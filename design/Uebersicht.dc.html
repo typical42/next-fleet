@@ -1,0 +1,177 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; }
+    a { color: #00679e; text-decoration: none; }
+    a:hover { color: #004f79; }
+  </style>
+</helmet>
+<div style="width: 1440px; height: 900px; display: flex; flex-direction: column; background: #00679e; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen-Sans, Cantarell, Ubuntu, 'Helvetica Neue', 'Noto Sans', 'Liberation Sans', Arial, sans-serif; font-size: 15px; color: #222222;">
+
+  <div style="height: 50px; flex-shrink: 0; display: flex; align-items: center; gap: 16px; padding: 0 12px; color: #ffffff;">
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13.5l1.8-5A2 2 0 0 1 6.7 7h10.6a2 2 0 0 1 1.9 1.5l1.8 5"></path><path d="M3 13.5h18V17a1 1 0 0 1-1 1h-1.5a1 1 0 0 1-1-1v-1h-11v1a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"></path><circle cx="6.75" cy="15" r="0.9" fill="#ffffff"></circle><circle cx="17.25" cy="15" r="0.9" fill="#ffffff"></circle></svg>
+      <span style="font-size: 16px; font-weight: 600; letter-spacing: 0.2px;">NextFleet</span>
+    </div>
+    <div style="flex-grow: 1;"></div>
+    <div style="display: flex; align-items: center; gap: 14px;">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"></circle><path d="M16 16l4 4"></path></svg>
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.7" stroke-linecap="round"><path d="M12 4a4 4 0 0 1 4 4v3l1.5 3h-11L8 11V8a4 4 0 0 1 4-4z"></path><path d="M10.5 17.5a1.6 1.6 0 0 0 3 0"></path></svg>
+      <div style="width: 30px; height: 30px; border-radius: 50%; background: #d9e7f0; color: #00679e; font-size: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center;">JK</div>
+    </div>
+  </div>
+
+  <div style="flex-grow: 1; display: flex; padding: 0 4px 4px 4px; min-height: 0;">
+    <div style="flex-grow: 1; display: flex; background: #ffffff; border-radius: 10px; overflow: hidden;">
+
+      <div style="width: 300px; flex-shrink: 0; border-right: 1px solid #ededed; display: flex; flex-direction: column; padding: 8px; box-sizing: border-box;">
+        <button style="height: 44px; border: none; border-radius: 8px; background: #00679e; color: #ffffff; font-size: 15px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; margin-bottom: 8px; font-family: inherit;">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+          Fahrzeug anlegen
+        </button>
+
+        <div style="display: flex; flex-direction: column; gap: 2px;">
+          <div style="height: 44px; border-radius: 22px; background: #dbeaf2; display: flex; align-items: center; gap: 12px; padding: 0 14px; font-weight: 600;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#222222" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16M4 12h16M4 19h9"></path></svg>
+            Übersicht
+          </div>
+
+          <div style="padding: 16px 14px 6px 14px; font-size: 13px; color: #6b6b6b; font-weight: 600;">Fahrzeuge</div>
+
+          <div style="height: 44px; border-radius: 22px; display: flex; align-items: center; gap: 12px; padding: 0 14px;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#c9211e" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5l8.5 15h-17z"></path><path d="M12 10.5v4"></path><path d="M12 17.2v0.1"></path></svg>
+            <span style="flex-grow: 1;">M-EV 7</span>
+            <span style="font-size: 13px; color: #c9211e; font-weight: 600;">1</span>
+          </div>
+          <div style="height: 44px; border-radius: 22px; display: flex; align-items: center; gap: 12px; padding: 0 14px;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#a37200" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8"></circle><path d="M12 7.5V12l3 2"></path></svg>
+            <span style="flex-grow: 1;">M-AB 1234</span>
+            <span style="font-size: 13px; color: #a37200; font-weight: 600;">2</span>
+          </div>
+          <div style="height: 44px; border-radius: 22px; display: flex; align-items: center; gap: 12px; padding: 0 14px;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2c7d3a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"></circle><path d="M8.5 12.3l2.4 2.4 4.6-4.9"></path></svg>
+            <span style="flex-grow: 1;">HH-CD 42</span>
+          </div>
+
+          <div style="height: 1px; background: #ededed; margin: 10px 14px;"></div>
+
+          <div style="height: 44px; border-radius: 22px; display: flex; align-items: center; gap: 12px; padding: 0 14px;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#222222" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 19V9m4.7 10V5m4.6 14v-7m4.7 7V8"></path></svg>
+            Berichte
+          </div>
+        </div>
+
+        <div style="flex-grow: 1;"></div>
+        <div style="height: 44px; border-radius: 22px; display: flex; align-items: center; gap: 12px; padding: 0 14px; color: #6b6b6b;">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#6b6b6b" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"></circle><path d="M12 3.5v2.2M12 18.3v2.2M20.5 12h-2.2M5.7 12H3.5M18 6l-1.6 1.6M7.6 16.4L6 18M18 18l-1.6-1.6M7.6 7.6L6 6"></path></svg>
+          Einstellungen
+        </div>
+      </div>
+
+      <div style="flex-grow: 1; padding: 28px 40px; overflow: hidden; display: flex; flex-direction: column; gap: 24px;">
+
+        <div style="display: flex; align-items: baseline; gap: 12px;">
+          <h1 style="margin: 0; font-size: 22px; font-weight: 600;">Übersicht</h1>
+          <span style="color: #6b6b6b; font-size: 14px;">3 Fahrzeuge · 1 überfällig</span>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <div style="display: flex; align-items: center; gap: 14px; padding: 14px 16px; border: 1px solid #f0cfcf; background: #fdf4f4; border-radius: 8px;">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#c9211e" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5l8.5 15h-17z"></path><path d="M12 10.5v4"></path><path d="M12 17.2v0.1"></path></svg>
+            <div style="flex-grow: 1;">
+              <div style="font-weight: 600;">Führerscheinkontrolle · Thomas Reiter</div>
+              <div style="font-size: 13px; color: #6b6b6b;">seit 12 Tagen überfällig · M-EV 7</div>
+            </div>
+            <button style="height: 36px; padding: 0 16px; border: 1px solid #dbdbdb; background: #ffffff; border-radius: 8px; font-size: 14px; font-family: inherit; cursor: pointer;">Erledigt</button>
+          </div>
+          <div style="display: flex; align-items: center; gap: 14px; padding: 14px 16px; border: 1px solid #ecdfc0; background: #fdfaf3; border-radius: 8px;">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#a37200" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8"></circle><path d="M12 7.5V12l3 2"></path></svg>
+            <div style="flex-grow: 1;">
+              <div style="font-weight: 600;">HU/AU · M-AB 1234</div>
+              <div style="font-size: 13px; color: #6b6b6b;">fällig am 24.09.2026 · in 3 Wochen</div>
+            </div>
+            <button style="height: 36px; padding: 0 16px; border: 1px solid #dbdbdb; background: #ffffff; border-radius: 8px; font-size: 14px; font-family: inherit; cursor: pointer;">Termin eintragen</button>
+          </div>
+        </div>
+
+        <div style="border: 1px solid #ededed; border-radius: 8px; overflow: hidden;">
+          <div style="display: grid; grid-template-columns: 2.2fr 1.1fr 1.1fr 1fr 1.6fr; gap: 16px; padding: 12px 18px; background: #f7f7f7; font-size: 13px; color: #6b6b6b; font-weight: 600;">
+            <div>Fahrzeug</div>
+            <div style="text-align: right;">Kilometerstand</div>
+            <div style="text-align: right;">Verbrauch</div>
+            <div style="text-align: right;">Kosten/km</div>
+            <div>Status</div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 2.2fr 1.1fr 1.1fr 1fr 1.6fr; gap: 16px; padding: 16px 18px; border-top: 1px solid #ededed; align-items: center;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <div style="width: 34px; height: 34px; border-radius: 8px; background: #eef3f6; display: flex; align-items: center; justify-content: center;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#00679e" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13l1.6-4.4A1.8 1.8 0 0 1 7.3 7.4h9.4a1.8 1.8 0 0 1 1.7 1.2L20 13"></path><path d="M4 13h16v3.4h-2.6v-1.2H6.6v1.2H4z"></path></svg>
+              </div>
+              <div>
+                <div style="font-weight: 600;">M-EV 7</div>
+                <div style="font-size: 13px; color: #6b6b6b;">Renault Zoe · Elektro</div>
+              </div>
+            </div>
+            <div style="text-align: right; font-variant-numeric: tabular-nums;">31.204 km</div>
+            <div style="text-align: right; font-variant-numeric: tabular-nums;">17,8 kWh/100</div>
+            <div style="text-align: right; font-variant-numeric: tabular-nums;">0,19 €</div>
+            <div style="display: flex; align-items: center; gap: 8px; color: #c9211e; font-weight: 600; font-size: 14px;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#c9211e" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.5l8.5 15h-17z"></path><path d="M12 10.5v4"></path><path d="M12 17.2v0.1"></path></svg>
+              Überfällig
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 2.2fr 1.1fr 1.1fr 1fr 1.6fr; gap: 16px; padding: 16px 18px; border-top: 1px solid #ededed; align-items: center; background: #f5f5f5;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <div style="width: 34px; height: 34px; border-radius: 8px; background: #eef3f6; display: flex; align-items: center; justify-content: center;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#00679e" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13l1.6-4.4A1.8 1.8 0 0 1 7.3 7.4h9.4a1.8 1.8 0 0 1 1.7 1.2L20 13"></path><path d="M4 13h16v3.4h-2.6v-1.2H6.6v1.2H4z"></path></svg>
+              </div>
+              <div>
+                <div style="font-weight: 600;">M-AB 1234</div>
+                <div style="font-size: 13px; color: #6b6b6b;">VW Passat Variant · Diesel</div>
+              </div>
+            </div>
+            <div style="text-align: right; font-variant-numeric: tabular-nums;">148.320 km</div>
+            <div style="text-align: right; font-variant-numeric: tabular-nums;">6,4 l/100 km</div>
+            <div style="text-align: right; font-variant-numeric: tabular-nums;">0,42 €</div>
+            <div style="display: flex; align-items: center; gap: 8px; color: #a37200; font-weight: 600; font-size: 14px;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a37200" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="8"></circle><path d="M12 7.5V12l3 2"></path></svg>
+              Bald fällig
+            </div>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 2.2fr 1.1fr 1.1fr 1fr 1.6fr; gap: 16px; padding: 16px 18px; border-top: 1px solid #ededed; align-items: center;">
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <div style="width: 34px; height: 34px; border-radius: 8px; background: #eef3f6; display: flex; align-items: center; justify-content: center;">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#00679e" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13l1.6-4.4A1.8 1.8 0 0 1 7.3 7.4h9.4a1.8 1.8 0 0 1 1.7 1.2L20 13"></path><path d="M4 13h16v3.4h-2.6v-1.2H6.6v1.2H4z"></path></svg>
+              </div>
+              <div>
+                <div style="font-weight: 600;">HH-CD 42</div>
+                <div style="font-size: 13px; color: #6b6b6b;">Ford Transit · Diesel</div>
+              </div>
+            </div>
+            <div style="text-align: right; font-variant-numeric: tabular-nums;">92.640 km</div>
+            <div style="text-align: right; font-variant-numeric: tabular-nums;">9,1 l/100 km</div>
+            <div style="text-align: right; font-variant-numeric: tabular-nums;">0,58 €</div>
+            <div style="display: flex; align-items: center; gap: 8px; color: #2c7d3a; font-weight: 600; font-size: 14px;">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2c7d3a" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"></circle><path d="M8.5 12.3l2.4 2.4 4.6-4.9"></path></svg>
+              Alles aktuell
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>

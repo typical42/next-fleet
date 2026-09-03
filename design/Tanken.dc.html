@@ -1,0 +1,100 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <style>
+    body { margin: 0; }
+    a { color: #00679e; text-decoration: none; }
+    a:hover { color: #004f79; }
+  </style>
+</helmet>
+<div style="width: 390px; height: 844px; display: flex; flex-direction: column; background: #ffffff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen-Sans, Cantarell, Ubuntu, 'Helvetica Neue', 'Noto Sans', 'Liberation Sans', Arial, sans-serif; font-size: 15px; color: #222222; position: relative; overflow: hidden;">
+
+  <div style="height: 50px; flex-shrink: 0; background: #00679e; display: flex; align-items: center; gap: 12px; padding: 0 12px; color: #ffffff;">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 5.5L8 12l6.5 6.5"></path></svg>
+    <span style="font-size: 16px; font-weight: 600;">M-AB 1234</span>
+  </div>
+
+  <div style="flex-grow: 1; padding: 16px; display: flex; flex-direction: column; gap: 12px; opacity: 0.35;">
+    <div style="font-size: 20px; font-weight: 600;">148.320 km</div>
+    <div style="height: 60px; border: 1px solid #ededed; border-radius: 8px;"></div>
+    <div style="height: 60px; border: 1px solid #ededed; border-radius: 8px;"></div>
+  </div>
+
+  <div style="position: absolute; left: 0; right: 0; bottom: 0; height: 660px; background: #ffffff; border-radius: 16px 16px 0 0; box-shadow: 0 -2px 24px rgba(0, 0, 0, 0.18); padding: 10px 16px 16px 16px; box-sizing: border-box; display: flex; flex-direction: column; gap: 14px;">
+
+    <div style="width: 40px; height: 4px; border-radius: 2px; background: #dbdbdb; align-self: center;"></div>
+
+    <div style="display: flex; align-items: center; gap: 12px;">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#00679e" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V6.5A1.5 1.5 0 0 1 5.5 5h6A1.5 1.5 0 0 1 13 6.5V19"></path><path d="M3 19h11"></path><path d="M4 10.5h9"></path><path d="M16 9.5v7a1.8 1.8 0 0 0 3.6 0V11l-2.2-3.2"></path></svg>
+      <div style="font-size: 19px; font-weight: 600; flex-grow: 1;">Tanken</div>
+      <div style="width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#6b6b6b" stroke-width="1.9" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+      </div>
+    </div>
+
+    <div style="display: flex; gap: 10px;">
+      <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 6px;">
+        <div style="font-size: 13px; color: #6b6b6b;">Menge</div>
+        <div style="height: 56px; border: 2px solid #00679e; border-radius: 8px; display: flex; align-items: center; padding: 0 14px; gap: 8px;">
+          <span style="font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums;">48,2</span>
+          <span style="font-size: 16px; color: #6b6b6b;">l</span>
+        </div>
+      </div>
+      <div style="flex-grow: 1; display: flex; flex-direction: column; gap: 6px;">
+        <div style="font-size: 13px; color: #6b6b6b;">Gesamtpreis</div>
+        <div style="height: 56px; border: 1px solid #dbdbdb; border-radius: 8px; display: flex; align-items: center; padding: 0 14px; gap: 8px;">
+          <span style="font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums;">82,10</span>
+          <span style="font-size: 16px; color: #6b6b6b;">€</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="font-size: 13px; color: #6b6b6b; margin-top: -6px;">1,703 € je Liter · zuletzt 1,689 € bei Aral, Dachau</div>
+
+    <div style="display: flex; flex-direction: column; gap: 6px;">
+      <div style="font-size: 13px; color: #6b6b6b;">Kilometerstand</div>
+      <div style="height: 56px; border: 1px solid #dbdbdb; border-radius: 8px; display: flex; align-items: center; padding: 0 14px; gap: 8px;">
+        <span style="font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums;">148.320</span>
+        <span style="font-size: 16px; color: #6b6b6b;">km</span>
+        <div style="flex-grow: 1;"></div>
+        <span style="font-size: 13px; color: #6b6b6b;">+430 seit 28.08.</span>
+      </div>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 14px; height: 56px; border: 1px solid #dbdbdb; border-radius: 8px; padding: 0 14px;">
+      <div style="flex-grow: 1;">
+        <div style="font-weight: 600;">Volltankung</div>
+        <div style="font-size: 13px; color: #6b6b6b;">Grundlage für den Verbrauch</div>
+      </div>
+      <div style="width: 48px; height: 28px; border-radius: 14px; background: #00679e; display: flex; align-items: center; justify-content: flex-end; padding: 0 3px; box-sizing: border-box;">
+        <div style="width: 22px; height: 22px; border-radius: 50%; background: #ffffff;"></div>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      <div style="font-size: 13px; color: #6b6b6b;">Tankstelle</div>
+      <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+        <div style="height: 40px; padding: 0 16px; border-radius: 20px; background: #dbeaf2; color: #00679e; font-weight: 600; font-size: 14px; display: flex; align-items: center;">Aral, Dachau</div>
+        <div style="height: 40px; padding: 0 16px; border-radius: 20px; border: 1px solid #dbdbdb; font-size: 14px; display: flex; align-items: center;">Shell, A8</div>
+        <div style="height: 40px; padding: 0 16px; border-radius: 20px; border: 1px solid #dbdbdb; font-size: 14px; display: flex; align-items: center; gap: 6px;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#222222" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"></path></svg>
+          Neu
+        </div>
+      </div>
+    </div>
+
+    <div style="flex-grow: 1;"></div>
+
+    <button style="height: 52px; border: none; border-radius: 8px; background: #00679e; color: #ffffff; font-size: 17px; font-weight: 600; font-family: inherit; cursor: pointer;">Speichern</button>
+    <div style="font-size: 13px; color: #6b6b6b; text-align: center;">03.09.2026, 17:42 · als Fahrer Johannes K.</div>
+  </div>
+</div>
+</x-dc>
+</body>
+</html>
