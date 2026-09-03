@@ -1,0 +1,9 @@
+{
+  "name": "johanneskolb/nextfleet",
+  "description": "Nextcloud app for vehicle fleet management",
+  "license": "AGPL-3.0-or-later",
+  "type": "project",
+  "require": {},
+  "require-dev": {},
+  "scripts": {}
+}

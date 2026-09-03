@@ -1,0 +1,2 @@
+# TODO: db (mariadb), app (nextcloud:34-apache, this repo bind-mounted into custom_apps/nextfleet),
+# cron (same image), mail (mailpit). See docs/development.md.

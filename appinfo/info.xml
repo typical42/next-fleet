@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<!-- TODO: fill in before the first release. See docs/legal.md for the licence fields. -->
+<info xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
+  <id>nextfleet</id>
+  <name>NextFleet</name>
+  <name lang="de">NextFleet</name>
+  <summary>Vehicle fleet management</summary>
+  <summary lang="de">Fuhrparkverwaltung</summary>
+  <description><![CDATA[TODO]]></description>
+  <version>0.0.1</version>
+  <licence>agpl</licence>
+  <author>Johannes Kolb</author>
+  <namespace>NextFleet</namespace>
+  <category>tools</category>
+  <bugs>TODO</bugs>
+  <dependencies>
+    <nextcloud min-version="31" max-version="34"/>
+  </dependencies>
+  <background-jobs>
+    <!-- TODO: OCA\NextFleet\BackgroundJob\ReminderJob -->
+  </background-jobs>
+</info>
