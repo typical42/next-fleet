@@ -1,6 +1,6 @@
 # Interface and languages
 
-Part of the [NextFleet plan](../plan.md).
+Part of the [NextFleet plan](../plan.md). Terms are defined in [CONTEXT.md](../CONTEXT.md).
 
 ## Interface
 
@@ -30,13 +30,18 @@ chrome, no bespoke tables, no second design language inside the page.
 
 ### Do not let the schema dictate the navigation
 
-The obvious layout gives each table a tab: Trips, Fuel, Service, Expenses. That mirrors the
+The obvious layout gives each table a tab: Trips, Energy, Maintenance, Expenses. That mirrors the
 [data model](architecture.md#data-model) and answers no question a person actually asks. People ask
 "what happened with this car?" and "what did March cost?".
 
-So the vehicle has **one timeline** of everything — trips, fill-ups, services, expenses, reminders
-— newest first, with filter chips above it: `All · Trips · Fuel · Service · Costs`. One place to
-look, one place to search, and the tabs collapse from six to three.
+So the vehicle has **one timeline** of everything — trips, fill-ups, maintenance, expenses,
+reminders — newest first, with filter chips above it:
+`All · Trips · Energy · Maintenance · Costs`. One place to look, one place to search, and the tabs
+collapse from six to three.
+
+The timeline is also where flagged records get resolved. An odometer that went backwards shows the
+follow-up question there — cluster swap, or a mistake? — instead of interrupting the person who
+entered it ([odometer rules](architecture.md#odometer-rules)).
 
 ```
 ┌─ NextFleet ──────────────────────────────────────────────────────────┐
@@ -47,7 +52,7 @@ look, one place to search, and the tabs collapse from six to three.
 │ ● M-EV 7   ⛔   │  │ ● Oil change in ~2 400 km (est. Nov)        │   │
 │                 │  └────────────────────────────────────────────┘   │
 │ Reports         │                                                    │
-│ ─────────────── │  Timeline    [All][Trips][Fuel][Service][Costs]    │
+│ ─────────────── │  Timeline  [All][Trips][Energy][Maint.][Costs]     │
 │ Settings        │  ───────────────────────────────────────────────   │
 │                 │  03.09.  ⛽ Fill-up   48,2 l   82,10 €   6,1 l/100 │
 │                 │  02.09.  🚗 Munich → Augsburg   82 km   business   │
@@ -68,23 +73,27 @@ touch. That keeps the middle free for the things you touch weekly.
 |---|---|---|
 | **Overview** | All vehicles, sorted by urgency, not alphabetically. Traffic light, plate, km, next due. | Open a vehicle |
 | **Vehicle** | Header KPIs + due banner + timeline (above) | **+ Entry** |
-| **Entry sheet** | Trip / Fuel / Service / Odometer — see below | Save |
+| **Entry sheet** | Trip / Fill-up / Maintenance / Odometer — see below | Save |
 | **Costs** | One year, one vehicle: stacked bars per month, table below, export button | Export |
-| **Reports** | Fahrtenbuch, mileage claim, fleet cost, CO₂ — pick range, get a file | Generate |
-| **Vehicle sidebar** | Master data, documents, reminders, sharing | Edit inline |
+| **Reports** | Fahrtenbuch, mileage claim, cost, CO₂ — pick a range, get a printable page ([ADR 0005](adr/0005-no-pdf-library.md)) | Print / export |
+| **Vehicle sidebar** | Master data, jurisdiction, documents, reminders (sharing from M6) | Edit inline |
 
 ### The entry sheet, in detail
 
 This is the screen the app lives or dies by. One `+` opens four choices, each a sheet, each with
 **one required field**:
 
-- **Trip** — end odometer *or* distance, whichever the driver happens to know. Toggle between them;
-  the app computes the other. Start odometer is prefilled from the last reading, date from now,
-  route from the last trips as suggestions.
-- **Fill-up** — litres and total price. Unit price is derived, and the station remembers its last
-  price. "Full tank" defaults to on, because it usually is
+- **Trip** — end odometer *or* distance, whichever the driver happens to know. Toggle between them.
+  Giving the distance is not the same as giving the odometer, and the app does not pretend otherwise
+  ([odometer rules](architecture.md#odometer-rules)). Date defaults to now; route, purpose and
+  partner autocomplete from this vehicle's own history, which is what keeps six spellings of one
+  client out of the reports.
+- **Fill-up** — amount and total price. Which energy types are offered comes from the vehicle's
+  `energy_types`, so a plug-in hybrid can log either and a diesel is never asked
+  ([data model](architecture.md#data-model)). Unit price is derived, and the station remembers its
+  last price. "Full tank" defaults to on, because it usually is
   ([the maths](architecture.md#numbers-consumption-cost-emissions) needs it).
-- **Service** — title and cost. If a reminder is open for this vehicle, offer it as one tap:
+- **Maintenance** — title and cost. If a reminder is open for this vehicle, offer it as one tap:
   "Closes: Oil change" — that is how recurrence stays correct without anyone thinking about it.
 - **Odometer** — one number. The escape hatch for everything not otherwise recorded.
 
@@ -96,10 +105,11 @@ Rules for all four:
 - The sheet never blocks on validation. An implausible odometer is saved and flagged
   ([data model](architecture.md#data-model)), never rejected — a driver at a petrol station will not
   debug a form.
-- **A failed save is queued, not lost.** The sheet writes to `localStorage` and retries; the
-  client-generated `uuid` ([stack and layers](architecture.md#stack-and-layers)) makes the replay
-  idempotent. Otherwise "works with bad reception" above is a promise the architecture does not
-  keep — and an underground car park is exactly where fill-ups happen.
+- **A failed save is never lost.** The sheet stays open with every value intact and offers retry.
+  Nothing is written to `localStorage`: a durable queue would put destinations and purposes on a
+  phone that may be shared or lost, to solve a problem the open sheet already solves. The driver
+  loses a tap, and only if they close the tab. (The Android client will need a real offline queue.
+  It will also need the clock handling in [time](architecture.md#time); neither is a v1 concern.)
 - Saving returns to where you were, with an undo toast. Nothing asks "are you sure?"; `deleted_at`
   ([data model](architecture.md#data-model)) makes undo the cheaper pattern.
 
@@ -115,6 +125,10 @@ not a project.
   current km. Tank size, VIN, first registration and inspection date arrive through a dismissible
   "complete this vehicle" hint on the overview. A twelve-field wall on first run loses people
   before they have a single record.
+- **The jurisdiction is not a fifth field.** It defaults from the instance setting, then the user's
+  locale, and lives in the vehicle sidebar where it can be changed
+  ([contributing](contributing.md)). It decides units, currency and rules — and a freelancer's
+  vehicles are all in one country, so asking would cost more than it is worth.
 - **Empty states do the teaching.** Not "no entries" but the two buttons that create the first one,
   plus the QR offer. `NcEmptyContent` with a real call to action.
 - **Numbers get context.** `6,4 l/100 km` alone means nothing; `6,4 l/100 km  ▲ 0,3 vs. average`
@@ -122,14 +136,18 @@ not a project.
 - **Status is never colour alone.** Traffic lights carry an icon and a word, for colour-blind users
   and for the print/export path.
 - **Sort by urgency.** The overview is a to-do list, not an inventory. Alphabetical order is what a
-  database returns, not what a fleet manager wants.
+  database returns, not what anyone wants. Vehicles that are `laid_up` sink; `disposed` ones leave
+  the list entirely ([data model](architecture.md#data-model)).
+- **Never sum across currencies or units.** A figure that spans vehicles is grouped and sectioned,
+  never totalled, and every KPI takes its label from the vehicle — `€/km` for a car, `€/h` for a
+  generator ([the maths](architecture.md#numbers-consumption-cost-emissions)).
 - **One primary button per screen.** On the vehicle screen that is **+ Entry** — not "Edit
   vehicle", which people need twice a year.
 - **Keyboard:** `n` new entry, `/` search, `Esc` closes the sheet.
 - **Dark mode and 320 px width are acceptance criteria**, not afterthoughts; the timeline is rows,
   not cards, so it survives both.
 
-### Fleet view (phase 2)
+### Fleet view (M6+)
 
 One table, all vehicles, columns for status, km, cost/km, next due, current driver. Sortable,
 filterable by group. This is the manager's screen and it is the one place density beats simplicity.

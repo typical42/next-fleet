@@ -1,6 +1,6 @@
 # Contributing a country, an importer, a report
 
-Part of the [NextFleet plan](../plan.md).
+Part of the [NextFleet plan](../plan.md). Terms are defined in [CONTEXT.md](../CONTEXT.md).
 
 Country rules, import formats and report layouts arrive the way everything else in open source
 arrives: fork the repository, add a directory, open a merge request, get it reviewed, ship it in the
@@ -22,16 +22,21 @@ The interfaces stay — as ordinary internal seams, not as public API:
 
 | Seam | Interface | First implementation |
 |---|---|---|
-| Jurisdiction profile | `IJurisdiction` — currency, units, plate format, document kinds, defaults | `de` |
+| Jurisdiction profile | `IJurisdiction` — currency, units, plate format, document kinds, defaults | `de`, `generic` |
 | Logbook ruleset | `ILogbookRules` — required fields per trip category, lock delay, retention, validation findings | German Fahrtenbuch ([logbook mode](features.md#logbook-mode)) |
 | Inspection regime | `IInspectionScheme` — names, cadence, first-due rule → reminder templates | HU/AU (24 months, 36 for new cars) |
 | Rates over time | `IRateProvider` — mileage allowance, VAT, emission factors, **each valid from a date** | 0,30 €/km, German grid factor |
-| Report renderer | `IReportRenderer` — range in, file out | Fahrtenbuch PDF, mileage claim |
+| Report renderer | `IReportRenderer` — range in, printable HTML out ([ADR 0005](adr/0005-no-pdf-library.md)) | Fahrtenbuch, mileage claim |
 | Importer | `IImporter` — foreign CSV in, our records out | Drivvo, Spritmonitor, LubeLogger |
 | Service templates | `IServiceTemplates` — intervals by market or manufacturer | Generic (oil, brakes, tyres) |
 
 A country is `lib/Jurisdiction/<Cc>/`, wired up in one registration list. Reviewing it means reading
 one directory, and deleting it means deleting one directory.
+
+**The generic profile is one of them.** Metric units, the instance's currency, no logbook ruleset,
+no inspection scheme, no rates. It is what an install in a country nobody has written gets, and it
+is why a report needing a rate must be *unavailable* rather than zero. Every seam has to tolerate a
+jurisdiction that answers "I don't know" — the generic profile is the test that it does.
 
 ## Rules that keep the seam honest
 
@@ -44,7 +49,9 @@ one directory, and deleting it means deleting one directory.
 - **Store canonical, display local.** Kilometres, millilitres, cents, UTC in the database — always,
   including for a UK vehicle. Conversion happens at the edges.
 - **Jurisdiction is per vehicle**, not per instance: a fleet crosses borders, and a leased car
-  registered abroad keeps its own rules. Falls back to instance default, then to the user's locale.
+  registered abroad keeps its own rules. It is not asked for when a vehicle is created — it defaults
+  from the instance setting, then the user's locale, and is changed in the vehicle sidebar
+  ([interface](ui.md#details-that-decide-whether-it-feels-easy)).
 - **Validation returns findings, not exceptions** ([data model](architecture.md#data-model)). A
   ruleset says "this trip has no purpose and your jurisdiction requires one" — the record is still
   saved, still flagged, still fixable.
@@ -66,11 +73,16 @@ Because we maintain what we merge:
 - A country nobody maintains gets marked experimental and eventually removed. Saying so up front is
   kinder than a silent, wrong tax report.
 
-## Ship the second country early
+## The second jurisdiction is a test, not a release
 
-**The UK is the honest test**: miles, litres, mpg, MOT annually after three years, 45p then 25p per
-mile. It breaks every unit assumption hiding in the code, which is exactly what we want it to do —
-at M5, not at M9. Germany alone proves nothing, whatever the interfaces look like.
+**The UK is the honest test**: miles, litres, mpg, MOT annually after three years, pence per mile.
+It breaks every unit assumption hiding in the code, which is exactly what we want it to do — before
+v1, not at M9. Germany alone proves nothing, whatever the interfaces look like.
+
+But it lives in `tests/Country/`, not in `lib/`
+([ADR 0002](adr/0002-uk-is-a-test-jurisdiction.md)). Shipping it would put our signed release behind
+UK rates and deadlines nobody here can maintain, which is the failure mode the section above is
+written to prevent. A real `uk` ships when a maintainer signs up in `CODEOWNERS`.
 
 ## Consequence for the interface
 
