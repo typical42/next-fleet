@@ -32,7 +32,7 @@ data formats are not protected. What creates actual exposure:
 | Other projects' names | No "Drivvo", "LubeLogger", "Spritmonitor" in the UI. Import features are described as "CSV import (Drivvo format)" — nominative use of a name to say what a file is, nothing more. |
 | **"TÜV"** | A registered trademark since 1979, actively enforced, and *not* usable as a synonym for inspection. The UI says **HU/AU** or "Hauptuntersuchung". Never "TÜV-Termin", never a TÜV-like seal. |
 | "Nextcloud" | App store rule: not in the app name. `NextFleet` is clear of it, though the `Next` prefix invites confusion — `FleetLog` is the safer fallback if anyone objects. Never restyle it "NextCloud"; the brand is one word, one capital. |
-| Dependencies | CI check that every npm/composer dependency is AGPL-compatible. One GPL-incompatible transitive package can block a release. |
+| Dependencies | CI check that every npm/composer dependency is AGPL-compatible. One GPL-incompatible transitive package can block a release. v1 avoids the hardest case by shipping no PDF library at all ([ADR 0005](adr/0005-no-pdf-library.md)). |
 
 **Contributions carry the licensing risk now.** Country directories arrive by merge request
 ([contributing](contributing.md)) and ship in a release signed with our certificate, so a
@@ -46,6 +46,17 @@ data, which in Germany brings the works council into it. Therefore:
 
 - Trip location fields stay free text. No GPS, no automatic tracking (already out of scope in
   [scope](../plan.md#scope)).
-- Per-vehicle retention setting with an automatic purge job; the Fahrtenbuch's 10-year retention is
-  opt-in, not the default.
-- Full per-user data export and delete, wired into Nextcloud's own user-deletion hooks.
+- **Retention is opt-in and off by default.** No automatic purge unless a vehicle is given a
+  retention period. A logbook that quietly deletes its owner's history is a worse failure than one
+  that keeps too much, and the real GDPR exposure here is driver data on shared vehicles, handled
+  below. Soft-deleted rows clear from the trash after 30 days; under Logbook Mode voided rows stay
+  for the retention period ([logbook mode](features.md#logbook-mode)).
+- **Under Logbook Mode retention cannot go below the jurisdiction's required period**, and the field
+  says why it is clamped.
+- **Erasing a driver pseudonymises, it does not delete**
+  ([ADR 0008](adr/0008-erasing-a-driver-pseudonymises.md)). `driver_uid` is replaced and the records
+  stay: they are the vehicle owner's logbook, and under Logbook Mode they carry a retention duty. A
+  co-driver leaving must not shred someone else's tax evidence.
+- Full per-user data export and per-vehicle export, wired into Nextcloud's own user-deletion hooks.
+  The per-vehicle export is also what a buyer gets when a vehicle is sold — v1 transfers no
+  ownership between users ([data model](architecture.md#data-model)).

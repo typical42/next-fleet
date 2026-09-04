@@ -1,6 +1,6 @@
 # Security
 
-Part of the [NextFleet plan](../plan.md).
+Part of the [NextFleet plan](../plan.md). Terms are defined in [CONTEXT.md](../CONTEXT.md).
 
 The app holds a movement profile: where someone was, when, and why. Treat it accordingly.
 
@@ -10,7 +10,7 @@ The app holds a movement profile: where someone was, when, and why. Treat it acc
 |---|---|---|
 | Another user on the same instance | Read a colleague's trips | Guessable ids, missing access checks |
 | A shared driver | More than their role allows | Role checks done in the UI only |
-| The open internet | Any unauthenticated endpoint | Share links, QR routes, OCS without auth |
+| The open internet | Any unauthenticated endpoint | Share links, QR routes, any route missing an auth annotation |
 | Someone uploading a file | Code execution in a viewer's browser | Receipt photos, PDFs, **SVG** |
 | Someone importing a file | Server resources, or a poisoned export | CSV import, CSV export opened in Excel |
 | A dependency | Everything, quietly | npm, composer, GitHub Actions |
@@ -21,10 +21,11 @@ The app holds a movement profile: where someone was, when, and why. Treat it acc
 - **Every controller method is annotated deliberately** — `#[NoAdminRequired]` on user endpoints,
   `#[NoCSRFRequired]` only where an OCS route genuinely needs it, `#[BruteForceProtection]` on
   anything token-addressed, `#[UserRateLimit]` on writes. An unannotated method fails review.
-- **One service decides access.** `VehicleAccess::may($uid, $op, $vehicleId)`. Controllers never
-  reach a mapper directly, and no mapper trusts an id from a request body. **IDOR is the realistic
-  bug here** — the API is id-addressed and sharing makes guessing worth the effort — so the
-  integration suite asserts the stranger case for *every* endpoint, not one.
+- **One service decides access.** `VehicleAccess::may($uid, $op, $vehicleId)`, backed by
+  `fleet_access` ([ADR 0001](adr/0001-own-access-table.md)). Controllers never reach a mapper
+  directly, and no mapper trusts an id from a request body. **IDOR is the realistic bug here** — the
+  API is id-addressed and sharing makes guessing worth the effort — so the integration suite asserts
+  the stranger case for *every* endpoint, not one.
 - **File downloads are proxied** ([Nextcloud integration](architecture.md#nextcloud-integration)).
   The app's ACL decides, not the file's.
 
@@ -42,9 +43,22 @@ The app holds a movement profile: where someone was, when, and why. Treat it acc
   export in Excel — the classic bug in an app whose main output is CSV.
 - **CSV import is bounded**: size cap, row cap, streaming parser, no archives, no `unserialize`,
   `json_decode` with a depth limit.
-- **PDF generation loads no remote resources.** A report renderer that fetches URLs is an SSRF hole
-  with a friendly name.
+- **Reports load no remote resources.** v1 renders printable HTML and ships no PDF library
+  ([ADR 0005](adr/0005-no-pdf-library.md)), which removes this surface rather than defending it. The
+  rule stands for the day a server-side renderer arrives: a renderer that fetches URLs is an SSRF
+  hole with a friendly name. The printable page inlines its own CSS and references nothing external.
 - **Never `v-html`**, anywhere, for anything. Every value on screen came from a person.
+
+### The client keeps nothing
+
+The entry sheet writes no `localStorage` ([entry sheet](ui.md#the-entry-sheet-in-detail)). A durable
+offline queue would hold destinations, purposes and partner names in a browser, on a phone that may
+be shared, lost or logged out of — the app's most sensitive data, in its least controlled place, for
+a problem an open form already solves. When the Android client introduces a real queue it introduces
+this threat with it, and it gets its own review.
+
+The server-time header ([time](architecture.md#time)) is a diagnostic. It never rewrites a
+user-entered date, so a wrong or hostile clock cannot silently move a logbook entry.
 
 ### Things that are visible in the real world
 
@@ -87,8 +101,9 @@ release goes out signed with our certificate, which means our name is on whateve
   app's own paths.
 - Bounded input: integers clamped to sane ranges, string lengths capped, enums whitelisted.
 - **Logs never contain destinations, purposes or tokens.** Errors carry ids, not content.
-- **Export and sync endpoints are rate-limited and logged.** A full trip CSV is the most sensitive
-  artefact this app can produce, and it is one request away.
+- **Export endpoints are rate-limited and logged.** A full trip CSV is the most sensitive artefact
+  this app can produce, and it is one request away. The same applies to the delta endpoint when the
+  OCS API arrives ([ADR 0006](adr/0006-one-api-surface-in-v1.md)).
 - `occ` commands never take secrets as arguments — shell history keeps them.
 
 ### Accepted risks, stated openly

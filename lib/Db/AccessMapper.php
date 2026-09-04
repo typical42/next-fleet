@@ -2,4 +2,4 @@
 namespace OCA\NextFleet\Db;
 
 // TODO
-class Share {}
+class AccessMapper {}
