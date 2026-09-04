@@ -4,4 +4,7 @@
 /build/
 *.log
 .php-cs-fixer.cache
-.phpunit.result.cache
+/.phpunit.cache/
+
+# Local agent tool permissions, not app source.
+/.claude/

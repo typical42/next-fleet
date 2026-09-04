@@ -1,1 +1,30 @@
-<!-- TODO -->
+<?xml version="1.0"?>
+<!--
+  - SPDX-FileCopyrightText: 2026 Johannes Kolb
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="tests/bootstrap.php"
+         cacheDirectory=".phpunit.cache"
+         colors="true"
+         executionOrder="depends,defects"
+         beStrictAboutOutputDuringTests="true"
+         failOnRisky="true"
+         failOnWarning="true">
+  <!--
+    - One suite per bootstrap. tests/Integration, tests/Country and tests/Api need a running
+    - server, so each gets its own suite and config when its first test lands - declaring an
+    - empty one here would trip failOnWarning.
+  -->
+  <testsuites>
+    <testsuite name="unit">
+      <directory>tests/Unit</directory>
+    </testsuite>
+  </testsuites>
+  <source>
+    <include>
+      <directory>lib</directory>
+    </include>
+  </source>
+</phpunit>

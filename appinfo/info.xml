@@ -1,5 +1,8 @@
 <?xml version="1.0"?>
-<!-- TODO: fill in before the first release. See docs/legal.md for the licence fields. -->
+<!--
+  - SPDX-FileCopyrightText: 2026 Johannes Kolb
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
 <info xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
       xsi:noNamespaceSchemaLocation="https://apps.nextcloud.com/schema/apps/info.xsd">
   <id>nextfleet</id>
@@ -7,17 +10,74 @@
   <name lang="de">NextFleet</name>
   <summary>Vehicle fleet management</summary>
   <summary lang="de">Fuhrparkverwaltung</summary>
-  <description><![CDATA[TODO]]></description>
+  <description><![CDATA[
+Keep the paperwork for your vehicles in your own Nextcloud: mileage, fuel and charging, costs,
+service and inspection dates, and a trip log.
+
+- **Odometer that adds up.** Readings are kept as history, not as a running total. Enter a distance
+  and NextFleet derives the reading; enter what the dashboard actually says and that wins.
+- **Costs and consumption** in cents, litres and watt-hours — never rounded floats.
+- **Reminders** for inspection, service and insurance, by date or by distance.
+- **Trip log** with the fields a German Fahrtenbuch needs, exportable as CSV.
+- **Share a vehicle** with the people who drive it, without giving them your whole account.
+
+Your data stays on your server. No tracking, no GPS, no cloud service in between.
+
+**No legal review.** NextFleet helps you keep a logbook. It does not promise the result satisfies
+any tax office, auditor or court. The rules and rates come from public sources, may be wrong and
+will go out of date. Ask your own adviser before relying on it.
+  ]]></description>
+  <description lang="de"><![CDATA[
+Verwalten Sie die Unterlagen Ihrer Fahrzeuge in Ihrer eigenen Nextcloud: Kilometerstände, Kraftstoff
+und Strom, Kosten, Wartungs- und Untersuchungstermine sowie ein Fahrtenbuch.
+
+- **Kilometerstand, der aufgeht.** Ablesungen werden als Verlauf gespeichert, nicht als laufende
+  Summe. Wer eine Strecke einträgt, bekommt einen abgeleiteten Stand; ein abgelesener Stand hat
+  Vorrang.
+- **Kosten und Verbrauch** in Cent, Millilitern und Wattstunden — keine gerundeten Fließkommazahlen.
+- **Erinnerungen** an HU/AU, Wartung und Versicherung, nach Datum oder nach Strecke.
+- **Fahrtenbuch** mit den Feldern, die es in Deutschland braucht, als CSV exportierbar.
+- **Fahrzeuge teilen** mit denen, die sie fahren, ohne Zugriff auf Ihr ganzes Konto.
+
+Die Daten bleiben auf Ihrem Server. Kein Tracking, kein GPS, kein Dienst dazwischen.
+
+**Keine juristische Prüfung.** NextFleet hilft beim Führen eines Fahrtenbuchs. Es sichert nicht zu,
+dass das Ergebnis von einem Finanzamt, einer Prüferin oder einem Gericht anerkannt wird. Die Regeln
+und Sätze stammen aus öffentlichen Quellen, können falsch sein und veralten. Fragen Sie Ihre eigene
+Beraterin oder Ihren Berater, bevor Sie sich darauf verlassen.
+  ]]></description>
   <version>0.0.1</version>
-  <licence>agpl</licence>
+  <licence>AGPL-3.0-or-later</licence>
   <author>Johannes Kolb</author>
   <namespace>NextFleet</namespace>
   <category>tools</category>
-  <bugs>TODO</bugs>
+  <category>organization</category>
+  <bugs>https://github.com/typical42/next-fleet/issues</bugs>
+  <repository type="git">https://github.com/typical42/next-fleet</repository>
+  <!--
+    - Screenshots go here, as https URLs the store can fetch. The images come from the demo
+    - fleet that `occ nextfleet:seed` builds, so they cannot be taken before that command and
+    - the UI exist:
+    -
+    -   <screenshot small-thumbnail="https://raw.githubusercontent.com/typical42/next-fleet/main/design/screenshots/overview-thumb.png">
+    -     https://raw.githubusercontent.com/typical42/next-fleet/main/design/screenshots/overview.png
+    -   </screenshot>
+  -->
   <dependencies>
     <nextcloud min-version="31" max-version="34"/>
   </dependencies>
-  <background-jobs>
-    <!-- TODO: OCA\NextFleet\BackgroundJob\ReminderJob -->
-  </background-jobs>
+  <!--
+    - The reminder engine arrives in M4. An empty <background-jobs> fails the store schema,
+    - so the whole element stays commented out until the job exists:
+    -
+    -   <background-jobs>
+    -     <job>OCA\NextFleet\BackgroundJob\ReminderJob</job>
+    -   </background-jobs>
+  -->
+  <navigations>
+    <navigation>
+      <name>NextFleet</name>
+      <route>nextfleet.page.index</route>
+    </navigation>
+  </navigations>
 </info>

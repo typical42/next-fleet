@@ -1,1 +1,38 @@
-<!-- TODO -->
+<?xml version="1.0"?>
+<!--
+  - SPDX-FileCopyrightText: 2026 Johannes Kolb
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+<psalm errorLevel="4"
+       resolveFromConfigFile="true"
+       findUnusedBaselineEntry="true"
+       errorBaseline="psalm-baseline.xml"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xmlns="https://getpsalm.org/schema/config"
+       xsi:schemaLocation="https://getpsalm.org/schema/config vendor/vimeo/psalm/config.xsd">
+  <projectFiles>
+    <directory name="lib"/>
+    <directory name="templates"/>
+    <directory name="tests"/>
+    <file name="appinfo/routes.php"/>
+    <ignoreFiles>
+      <directory name="vendor"/>
+    </ignoreFiles>
+  </projectFiles>
+  <!--
+    - nextcloud/ocp ships OCP and nothing else, so reading vendor here is what makes the
+    - server API resolve - and what makes a private OC\ class an UndefinedClass error.
+    - Read, not analysed: only projectFiles is our problem.
+  -->
+  <extraFiles>
+    <directory name="vendor"/>
+  </extraFiles>
+  <!--
+    - script() and style() come from Nextcloud's legacy template layer, which is not part of
+    - OCP and not in vendor. Templates are analysed, so their one server-provided global has
+    - to be declared somewhere; the test stub is the same declaration.
+  -->
+  <stubs>
+    <file name="tests/Stub/template_functions.php"/>
+  </stubs>
+</psalm>
