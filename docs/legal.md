@@ -17,8 +17,20 @@ notice. The app store requires AGPL or a compatible licence, and the frontend bu
 `@nextcloud/vue`, which is AGPL itself — so the combined work is AGPL either way.
 
 Consistency matters: `LICENSE`, the `<licence>` tag in `appinfo/info.xml`, `composer.json`,
-`package.json` and the SPDX headers must all say the same thing. Use REUSE (`reuse lint` in CI) to
-keep them honest.
+`package.json` and the SPDX headers must all say the same thing. The store's own `agpl` shorthand is
+deprecated, so the tag carries the SPDX identifier — which the schema only accepts from Nextcloud 31
+up, and 31 is our floor anyway.
+
+**Where the licence is declared.** Every file that has a comment syntax carries a two-line SPDX
+header. The rest — JSON, lock files, Markdown, the design exports — is annotated in `REUSE.toml`,
+and the licence text sits in `LICENSES/AGPL-3.0-or-later.txt`, where REUSE looks for it; the root
+`LICENSE` is a copy for GitHub. `reuse lint` is the check that covers both halves, but it needs
+Python, which the dev machine has not — so it belongs in CI, where it is not wired up yet, and
+`tests/Unit/LicensingTest.php` enforces the header half meanwhile.
+
+The frontend bundle is a combined work with its MIT dependencies, and `@nextcloud/vite-config`
+emits `js/nextfleet-main.mjs.license` listing each one — so `LICENSE.third-party` is only needed for
+code we vendor by hand.
 
 **Can another vehicle-logbook project sue us?** Not for the feature set. Copyright protects code,
 not ideas or functionality — the EU Software Directive excludes the ideas and principles underlying

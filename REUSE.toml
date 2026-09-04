@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 Johannes Kolb
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Licensing for the files that carry no comment syntax, plus the prose, which reads better
+# without a header on every page. Source files declare themselves; see docs/legal.md.
+version = 1
+SPDX-PackageName = "NextFleet"
+SPDX-PackageDownloadLocation = "https://github.com/typical42/next-fleet"
+
+[[annotations]]
+path = [
+    ".eslintignore",
+    ".gitignore",
+    "**.json",
+    "**.lock",
+    "**.md",
+    "LICENSE",
+    "design/**.html",
+    "psalm-baseline.xml",
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2026 Johannes Kolb"
+SPDX-License-Identifier = "AGPL-3.0-or-later"

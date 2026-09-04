@@ -54,9 +54,48 @@ Yes, this works, and the browser part is free: WSL2 forwards `localhost`, so any
 Ubuntu is reachable at `http://localhost:8080` from a Windows browser. No port mapping, no IP
 lookup.
 
-**What's missing on this machine right now:** Docker, PHP and Composer. Node 20+ is present.
+**Toolchain:** PHP 8.1+, Composer, Node 20.19+ (Vite 7's floor) and Docker. `composer.json` pins its resolution
+platform to PHP 8.1.31 — the oldest major NC 31 supports, at its last patch — so a lock file
+written on a newer PHP still installs on the oldest CI job.
 
-Two ways to get Docker:
+Psalm is held at 5.x. From 6.x it refuses to start below a PHP *patch* level — 8.3.16 — and
+distributions ship security-patched builds that keep the old number, so the 8.3.6 in Ubuntu 24.04
+cannot run it. Composer will not stop you: the platform pin above is 8.1.31, which satisfies
+Psalm 6, so a bump installs and then dies at startup. Raise it once the PHP here comes from a
+source that tracks patch releases.
+
+php-cs-fixer formats every PHP file git tracks, `appinfo/` and `templates/` included; `vendor/`,
+`node_modules/` and anything `.gitignore` names are skipped. On any PHP newer than the 8.1 floor it
+prints a warning about that gap on every run; it goes to stderr and the exit status stays 0.
+
+Psalm analyses `lib/`, `templates/`, `tests/` and `appinfo/routes.php`. Templates call `script()`,
+which belongs to Nextcloud's legacy template layer rather than to OCP and so is in no package here;
+`tests/Stub/template_functions.php` declares it for both Psalm and PHPUnit.
+
+`npm run build` bundles `src/main.js` into `js/nextfleet-main.mjs`; `npm run watch` does the same
+in development mode and rebuilds on save. Two bits of noise to ignore: `@nextcloud/vite-config`
+sets `outDir` to the repo root on purpose, so that every build prints Vite's "build.outDir must not
+be … a parent directory of root"; and its polyfill chain pulls in `elliptic` and `crypto-browserify`,
+so `npm audit` reports seven low-severity advisories with no upstream fix. Gate CI at `--audit-level
+moderate` rather than muting the tool.
+
+`npm run lint` runs all three static frontend checks in turn — ESLint, Stylelint, then `tsc
+--noEmit` — and `npm run lint:js`, `lint:css` and `lint:types` run them one at a time. `npm test`
+is Vitest; frontend tests sit next to what they test as `src/**/*.spec.js`, so `tests/` stays
+PHPUnit's.
+
+`@nextcloud/eslint-config` is held at 8.x, the same trap as Psalm above: version 9 needs ESLint 10
+and Node's `findPackageJSON`, which arrives in Node 22, so it installs on the Node 20 here and then
+dies on the first run. Moving to 9 means moving the Node floor and rewriting `.eslintrc.cjs` as a
+flat `eslint.config.js`. Its plugin drags in a `fast-xml-parser` with a moderate advisory, so
+`package.json` overrides that to 5.x; the plugin only reads `appinfo/info.xml` with it and works
+unchanged.
+
+TypeScript checks the JavaScript (`checkJs`), which is what makes `tsc` worth running while no
+`.ts` file exists. It cannot read single-file components, so `src/shims-vue.d.ts` declares them and
+`.vue` files are covered by ESLint alone.
+
+Two ways to get Docker, if it is not already there:
 
 1. **Docker Desktop for Windows** with WSL integration enabled — least friction, GUI, survives
    reboots.
@@ -69,12 +108,22 @@ Two ways to get Docker:
 ```
 db        mariadb:11          — the real DB, not SQLite; catches the errors SQLite hides
 app       nextcloud:34-apache — port 8080, our app bind-mounted into /var/www/html/custom_apps/nextfleet
+app31     nextcloud:31-apache — port 8081, same mount
 cron      nextcloud:34-apache — same image, runs cron.php every 5 min, so reminders actually fire
 mail      axllent/mailpit     — SMTP sink on :1025, web UI on :8025
 ```
 
 The bind mount is the whole trick: edit in WSL, reload the browser. `npm run watch` in the repo
 rebuilds the frontend into the same directory.
+
+The two majors share the database *server* and nothing else — separate schemas, separate `html`
+volumes. Whichever started second would otherwise run `occ upgrade` over the other's install and the
+gate would test one version twice. The image creates only the schema `MARIADB_DATABASE` names, so
+`.docker/db-init/` adds the second.
+
+`cron` sets `entrypoint: /cron.sh`, which bypasses the image's entrypoint — so it reads none of the
+`NEXTCLOUD_*` environment and takes its configuration from the `config.php` in the volume it shares
+with `app`.
 
 Setup, once:
 
@@ -84,9 +133,9 @@ docker compose exec -u www-data app php occ app:enable nextfleet
 docker compose exec -u www-data app php occ config:system:set debug --value=true --type=boolean
 ```
 
-Then `http://localhost:8080` in Windows. A second `app` service pinned to `nextcloud:31-apache` on
-port 8081 is part of the stack, not an extra: the M0 gate above is checked by loading both ports, and
-after M0 it is the fastest way to catch a component that only exists in 34.
+Then `http://localhost:8080` in Windows, and `:8081` for NC 31 — `app31` is not an extra: the M0 gate
+above is checked by loading both ports, and after M0 it is the fastest way to catch a component that
+only exists in 34. Enabling the app is per service, so run the `occ` lines against `app31` too.
 
 Two things that will bite:
 

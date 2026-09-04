@@ -1,2 +1,104 @@
-# TODO: db (mariadb), app (nextcloud:34-apache, this repo bind-mounted into custom_apps/nextfleet),
-# cron (same image), mail (mailpit). See docs/development.md.
+# SPDX-FileCopyrightText: 2026 Johannes Kolb
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# The dev stack described in docs/development.md#local-dev-environment.
+#
+#   docker compose up -d
+#   docker compose exec -u www-data app php occ app:enable nextfleet
+#
+# Credentials here are deliberately trivial: nothing in this file is reachable from
+# outside the machine and none of it is a template for a deployment.
+
+x-nextcloud-env: &nextcloud-env
+  MYSQL_HOST: db
+  MYSQL_USER: nextcloud
+  MYSQL_PASSWORD: nextcloud
+  # Nextcloud refuses the request unless the host it is reached on is trusted.
+  NEXTCLOUD_TRUSTED_DOMAINS: localhost
+  NEXTCLOUD_ADMIN_USER: admin
+  NEXTCLOUD_ADMIN_PASSWORD: admin
+  SMTP_HOST: mail
+  SMTP_PORT: 1025
+  MAIL_FROM_ADDRESS: nextfleet
+  MAIL_DOMAIN: example.org
+
+services:
+  db:
+    image: mariadb:11
+    # Nextcloud's own requirement; the default REPEATABLE-READ deadlocks its file cache.
+    command: --transaction-isolation=READ-COMMITTED --log-bin --binlog-format=ROW
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: root
+      MARIADB_DATABASE: nextcloud
+      MARIADB_USER: nextcloud
+      MARIADB_PASSWORD: nextcloud
+    volumes:
+      - db:/var/lib/mysql
+      # The image creates one database; the second major needs its own schema.
+      - ./db-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  app:
+    image: nextcloud:34-apache
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    environment:
+      <<: *nextcloud-env
+      MYSQL_DATABASE: nextcloud
+    volumes:
+      - app_html:/var/www/html
+      # The whole trick: edit in WSL, reload the browser.
+      - ..:/var/www/html/custom_apps/nextfleet
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Not an extra: the M0 gate is checked by loading both ports, and after M0 this is the
+  # fastest way to catch a component that exists in 34 and not in 31. Its own database
+  # and its own html volume - two majors cannot share one install.
+  app31:
+    image: nextcloud:31-apache
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    environment:
+      <<: *nextcloud-env
+      MYSQL_DATABASE: nextcloud31
+    volumes:
+      - app31_html:/var/www/html
+      - ..:/var/www/html/custom_apps/nextfleet
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Runs cron.php every five minutes, so reminders actually fire instead of waiting for
+  # a page load. Shares app's install; testing the job by waiting is not testing, so see
+  # background-job:execute in docs/development.md.
+  cron:
+    image: nextcloud:34-apache
+    restart: unless-stopped
+    entrypoint: /cron.sh
+    volumes:
+      - app_html:/var/www/html
+      - ..:/var/www/html/custom_apps/nextfleet
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # SMTP sink. Nothing leaves the machine; the digest is read at http://localhost:8025.
+  mail:
+    image: axllent/mailpit
+    restart: unless-stopped
+    ports:
+      - "8025:8025"
+
+volumes:
+  db:
+  app_html:
+  app31_html:
