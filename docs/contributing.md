@@ -2,9 +2,9 @@
 
 Part of the [NextFleet plan](../plan.md). Terms are defined in [CONTEXT.md](../CONTEXT.md).
 
-Country rules, import formats and report layouts arrive the way everything else in open source
-arrives: fork the repository, add a directory, open a merge request, get it reviewed, ship it in the
-next release. There is **no plugin system, no registry, no separate app to install**.
+Country rules, import formats and report layouts arrive the way everything else in open source arrives: 
+fork the repository, add a directory, open a merge request, get it reviewed, ship it in the next release.
+There is **no plugin system, no registry, no separate app to install**.
 
 That is a deliberate decision, and it costs us something. Writing it down so nobody re-litigates it
 by accident:
