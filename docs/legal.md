@@ -24,9 +24,13 @@ up, and 31 is our floor anyway.
 **Where the licence is declared.** Every file that has a comment syntax carries a two-line SPDX
 header. The rest — JSON, lock files, Markdown, the design exports — is annotated in `REUSE.toml`,
 and the licence text sits in `LICENSES/AGPL-3.0-or-later.txt`, where REUSE looks for it; the root
-`LICENSE` is a copy for GitHub. `reuse lint` is the check that covers both halves, but it needs
-Python, which the dev machine has not — so it belongs in CI, where it is not wired up yet, and
-`tests/Unit/LicensingTest.php` enforces the header half meanwhile.
+`LICENSE` is a copy for GitHub. `reuse lint` is the check that covers both halves and runs on every
+push; `tests/Unit/LicensingTest.php` enforces the header half without it, so a missing header fails
+`composer test` rather than waiting for CI.
+
+REUSE reads any file, tests included, so a string literal that merely *mentions* an SPDX identifier
+is picked up as a declaration and rejected. Fence such a line between `REUSE-IgnoreStart` and
+`REUSE-IgnoreEnd` comments.
 
 The frontend bundle is a combined work with its MIT dependencies, and `@nextcloud/vite-config`
 emits `js/nextfleet-main.mjs.license` listing each one — so `LICENSE.third-party` is only needed for

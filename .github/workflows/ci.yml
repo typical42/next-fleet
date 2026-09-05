@@ -1,3 +1,213 @@
 # SPDX-FileCopyrightText: 2026 Johannes Kolb
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# TODO: NC 31-34 x PHP x SQLite/MariaDB/PostgreSQL. See docs/development.md.
+
+# The matrix docs/development.md#testing describes. Four supported Nextcloud majors times
+# every PHP version times three databases is dozens of jobs, so the trim happens on the PHP
+# and database axes - never on Nextcloud, because that is the axis users actually vary.
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    # Monday, 04:30 UTC.
+    - cron: '30 4 * * 1'
+
+# A compromised action owns the release (docs/security.md#supply-chain), so the token can
+# only read and every `uses` below names a commit, not a tag that can move under it.
+permissions:
+  contents: read
+
+# head_ref is set on a pull request and empty everywhere else, so pushing again to a branch
+# under review cancels the run it supersedes and nothing else is ever cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  static:
+    name: php-cs-fixer, psalm, composer audit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The version composer.json pins its resolution platform to, so the analysis sees the
+      # oldest PHP the app claims and php-cs-fixer stays quiet about the gap.
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.1'
+          coverage: none
+
+      - run: composer install --no-progress
+      - run: composer run lint
+      - run: composer audit --locked
+
+  frontend:
+    name: eslint, stylelint, tsc, vitest, build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20'
+          cache: npm
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+      # @nextcloud/vite-config's polyfill chain carries seven low-severity advisories with
+      # no upstream fix, so gate above them rather than mute the tool.
+      - run: npm audit --audit-level moderate
+
+  reuse:
+    name: reuse lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The half tests/Unit/LicensingTest.php cannot cover: a REUSE.toml entry gone stale.
+      - uses: fsfe/reuse-action@676e2d560c9a403aa252096d99fcab3e1132b0f5 # v6.0.0
+
+  plan:
+    name: Pick the matrix
+    runs-on: ubuntu-24.04
+    env:
+      # Two on every pull request: the oldest combination is where breakage hides, so it
+      # belongs here rather than in a nightly nobody reads.
+      ON_PULL_REQUEST: >-
+        [{"nextcloud": "stable31", "php": "8.1", "db": "mariadb"},
+         {"nextcloud": "stable34", "php": "8.5", "db": "mariadb"}]
+
+      # Merging adds the two databases a pull request skips.
+      ON_PUSH: >-
+        [{"nextcloud": "stable31", "php": "8.1", "db": "mariadb"},
+         {"nextcloud": "stable34", "php": "8.5", "db": "mariadb"},
+         {"nextcloud": "stable34", "php": "8.5", "db": "pgsql"},
+         {"nextcloud": "stable34", "php": "8.5", "db": "sqlite"}]
+
+      # Every major against every PHP it accepts, plus both ends of the range on the other
+      # two databases. Allowed to fail loudly - see continue-on-error below.
+      ON_SCHEDULE: >-
+        [{"nextcloud": "stable31", "php": "8.1", "db": "mariadb"},
+         {"nextcloud": "stable31", "php": "8.2", "db": "mariadb"},
+         {"nextcloud": "stable31", "php": "8.3", "db": "mariadb"},
+         {"nextcloud": "stable31", "php": "8.4", "db": "mariadb"},
+         {"nextcloud": "stable32", "php": "8.1", "db": "mariadb"},
+         {"nextcloud": "stable32", "php": "8.2", "db": "mariadb"},
+         {"nextcloud": "stable32", "php": "8.3", "db": "mariadb"},
+         {"nextcloud": "stable32", "php": "8.4", "db": "mariadb"},
+         {"nextcloud": "stable33", "php": "8.2", "db": "mariadb"},
+         {"nextcloud": "stable33", "php": "8.3", "db": "mariadb"},
+         {"nextcloud": "stable33", "php": "8.4", "db": "mariadb"},
+         {"nextcloud": "stable33", "php": "8.5", "db": "mariadb"},
+         {"nextcloud": "stable34", "php": "8.2", "db": "mariadb"},
+         {"nextcloud": "stable34", "php": "8.3", "db": "mariadb"},
+         {"nextcloud": "stable34", "php": "8.4", "db": "mariadb"},
+         {"nextcloud": "stable34", "php": "8.5", "db": "mariadb"},
+         {"nextcloud": "stable31", "php": "8.1", "db": "pgsql"},
+         {"nextcloud": "stable31", "php": "8.1", "db": "sqlite"},
+         {"nextcloud": "stable34", "php": "8.5", "db": "pgsql"},
+         {"nextcloud": "stable34", "php": "8.5", "db": "sqlite"}]
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      # jq wraps the list in the object `strategy.matrix` expects and collapses it onto the
+      # one line an output can carry. Its own assignment, not a substitution inside `echo`:
+      # there its exit status is the echo's, and a list broken while editing would leave an
+      # empty output to fail two jobs later in `fromJson`.
+      - id: select
+        run: |
+          case "$GITHUB_EVENT_NAME" in
+            pull_request) combinations="$ON_PULL_REQUEST" ;;
+            schedule) combinations="$ON_SCHEDULE" ;;
+            *) combinations="$ON_PUSH" ;;
+          esac
+          matrix=$(jq -c '{include: .}' <<< "$combinations")
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  server:
+    name: NC ${{ matrix.nextcloud }}, PHP ${{ matrix.php }}, ${{ matrix.db }}
+    needs: plan
+    runs-on: ubuntu-24.04
+    # No `continue-on-error` for the weekly run. It is allowed to fail because nothing waits
+    # on a scheduled run, not because the failure should be hidden - and continue-on-error
+    # concludes green, which is the one outcome that tells nobody.
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    services:
+      # Both start on every combination: a service cannot be declared conditionally, and
+      # the install step below uses only the one `matrix.db` names.
+      mariadb:
+        image: mariadb:11
+        env:
+          MARIADB_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd=pg_isready
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+    steps:
+      # The server carries its dependencies in the 3rdparty submodule, so a checkout with
+      # submodules is a runnable Nextcloud and needs no composer install of its own.
+      - name: Check out Nextcloud
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: nextcloud/server
+          ref: ${{ matrix.nextcloud }}
+          submodules: true
+
+      - name: Check out the app where the server looks for it
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: apps/nextfleet
+
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: bcmath, ctype, curl, dom, fileinfo, gd, iconv, intl, mbstring, openssl, pdo_mysql, pdo_pgsql, pdo_sqlite, posix, sqlite3, xml, zip
+          coverage: none
+
+      - name: Install the app's dependencies
+        working-directory: apps/nextfleet
+        run: composer install --no-progress
+
+      - name: Install Nextcloud
+        env:
+          DB: ${{ matrix.db }}
+        run: |
+          case "$DB" in
+            mariadb) args=(--database=mysql --database-host=127.0.0.1 --database-port=3306 --database-name=nextcloud --database-user=root --database-pass=root) ;;
+            pgsql) args=(--database=pgsql --database-host=127.0.0.1 --database-port=5432 --database-name=nextcloud --database-user=postgres --database-pass=postgres) ;;
+            sqlite) args=(--database=sqlite --database-name=nextcloud) ;;
+            *) echo "no such database: $DB" >&2; exit 1 ;;
+          esac
+          php occ maintenance:install --admin-user=admin --admin-pass=admin "${args[@]}"
+
+      # The migration runs here, and a class the server refuses takes the whole app down
+      # with it - see tests/Unit/MigrationsTest.php.
+      - name: Enable the app
+        run: php occ app:enable nextfleet
+
+      - name: Test
+        working-directory: apps/nextfleet
+        run: composer run test
