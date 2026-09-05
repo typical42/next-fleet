@@ -11,8 +11,9 @@ namespace OCA\NextFleet\Tests\Unit;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The house half of `reuse lint`: it needs Python, which the dev machine has not
- * (docs/legal.md). What it cannot catch is a REUSE.toml entry gone stale.
+ * The half of `reuse lint` that runs without Python, so a missing header is caught by
+ * `composer test` rather than only by CI. What it cannot catch is a REUSE.toml entry gone
+ * stale; the workflow's `reuse` job is there for that.
  */
 class LicensingTest extends TestCase {
 	private const ROOT = __DIR__ . '/../..';
@@ -27,9 +28,11 @@ class LicensingTest extends TestCase {
 		$missing = [];
 		foreach ($this->sourceFiles() as $path) {
 			$head = (string)file_get_contents(self::ROOT . '/' . $path, false, null, 0, 512);
+			// REUSE-IgnoreStart - the needle below is a needle, not this file's own licence.
 			if (!str_contains($head, 'SPDX-License-Identifier: AGPL-3.0-or-later')) {
 				$missing[] = $path;
 			}
+			// REUSE-IgnoreEnd
 		}
 
 		$this->assertSame([], $missing, "No SPDX header in:\n" . implode("\n", $missing));

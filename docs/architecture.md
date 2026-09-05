@@ -50,7 +50,7 @@ Tables (prefix `fleet_`; Nextcloud prepends `oc_`, so names stay under 27 charac
 | Table | Key columns |
 |---|---|
 | `fleet_vehicles` | `user_id` (owner), `plate`, `manufacturer`, `model`, `vehicle_type`, `engine`, `energy_types`, `tank_ml`, `battery_wh`, `first_reg`, `vin`, `odo_value` (cache), `odo_unit` (km/h), `purchase_price`, `residual_est`, `currency`, `jurisdiction`, `logbook_mode`, `lifecycle`, `disposed_at`, `folder_file_id`, `retention_months`, `color`, `notes` |
-| `fleet_odo_readings` | `vehicle_id`, `read_at`, `value`, `kind` (reading/reset/correction), `origin` (observed/derived), `flagged`, `source_type` (manual/trip/energy/maintenance), `source_id` |
+| `fleet_odo_readings` | `vehicle_id`, `read_at`, `read_at_off`, `value`, `kind` (reading/reset/correction), `origin` (observed/derived), `flagged`, `source_type` (manual/trip/energy/maintenance), `source_id` |
 | `fleet_trips` | `vehicle_id`, `started_at`, `ended_at`, `start_odo` (nullable claim), `end_odo`, `distance`, `cost_center`, `from_label`, `to_label`, `purpose`, `partner`, `category` (business/private/commute), `driver_uid`, `reconciled` |
 | `fleet_energy` | `vehicle_id`, `filled_at`, `odo`, `energy` (petrol/diesel/lpg/cng/electric), `amount` (ml or Wh, per `energy`), `unit_price`, `total`, `vat_rate`, `full_tank`, `missed_previous`, `station`, `is_dc`, `location_kind` (home/public) |
 | `fleet_maintenance` | `vehicle_id`, `type` (service/repair/inspection/tyres/upgrade), `done_at`, `odo`, `title`, `vendor`, `cost`, `vat_rate`, `notes`, `reminder_id` |
@@ -103,11 +103,13 @@ second source of truth and a country the core is not supposed to know.
 erasure something explicit to purge. A jurisdiction that needs its own field adds a column in a
 reviewed migration ([contributing](contributing.md)) — there is no catch-all JSON blob, because a
 field that is not in the schema is a field nobody maintains. That rule is why notification receipts
-are a table and not a column.
+are a table and not a column. It also carries a `<name>_off` for each of its user-facing instants
+([Time](#time)); the table above spells those out only for the tables that exist.
 
-**Indexes are part of the schema, not an optimisation:** `(vehicle_id, <time column>)` on every
-child table, `(user_id)` on vehicles, `(vehicle_id, read_at)` on readings, `(grantee)` on access.
-QBMapper hides the query, not the missing index.
+**Indexes are part of the schema, not an optimisation:** a unique index on `uuid` everywhere, so the
+database states the identity too; `(vehicle_id, <time column>)` on every child table, `(user_id)` on
+vehicles, `(vehicle_id, read_at)` on readings, `(grantee)` on access. QBMapper hides the query, not
+the missing index.
 
 ### Time
 
@@ -118,7 +120,9 @@ ending 00:30 in Berlin belongs to the previous day in UTC.
 
 - **Reporting and legal views derive the local date** from the pair. Ordering and durations use the
   instant.
-- **`occurred_at` is the user's** — when the trip or fill-up happened, editable, part of the data.
+- **The entry's own instant is the user's** — `read_at`, `ended_at`, `filled_at` — when it happened,
+  editable, part of the data. A plain calendar date such as `first_reg` is one fact and takes no
+  offset.
 - **`created_at` is the server's**, from `ITimeFactory`, never accepted from a client. Timeliness is
   the gap between the two, and the export can show it rather than pretending it is zero.
 - Never call `time()` or `new DateTime()` in app code ([testing](development.md#testing)).
@@ -129,6 +133,13 @@ An update sends the `updated_at` it read; a stale one is rejected with **412**, 
 overwritten. Roughly ten lines in the base mapper. Two browser tabs are the realistic case today and
 any later sync needs the same foundation. Trips under Logbook Mode cannot collide — they are
 append-only.
+
+The token is `updated_at` itself, a unix second, and the statement that checks it is the statement
+that writes: one `UPDATE … WHERE id = ? AND updated_at = ? AND deleted_at IS NULL`, matching nothing
+when the row has moved on. It **always advances**, to at least one second past the token it
+replaces, because two writes in the same second would otherwise leave the second one's token
+looking fresh. Identity and provenance — `uuid`, `created_at`, `created_by` — are not writable
+through an update at all.
 
 The client also learns the server's clock: every response carries the server time in a header, and
 the frontend keeps a running offset. That offset is a **diagnostic** — it lets the UI warn that a

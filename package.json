@@ -19,6 +19,8 @@
     "lint:js": "eslint . --ext .js,.cjs,.ts,.vue",
     "lint:types": "tsc --noEmit",
     "test": "vitest run",
+    "test:e2e": "playwright test",
+    "test:e2e:docker": "docker run --rm --init --network host -u $(id -u):$(id -g) -e HOME=/tmp -e CI -e NEXTFLEET_URL_NC31 -e NEXTFLEET_URL_NC34 -v \"$PWD\":/w -w /w mcr.microsoft.com/playwright:v1.63.0-noble npx playwright test",
     "test:watch": "vitest",
     "watch": "vite build --mode development --watch"
   },
@@ -34,6 +36,7 @@
     "@nextcloud/eslint-config": "^8.4.2",
     "@nextcloud/stylelint-config": "^3.2.2",
     "@nextcloud/vite-config": "^2.5.4",
+    "@playwright/test": "^1.63.0",
     "@types/node": "^20.19.43",
     "browserslist": "^4.24.0",
     "eslint": "^8.57.1",

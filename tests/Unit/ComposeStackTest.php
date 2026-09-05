@@ -120,6 +120,20 @@ class ComposeStackTest extends TestCase {
 	}
 
 	/**
+	 * Docker creates the bind mount's parent as root and the image only takes ownership of
+	 * it while it is still empty, so without this NC 31 refuses to install. It is one line
+	 * of shell in a YAML file, and nothing but this test notices when it goes.
+	 *
+	 * @dataProvider webServices
+	 */
+	public function testEveryNextcloudServiceTakesOwnershipOfTheAppDirectory(string $name): void {
+		$entrypoint = implode(' ', (array)($this->service($name)['entrypoint'] ?? []));
+
+		$this->assertStringContainsString('chown www-data:www-data /var/www/html/custom_apps', $entrypoint);
+		$this->assertStringContainsString('/entrypoint.sh', $entrypoint, 'the image never gets to install');
+	}
+
+	/**
 	 * A shared schema or a shared html volume means whichever major starts second runs
 	 * `occ upgrade` against the other's install, and the gate then tests one version twice.
 	 */

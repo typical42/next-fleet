@@ -5,6 +5,8 @@
 *.log
 .php-cs-fixer.cache
 /.phpunit.cache/
+/playwright-report/
+/test-results/
 
 # Local agent tool permissions, not app source.
 /.claude/

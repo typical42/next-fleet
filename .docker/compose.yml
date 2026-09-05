@@ -9,6 +9,19 @@
 # Credentials here are deliberately trivial: nothing in this file is reachable from
 # outside the machine and none of it is a template for a deployment.
 
+name: nextfleet
+
+# Docker creates the bind mount's parent, /var/www/html/custom_apps, as root, and the image
+# only takes ownership of that directory while it is still empty — which the mount stops it
+# from ever being. NC 31 then refuses to install: "Cannot write into apps directory". The
+# image's hook scripts run as www-data and cannot chown, so it happens here, before the
+# image's own entrypoint.
+x-custom-apps-owner: &fix-custom-apps-owner
+  entrypoint:
+    - /bin/sh
+    - -c
+    - chown www-data:www-data /var/www/html/custom_apps && exec /entrypoint.sh apache2-foreground
+
 x-nextcloud-env: &nextcloud-env
   MYSQL_HOST: db
   MYSQL_USER: nextcloud
@@ -45,6 +58,7 @@ services:
 
   app:
     image: nextcloud:34-apache
+    <<: *fix-custom-apps-owner
     restart: unless-stopped
     ports:
       - "8080:80"
@@ -64,6 +78,7 @@ services:
   # and its own html volume - two majors cannot share one install.
   app31:
     image: nextcloud:31-apache
+    <<: *fix-custom-apps-owner
     restart: unless-stopped
     ports:
       - "8081:80"

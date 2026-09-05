@@ -22,6 +22,11 @@ time is a reminder engine you cannot test.
 | Security | An IDOR sweep asserting the stranger case on every endpoint, a CSV-export escaping test, and `npm audit`/`composer audit` as merge gates ([security](security.md)) | The bugs that end up in a CVE rather than an issue |
 | Accessibility | axe inside the Playwright run | A table-heavy app fails keyboard and screen-reader use easily, and this audience notices |
 
+**A mapper unit test needs `doctrine/dbal`.** `IQueryBuilder` defines its `PARAM_*` constants as
+`Doctrine\DBAL\ParameterType` values, so mocking the interface loads that class, and `nextcloud/ocp`
+does not bring it. It is a `require-dev` pinned to the major the server ships (3.x); the server's
+own copy wins at runtime, ours only feeds the tests.
+
 **CI matrix** (GitHub Actions). Four supported Nextcloud majors times every PHP version times three
 databases is dozens of jobs, so the trim happens on the PHP and database axes — never on Nextcloud,
 because that is the axis users actually vary.
@@ -31,6 +36,36 @@ because that is the axis users actually vary.
 | Pull request | Two: NC 31 with the oldest PHP it supports, and NC 34 with the newest. MariaDB both. The oldest combination is where breakage hides, so it belongs on every PR rather than in a nightly nobody reads |
 | Merge to `main` | Add PostgreSQL and SQLite, on NC 34 |
 | Weekly | The fuller matrix, allowed to fail loudly without blocking anyone |
+
+`.github/workflows/ci.yml` implements it. Alongside the matrix run — a Nextcloud checkout, a real
+database, `occ maintenance:install`, `occ app:enable`, then PHPUnit — three jobs run once each:
+static analysis with `composer lint` and `composer audit`, the frontend checks, and `reuse lint`. A
+`plan` job picks the combinations for the event that triggered the run; the three lists sit in its
+environment as JSON so `tests/Unit/CiWorkflowTest.php` can read them, because `actionlint` only
+proves GitHub will run the file, not that it runs the right thing.
+
+Nothing in the file marks the weekly run as allowed to fail. It blocks nobody already — no merge
+waits on a scheduled run — and `continue-on-error` would conclude it green, which is the one outcome
+that tells nobody.
+
+Which PHP a major accepts comes from its own `lib/versioncheck.php`: 31 and 32 take 8.1 to 8.4, 33
+and 34 take 8.2 to 8.5. So "NC 34 with the newest PHP" is 8.5, which is what the `nextcloud:34-apache`
+image ships anyway.
+
+Neither `actionlint` nor `reuse` is installed here — both want a package manager that needs root —
+so run them through docker:
+
+```bash
+docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:latest
+docker run --rm -v "$PWD":/data fsfe/reuse:latest lint
+```
+
+REUSE reads test files too, so a line that merely quotes an SPDX identifier has to be fenced; see
+[legal](legal.md).
+
+The E2E run is the one check still missing from CI. It needs the whole compose stack on the runner
+and the app services carry no healthcheck to wait on, so it belongs with the E2E work rather than
+with the matrix.
 
 Add the app store's `krankerl`/appinfo validation as a release gate.
 
@@ -81,8 +116,8 @@ moderate` rather than muting the tool.
 
 `npm run lint` runs all three static frontend checks in turn — ESLint, Stylelint, then `tsc
 --noEmit` — and `npm run lint:js`, `lint:css` and `lint:types` run them one at a time. `npm test`
-is Vitest; frontend tests sit next to what they test as `src/**/*.spec.js`, so `tests/` stays
-PHPUnit's.
+is Vitest; frontend tests sit next to what they test as `src/**/*.spec.js`. The only frontend tests
+under `tests/` are Playwright's, in `tests/e2e/`; everything else there is PHPUnit's.
 
 `@nextcloud/eslint-config` is held at 8.x, the same trap as Psalm above: version 9 needs ESLint 10
 and Node's `findPackageJSON`, which arrives in Node 22, so it installs on the Node 20 here and then
@@ -116,6 +151,12 @@ mail      axllent/mailpit     — SMTP sink on :1025, web UI on :8025
 The bind mount is the whole trick: edit in WSL, reload the browser. `npm run watch` in the repo
 rebuilds the frontend into the same directory.
 
+It also costs one line of shell. Docker creates the mount's parent, `custom_apps`, as root, and the
+image only takes ownership of that directory while it is still empty — which the mount stops it from
+ever being. NC 34 lives with it; NC 31 refuses to install, and says `Cannot write into "apps"
+directory` rather than anything about the mount. The image's hook scripts run as `www-data` and
+cannot chown, so both app services override the entrypoint to do it first.
+
 The two majors share the database *server* and nothing else — separate schemas, separate `html`
 volumes. Whichever started second would otherwise run `occ upgrade` over the other's install and the
 gate would test one version twice. The image creates only the schema `MARIADB_DATABASE` names, so
@@ -137,12 +178,28 @@ Then `http://localhost:8080` in Windows, and `:8081` for NC 31 — `app31` is no
 above is checked by loading both ports, and after M0 it is the fastest way to catch a component that
 only exists in 34. Enabling the app is per service, so run the `occ` lines against `app31` too.
 
-Two things that will bite:
+`npm run test:e2e` is that check, automated: one Playwright project per major, asserting that the
+page mounts the Vue root and reports nothing to the console. It needs the stack up and `js/` built —
+without a bundle the root stays empty and the failure names the assertion, not the missing build. It
+logs in through the form — Nextcloud redirects a browser to `/login` whatever `Authorization` header it
+carries, so basic auth is no shortcut. `NEXTFLEET_URL_NC34` and `NEXTFLEET_URL_NC31` override the
+two ports.
+
+Chromium's own dependencies are system packages and `npx playwright install --with-deps` needs
+root. Where that is not available, `npm run test:e2e:docker` runs the same specs inside Playwright's
+own image, which ships them, on the host network. The image tag in that script is the
+`@playwright/test` version: Playwright refuses browsers it did not build, so bump the two together.
+
+Three things that will bite:
 
 - **Keep the repo in the Linux filesystem** (`/home/...`, as it is), not under `/mnt/c`. Cross-OS
   file access is slow enough to make `npm run watch` and PHP autoloading painful.
-- **`trusted_domains` must contain `localhost:8080`**, or Nextcloud refuses the request. Set
-  `NEXTCLOUD_TRUSTED_DOMAINS=localhost` in the compose file.
+- **`trusted_domains` must contain the host**, or Nextcloud refuses the request with
+  `Access through untrusted domain`. `NEXTCLOUD_TRUSTED_DOMAINS=localhost` in the compose file
+  covers both ports; the check compares the host and ignores the port.
+- **A migration only ever runs once**, so filling in `lib/Migration/` after the app has been enabled
+  changes nothing on an install that already recorded it. Re-run it with
+  `occ migrations:execute nextfleet <version>`, or start from `docker compose down -v`.
 
 For a full server-source setup (debugging Nextcloud itself, multiple versions, LDAP, Collabora),
 switch to [nextcloud-docker-dev](https://juliusknorr.github.io/nextcloud-docker-dev/). Overkill for
