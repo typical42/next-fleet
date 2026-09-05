@@ -27,6 +27,26 @@ time is a reminder engine you cannot test.
 does not bring it. It is a `require-dev` pinned to the major the server ships (3.x); the server's
 own copy wins at runtime, ours only feeds the tests.
 
+**The integration suite needs a server**, so it has its own bootstrap and config and runs inside the
+dev container:
+
+```bash
+docker compose -f .docker/compose.yml exec -u www-data -w /var/www/html/custom_apps/nextfleet \
+  app php vendor/bin/phpunit -c phpunit.integration.xml
+```
+
+`NEXTCLOUD_ROOT` says where the server is, `/var/www/html` by default. The schema test drops and
+rebuilds the app's tables, so run it against a dev instance and nothing else.
+
+PHPUnit loads our autoloader first, stubs included, and `lib/base.php` then puts the server's own
+in front of it — so `OCP\` resolves to the running server and not to the pinned stubs. That is the
+server's doing, not ours, and it holds on 31 and 34 alike; `tests/Integration/AutoloadingTest.php`
+is there so a version that changes it says so.
+
+`ISchemaWrapper` gained `dropAutoincrementColumn()` in NC 33. The stubs are older and do not have
+it, so a test double implementing that interface has to declare it anyway — without it the class is
+abstract, and fatal, on a newer server.
+
 **CI matrix** (GitHub Actions). Four supported Nextcloud majors times every PHP version times three
 databases is dozens of jobs, so the trim happens on the PHP and database axes — never on Nextcloud,
 because that is the axis users actually vary.
@@ -38,7 +58,8 @@ because that is the axis users actually vary.
 | Weekly | The fuller matrix, allowed to fail loudly without blocking anyone |
 
 `.github/workflows/ci.yml` implements it. Alongside the matrix run — a Nextcloud checkout, a real
-database, `occ maintenance:install`, `occ app:enable`, then PHPUnit — three jobs run once each:
+database, `occ maintenance:install`, `occ app:enable`, then both PHPUnit suites, which is where
+the schema meets PostgreSQL and SQLite — three jobs run once each:
 static analysis with `composer lint` and `composer audit`, the frontend checks, and `reuse lint`. A
 `plan` job picks the combinations for the event that triggered the run; the three lists sit in its
 environment as JSON so `tests/Unit/CiWorkflowTest.php` can read them, because `actionlint` only
@@ -197,9 +218,13 @@ Three things that will bite:
 - **`trusted_domains` must contain the host**, or Nextcloud refuses the request with
   `Access through untrusted domain`. `NEXTCLOUD_TRUSTED_DOMAINS=localhost` in the compose file
   covers both ports; the check compares the host and ignores the port.
-- **A migration only ever runs once**, so filling in `lib/Migration/` after the app has been enabled
-  changes nothing on an install that already recorded it. Re-run it with
-  `occ migrations:execute nextfleet <version>`, or start from `docker compose down -v`.
+- **A migration only ever runs once**, so editing `lib/Migration/` changes nothing on an install
+  that already recorded it. `occ migrations:execute nextfleet <version>` — which exists only once
+  `debug` is on, and says "command is not defined" otherwise — re-runs the step, but a
+  step that creates tables skips every table it finds — the guard that lets a re-install over
+  leftover tables succeed — and so applies nothing. Drop the tables first, or
+  `docker compose down -v`. The integration schema test does that dropping itself, which makes it
+  the quickest way to try a change.
 
 For a full server-source setup (debugging Nextcloud itself, multiple versions, LDAP, Collabora),
 switch to [nextcloud-docker-dev](https://juliusknorr.github.io/nextcloud-docker-dev/). Overkill for

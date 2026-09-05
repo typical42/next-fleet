@@ -38,6 +38,7 @@
     "cs:fix": "php-cs-fixer fix",
     "psalm": "psalm --threads=1",
     "test": "phpunit",
+    "test:integration": "phpunit -c phpunit.integration.xml",
     "lint": [
       "@cs:check",
       "@psalm"

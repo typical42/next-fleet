@@ -180,6 +180,21 @@ class CiWorkflowTest extends TestCase {
 	}
 
 	/**
+	 * The server job is the only one with a database, so both suites belong to it: without
+	 * the second the migration is never measured against a real schema, and postgres and
+	 * sqlite are never exercised at all.
+	 */
+	public function testTheServerJobRunsBothTestSuites(): void {
+		$script = '';
+		foreach ((array)$this->job('server')['steps'] as $step) {
+			$script .= (string)($step['run'] ?? '') . "\n";
+		}
+
+		$this->assertStringContainsString('composer run test', $script);
+		$this->assertStringContainsString('composer run test:integration', $script);
+	}
+
+	/**
 	 * The lists are data the job reads through the environment; a renamed variable leaves
 	 * the data in place and silently selects nothing.
 	 */
