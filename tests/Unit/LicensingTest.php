@@ -47,6 +47,7 @@ class LicensingTest extends TestCase {
 	 * Everything git would carry, tracked or not yet — which is what ends up in a release,
 	 * and what REUSE itself looks at. Asking git rather than walking the tree means a new
 	 * build or coverage directory is excluded by .gitignore instead of by a list that rots.
+	 * A file git still tracks but the working tree no longer has is in neither.
 	 *
 	 * @return list<string> repository-relative paths
 	 */
@@ -58,7 +59,8 @@ class LicensingTest extends TestCase {
 		$paths = array_values(array_filter(
 			$tracked,
 			fn (string $path): bool => in_array(strtolower(pathinfo($path, PATHINFO_EXTENSION)), self::SOURCE_EXTENSIONS, true)
-				&& !in_array($path, self::NOT_OURS, true),
+				&& !in_array($path, self::NOT_OURS, true)
+				&& is_file(self::ROOT . '/' . $path),
 		));
 
 		$this->assertNotEmpty($paths, 'the listing found nothing, so it proves nothing');

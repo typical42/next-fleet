@@ -211,3 +211,11 @@ jobs:
       - name: Test
         working-directory: apps/nextfleet
         run: composer run test
+
+      # The unit suite mocks the database away, so this is the only job that measures the
+      # schema against a real one - and the only place the app meets postgres and sqlite.
+      - name: Test against the server
+        working-directory: apps/nextfleet
+        env:
+          NEXTCLOUD_ROOT: ${{ github.workspace }}
+        run: composer run test:integration

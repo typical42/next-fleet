@@ -14,7 +14,9 @@ Standard Nextcloud app, no external services.
 - **One API surface in v1**: the internal route set the web UI uses
   ([ADR 0006](adr/0006-one-api-surface-in-v1.md)). The versioned OCS API and `GET /sync?since=`
   arrive with the Android client that consumes them. Until then, controllers stay thin and every
-  rule lives in a service, which is what makes that layer cheap to add later.
+  rule lives in a service, which is what makes that layer cheap to add later. The routes are in
+  `appinfo/routes.php`; the JSON keys are the column names, so what a client reads back is what it
+  may send — and what it may *not* send is stated once, in the service.
 - **Target:** Nextcloud 31 → 34 (`min-version`/`max-version` in `appinfo/info.xml`). App id
   `nextfleet` (lowercase, matches folder name; must not contain "Nextcloud"). Licence
   AGPL-3.0-or-later.
@@ -106,6 +108,10 @@ field that is not in the schema is a field nobody maintains. That rule is why no
 are a table and not a column. It also carries a `<name>_off` for each of its user-facing instants
 ([Time](#time)); the table above spells those out only for the tables that exist.
 
+**A boolean column is nullable and carries a default.** Nextcloud's schema check refuses a `NOT NULL`
+boolean outright — it is an integer of length 1 on the databases it supports — and NC 31 enforces
+that where NC 34 no longer does. The default is what a flag nobody touched means.
+
 **Indexes are part of the schema, not an optimisation:** a unique index on `uuid` everywhere, so the
 database states the identity too; `(vehicle_id, <time column>)` on every child table, `(user_id)` on
 vehicles, `(vehicle_id, read_at)` on readings, `(grantee)` on access. QBMapper hides the query, not
@@ -121,8 +127,8 @@ ending 00:30 in Berlin belongs to the previous day in UTC.
 - **Reporting and legal views derive the local date** from the pair. Ordering and durations use the
   instant.
 - **The entry's own instant is the user's** — `read_at`, `ended_at`, `filled_at` — when it happened,
-  editable, part of the data. A plain calendar date such as `first_reg` is one fact and takes no
-  offset.
+  editable, part of the data. A plain calendar date is one fact and takes no offset: `first_reg` and
+  `disposed_at` are days, not moments.
 - **`created_at` is the server's**, from `ITimeFactory`, never accepted from a client. Timeliness is
   the gap between the two, and the export can show it rather than pretending it is zero.
 - Never call `time()` or `new DateTime()` in app code ([testing](development.md#testing)).
@@ -140,6 +146,11 @@ when the row has moved on. It **always advances**, to at least one second past t
 replaces, because two writes in the same second would otherwise leave the second one's token
 looking fresh. Identity and provenance — `uuid`, `created_at`, `created_by` — are not writable
 through an update at all.
+
+On the wire the token is the vehicle's `updated_at`, and every write carries it back — a `PUT` in
+the body, a `DELETE` in the query string. A write that arrives without one is a **400**: there is
+nothing to check it against. **Nextcloud answers its own failed CSRF check with 412 too**, so a
+client tells the two apart by the body, not by the status.
 
 The client also learns the server's clock: every response carries the server time in a header, and
 the frontend keeps a running offset. That offset is a **diagnostic** — it lets the UI warn that a
