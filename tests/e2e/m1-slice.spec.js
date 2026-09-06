@@ -6,7 +6,7 @@
 import { AxeBuilder } from '@axe-core/playwright'
 import { expect, test } from '@playwright/test'
 
-import { appPage, login } from './app.js'
+import { api, appPage, login } from './app.js'
 
 // Every vehicle this file makes wears this prefix, and every run deletes what it finds under it
 // before starting. Cleaning up front rather than afterwards leaves a failed run's rows where a
@@ -147,33 +147,4 @@ async function removeVehicles(page, prefix) {
 			})
 		}
 	}
-}
-
-/**
- * The app's API from inside the signed-in page, which is the only place that holds both the
- * session cookie and the CSRF token.
- *
- * @param {import('@playwright/test').Page} page - a page on a signed-in Nextcloud
- * @param {object} call - what to ask for
- * @param {string} call.method - the HTTP verb
- * @param {string} call.path - below the app's own route prefix
- * @param {object} [call.body] - sent as JSON
- * @return {Promise<any>} the parsed answer
- */
-function api(page, call) {
-	return page.evaluate(async ({ method, path, body }) => {
-		const response = await fetch(`/index.php/apps/nextfleet${path}`, {
-			method,
-			headers: {
-				'Content-Type': 'application/json',
-				requesttoken: document.head.dataset.requesttoken ?? '',
-			},
-			body: body === undefined ? undefined : JSON.stringify(body),
-		})
-		if (!response.ok) {
-			throw new Error(`${method} ${path} answered ${response.status}`)
-		}
-
-		return response.json()
-	}, call)
 }
