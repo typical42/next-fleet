@@ -84,9 +84,11 @@ docker run --rm -v "$PWD":/data fsfe/reuse:latest lint
 REUSE reads test files too, so a line that merely quotes an SPDX identifier has to be fenced; see
 [legal](legal.md).
 
-The E2E run is the one check still missing from CI. It needs the whole compose stack on the runner
-and the app services carry no healthcheck to wait on, so it belongs with the E2E work rather than
-with the matrix.
+The E2E job starts the compose stack on the runner and waits for it with `docker compose up
+--wait`, which means *installed* only because both app services carry a healthcheck asking
+`status.php` — apache answers long before Nextcloud does, and answers even when the install failed.
+It builds the bundle first: the specs assert what Vue mounted, and an unbuilt `js/` leaves the root
+empty.
 
 Add the app store's `krankerl`/appinfo validation as a release gate.
 
@@ -134,6 +136,13 @@ sets `outDir` to the repo root on purpose, so that every build prints Vite's "bu
 be … a parent directory of root"; and its polyfill chain pulls in `elliptic` and `crypto-browserify`,
 so `npm audit` reports seven low-severity advisories with no upstream fix. Gate CI at `--audit-level
 moderate` rather than muting the tool.
+
+The build also writes `css/nextfleet-main.css` and a hashed `css/*.chunk.css` beside the
+hand-written `css/app.css`: `@nextcloud/vue` ships a stylesheet the bundle does not carry, so
+`templates/main.php` asks for both the script and the style. The two generated files are gitignored
+and skipped by Stylelint; `css/app.css` is the only source there. The chunk carries a content hash
+and the build cannot empty a directory it shares with sources, so old ones pile up — delete them
+when they bother you, nothing reads them.
 
 `npm run lint` runs all three static frontend checks in turn — ESLint, Stylelint, then `tsc
 --noEmit` — and `npm run lint:js`, `lint:css` and `lint:types` run them one at a time. `npm test`
@@ -199,17 +208,30 @@ Then `http://localhost:8080` in Windows, and `:8081` for NC 31 — `app31` is no
 above is checked by loading both ports, and after M0 it is the fastest way to catch a component that
 only exists in 34. Enabling the app is per service, so run the `occ` lines against `app31` too.
 
-`npm run test:e2e` is that check, automated: one Playwright project per major, asserting that the
-page mounts the Vue root and reports nothing to the console. It needs the stack up and `js/` built —
-without a bundle the root stays empty and the failure names the assertion, not the missing build. It
-logs in through the form — Nextcloud redirects a browser to `/login` whatever `Authorization` header it
-carries, so basic auth is no shortcut. `NEXTFLEET_URL_NC34` and `NEXTFLEET_URL_NC31` override the
-two ports.
+`npm run test:e2e` is that check, automated: one Playwright project per major, so a failure names
+the version that broke. `m0-gate.spec.js` is the gate — the page mounts the Vue root and reports
+nothing to the console. `m1-slice.spec.js` drives the app: a vehicle created through the sheet, a
+counter reading refused and then recorded, and both read back from the server in the overview; then
+an axe audit of the overview, the vehicle screen and an open sheet. The audit is scoped to
+`#nextfleet` at the WCAG 2.1 AA tags — Nextcloud's own header is outside this app's reach.
+
+It needs the stack up and `js/` built — without a bundle the root stays empty and the failure names
+the assertion, not the missing build. It logs in through the form — Nextcloud redirects a browser to
+`/login` whatever `Authorization` header it carries, so basic auth is no shortcut.
+`NEXTFLEET_URL_NC34` and `NEXTFLEET_URL_NC31` override the two ports.
+
+Every vehicle the run makes wears an `E2E-` plate and each run deletes what it finds under that
+prefix before it starts. Cleaning up front rather than afterwards leaves a failed run's rows where
+they can be looked at, and still makes the next run find one vehicle rather than two.
 
 Chromium's own dependencies are system packages and `npx playwright install --with-deps` needs
 root. Where that is not available, `npm run test:e2e:docker` runs the same specs inside Playwright's
 own image, which ships them, on the host network. The image tag in that script is the
 `@playwright/test` version: Playwright refuses browsers it did not build, so bump the two together.
+
+**Disable the first-run wizard on both instances** — `occ app:disable firstrunwizard`. Its modal
+covers the page on a fresh install, and Playwright waits out its timeout on the first click without
+ever saying what intercepted it. A `docker compose down -v` brings it back.
 
 Three things that will bite:
 

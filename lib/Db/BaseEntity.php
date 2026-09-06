@@ -40,4 +40,21 @@ abstract class BaseEntity extends Entity {
 		$this->addType('deletedAt', Types::BIGINT);
 		$this->addType('createdBy', Types::STRING);
 	}
+
+	/**
+	 * Every column this entity has, marked as written. QBMapper builds an INSERT out of the
+	 * fields a setter changed, and a setter handed the property's own starting value changed
+	 * nothing - so a reading taken in UTC (`read_at_off` is 0) or off a counter at zero would
+	 * leave the column out and the NOT NULL constraint would refuse the row.
+	 *
+	 * `id` is excluded: an explicit NULL means auto-increment on MariaDB and is a refusal on
+	 * PostgreSQL.
+	 */
+	public function markEveryColumnWritten(): void {
+		foreach (array_keys($this->getFieldTypes()) as $field) {
+			if ($field !== 'id') {
+				$this->markFieldUpdated($field);
+			}
+		}
+	}
 }

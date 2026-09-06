@@ -134,6 +134,22 @@ class ComposeStackTest extends TestCase {
 	}
 
 	/**
+	 * `docker compose up --wait` is what CI waits on, and without a healthcheck it waits for
+	 * apache rather than for Nextcloud. Apache starts even when the install failed - that is
+	 * exactly how the missing chown above presented - so the check has to ask status.php
+	 * whether the install stands.
+	 *
+	 * @dataProvider webServices
+	 */
+	public function testEveryNextcloudServiceReportsWhenItIsActuallyInstalled(string $name): void {
+		$health = (array)($this->service($name)['healthcheck'] ?? []);
+		$test = implode(' ', (array)($health['test'] ?? []));
+
+		$this->assertStringContainsString('status.php', $test);
+		$this->assertStringContainsString('installed', $test, 'a running apache is not an install');
+	}
+
+	/**
 	 * A shared schema or a shared html volume means whichever major starts second runs
 	 * `occ upgrade` against the other's install, and the gate then tests one version twice.
 	 */

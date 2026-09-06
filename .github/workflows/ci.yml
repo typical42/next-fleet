@@ -65,6 +65,43 @@ jobs:
       # no upstream fix, so gate above them rather than mute the tool.
       - run: npm audit --audit-level moderate
 
+  e2e:
+    name: Playwright and axe, NC 31 and NC 34
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20'
+          cache: npm
+
+      - run: npm ci
+
+      # Not optional: the gate asserts what Vue mounted, and an unbuilt js/ leaves the root
+      # empty - which reads as a broken app rather than as a missing build.
+      - run: npm run build
+
+      # A runner has root, so the browser's system libraries install here. Locally they do
+      # not, which is what npm run test:e2e:docker is for.
+      - run: npx playwright install --with-deps chromium
+
+      # --wait means installed rather than merely running only because both app services
+      # carry a healthcheck that asks status.php - see tests/Unit/ComposeStackTest.php.
+      - name: Start both majors
+        run: docker compose -f .docker/compose.yml up -d --wait app app31
+
+      - name: Enable the app on both majors
+        run: |
+          for service in app app31; do
+            docker compose -f .docker/compose.yml exec -T -u www-data "$service" php occ app:enable nextfleet
+            # Its modal covers the page on a fresh install, and Playwright waits out the
+            # whole timeout without ever naming what intercepted the click.
+            docker compose -f .docker/compose.yml exec -T -u www-data "$service" php occ app:disable firstrunwizard
+          done
+
+      - run: npm run test:e2e
+
   reuse:
     name: reuse lint
     runs-on: ubuntu-24.04

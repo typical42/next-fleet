@@ -22,6 +22,18 @@ x-custom-apps-owner: &fix-custom-apps-owner
     - -c
     - chown www-data:www-data /var/www/html/custom_apps && exec /entrypoint.sh apache2-foreground
 
+# Apache answers long before Nextcloud is installed, and it answers even when the install
+# failed outright — which is how the chown above presented. status.php is the only thing that
+# says so, and `docker compose up --wait` is what reads it (docs/development.md#testing).
+x-nextcloud-health: &nextcloud-health
+  healthcheck:
+    test: ["CMD-SHELL", "curl -fsS http://localhost/status.php | grep -q '\"installed\":true'"]
+    interval: 10s
+    timeout: 5s
+    # The first start installs the database, which is minutes on a cold runner.
+    retries: 60
+    start_period: 30s
+
 x-nextcloud-env: &nextcloud-env
   MYSQL_HOST: db
   MYSQL_USER: nextcloud
@@ -58,7 +70,7 @@ services:
 
   app:
     image: nextcloud:34-apache
-    <<: *fix-custom-apps-owner
+    <<: [*fix-custom-apps-owner, *nextcloud-health]
     restart: unless-stopped
     ports:
       - "8080:80"
@@ -78,7 +90,7 @@ services:
   # and its own html volume - two majors cannot share one install.
   app31:
     image: nextcloud:31-apache
-    <<: *fix-custom-apps-owner
+    <<: [*fix-custom-apps-owner, *nextcloud-health]
     restart: unless-stopped
     ports:
       - "8081:80"

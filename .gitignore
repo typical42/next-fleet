@@ -2,6 +2,9 @@
 /node_modules/
 /js/
 /build/
+# The frontend build lands its stylesheets beside the hand-written one; only app.css is source.
+/css/nextfleet-main.css
+/css/*.chunk.css
 *.log
 .php-cs-fixer.cache
 /.phpunit.cache/

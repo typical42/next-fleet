@@ -129,6 +129,28 @@ class OdometerTest extends TestCase {
 	}
 
 	/**
+	 * A reading taken in UTC has `read_at_off` 0 and a counter nobody has driven has `value` 0,
+	 * and both are the value the property starts with - which QBMapper reads as "unchanged" and
+	 * leaves out of the INSERT. The NOT NULL column then refuses the row, so the ordinary case
+	 * is the one that 500s. Only the real database says whether it is written.
+	 */
+	public function testAReadingOfZeroInUtcIsARowTheDatabaseAccepts(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+
+		$written = $this->odometer->record(self::OWNER, $vehicle->getUuid(), [
+			'read_at' => 1750000000,
+			'read_at_off' => 0,
+			'value' => 0,
+		]);
+
+		$read = $this->odometer->list(self::OWNER, $vehicle->getUuid());
+		$this->assertCount(1, $read);
+		$this->assertSame($written->getUuid(), $read[0]->getUuid());
+		$this->assertSame(0, $read[0]->getValue());
+		$this->assertSame(0, $read[0]->getReadAtOff());
+	}
+
+	/**
 	 * Nothing registers these classes (lib/AppInfo/Application.php), so the container has to
 	 * build the whole chain from constructor types alone.
 	 */

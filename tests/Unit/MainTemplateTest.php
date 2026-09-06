@@ -18,6 +18,7 @@ class MainTemplateTest extends TestCase {
 	protected function setUp(): void {
 		require_once self::ROOT . '/tests/Stub/template_functions.php';
 		RecordedTemplateScripts::$requested = [];
+		RecordedTemplateScripts::$styled = [];
 	}
 
 	private function render(): string {
@@ -49,6 +50,20 @@ class MainTemplateTest extends TestCase {
 		$this->assertSame(
 			[Application::APP_ID . '/' . Application::APP_ID . '-main'],
 			RecordedTemplateScripts::$requested,
+		);
+	}
+
+	/**
+	 * The build extracts @nextcloud/vue's stylesheet beside the bundle rather than into it, so a
+	 * page that asks only for the script renders the shell unstyled — which no test that reads
+	 * the DOM would notice.
+	 */
+	public function testTheTemplateAsksForTheBundlesStylesheet(): void {
+		$this->render();
+
+		$this->assertSame(
+			[Application::APP_ID . '/' . Application::APP_ID . '-main'],
+			RecordedTemplateScripts::$styled,
 		);
 	}
 }

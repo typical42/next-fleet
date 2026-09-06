@@ -5,22 +5,16 @@
 
 import { expect, test } from '@playwright/test'
 
+import { appPage, login } from './app.js'
+
 // The gate runs against every project in playwright.config.js, i.e. against
 // every supported Nextcloud major, and one bundle has to satisfy all of them.
-const appPage = '/index.php/apps/nextfleet/'
 
 // templates/main.php renders this empty; anything inside it was put there by Vue.
 const vueRoot = '#nextfleet'
 
-// The stack's admin, straight from .docker/compose.yml. Basic auth is no
-// shortcut here: Nextcloud answers a browser with a redirect to this form
-// whatever the Authorization header says.
 test.beforeEach(async ({ page }) => {
-	await page.goto('/login')
-	await page.locator('#user').fill('admin')
-	await page.locator('#password').fill('admin')
-	await page.locator('form button[type="submit"]').click()
-	await page.waitForURL((url) => !url.pathname.startsWith('/login'))
+	await login(page)
 })
 
 test('the app page loads and mounts the Vue root', async ({ page }) => {

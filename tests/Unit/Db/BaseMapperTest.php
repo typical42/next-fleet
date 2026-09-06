@@ -146,6 +146,7 @@ class BaseMapperTest extends TestCase {
 			'created_at' => self::NOW,
 			'uuid' => $thing->getUuid(),
 			'updated_at' => self::NOW,
+			'deleted_at' => null,
 		], $this->row());
 	}
 
@@ -162,6 +163,27 @@ class BaseMapperTest extends TestCase {
 		$this->mapper()->insert($thing);
 
 		$this->assertSame('0195e2f1-0000-4000-8000-000000000001', $thing->getUuid());
+	}
+
+	/**
+	 * QBMapper writes the columns a setter changed, and a setter handed the property's own
+	 * starting value changed nothing - so the column is left out of the INSERT and a NOT NULL
+	 * column with no database default refuses the row. That is the ordinary case, not an edge
+	 * one: `read_at_off` is 0 for a reading taken in UTC, and `value` is 0 on a counter nobody
+	 * has driven yet.
+	 *
+	 * `id` stays out: an explicit NULL is an auto-increment on MariaDB and a refusal on
+	 * PostgreSQL, and CI runs both.
+	 */
+	public function testInsertWritesEveryColumnAndNotTheIdentity(): void {
+		$thing = new Thing();
+		$thing->setCreatedBy('alice');
+
+		$this->mapper()->insert($thing);
+
+		$this->assertSame('', $this->row()['label'] ?? null, 'a column left at its default was dropped');
+		$this->assertArrayHasKey('deleted_at', $this->row());
+		$this->assertArrayNotHasKey('id', $this->row());
 	}
 
 	/**

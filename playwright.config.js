@@ -17,6 +17,12 @@ export default defineConfig({
 	testDir: './tests/e2e',
 	forbidOnly: Boolean(process.env.CI),
 	reporter: 'list',
+	// A freshly installed Nextcloud with an empty opcache, serving four browsers at once, takes
+	// well over the default five seconds to answer the first page loads. That is CI's normal
+	// state, and every assertion here waits on a request rather than on an animation. The test
+	// budget goes up with it: a cold run of the M1 slice measured 30 s against the 30 s default.
+	expect: { timeout: 15_000 },
+	timeout: 90_000,
 	use: {
 		browserName: 'chromium',
 	},
