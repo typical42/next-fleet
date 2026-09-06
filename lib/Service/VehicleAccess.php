@@ -59,6 +59,35 @@ class VehicleAccess {
 	}
 
 	/**
+	 * Every vehicle this user may look at through a grant. What they own is not in it - that is a
+	 * column on the vehicle itself, and asking this table for it would be a second query.
+	 *
+	 * The roles travel with the query, so the same table decides here as in may(): a row whose
+	 * role covers nothing must not put a vehicle in a list that carries its plate, its VIN and
+	 * what it cost.
+	 *
+	 * @return list<int>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function reachableVehicleIds(string $userId): array {
+		return $this->grants->findVehicleIds(
+			$userId,
+			$this->groupIdsOf($userId),
+			self::rolesCovering(self::VIEW),
+		);
+	}
+
+	/**
+	 * @return list<string>
+	 */
+	private static function rolesCovering(string $operation): array {
+		return array_values(array_keys(array_filter(
+			self::ROLES,
+			static fn (array $operations): bool => in_array($operation, $operations, true),
+		)));
+	}
+
+	/**
 	 * @return list<string>
 	 */
 	private function groupIdsOf(string $userId): array {

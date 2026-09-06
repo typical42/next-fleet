@@ -43,18 +43,21 @@ class AccessMapper extends BaseMapper {
 	}
 
 	/**
-	 * Every vehicle one user reaches through a grant, so the overview can widen from what they
-	 * own to what they may see. Ids, not vehicles: the rows live in the other table.
+	 * Every vehicle one user reaches through a grant in one of the given roles, so the overview
+	 * can widen from what they own to what they may see. Ids, not vehicles: the rows live in the
+	 * other table. Which roles those are is VehicleAccess's to say - the column takes any word.
 	 *
 	 * @param list<string> $groupIds
+	 * @param list<string> $roles
 	 * @return list<int>
 	 * @throws \OCP\DB\Exception
 	 */
-	public function findVehicleIds(string $userId, array $groupIds): array {
+	public function findVehicleIds(string $userId, array $groupIds, array $roles): array {
 		$qb = $this->db->getQueryBuilder();
 		$qb->selectDistinct('vehicle_id')
 			->from($this->tableName)
 			->where($this->grantedTo($qb, $userId, $groupIds))
+			->andWhere($qb->expr()->in('role', $qb->createNamedParameter($roles, IQueryBuilder::PARAM_STR_ARRAY)))
 			->andWhere($qb->expr()->isNull('deleted_at'));
 
 		$result = $qb->executeQuery();

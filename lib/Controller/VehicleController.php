@@ -9,11 +9,14 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Controller;
 
 use OCA\NextFleet\Db\Vehicle;
+use OCA\NextFleet\Exception\AccessDeniedException;
+use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Controller;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\Attribute\NoAdminRequired;
+use OCP\AppFramework\Http\Attribute\UserRateLimit;
 use OCP\AppFramework\Http\DataResponse;
 use OCP\IRequest;
 use OCP\IUserSession;
@@ -40,10 +43,11 @@ class VehicleController extends Controller {
 
 	#[NoAdminRequired]
 	public function show(string $uuid): DataResponse {
-		return $this->answer(fn (): Vehicle => $this->service->find($uuid));
+		return $this->answer(fn (): Vehicle => $this->service->find($this->userId(), $uuid));
 	}
 
 	#[NoAdminRequired]
+	#[UserRateLimit(limit: 60, period: 60)]
 	public function create(): DataResponse {
 		return $this->answer(
 			fn (): Vehicle => $this->service->create($this->userId(), $this->request->getParams()),
@@ -52,6 +56,7 @@ class VehicleController extends Controller {
 	}
 
 	#[NoAdminRequired]
+	#[UserRateLimit(limit: 60, period: 60)]
 	public function update(string $uuid): DataResponse {
 		$token = $this->token();
 		if ($token === null) {
@@ -59,18 +64,19 @@ class VehicleController extends Controller {
 		}
 
 		return $this->answer(
-			fn (): Vehicle => $this->service->update($uuid, $token, $this->request->getParams()),
+			fn (): Vehicle => $this->service->update($this->userId(), $uuid, $token, $this->request->getParams()),
 		);
 	}
 
 	#[NoAdminRequired]
+	#[UserRateLimit(limit: 60, period: 60)]
 	public function delete(string $uuid): DataResponse {
 		$token = $this->token();
 		if ($token === null) {
 			return $this->refuse('updated_at is missing, so this write cannot be checked');
 		}
 
-		return $this->answer(fn (): Vehicle => $this->service->delete($uuid, $token));
+		return $this->answer(fn (): Vehicle => $this->service->delete($this->userId(), $uuid, $token));
 	}
 
 	/**
@@ -84,6 +90,15 @@ class VehicleController extends Controller {
 			return new DataResponse($work(), $status);
 		} catch (DoesNotExistException) {
 			return new DataResponse(['message' => 'No such vehicle'], Http::STATUS_NOT_FOUND);
+		} catch (AccessDeniedException) {
+			return new DataResponse(['message' => 'Not yours'], Http::STATUS_FORBIDDEN);
+		} catch (StaleUpdateException) {
+			// `conflict` is what tells this apart from Nextcloud's own failed CSRF check, which
+			// is a 412 as well (docs/architecture.md#concurrency).
+			return new DataResponse(
+				['message' => 'Changed since you read it', 'conflict' => true],
+				Http::STATUS_PRECONDITION_FAILED,
+			);
 		} catch (\InvalidArgumentException $e) {
 			return $this->refuse($e->getMessage());
 		}

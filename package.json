@@ -28,6 +28,10 @@
     "fast-xml-parser": "^5.7.0"
   },
   "dependencies": {
+    "@nextcloud/auth": "^2.6.0",
+    "@nextcloud/l10n": "^3.4.1",
+    "@nextcloud/router": "^3.1.0",
+    "@nextcloud/vue": "^9.11.0",
     "pinia": "^4.0.3",
     "vue": "^3.5.0"
   },
@@ -38,8 +42,11 @@
     "@nextcloud/vite-config": "^2.5.4",
     "@playwright/test": "^1.63.0",
     "@types/node": "^20.19.43",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "@vue/test-utils": "^2.5.0",
     "browserslist": "^4.24.0",
     "eslint": "^8.57.1",
+    "happy-dom": "^20.14.0",
     "sass": "^1.83.0",
     "stylelint": "^17.15.0",
     "stylelint-config-recommended-scss": "^17.0.1",

@@ -21,11 +21,15 @@ The app holds a movement profile: where someone was, when, and why. Treat it acc
 - **Every controller method is annotated deliberately** — `#[NoAdminRequired]` on user endpoints,
   `#[NoCSRFRequired]` only where an OCS route genuinely needs it, `#[BruteForceProtection]` on
   anything token-addressed, `#[UserRateLimit]` on writes. An unannotated method fails review.
-- **One service decides access.** `VehicleAccess::may($uid, $op, $vehicleId)`, backed by
+- **One service decides access.** `VehicleAccess::may($uid, $op, $vehicle)`, backed by
   `fleet_access` ([ADR 0001](adr/0001-own-access-table.md)). Controllers never reach a mapper
   directly, and no mapper trusts an id from a request body. **IDOR is the realistic bug here** — the
   API is id-addressed and sharing makes guessing worth the effort — so the integration suite asserts
-  the stranger case for *every* endpoint, not one.
+  the stranger case for *every* endpoint, not one
+  (`tests/Integration/VehicleIdorTest.php`, which reads its route list from `appinfo/routes.php`).
+- **A refusal is a 403 and an unknown uuid a 404**, which does tell a caller that a uuid exists.
+  That is the trade the PRD asks for, and it costs nothing: a v4 uuid is not guessed, it is leaked —
+  and whoever leaked it also leaked the answer.
 - **File downloads are proxied** ([Nextcloud integration](architecture.md#nextcloud-integration)).
   The app's ACL decides, not the file's.
 

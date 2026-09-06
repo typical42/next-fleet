@@ -2,4 +2,132 @@
  * SPDX-FileCopyrightText: 2026 Johannes Kolb
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
-// TODO: API client. Queue failed writes, replay by uuid — see docs/ui.md.
+
+import { getRequestToken } from '@nextcloud/auth'
+import { generateUrl } from '@nextcloud/router'
+
+/**
+ * A vehicle as it travels: the JSON keys are the column names, so what a client reads is what it
+ * may send back (docs/architecture.md#data-model).
+ *
+ * @typedef {object} Vehicle
+ * @property {string} uuid - identity; the plate is only a label
+ * @property {number} updated_at - the token the next write is checked against
+ * @property {string} [plate] - as registered, free to change
+ * @property {string} [manufacturer]
+ * @property {string} [model]
+ * @property {string} [engine]
+ * @property {number|null} [odo_value] - the newest Reading, cached; null until one exists
+ * @property {string} [odo_unit] - `km` or `h`, the vehicle's own
+ * @property {string} [lifecycle]
+ */
+
+/**
+ * One reading of a vehicle's counter (docs/architecture.md#odometer-rules). `origin` and `flagged`
+ * are the server's answer, never a field a client fills in.
+ *
+ * @typedef {object} Reading
+ * @property {string} uuid
+ * @property {number} read_at - the instant it was read, seconds
+ * @property {number} read_at_off - the UTC offset it was read at, minutes
+ * @property {number} value - kilometres or engine hours, per the vehicle's `odo_unit`
+ * @property {string} origin - `observed` when somebody read it, `derived` when it was computed
+ * @property {boolean} flagged - it contradicts the reading before it
+ */
+
+/**
+ * The row moved on since it was read, so the write was refused instead of overwriting it
+ * (docs/architecture.md#concurrency). Its own class because the sheet answers it differently
+ * from every other failure: the values are fine, the version is not.
+ */
+export class ConflictError extends Error {}
+
+/**
+ * Every vehicle the session may see - their own and the ones granted to them
+ * (docs/adr/0001-own-access-table.md).
+ *
+ * @return {Promise<Vehicle[]>} the fleet, as the server ordered it
+ */
+export async function listVehicles() {
+	return request('GET', '/api/vehicles')
+}
+
+/**
+ * Add a vehicle. What the sheet leaves out the server decides, so the answer is what the client
+ * keeps rather than what it sent.
+ *
+ * @param {Partial<Vehicle>} fields - the four the create sheet asks for (docs/ui.md)
+ * @return {Promise<Vehicle>} the vehicle as the server made it, identity and token included
+ */
+export async function createVehicle(fields) {
+	return request('POST', '/api/vehicles', fields)
+}
+
+/**
+ * Write a vehicle back, checked against the `updated_at` it was read with.
+ *
+ * @param {Vehicle} vehicle - the vehicle as the sheet has it, `uuid` and `updated_at` included
+ * @return {Promise<Vehicle>} the vehicle as the server now holds it, with its next token
+ * @throws {ConflictError} when another writer got there first
+ */
+export async function updateVehicle(vehicle) {
+	return request('PUT', `/api/vehicles/${vehicle.uuid}`, vehicle)
+}
+
+/**
+ * Record one reading of a vehicle's counter. A Reading is only ever written, so it carries no
+ * token and cannot lose a race (docs/architecture.md#concurrency).
+ *
+ * @param {string} uuid - the vehicle the counter belongs to
+ * @param {object} entry - `value` or `distance`, never both, plus `read_at_off`
+ * @return {Promise<Reading>} the reading as the server judged it, `origin` and `flagged` included
+ */
+export async function recordReading(uuid, entry) {
+	return request('POST', `/api/vehicles/${uuid}/readings`, entry)
+}
+
+/**
+ * @param {string} method - the HTTP verb
+ * @param {string} path - below the app's own route prefix
+ * @param {object} [body] - sent as JSON, which Nextcloud merges into the request parameters
+ * @return {Promise<any>} the parsed answer
+ */
+async function request(method, path, body) {
+	const response = await fetch(generateUrl(`/apps/nextfleet${path}`), {
+		method,
+		headers: {
+			'Content-Type': 'application/json',
+			requesttoken: getRequestToken() ?? '',
+		},
+		// A read has no body at all. `JSON.stringify(undefined)` is `undefined`, but spelling it
+		// out keeps a future `null` from travelling as the string "null".
+		body: body === undefined ? undefined : JSON.stringify(body),
+	})
+
+	const answer = await parse(response)
+	if (response.ok) {
+		return answer
+	}
+
+	// Nextcloud answers its own failed CSRF check with 412 as well, so the conflict is the one
+	// the body claims, not the one the status suggests.
+	if (response.status === 412 && answer?.conflict === true) {
+		throw new ConflictError(answer.message)
+	}
+
+	throw new Error(answer?.message ?? `The server answered ${response.status}`)
+}
+
+/**
+ * @param {Response} response - the answer to read
+ * @return {Promise<any>} its JSON body, or null when it carries none
+ */
+async function parse(response) {
+	try {
+		return await response.json()
+	} catch {
+		// A refusal from the server itself — a session that expired into a login page — is not
+		// JSON. It is still a failure, and the status is what tells the story.
+		return null
+	}
+}
