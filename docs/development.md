@@ -98,10 +98,15 @@ fast and a component present in 34 may be missing in 31 — which is why
 [the interface](ui.md#look-like-nextcloud-not-like-fleet-software) restricts itself to the old,
 stable components. If no single bundle spans the range, the 31 floor moves; the UI does not.
 
-**Seed data:** an `occ nextfleet:seed` command that generates a demo fleet with two years of trips
-and fill-ups — including the awkward rows: a flagged backwards odometer, a `missed_previous` gap, a
-plug-in hybrid with both energy types, and a vehicle counted in hours. It powers E2E tests,
-screenshots for the app store, and manual clicking.
+**Seed data:** `occ nextfleet:seed <user>` writes a demo fleet spanning the two years before it runs
+— including the awkward rows: a flagged backwards odometer, a plug-in hybrid with both energy
+types, and a vehicle counted in hours. It powers E2E tests, screenshots for the app store, and
+manual clicking. Trips, fill-ups and a `missed_previous` gap arrive with the tables that hold them.
+
+It writes through the services a request writes through, so a fleet it cannot produce is a fleet the
+app cannot hold, and the odometer rules decide the flags rather than the fixture. Every plate starts
+`NF-`, which keeps the demo out of the way of the E2E's `E2E-`; a re-run retires the rows it is
+about to write again, and leaves anything else parked next to them alone.
 
 Testing the reminder job by waiting is not testing. Move the clock, then run
 `occ background-job:list` / `background-job:execute <id>` to fire the job on demand.

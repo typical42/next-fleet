@@ -219,6 +219,25 @@ class CiWorkflowTest extends TestCase {
 	}
 
 	/**
+	 * The demo fleet is a fixture, not decoration: tests/e2e/demo-fleet.spec.js asserts rows only
+	 * `occ nextfleet:seed` writes, and a run that skips it fails on missing data while pointing at
+	 * the app.
+	 */
+	public function testTheEndToEndJobSeedsTheDemoFleetBeforeItRuns(): void {
+		$script = [];
+		foreach ((array)$this->job('e2e')['steps'] as $step) {
+			$script[] = (string)($step['run'] ?? '');
+		}
+		$script = implode("\n", $script);
+
+		$seed = strpos($script, 'nextfleet:seed');
+		$run = strpos($script, 'npm run test:e2e');
+		$this->assertIsInt($seed, 'the job never seeds the fleet its specs read');
+		$this->assertIsInt($run, 'the job never runs the E2E');
+		$this->assertLessThan($run, $seed, 'the fleet is seeded after the run that reads it');
+	}
+
+	/**
 	 * The lists are data the job reads through the environment; a renamed variable leaves
 	 * the data in place and silently selects nothing.
 	 */

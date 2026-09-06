@@ -11,6 +11,7 @@ namespace OCA\NextFleet\Tests\Unit\AppInfo;
 use DOMDocument;
 use LibXMLError;
 use PHPUnit\Framework\TestCase;
+use Symfony\Component\Console\Command\Command;
 
 class InfoXmlTest extends TestCase {
 	private const ROOT = __DIR__ . '/../../..';
@@ -57,6 +58,40 @@ class InfoXmlTest extends TestCase {
 		$this->assertSame('AGPL-3.0-or-later', (string)$info->licence);
 		$this->assertSame('AGPL-3.0-or-later', $this->licenceOf('/composer.json'));
 		$this->assertSame('AGPL-3.0-or-later', $this->licenceOf('/package.json'));
+	}
+
+	/**
+	 * `occ` learns a command from this file and from nowhere else, so a command class that is
+	 * not listed here is a command nobody can run - and the class is loadable, so nothing tells
+	 * anyone it exists.
+	 */
+	public function testEveryConsoleCommandIsRegistered(): void {
+		$info = simplexml_load_file(self::ROOT . '/appinfo/info.xml');
+		$this->assertNotFalse($info);
+
+		$registered = array_map('strval', $info->xpath('/info/commands/command') ?: []);
+
+		// Order is the file's own business - what matters is that the two lists hold the same
+		// classes.
+		$this->assertEqualsCanonicalizing($this->commandClasses(), $registered);
+	}
+
+	/**
+	 * Every class under lib/Command/ that `occ` could run. A stub that is not a Command yet is
+	 * not one of them.
+	 *
+	 * @return list<string>
+	 */
+	private function commandClasses(): array {
+		$classes = [];
+		foreach (glob(self::ROOT . '/lib/Command/*.php') ?: [] as $file) {
+			$class = 'OCA\\NextFleet\\Command\\' . basename($file, '.php');
+			if (is_subclass_of($class, Command::class)) {
+				$classes[] = $class;
+			}
+		}
+
+		return $classes;
 	}
 
 	private function licenceOf(string $path): string {

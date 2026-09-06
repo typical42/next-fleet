@@ -91,13 +91,16 @@ jobs:
       - name: Start both majors
         run: docker compose -f .docker/compose.yml up -d --wait app app31
 
-      - name: Enable the app on both majors
+      - name: Enable the app and seed the demo fleet on both majors
         run: |
           for service in app app31; do
             docker compose -f .docker/compose.yml exec -T -u www-data "$service" php occ app:enable nextfleet
             # Its modal covers the page on a fresh install, and Playwright waits out the
             # whole timeout without ever naming what intercepted the click.
             docker compose -f .docker/compose.yml exec -T -u www-data "$service" php occ app:disable firstrunwizard
+            # The fixture tests/e2e/demo-fleet.spec.js reads: the rows that are awkward to
+            # make by hand, written through the services a request writes through.
+            docker compose -f .docker/compose.yml exec -T -u www-data "$service" php occ nextfleet:seed admin
           done
 
       - run: npm run test:e2e
