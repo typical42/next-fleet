@@ -14,12 +14,12 @@ import { generateUrl } from '@nextcloud/router'
  * @property {string} uuid - identity; the plate is only a label
  * @property {number} updated_at - the token the next write is checked against
  * @property {string} [plate] - as registered, free to change
- * @property {string} [manufacturer]
- * @property {string} [model]
- * @property {string} [engine]
+ * @property {string} [manufacturer] - who built it
+ * @property {string} [model] - what they call it
+ * @property {string} [engine] - the drivetrain classification (CONTEXT.md)
  * @property {number|null} [odo_value] - the newest Reading, cached; null until one exists
  * @property {string} [odo_unit] - `km` or `h`, the vehicle's own
- * @property {string} [lifecycle]
+ * @property {string} [lifecycle] - `active`, `laid_up` or `disposed` (CONTEXT.md)
  */
 
 /**
@@ -27,7 +27,7 @@ import { generateUrl } from '@nextcloud/router'
  * are the server's answer, never a field a client fills in.
  *
  * @typedef {object} Reading
- * @property {string} uuid
+ * @property {string} uuid - identity
  * @property {number} read_at - the instant it was read, seconds
  * @property {number} read_at_off - the UTC offset it was read at, minutes
  * @property {number} value - kilometres or engine hours, per the vehicle's `odo_unit`
@@ -50,6 +50,17 @@ export class ConflictError extends Error {}
  */
 export async function listVehicles() {
 	return request('GET', '/api/vehicles')
+}
+
+/**
+ * One vehicle as the server now holds it. Read after a Reading was written: `odo_value` is a cache
+ * the server recomputes and no client can count for itself (docs/architecture.md#odometer-rules).
+ *
+ * @param {string} uuid - the vehicle's identity
+ * @return {Promise<Vehicle>} the vehicle, with its current token
+ */
+export async function getVehicle(uuid) {
+	return request('GET', `/api/vehicles/${uuid}`)
 }
 
 /**

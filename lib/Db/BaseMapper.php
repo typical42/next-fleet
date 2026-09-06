@@ -60,6 +60,7 @@ abstract class BaseMapper extends QBMapper {
 		$now = $this->time->getTime();
 		$entity->setCreatedAt($now);
 		$entity->setUpdatedAt($now);
+		$entity->markEveryColumnWritten();
 
 		return parent::insert($entity);
 	}

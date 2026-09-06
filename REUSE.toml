@@ -11,6 +11,7 @@ SPDX-PackageDownloadLocation = "https://github.com/typical42/next-fleet"
 path = [
     ".eslintignore",
     ".gitignore",
+    ".stylelintignore",
     "**.json",
     "**.lock",
     "**.md",

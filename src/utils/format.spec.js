@@ -4,9 +4,12 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { formatCount, formatOdometer, parseCount } from './format.js'
+import { formatCount, formatOdometer, nameOf, parseWhole, subtitleOf } from './format.js'
 
-vi.mock('@nextcloud/l10n', () => ({ getCanonicalLocale: () => 'en-GB' }))
+vi.mock('@nextcloud/l10n', () => ({
+	getCanonicalLocale: () => 'en-GB',
+	t: (/** @type {string} */ app, /** @type {string} */ text) => text,
+}))
 
 describe('formatCount', () => {
 	/**
@@ -38,13 +41,64 @@ describe('formatOdometer', () => {
 	})
 })
 
-describe('parseCount', () => {
+describe('nameOf', () => {
 	/**
-	 * The sheet is filled at a pump, one-handed, on whatever keyboard the phone offers, so both
-	 * separators are the same number (docs/ui.md).
+	 * The plate is what a driver calls the vehicle, so it is the label wherever one is needed - and
+	 * it stays a label: identity is the uuid (CONTEXT.md), which is why a plate may be missing.
 	 */
-	it('reads a comma and a dot as the same decimal separator', () => {
-		expect(parseCount('7,2')).toBe(7.2)
-		expect(parseCount('7.2')).toBe(7.2)
+	it('calls a vehicle by its plate, and by its make when it has none', () => {
+		expect(nameOf({ plate: 'M-AB 1234', manufacturer: 'VW', model: 'Passat' })).toBe('M-AB 1234')
+		expect(nameOf({ manufacturer: 'VW', model: 'Passat' })).toBe('VW Passat')
+		expect(nameOf({ model: 'Passat' })).toBe('Passat')
+	})
+
+	/** A vehicle with nothing filled in is still a row somebody has to be able to click. */
+	it('names a vehicle that says nothing about itself', () => {
+		expect(nameOf({})).toBe('Unnamed vehicle')
+	})
+})
+
+describe('subtitleOf', () => {
+	/** The second line says what the first one could not; repeating the name teaches nothing. */
+	it('says the make under the plate, and nothing under the make', () => {
+		expect(subtitleOf({ plate: 'M-AB 1234', manufacturer: 'VW', model: 'Passat', lifecycle: 'active' }))
+			.toBe('VW Passat')
+		expect(subtitleOf({ manufacturer: 'VW', model: 'Passat', lifecycle: 'active' })).toBe('')
+	})
+
+	/**
+	 * A lifecycle is a code in the database and a word on screen (docs/ui.md#languages), and it is
+	 * only worth a line when it is not the ordinary one: an off-the-road vehicle explains why it
+	 * sank down the list.
+	 */
+	it('spells out a lifecycle that is not the ordinary one', () => {
+		expect(subtitleOf({ plate: 'M-EV 7', lifecycle: 'laid_up' })).toBe('Laid up')
+		expect(subtitleOf({ plate: 'M-EV 7', manufacturer: 'Kia', lifecycle: 'laid_up' }))
+			.toBe('Kia · Laid up')
+	})
+})
+
+describe('parseWhole', () => {
+	/**
+	 * The counter is what the app itself wrote out a moment earlier, and in German that reads
+	 * `148.320` (docs/ui.md#languages). Reading the dot as a decimal point would turn it into 148
+	 * and cache that as the vehicle's odometer, with nothing on screen to say so.
+	 */
+	it('reads a grouped number back the way any locale writes it', () => {
+		expect(parseWhole('148.320')).toBe(148320)
+		expect(parseWhole('148,320')).toBe(148320)
+		expect(parseWhole('148 320')).toBe(148320)
+		expect(parseWhole('148320')).toBe(148320)
+	})
+
+	/**
+	 * A counter reads in whole kilometres or whole hours (docs/architecture.md#data-model). A
+	 * field that says something else is a question for the driver, not a number to round.
+	 */
+	it('says nothing about a field that is not a whole number', () => {
+		expect(parseWhole('7,2')).toBeNull()
+		expect(parseWhole('full')).toBeNull()
+		expect(parseWhole('-5')).toBeNull()
+		expect(parseWhole('')).toBeNull()
 	})
 })

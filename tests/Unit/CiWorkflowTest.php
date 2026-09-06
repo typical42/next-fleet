@@ -190,8 +190,32 @@ class CiWorkflowTest extends TestCase {
 			$script .= (string)($step['run'] ?? '') . "\n";
 		}
 
-		$this->assertStringContainsString('composer run test', $script);
-		$this->assertStringContainsString('composer run test:integration', $script);
+		// The suite, not a prefix of the other one: `composer run test:integration` alone
+		// satisfies a bare `composer run test`.
+		$this->assertMatchesRegularExpression('/^composer run test$/m', $script);
+		$this->assertMatchesRegularExpression('/^composer run test:integration$/m', $script);
+	}
+
+	/**
+	 * The E2E job is the only one that runs a browser, and it is the only one where the two
+	 * things it depends on are invisible when they go missing: without a bundle the Vue root
+	 * stays empty, and without `--wait` "the stack is up" means apache answered rather than
+	 * Nextcloud installed (tests/Unit/ComposeStackTest.php).
+	 */
+	public function testTheEndToEndJobBuildsTheBundleAndWaitsForTheStack(): void {
+		$script = [];
+		foreach ((array)$this->job('e2e')['steps'] as $step) {
+			$script[] = (string)($step['run'] ?? '');
+		}
+		$script = implode("\n", $script);
+
+		$this->assertStringContainsString('--wait', $script, 'apache answers before Nextcloud is installed');
+
+		$build = strpos($script, 'npm run build');
+		$run = strpos($script, 'npm run test:e2e');
+		$this->assertIsInt($build, 'the job never builds the bundle it asserts against');
+		$this->assertIsInt($run, 'the job never runs the E2E');
+		$this->assertLessThan($run, $build, 'the bundle is built after the run that needs it');
 	}
 
 	/**

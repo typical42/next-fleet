@@ -54,7 +54,7 @@ entered it ([odometer rules](architecture.md#odometer-rules)).
 │ Reports         │                                                    │
 │ ─────────────── │  Timeline  [All][Trips][Energy][Maint.][Costs]     │
 │ Settings        │  ───────────────────────────────────────────────   │
-│                 │  03.09.  ⛽ Fill-up   48,2 l   82,10 €   6,1 l/100 │
+│                 │  03.09.  ⛽ Energy    48,2 l   82,10 €   6,1 l/100 │
 │                 │  02.09.  🚗 Munich → Augsburg   82 km   business   │
 │                 │  28.08.  🔧 Brake pads   Werkstatt Huber  312,00 € │
 └─────────────────┴────────────────────────────────────────────────────┘
@@ -73,7 +73,7 @@ touch. That keeps the middle free for the things you touch weekly.
 |---|---|---|
 | **Overview** | All vehicles, sorted by urgency, not alphabetically. Traffic light, plate, km, next due. | Open a vehicle |
 | **Vehicle** | Header KPIs + due banner + timeline (above) | **+ Entry** |
-| **Entry sheet** | Trip / Fill-up / Maintenance / Odometer — see below | Save |
+| **Entry sheet** | Trip / Energy / Maintenance / Odometer — see below | Save |
 | **Costs** | One year, one vehicle: stacked bars per month, table below, export button | Export |
 | **Reports** | Fahrtenbuch, mileage claim, cost, CO₂ — pick a range, get a printable page ([ADR 0005](adr/0005-no-pdf-library.md)) | Print / export |
 | **Vehicle sidebar** | Master data, jurisdiction, documents, reminders (sharing from M6) | Edit inline |
@@ -88,7 +88,7 @@ This is the screen the app lives or dies by. One `+` opens four choices, each a 
   ([odometer rules](architecture.md#odometer-rules)). Date defaults to now; route, purpose and
   partner autocomplete from this vehicle's own history, which is what keeps six spellings of one
   client out of the reports.
-- **Fill-up** — amount and total price. Which energy types are offered comes from the vehicle's
+- **Energy** — amount and total price. Which energy types are offered comes from the vehicle's
   `energy_types`, so a plug-in hybrid can log either and a diesel is never asked
   ([data model](architecture.md#data-model)). Unit price is derived, and the station remembers its
   last price. "Full tank" defaults to on, because it usually is
