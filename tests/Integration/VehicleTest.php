@@ -14,7 +14,11 @@ use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Db\DoesNotExistException;
+use OCP\AppFramework\Http;
 use OCP\IDBConnection;
+use OCP\IRequest;
+use OCP\IUser;
+use OCP\IUserSession;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -69,7 +73,7 @@ class VehicleTest extends TestCase {
 			'notes' => "two rows of seats\nand a dent",
 		]);
 
-		$read = $this->service->find($written->getUuid());
+		$read = $this->service->find(self::OWNER, $written->getUuid());
 
 		$this->assertMatchesRegularExpression(
 			'/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/',
@@ -109,25 +113,60 @@ class VehicleTest extends TestCase {
 		$vehicle = $this->service->create(self::OWNER, ['plate' => 'B-XY 123']);
 		$stale = $vehicle->getUpdatedAt();
 
-		$fresh = $this->service->update($vehicle->getUuid(), $stale, ['plate' => 'B-ZZ 9']);
-		$this->assertSame('B-ZZ 9', $this->service->find($vehicle->getUuid())->getPlate());
+		$fresh = $this->service->update(self::OWNER, $vehicle->getUuid(), $stale, ['plate' => 'B-ZZ 9']);
+		$this->assertSame('B-ZZ 9', $this->service->find(self::OWNER, $vehicle->getUuid())->getPlate());
 		$this->assertGreaterThan($stale, $fresh->getUpdatedAt());
 
 		$this->expectException(StaleUpdateException::class);
-		$this->service->update($vehicle->getUuid(), $stale, ['plate' => 'B-AA 1']);
+		$this->service->update(self::OWNER, $vehicle->getUuid(), $stale, ['plate' => 'B-AA 1']);
+	}
+
+	/**
+	 * The same race as above, through the controller a route reaches: the loser gets a 412 whose
+	 * body names the conflict, and the winner's plate is still on the row.
+	 */
+	public function testAWriteThatLostTheRaceIsAPreconditionFailure(): void {
+		$vehicle = $this->service->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$stale = $vehicle->getUpdatedAt();
+		$this->service->update(self::OWNER, $vehicle->getUuid(), $stale, ['plate' => 'B-ZZ 9']);
+
+		$response = $this->controller(self::OWNER, ['updated_at' => $stale, 'plate' => 'B-AA 1'])
+			->update($vehicle->getUuid());
+
+		$this->assertSame(Http::STATUS_PRECONDITION_FAILED, $response->getStatus());
+		$this->assertTrue($response->getData()['conflict']);
+		$this->assertSame('B-ZZ 9', $this->service->find(self::OWNER, $vehicle->getUuid())->getPlate());
+	}
+
+	/**
+	 * The controller as a route reaches it: the real service, and a session that is whoever is
+	 * asking.
+	 *
+	 * @param array<string, mixed> $params
+	 */
+	private function controller(string $userId, array $params): VehicleController {
+		$request = $this->createMock(IRequest::class);
+		$request->method('getParams')->willReturn($params);
+
+		$user = $this->createMock(IUser::class);
+		$user->method('getUID')->willReturn($userId);
+		$session = $this->createMock(IUserSession::class);
+		$session->method('getUser')->willReturn($user);
+
+		return new VehicleController(Application::APP_ID, $request, $this->service, $session);
 	}
 
 	/** A deleted vehicle is out of reach of a read, and the row is still there for the trash. */
 	public function testADeletedVehicleIsOutOfReachButNotGone(): void {
 		$vehicle = $this->service->create(self::OWNER, ['plate' => 'B-XY 123']);
 
-		$deleted = $this->service->delete($vehicle->getUuid(), $vehicle->getUpdatedAt());
+		$deleted = $this->service->delete(self::OWNER, $vehicle->getUuid(), $vehicle->getUpdatedAt());
 
 		$this->assertNotNull($deleted->getDeletedAt());
 		$this->assertSame([], $this->service->list(self::OWNER));
 
 		$this->expectException(DoesNotExistException::class);
-		$this->service->find($vehicle->getUuid());
+		$this->service->find(self::OWNER, $vehicle->getUuid());
 	}
 
 	/**

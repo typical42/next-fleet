@@ -147,10 +147,19 @@ replaces, because two writes in the same second would otherwise leave the second
 looking fresh. Identity and provenance — `uuid`, `created_at`, `created_by` — are not writable
 through an update at all.
 
+**Recomputed columns stay out of it.** `fleet_vehicles.odo_value` and `fleet_odo_readings.flagged`
+are derived from the readings ([odometer rules](#odometer-rules)), so each is written by a statement
+of its own that moves neither `updated_at` nor the token. Otherwise an odometer entry would refuse
+the vehicle sheet that happened to be open, and two entries arriving together would tell the second
+one it lost a race it was never in.
+
 On the wire the token is the vehicle's `updated_at`, and every write carries it back — a `PUT` in
 the body, a `DELETE` in the query string. A write that arrives without one is a **400**: there is
 nothing to check it against. **Nextcloud answers its own failed CSRF check with 412 too**, so a
-client tells the two apart by the body, not by the status.
+client tells the two apart by the body, not by the status: ours carries `"conflict": true`, which
+Nextcloud's never does. The client raises that as its own error type, so the sheet can stay open
+with the values intact ([ui](ui.md#the-entry-sheet-in-detail)) — a CSRF failure would only repeat
+itself on a retry.
 
 The client also learns the server's clock: every response carries the server time in a header, and
 the frontend keeps a running offset. That offset is a **diagnostic** — it lets the UI warn that a
@@ -181,13 +190,14 @@ This is where logbooks quietly break. Six rules, decided once:
    `started_at`) + distance*, marked `origin = derived`. Consumption requires **observed** readings
    at both ends of a segment, which costs nothing because fill-ups always carry a real number. When
    a later observed reading contradicts the derived chain, the observed value wins and the derived
-   rows are flagged — never silently corrected.
+   rows are flagged — never silently corrected. Winning is not an alibi: if that reading is still
+   below the last row left standing, it is flagged too, and both questions get asked.
 
 ## Nextcloud integration
 
 | Concern | Mechanism |
 |---|---|
-| Identity, ACL | `OCP\IUserSession`, `IGroupManager`. Every query runs through `VehicleAccess::may` from M1 on: owner, or a row in `fleet_access` with a sufficient role ([ADR 0001](adr/0001-own-access-table.md)). |
+| Identity, ACL | `OCP\IUserSession`, `IGroupManager`. Every query runs through `VehicleAccess::may` from M1 on: owner, or a row in `fleet_access` with a sufficient role ([ADR 0001](adr/0001-own-access-table.md)). A route that names one vehicle asks `may`; a route that lists them asks `reachableVehicleIds` instead, so the widening is one query and not one per row. |
 | Reminders → push | Own `TimedJob` (hourly) evaluates due reminders, then `OCP\Notification\IManager` + an `INotifier`. This is the reliable path: it works without the Calendar app. |
 | Reminders → calendar | User picks one writable calendar in settings; we write real events with alarms through `OCP\Calendar\IManager` (`createEventBuilder()` → `createInCalendar()`, needs a calendar implementing `ICreateFromString`; app `dav` as dependency). Store `cal_uid` so we can re-write or cancel. Real events sync over CalDAV, so the phone rings without our app. |
 | Reminders → mail | `OCP\Mail\IMailer` + `IEMailTemplate`, using the server's configured SMTP. Digest, not one mail per item. |

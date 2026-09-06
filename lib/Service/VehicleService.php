@@ -11,6 +11,7 @@ namespace OCA\NextFleet\Service;
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
+use OCA\NextFleet\Exception\AccessDeniedException;
 use OCA\NextFleet\Exception\StaleUpdateException;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\IConfig;
@@ -80,6 +81,7 @@ class VehicleService {
 
 	public function __construct(
 		private VehicleMapper $mapper,
+		private VehicleAccess $access,
 		private IConfig $config,
 	) {
 	}
@@ -134,11 +136,12 @@ class VehicleService {
 	 * @param array<string, mixed> $fields
 	 * @param int $expectedUpdatedAt the `updated_at` the client read
 	 * @throws DoesNotExistException
+	 * @throws AccessDeniedException if the user may not edit this vehicle
 	 * @throws StaleUpdateException if the row has changed since
 	 * @throws \OCP\DB\Exception
 	 */
-	public function update(string $uuid, int $expectedUpdatedAt, array $fields): Vehicle {
-		$vehicle = $this->find($uuid);
+	public function update(string $userId, string $uuid, int $expectedUpdatedAt, array $fields): Vehicle {
+		$vehicle = $this->reach($userId, VehicleAccess::EDIT, $uuid);
 		$this->apply($vehicle, $fields);
 
 		return $this->mapper->updateChecked($vehicle, $expectedUpdatedAt);
@@ -147,19 +150,43 @@ class VehicleService {
 	/**
 	 * @param int $expectedUpdatedAt the `updated_at` the client read
 	 * @throws DoesNotExistException
+	 * @throws AccessDeniedException if the user may not delete this vehicle
 	 * @throws StaleUpdateException if the row has changed since
 	 * @throws \OCP\DB\Exception
 	 */
-	public function delete(string $uuid, int $expectedUpdatedAt): Vehicle {
-		return $this->mapper->softDelete($this->find($uuid), $expectedUpdatedAt);
+	public function delete(string $userId, string $uuid, int $expectedUpdatedAt): Vehicle {
+		return $this->mapper->softDelete(
+			$this->reach($userId, VehicleAccess::DELETE, $uuid),
+			$expectedUpdatedAt,
+		);
 	}
 
 	/**
 	 * @throws DoesNotExistException
+	 * @throws AccessDeniedException if the user holds nothing on this vehicle
 	 * @throws \OCP\DB\Exception
 	 */
-	public function find(string $uuid): Vehicle {
-		return $this->mapper->findByUuid($uuid);
+	public function find(string $userId, string $uuid): Vehicle {
+		return $this->reach($userId, VehicleAccess::VIEW, $uuid);
+	}
+
+	/**
+	 * The one gate every uuid-addressed route goes through
+	 * (docs/adr/0001-own-access-table.md): the row, or the reason there is none for this user.
+	 * Public because everything hanging off a vehicle passes through it too - the odometer
+	 * first - and a second copy of it is a second place to forget an operation.
+	 *
+	 * @throws DoesNotExistException
+	 * @throws AccessDeniedException
+	 * @throws \OCP\DB\Exception
+	 */
+	public function reach(string $userId, string $operation, string $uuid): Vehicle {
+		$vehicle = $this->mapper->findByUuid($uuid);
+		if (!$this->access->may($userId, $operation, $vehicle)) {
+			throw new AccessDeniedException();
+		}
+
+		return $vehicle;
 	}
 
 	/**
@@ -167,7 +194,7 @@ class VehicleService {
 	 * @throws \OCP\DB\Exception
 	 */
 	public function list(string $userId): array {
-		return $this->mapper->findAllForOwner($userId);
+		return $this->mapper->findAllVisible($userId, $this->access->reachableVehicleIds($userId));
 	}
 
 	/**

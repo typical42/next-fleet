@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Tests\Unit;
 
 use OCA\NextFleet\AppInfo\Application;
+use OCP\AppFramework\Http\Attribute\UserRateLimit;
 use PHPUnit\Framework\TestCase;
 use ReflectionMethod;
 
@@ -35,6 +36,31 @@ class RoutesTest extends TestCase {
 			$this->assertTrue(
 				(new ReflectionMethod($class, $action))->isPublic(),
 				sprintf('route %s points at %s::%s, which the framework cannot call', $route['url'], $class, $action),
+			);
+		}
+	}
+
+	/**
+	 * Every route that writes carries `#[UserRateLimit]` (docs/security.md). The annotation is
+	 * the whole defence — nothing else limits how fast one session can fill the tables — and
+	 * leaving it off a new write route is invisible until somebody does.
+	 */
+	public function testEveryWriteRouteIsRateLimited(): void {
+		$routes = require __DIR__ . '/../../appinfo/routes.php';
+
+		foreach ($routes['routes'] as $route) {
+			if (in_array($route['verb'], ['GET', 'HEAD'], true)) {
+				continue;
+			}
+
+			[$controller, $method] = explode('#', $route['name']);
+			$class = 'OCA\\NextFleet\\Controller\\' . self::camelCase(ucfirst($controller)) . 'Controller';
+			$attributes = (new ReflectionMethod($class, self::camelCase($method)))
+				->getAttributes(UserRateLimit::class);
+
+			$this->assertNotEmpty(
+				$attributes,
+				sprintf('%s %s writes and carries no #[UserRateLimit]', $route['verb'], $route['url']),
 			);
 		}
 	}

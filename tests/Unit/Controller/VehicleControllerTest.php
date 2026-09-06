@@ -11,6 +11,8 @@ namespace OCA\NextFleet\Tests\Unit\Controller;
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Controller\VehicleController;
 use OCA\NextFleet\Db\Vehicle;
+use OCA\NextFleet\Exception\AccessDeniedException;
+use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Http;
@@ -100,7 +102,7 @@ class VehicleControllerTest extends TestCase {
 		$this->params = ['uuid' => self::UUID, 'updated_at' => 1750000000, 'plate' => 'B-ZZ 9'];
 		$this->service->expects($this->once())
 			->method('update')
-			->with(self::UUID, 1750000000, $this->params)
+			->with('alice', self::UUID, 1750000000, $this->params)
 			->willReturn($this->stored());
 
 		$this->assertSame(Http::STATUS_OK, $this->controller()->update(self::UUID)->getStatus());
@@ -111,7 +113,7 @@ class VehicleControllerTest extends TestCase {
 		$this->params = ['uuid' => self::UUID, 'updated_at' => '1750000000'];
 		$this->service->expects($this->once())
 			->method('delete')
-			->with(self::UUID, 1750000000)
+			->with('alice', self::UUID, 1750000000)
 			->willReturn($this->stored());
 
 		$this->assertSame(Http::STATUS_OK, $this->controller()->delete(self::UUID)->getStatus());
@@ -126,6 +128,74 @@ class VehicleControllerTest extends TestCase {
 		$this->service->expects($this->never())->method('update');
 
 		$this->assertSame(Http::STATUS_BAD_REQUEST, $this->controller()->update(self::UUID)->getStatus());
+	}
+
+	/**
+	 * The stranger case on every route that takes a uuid (docs/security.md). The service decides
+	 * (VehicleAccess); what is tested here is that its refusal reaches the client as one, rather
+	 * than as the 500 an uncaught exception would be.
+	 *
+	 * @dataProvider uuidAddressedRoutes
+	 */
+	public function testAVehicleOutOfReachIsForbidden(string $route): void {
+		$this->params = ['uuid' => self::UUID, 'updated_at' => 1750000000];
+		foreach (['find', 'update', 'delete'] as $work) {
+			$this->service->method($work)->willThrowException(new AccessDeniedException());
+		}
+
+		$response = $this->controller()->$route(self::UUID);
+
+		$this->assertSame(Http::STATUS_FORBIDDEN, $response->getStatus());
+	}
+
+	/**
+	 * Every route in `appinfo/routes.php` that names a vehicle, read from the file: one added
+	 * later is one the sweep above has not been through.
+	 *
+	 * @return iterable<string, array{string}>
+	 */
+	public static function uuidAddressedRoutes(): iterable {
+		/** @var array{routes: list<array{name: string, url: string}>} $routes */
+		$routes = require __DIR__ . '/../../../appinfo/routes.php';
+		foreach ($routes['routes'] as $route) {
+			[$controller, $method] = explode('#', $route['name']);
+			if ($controller === 'vehicle' && str_contains($route['url'], '{uuid}')) {
+				yield $method => [$method];
+			}
+		}
+	}
+
+	/**
+	 * A write that lost the race is refused with 412, and the body says so: Nextcloud answers
+	 * its own failed CSRF check with 412 too, so the status alone tells a client nothing
+	 * (docs/architecture.md#concurrency).
+	 *
+	 * @dataProvider writeRoutes
+	 */
+	public function testAWriteThatLostTheRaceIsAPreconditionFailure(string $route): void {
+		$this->params = ['uuid' => self::UUID, 'updated_at' => 1750000000];
+		foreach (['update', 'delete'] as $work) {
+			$this->service->method($work)->willThrowException(new StaleUpdateException('moved on'));
+		}
+
+		$response = $this->controller()->$route(self::UUID);
+
+		$this->assertSame(Http::STATUS_PRECONDITION_FAILED, $response->getStatus());
+		$this->assertTrue($response->getData()['conflict']);
+	}
+
+	/**
+	 * Every route in `appinfo/routes.php` that writes a vehicle it already has, read from the
+	 * file: each one carries a token, so each one can lose the race.
+	 *
+	 * @return iterable<string, array{string}>
+	 */
+	public static function writeRoutes(): iterable {
+		foreach (self::uuidAddressedRoutes() as $method => $case) {
+			if ($method !== 'show') {
+				yield $method => $case;
+			}
+		}
 	}
 
 	/** A field the column cannot hold is the request's fault, and it says which field. */

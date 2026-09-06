@@ -10,20 +10,26 @@ namespace OCA\NextFleet\Tests\Unit\Service;
 
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
+use OCA\NextFleet\Exception\AccessDeniedException;
+use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\IConfig;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The rules a vehicle is written under: who owns it, what a request may and may not decide,
- * and which columns are never left to the database.
+ * The rules a vehicle is written under: who owns it, who reaches it, what a request may and may
+ * not decide, and which columns are never left to the database.
  */
 class VehicleServiceTest extends TestCase {
 	private const UUID = '0195e2f1-0000-4000-8000-000000000001';
+	private const OWNER = 'alice';
+	private const DRIVER = 'carol';
+	private const STRANGER = 'bob';
 
 	private VehicleMapper&MockObject $mapper;
 	private IConfig&MockObject $config;
+	private VehicleAccess&MockObject $access;
 
 	protected function setUp(): void {
 		$this->mapper = $this->createMock(VehicleMapper::class);
@@ -31,10 +37,22 @@ class VehicleServiceTest extends TestCase {
 
 		$this->config = $this->createMock(IConfig::class);
 		$this->config->method('getUserValue')->willReturnArgument(3);
+
+		// The rules of who reaches what are VehicleAccess's own (VehicleAccessTest); here it
+		// stands for the answer: the owner may everything, the driver may look.
+		$this->access = $this->createMock(VehicleAccess::class);
+		$this->access->method('may')->willReturnCallback(
+			static fn (string $userId, string $operation): bool => match ($userId) {
+				self::OWNER => true,
+				self::DRIVER => $operation === VehicleAccess::VIEW,
+				default => false,
+			},
+		);
+		$this->access->method('reachableVehicleIds')->willReturn([]);
 	}
 
 	private function service(): VehicleService {
-		return new VehicleService($this->mapper, $this->config);
+		return new VehicleService($this->mapper, $this->access, $this->config);
 	}
 
 	/** A vehicle as a read hands it over: clean, with its own identity and dating. */
@@ -186,9 +204,18 @@ class VehicleServiceTest extends TestCase {
 			->with($this->anything(), 1750000000)
 			->willReturnArgument(0);
 
-		$vehicle = $this->service()->update(self::UUID, 1750000000, ['plate' => 'B-ZZ 9']);
+		$vehicle = $this->service()->update(self::OWNER, self::UUID, 1750000000, ['plate' => 'B-ZZ 9']);
 
 		$this->assertSame('B-ZZ 9', $vehicle->getPlate());
+	}
+
+	/** Denied before the write, not after it: the row is not touched at all. */
+	public function testAStrangerDoesNotWriteAVehicle(): void {
+		$this->mapper->method('findByUuid')->willReturn($this->stored());
+		$this->mapper->expects($this->never())->method('updateChecked');
+
+		$this->expectException(AccessDeniedException::class);
+		$this->service()->update(self::STRANGER, self::UUID, 1750000000, ['plate' => 'B-ZZ 9']);
 	}
 
 	/**
@@ -199,7 +226,7 @@ class VehicleServiceTest extends TestCase {
 		$this->mapper->method('findByUuid')->willReturn($this->stored());
 		$this->mapper->method('updateChecked')->willReturnArgument(0);
 
-		$vehicle = $this->service()->update(self::UUID, 1750000000, ['plate' => 'B-ZZ 9']);
+		$vehicle = $this->service()->update(self::OWNER, self::UUID, 1750000000, ['plate' => 'B-ZZ 9']);
 
 		$this->assertSame('uk', $vehicle->getJurisdiction());
 		$this->assertSame('alice', $vehicle->getUserId());
@@ -217,17 +244,48 @@ class VehicleServiceTest extends TestCase {
 			->with($this->anything(), 1750000000)
 			->willReturnArgument(0);
 
-		$this->service()->delete(self::UUID, 1750000000);
+		$this->service()->delete(self::OWNER, self::UUID, 1750000000);
 	}
 
-	/** The overview is the user's own vehicles; a grant widens it from task 15 on. */
-	public function testListAsksForWhatTheUserOwns(): void {
+	/**
+	 * A check that stopped at "this user reaches the vehicle" would hand the co-driver the delete
+	 * button. Which operation is asked for is half the question.
+	 */
+	public function testAGrantToLookIsNotAGrantToDelete(): void {
+		$this->mapper->method('findByUuid')->willReturn($this->stored());
+		$this->mapper->expects($this->never())->method('softDelete');
+
+		$this->assertSame(self::UUID, $this->service()->find(self::DRIVER, self::UUID)->getUuid());
+
+		$this->expectException(AccessDeniedException::class);
+		$this->service()->delete(self::DRIVER, self::UUID, 1750000000);
+	}
+
+	/**
+	 * The overview is what a user owns and what they were granted. The grants resolve to ids
+	 * once, and the vehicles come back in one query - not one per row
+	 * (docs/architecture.md#nextcloud-integration).
+	 */
+	public function testTheListWidensToWhatWasGranted(): void {
+		$this->access = $this->createMock(VehicleAccess::class);
+		$this->access->method('reachableVehicleIds')->with(self::DRIVER)->willReturn([7, 9]);
+
 		$this->mapper->expects($this->once())
-			->method('findAllForOwner')
-			->with('alice')
+			->method('findAllVisible')
+			->with(self::DRIVER, [7, 9])
 			->willReturn([$this->stored()]);
 
-		$this->assertCount(1, $this->service()->list('alice'));
+		$this->assertCount(1, $this->service()->list(self::DRIVER));
+	}
+
+	/** Owning a vehicle takes no grant, so a user with none still sees their own fleet. */
+	public function testTheListOfSomeoneWithNoGrantIsWhatTheyOwn(): void {
+		$this->mapper->expects($this->once())
+			->method('findAllVisible')
+			->with(self::OWNER, [])
+			->willReturn([$this->stored()]);
+
+		$this->assertCount(1, $this->service()->list(self::OWNER));
 	}
 
 	/** A vehicle is found by its identity, never by the row number. */
@@ -237,7 +295,18 @@ class VehicleServiceTest extends TestCase {
 			->with(self::UUID)
 			->willReturn($this->stored());
 
-		$this->assertSame(self::UUID, $this->service()->find(self::UUID)->getUuid());
+		$this->assertSame(self::UUID, $this->service()->find(self::OWNER, self::UUID)->getUuid());
+	}
+
+	/**
+	 * The realistic bug in an id-addressed API (docs/security.md): a uuid is all it takes to name
+	 * a row, so every route that takes one asks first.
+	 */
+	public function testAStrangerDoesNotReachAVehicle(): void {
+		$this->mapper->method('findByUuid')->willReturn($this->stored());
+
+		$this->expectException(AccessDeniedException::class);
+		$this->service()->find(self::STRANGER, self::UUID);
 	}
 
 	/**
