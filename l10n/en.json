@@ -10,7 +10,10 @@
 		"Electric": "Electric",
 		"Engine": "Engine",
 		"Everything else hangs off a vehicle, so that is where a logbook starts.": "Everything else hangs off a vehicle, so that is where a logbook starts.",
+		"Generic": "Generic",
+		"Germany": "Germany",
 		"Hybrid": "Hybrid",
+		"Jurisdiction": "Jurisdiction",
 		"LPG": "LPG",
 		"Laid up": "Laid up",
 		"Manufacturer": "Manufacturer",
@@ -28,7 +31,8 @@
 		"The vehicle was added, but its counter reading was not: {reason}": "The vehicle was added, but its counter reading was not: {reason}",
 		"Try again": "Try again",
 		"Unnamed vehicle": "Unnamed vehicle",
-		"Vehicles": "Vehicles"
+		"Vehicles": "Vehicles",
+		"Vehicles you add from now on are kept under this country: its units, its currency and its rules. The ones you already have keep theirs.": "Vehicles you add from now on are kept under this country: its units, its currency and its rules. The ones you already have keep theirs."
 	},
 	"pluralForm": "nplurals=2; plural=(n != 1);"
 }

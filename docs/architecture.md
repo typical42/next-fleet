@@ -10,7 +10,9 @@ Standard Nextcloud app, no external services.
   API only (app store rule). Layers: Controller → Service → QBMapper → Entity. Migrations via
   `OCP\Migration\SimpleMigrationStep`.
 - **Vue 3 + Vite** (`@nextcloud/vite-config`, `@nextcloud/vue`), Pinia for state. **One bundle for
-  the whole supported range** — proving that is the M0 gate ([plan](../plan.md#milestones)).
+  the whole supported range** — proving that is the M0 gate ([plan](../plan.md#milestones)). One
+  per *page*, though: the app's block on the user's settings page is a second entry, because
+  mounting the fleet inside a settings section would load every view for one dropdown.
 - **One API surface in v1**: the internal route set the web UI uses
   ([ADR 0006](adr/0006-one-api-surface-in-v1.md)). The versioned OCS API and `GET /sync?since=`
   arrive with the Android client that consumes them. Until then, controllers stay thin and every
@@ -146,6 +148,14 @@ when the row has moved on. It **always advances**, to at least one second past t
 replaces, because two writes in the same second would otherwise leave the second one's token
 looking fresh. Identity and provenance — `uuid`, `created_at`, `created_by` — are not writable
 through an update at all.
+
+**Undo is the one write that does not advance the token.** `POST /api/vehicles/{uuid}/restore` runs
+`UPDATE … SET deleted_at = NULL WHERE id = ? AND updated_at = ? AND deleted_at IS NOT NULL`: the
+same check, the mirror predicate, and `updated_at` left where the delete put it. The undo toast
+holds exactly one token — the one the delete answered with — so moving it would refuse the gesture,
+and nobody else can be holding it, because it was minted by the delete and never left that response.
+A restore that matches nothing is a **412** like any other: either the row moved on, or it was never
+deleted, and both mean what you read is not what is there.
 
 **Recomputed columns stay out of it.** `fleet_vehicles.odo_value` and `fleet_odo_readings.flagged`
 are derived from the readings ([odometer rules](#odometer-rules)), so each is written by a statement

@@ -11,6 +11,7 @@ namespace OCA\NextFleet\Tests\Unit\Command;
 use OCA\NextFleet\Command\SeedCommand;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
+use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
@@ -19,6 +20,7 @@ use OCP\IConfig;
 use OCP\IUserManager;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
+use Psr\Container\ContainerInterface;
 use Symfony\Component\Console\Tester\CommandTester;
 
 /**
@@ -85,9 +87,15 @@ class SeedCommandTest extends TestCase {
 		$time = $this->createMock(ITimeFactory::class);
 		$time->method('getTime')->willReturn(1767225600);
 
-		// The real service, because what this command is worth is that the fleet it invents
-		// passes the validation every other write passes.
-		$fleet = new VehicleService($this->mapper, $access, $config);
+		// The real service and the real registration list, because what this command is worth is
+		// that the fleet it invents passes the validation every other write passes - and takes
+		// the same country defaults.
+		$container = $this->createMock(ContainerInterface::class);
+		$container->method('get')->willReturnCallback(
+			/** @param class-string $id */
+			static fn (string $id): object => new $id(),
+		);
+		$fleet = new VehicleService($this->mapper, $access, $config, new Jurisdictions($container));
 
 		return new CommandTester(new SeedCommand($this->users, $fleet, $this->odometer, $time));
 	}

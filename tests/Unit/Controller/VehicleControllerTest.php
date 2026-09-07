@@ -120,14 +120,33 @@ class VehicleControllerTest extends TestCase {
 	}
 
 	/**
-	 * Without a token there is nothing to check the write against, and a write that skips the
-	 * check is the lost update the whole mechanism exists to prevent.
+	 * So does the undo, and the token it carries is the one the delete answered with - there is
+	 * no body on the way back either, so it travels the same way.
 	 */
-	public function testAWriteWithoutATokenIsRefused(): void {
-		$this->params = ['uuid' => self::UUID, 'plate' => 'B-ZZ 9'];
-		$this->service->expects($this->never())->method('update');
+	public function testARestoreCarriesTheTokenTheDeleteAnsweredWith(): void {
+		$this->params = ['uuid' => self::UUID, 'updated_at' => '1750000000'];
+		$this->service->expects($this->once())
+			->method('restore')
+			->with('alice', self::UUID, 1750000000)
+			->willReturn($this->stored());
 
-		$this->assertSame(Http::STATUS_BAD_REQUEST, $this->controller()->update(self::UUID)->getStatus());
+		$this->assertSame(Http::STATUS_OK, $this->controller()->restore(self::UUID)->getStatus());
+	}
+
+	/**
+	 * Without a token there is nothing to check the write against, and a write that skips the
+	 * check is the lost update the whole mechanism exists to prevent. Every write route, read from
+	 * the file, so one added later cannot quietly leave the guard out.
+	 *
+	 * @dataProvider writeRoutes
+	 */
+	public function testAWriteWithoutATokenIsRefused(string $route): void {
+		$this->params = ['uuid' => self::UUID, 'plate' => 'B-ZZ 9'];
+		foreach (['update', 'delete', 'restore'] as $work) {
+			$this->service->expects($this->never())->method($work);
+		}
+
+		$this->assertSame(Http::STATUS_BAD_REQUEST, $this->controller()->$route(self::UUID)->getStatus());
 	}
 
 	/**
@@ -139,7 +158,7 @@ class VehicleControllerTest extends TestCase {
 	 */
 	public function testAVehicleOutOfReachIsForbidden(string $route): void {
 		$this->params = ['uuid' => self::UUID, 'updated_at' => 1750000000];
-		foreach (['find', 'update', 'delete'] as $work) {
+		foreach (['find', 'update', 'delete', 'restore'] as $work) {
 			$this->service->method($work)->willThrowException(new AccessDeniedException());
 		}
 
@@ -174,7 +193,7 @@ class VehicleControllerTest extends TestCase {
 	 */
 	public function testAWriteThatLostTheRaceIsAPreconditionFailure(string $route): void {
 		$this->params = ['uuid' => self::UUID, 'updated_at' => 1750000000];
-		foreach (['update', 'delete'] as $work) {
+		foreach (['update', 'delete', 'restore'] as $work) {
 			$this->service->method($work)->willThrowException(new StaleUpdateException('moved on'));
 		}
 

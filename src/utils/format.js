@@ -60,6 +60,26 @@ export function lifecycleWord(lifecycle) {
 }
 
 /**
+ * A country is a code in the config and a word on screen (docs/ui.md#languages). The words live
+ * here rather than in lib/Jurisdiction/, because the catalogues are the frontend's, and they are
+ * looked up on call because the catalogue is registered by the page and not by this module.
+ *
+ * @param {string} key - the registered key, as lib/Jurisdiction/ spells it
+ * @param {string} [name] - what the server calls it: English, and the fallback for a country this
+ *   bundle has no word for, because untranslated beats missing
+ * @return {string} the word for it
+ */
+export function jurisdictionWord(key, name = key) {
+	/** @type {Record<string, string>} */
+	const words = {
+		de: t('nextfleet', 'Germany'),
+		generic: t('nextfleet', 'Generic'),
+	}
+
+	return words[key] ?? name
+}
+
+/**
  * @param {Partial<import('../services/api.js').Vehicle>} vehicle - the vehicle as it was read
  * @return {string} manufacturer and model, as much of the two as the vehicle carries
  */
@@ -115,3 +135,36 @@ export function parseWhole(input) {
 
 	return GROUPED.test(typed) ? Number(typed.replace(/\D/g, '')) : null
 }
+
+/**
+ * A calendar day as the date picker wants it. The day is one fact and carries no time of day
+ * (docs/architecture.md#time), so it is built at local midnight: `new Date('2019-03-07')` is UTC
+ * midnight, which every local getter west of Greenwich reads back as the 6th.
+ *
+ * @param {string|null|undefined} day - the day as the API states it, `YYYY-MM-DD`
+ * @return {Date|null} that day, or null when there is none
+ */
+export function parseDay(day) {
+	const parts = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(day ?? '').trim())
+
+	return parts === null ? null : new Date(Number(parts[1]), Number(parts[2]) - 1, Number(parts[3]))
+}
+
+/**
+ * The inverse, with the same local getters the picker itself formats with.
+ *
+ * @param {Date|null|undefined} date - what the picker holds
+ * @return {string} the day as the API states it, or the empty string for no day
+ */
+export function formatDay(date) {
+	if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+		return ''
+	}
+
+	return [
+		String(date.getFullYear()).padStart(4, '0'),
+		String(date.getMonth() + 1).padStart(2, '0'),
+		String(date.getDate()).padStart(2, '0'),
+	].join('-')
+}
+

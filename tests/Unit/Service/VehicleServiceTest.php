@@ -11,11 +11,13 @@ namespace OCA\NextFleet\Tests\Unit\Service;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Exception\AccessDeniedException;
+use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\IConfig;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
+use Psr\Container\ContainerInterface;
 
 /**
  * The rules a vehicle is written under: who owns it, who reaches it, what a request may and may
@@ -52,7 +54,21 @@ class VehicleServiceTest extends TestCase {
 	}
 
 	private function service(): VehicleService {
-		return new VehicleService($this->mapper, $this->access, $this->config);
+		return new VehicleService($this->mapper, $this->access, $this->config, $this->jurisdictions());
+	}
+
+	/**
+	 * The real registration list, not a double: what this service has to get right is which
+	 * profile a vehicle is written under, and a stubbed profile would prove it against nothing.
+	 */
+	private function jurisdictions(): Jurisdictions {
+		$container = $this->createMock(ContainerInterface::class);
+		$container->method('get')->willReturnCallback(
+			/** @param class-string $id */
+			static fn (string $id): object => new $id(),
+		);
+
+		return new Jurisdictions($container);
 	}
 
 	/** A vehicle as a read hands it over: clean, with its own identity and dating. */
@@ -126,14 +142,76 @@ class VehicleServiceTest extends TestCase {
 
 	/**
 	 * The create sheet asks for four fields (docs/ui.md), so the rest of what a row needs is
-	 * decided here: a car, counted in kilometres, in service.
+	 * decided here: a car, in service. The unit and the currency are the profile's
+	 * (testCreateTakesUnitsAndCurrencyFromTheProfile).
 	 */
 	public function testCreateFillsInWhatTheSheetDoesNotAsk(): void {
 		$vehicle = $this->service()->create('alice', []);
 
 		$this->assertSame('car', $vehicle->getVehicleType());
-		$this->assertSame('km', $vehicle->getOdoUnit());
 		$this->assertSame('active', $vehicle->getLifecycle());
+	}
+
+	/**
+	 * What a country decides is asked of its profile, not held as a literal here
+	 * (docs/contributing.md): under Germany a new vehicle counts kilometres and is priced in
+	 * euros.
+	 */
+	public function testCreateTakesUnitsAndCurrencyFromTheProfile(): void {
+		$vehicle = $this->service()->create('alice', []);
+
+		$this->assertSame('de', $vehicle->getJurisdiction());
+		$this->assertSame('km', $vehicle->getOdoUnit());
+		$this->assertSame('EUR', $vehicle->getCurrency());
+	}
+
+	/**
+	 * "I don't know" is an answer and has to break nothing: the generic profile names no
+	 * currency, so the vehicle carries none and states its own later.
+	 */
+	public function testCreateUnderAProfileWithNoCurrencyWritesNone(): void {
+		$vehicle = $this->service()->create('alice', ['jurisdiction' => 'generic']);
+
+		$this->assertSame('generic', $vehicle->getJurisdiction());
+		$this->assertSame('km', $vehicle->getOdoUnit());
+		$this->assertNull($vehicle->getCurrency());
+	}
+
+	/**
+	 * The profile is the vehicle's own, not the author's: a request that states a country is
+	 * answered by that country, whatever the personal setting says.
+	 */
+	public function testAStatedJurisdictionDecidesTheDefaultsOverTheSetting(): void {
+		$this->config = $this->createMock(IConfig::class);
+		$this->config->method('getUserValue')->willReturn('generic');
+
+		$vehicle = $this->service()->create('alice', ['jurisdiction' => 'de']);
+
+		$this->assertSame('de', $vehicle->getJurisdiction());
+		$this->assertSame('EUR', $vehicle->getCurrency());
+	}
+
+	/**
+	 * A vehicle whose country left a later release still gets written: the key stays on the row,
+	 * and the generic profile answers for it (lib/Jurisdiction/Jurisdictions.php).
+	 */
+	public function testAnUnknownJurisdictionIsAnsweredByTheGenericProfile(): void {
+		$vehicle = $this->service()->create('alice', ['jurisdiction' => 'uk']);
+
+		$this->assertSame('uk', $vehicle->getJurisdiction());
+		$this->assertNull($vehicle->getCurrency());
+	}
+
+	/** A default is only a default: what the request states wins over what the country says. */
+	public function testARequestOutranksTheProfilesDefaults(): void {
+		$vehicle = $this->service()->create('alice', [
+			'jurisdiction' => 'de',
+			'currency' => 'CHF',
+			'odo_unit' => 'h',
+		]);
+
+		$this->assertSame('CHF', $vehicle->getCurrency());
+		$this->assertSame('h', $vehicle->getOdoUnit());
 	}
 
 	/**

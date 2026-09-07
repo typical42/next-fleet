@@ -22,7 +22,7 @@ The interfaces stay — as ordinary internal seams, not as public API:
 
 | Seam | Interface | First implementation |
 |---|---|---|
-| Jurisdiction profile | `IJurisdiction` — currency, units, plate format, document kinds, defaults | `de`, `generic` |
+| Jurisdiction profile | `IJurisdiction` — key, display name, units, currency, the defaults a new vehicle takes. Plate format and document kinds arrive with the feature that reads them | `de`, `generic` |
 | Logbook ruleset | `ILogbookRules` — required fields per trip category, lock delay, retention, validation findings | German Fahrtenbuch ([logbook mode](features.md#logbook-mode)) |
 | Inspection regime | `IInspectionScheme` — names, cadence, first-due rule → reminder templates | HU/AU (24 months, 36 for new cars) |
 | Rates over time | `IRateProvider` — mileage allowance, VAT, emission factors, **each valid from a date** | 0,30 €/km, German grid factor |
@@ -30,13 +30,23 @@ The interfaces stay — as ordinary internal seams, not as public API:
 | Importer | `IImporter` — foreign CSV in, our records out | Drivvo, Spritmonitor, LubeLogger |
 | Service templates | `IServiceTemplates` — intervals by market or manufacturer | Generic (oil, brakes, tyres) |
 
-A country is `lib/Jurisdiction/<Cc>/`, wired up in one registration list. Reviewing it means reading
-one directory, and deleting it means deleting one directory.
+A country is `lib/Jurisdiction/<Cc>/`, wired up in one registration list — `Jurisdictions::PROFILES`,
+one line per country, resolved through the container so a profile can take dependencies. Reviewing a
+country means reading one directory; deleting it means deleting that directory and its line — and,
+for the country `Jurisdictions::DEFAULT` names, naming another first. A key nobody has written
+resolves to `generic` rather than throwing: a vehicle registered under a country a later release
+dropped must still open.
 
-**The generic profile is one of them.** Metric units, the instance's currency, no logbook ruleset,
-no inspection scheme, no rates. It is what an install in a country nobody has written gets, and it
-is why a report needing a rate must be *unavailable* rather than zero. Every seam has to tolerate a
-jurisdiction that answers "I don't know" — the generic profile is the test that it does.
+The profile is the only seam M1 fills; the rest stay empty interfaces until the milestone that needs
+them ([milestones](../plan.md#milestones)). The other classes already sitting in
+`lib/Jurisdiction/De/` are placeholders for those milestones, empty and wired to nothing.
+
+**The generic profile is the other one.** Metric units, no currency, no logbook ruleset, no inspection
+scheme, no rates. A vehicle under it states its own currency — an instance-wide one would be a
+single number for a fleet that crosses borders. It is what an install in a country nobody has
+written gets, and it is why a report needing a rate must be *unavailable* rather than zero. Every
+seam has to tolerate a jurisdiction that answers "I don't know" — the generic profile is the test
+that it does.
 
 ## Rules that keep the seam honest
 
@@ -50,8 +60,8 @@ jurisdiction that answers "I don't know" — the generic profile is the test tha
   including for a UK vehicle. Conversion happens at the edges.
 - **Jurisdiction is per vehicle**, not per instance: a fleet crosses borders, and a leased car
   registered abroad keeps its own rules. It is not asked for when a vehicle is created — it defaults
-  from the instance setting, then the user's locale, and is changed in the vehicle sidebar
-  ([interface](ui.md#details-that-decide-whether-it-feels-easy)).
+  from the user's personal setting, and is changed in the vehicle's edit sheet until the sidebar
+  exists ([interface](ui.md#details-that-decide-whether-it-feels-easy)).
 - **Validation returns findings, not exceptions** ([data model](architecture.md#data-model)). A
   ruleset says "this trip has no purpose and your jurisdiction requires one" — the record is still
   saved, still flagged, still fixable.
@@ -87,4 +97,6 @@ written to prevent. A real `uk` ships when a maintainer signs up in `CODEOWNERS`
 ## Consequence for the interface
 
 Units stop being a "low priority setting". They are a property of the jurisdiction, resolved on
-display, and the l/100 km ↔ mpg conversion belongs in the profile — not in a checkbox.
+display, and the l/100 km ↔ mpg conversion belongs in the profile — not in a checkbox. What
+`IJurisdiction` answers today is what a vehicle is *stored* under; the display units join it in the
+same interface with the first screen that converts, never as a user setting.

@@ -161,13 +161,33 @@ abstract class BaseMapper extends QBMapper {
 	 * @throws \OCP\DB\Exception
 	 */
 	public function findByUuid(string $uuid): BaseEntity {
+		$qb = $this->byUuid($uuid);
+		$qb->andWhere($qb->expr()->isNull('deleted_at'));
+
+		return $this->findEntity($qb);
+	}
+
+	/**
+	 * The same row whatever state it is in. A restore is the one caller that wants it: the row it
+	 * is after is precisely the one findByUuid() passes over, and a restore of a row somebody
+	 * already brought back has to say "not as you read it" rather than "no such thing".
+	 *
+	 * @return T
+	 * @throws DoesNotExistException
+	 * @throws MultipleObjectsReturnedException
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findAnyByUuid(string $uuid): BaseEntity {
+		return $this->findEntity($this->byUuid($uuid));
+	}
+
+	private function byUuid(string $uuid): IQueryBuilder {
 		$qb = $this->db->getQueryBuilder();
 		$qb->select('*')
 			->from($this->tableName)
-			->where($qb->expr()->eq('uuid', $qb->createNamedParameter($uuid)))
-			->andWhere($qb->expr()->isNull('deleted_at'));
+			->where($qb->expr()->eq('uuid', $qb->createNamedParameter($uuid)));
 
-		return $this->findEntity($qb);
+		return $qb;
 	}
 
 	/**
@@ -184,6 +204,49 @@ abstract class BaseMapper extends QBMapper {
 		$entity->setDeletedAt($this->time->getTime());
 
 		return $this->updateChecked($entity, $expectedUpdatedAt);
+	}
+
+	/**
+	 * Undo: the stamp taken off again, on the row the client read and only while it is still
+	 * stamped. A statement that matched a live row would undo a delete nobody did.
+	 *
+	 * The token does not move. It names the state the row is put back into, and the undo toast
+	 * holds exactly one of them - the one the delete answered with - so advancing it here would
+	 * refuse the gesture it exists for. Nobody else can be holding it either: it was minted by
+	 * the delete and never left that response.
+	 *
+	 * @param T $entity
+	 * @param int $expectedUpdatedAt the `updated_at` the delete answered with
+	 * @return T
+	 * @throws StaleUpdateException if the row has changed since, or was never deleted
+	 * @throws \OCP\DB\Exception
+	 */
+	public function restoreChecked(BaseEntity $entity, int $expectedUpdatedAt): BaseEntity {
+		$id = $entity->getId();
+		if ($id === null) {
+			throw new \InvalidArgumentException('Entity which should be restored has no id');
+		}
+
+		$qb = $this->db->getQueryBuilder();
+		$qb->update($this->tableName)
+			->set('deleted_at', $qb->createNamedParameter(null, IQueryBuilder::PARAM_INT))
+			->where($qb->expr()->eq('id', $qb->createNamedParameter($id, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->eq(
+				'updated_at',
+				$qb->createNamedParameter($expectedUpdatedAt, IQueryBuilder::PARAM_INT),
+			))
+			->andWhere($qb->expr()->isNotNull('deleted_at'));
+
+		if ($qb->executeStatement() === 0) {
+			throw new StaleUpdateException(
+				$this->tableName . ' row ' . $id . ' is not the deleted row that was read',
+			);
+		}
+
+		$entity->setDeletedAt(null);
+		$entity->resetUpdatedFields();
+
+		return $entity;
 	}
 
 	/**

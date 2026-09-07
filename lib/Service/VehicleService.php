@@ -13,6 +13,7 @@ use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Exception\AccessDeniedException;
 use OCA\NextFleet\Exception\StaleUpdateException;
+use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\IConfig;
 
@@ -71,18 +72,18 @@ class VehicleService {
 	private const REQUIRED = ['vehicle_type', 'odo_unit', 'jurisdiction', 'lifecycle'];
 
 	/**
-	 * What the create sheet does not ask for (docs/ui.md). Germany is the first jurisdiction
-	 * (plan.md); metric is what a vehicle counts in until someone says otherwise.
+	 * What the create sheet does not ask for (docs/ui.md) and no country decides: neither a car
+	 * nor being in service is a German fact. Units and currency are the profile's
+	 * (lib/Jurisdiction/IJurisdiction.php).
 	 */
-	private const JURISDICTION_FALLBACK = 'de';
 	private const VEHICLE_TYPE_FALLBACK = 'car';
-	private const ODO_UNIT_FALLBACK = 'km';
 	private const LIFECYCLE_FALLBACK = 'active';
 
 	public function __construct(
 		private VehicleMapper $mapper,
 		private VehicleAccess $access,
 		private IConfig $config,
+		private Jurisdictions $jurisdictions,
 	) {
 	}
 
@@ -94,39 +95,59 @@ class VehicleService {
 		$vehicle = new Vehicle();
 		$vehicle->setUserId($userId);
 		$vehicle->setCreatedBy($userId);
+		$jurisdiction = $this->jurisdictionOf($userId, $fields);
+		$profile = $this->jurisdictions->get($jurisdiction);
 		// Written before the request is applied, so a payload value wins - and written at all,
 		// however well a property default already agrees, because a clean property is not
 		// dirty and QBMapper leaves it out of the INSERT.
 		$vehicle->setVehicleType(self::VEHICLE_TYPE_FALLBACK);
-		$vehicle->setOdoUnit(self::ODO_UNIT_FALLBACK);
 		$vehicle->setLifecycle(self::LIFECYCLE_FALLBACK);
-		$vehicle->setJurisdiction($this->jurisdictionOf($userId));
+		$vehicle->setJurisdiction($jurisdiction);
+		// What the country decides, asked rather than assumed. The answers reach no validator:
+		// a profile is code, and tests/Country/ holds it to what these columns take. A null
+		// currency is an answer - the vehicle states its own (docs/contributing.md).
+		$vehicle->setOdoUnit($profile->odoUnit());
+		$vehicle->setCurrency($profile->currency());
 		$this->apply($vehicle, $fields);
 
 		return $this->mapper->insert($vehicle);
 	}
 
 	/**
-	 * The user's own default (docs/ui.md), held to the same shape a request would be: a stored
-	 * setting reaches no validator on its way in, and one the column cannot hold would fail
-	 * every create rather than the one screen that wrote it.
+	 * Which country's rules the new vehicle is written under: what the request states, else the
+	 * user's own default (docs/ui.md), else this release's. An unknown key is kept rather than
+	 * corrected - the registration list answers for it.
+	 *
+	 * @param array<string, mixed> $fields
 	 */
-	private function jurisdictionOf(string $userId): string {
+	private function jurisdictionOf(string $userId, array $fields): string {
 		$stored = $this->config->getUserValue(
 			$userId,
 			Application::APP_ID,
 			'jurisdiction',
-			self::JURISDICTION_FALLBACK,
+			Jurisdictions::DEFAULT,
 		);
 
+		return $this->jurisdictionIn($fields['jurisdiction'] ?? null)
+			?? $this->jurisdictionIn($stored)
+			?? Jurisdictions::DEFAULT;
+	}
+
+	/**
+	 * One candidate key, or null where it is no key at all. A stored setting reaches no
+	 * validator on its way in, so one the column cannot hold would otherwise fail every create
+	 * rather than the one screen that wrote it; a request stating the same thing is refused by
+	 * `apply()` a moment later, which is where a 400 belongs.
+	 */
+	private function jurisdictionIn(mixed $value): ?string {
 		[, $kind, $limit] = self::WRITABLE['jurisdiction'];
 		try {
-			$jurisdiction = $this->read('jurisdiction', $kind, $limit, $stored);
+			$jurisdiction = $this->read('jurisdiction', $kind, $limit, $value);
 		} catch (\InvalidArgumentException) {
-			$jurisdiction = null;
+			return null;
 		}
 
-		return is_string($jurisdiction) ? $jurisdiction : self::JURISDICTION_FALLBACK;
+		return is_string($jurisdiction) ? $jurisdiction : null;
 	}
 
 	/**
@@ -162,6 +183,24 @@ class VehicleService {
 	}
 
 	/**
+	 * Undo, and it takes the right the delete took - a viewer who cannot delete cannot un-delete.
+	 * The lookup ignores `deleted_at`, so a stranger gets the same refusal here as on every other
+	 * route rather than a 404 that would tell them which uuids are in somebody's trash.
+	 *
+	 * @param int $expectedUpdatedAt the `updated_at` the delete answered with
+	 * @throws DoesNotExistException
+	 * @throws AccessDeniedException if the user may not delete this vehicle
+	 * @throws StaleUpdateException if the row has changed since, or was never deleted
+	 * @throws \OCP\DB\Exception
+	 */
+	public function restore(string $userId, string $uuid, int $expectedUpdatedAt): Vehicle {
+		return $this->mapper->restoreChecked(
+			$this->permit($userId, VehicleAccess::DELETE, $this->mapper->findAnyByUuid($uuid)),
+			$expectedUpdatedAt,
+		);
+	}
+
+	/**
 	 * @throws DoesNotExistException
 	 * @throws AccessDeniedException if the user holds nothing on this vehicle
 	 * @throws \OCP\DB\Exception
@@ -181,7 +220,17 @@ class VehicleService {
 	 * @throws \OCP\DB\Exception
 	 */
 	public function reach(string $userId, string $operation, string $uuid): Vehicle {
-		$vehicle = $this->mapper->findByUuid($uuid);
+		return $this->permit($userId, $operation, $this->mapper->findByUuid($uuid));
+	}
+
+	/**
+	 * The gate itself, once a row is in hand. Separate from reach() only because a restore looks
+	 * the row up differently and must still be refused by the same rule.
+	 *
+	 * @throws AccessDeniedException
+	 * @throws \OCP\DB\Exception
+	 */
+	private function permit(string $userId, string $operation, Vehicle $vehicle): Vehicle {
 		if (!$this->access->may($userId, $operation, $vehicle)) {
 			throw new AccessDeniedException();
 		}

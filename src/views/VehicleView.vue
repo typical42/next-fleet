@@ -8,6 +8,7 @@ import NcButton from '@nextcloud/vue/components/NcButton'
 import { ref } from 'vue'
 
 import EntrySheet from '../components/EntrySheet.vue'
+import VehicleSheet from '../components/VehicleSheet.vue'
 import { formatOdometer, nameOf, subtitleOf } from '../utils/format.js'
 
 defineProps({
@@ -16,6 +17,7 @@ defineProps({
 })
 
 const entering = ref(false)
+const editing = ref(false)
 </script>
 
 <template>

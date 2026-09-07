@@ -74,9 +74,14 @@ touch. That keeps the middle free for the things you touch weekly.
 | **Overview** | All vehicles, sorted by urgency, not alphabetically. Traffic light, plate, km, next due. | Open a vehicle |
 | **Vehicle** | Header KPIs + due banner + timeline (above) | **+ Entry** |
 | **Entry sheet** | Trip / Energy / Maintenance / Odometer — see below | Save |
+| **Vehicle sheet** | Create with four fields; edit every writable one, plus lifecycle and jurisdiction | Save |
 | **Costs** | One year, one vehicle: stacked bars per month, table below, export button | Export |
 | **Reports** | Fahrtenbuch, mileage claim, cost, CO₂ — pick a range, get a printable page ([ADR 0005](adr/0005-no-pdf-library.md)) | Print / export |
 | **Vehicle sidebar** | Master data, jurisdiction, documents, reminders (sharing from M6) | Edit inline |
+| **Personal settings** | The defaults a person keeps, jurisdiction first. Not a screen in the app: it is the app's block on Nextcloud's own settings page, its own bundle, and it talks to the same API as everything else | Pick and it saves |
+
+The **Settings** entry in the sketch above is a link into that page, not a seventh screen. A
+preference belongs to the person, so it lives where a person looks for their preferences.
 
 ### The entry sheet, in detail
 
@@ -125,8 +130,8 @@ not a project.
   current km. Tank size, VIN, first registration and inspection date arrive through a dismissible
   "complete this vehicle" hint on the overview. A twelve-field wall on first run loses people
   before they have a single record.
-- **The jurisdiction is not a fifth field.** It defaults from the instance setting, then the user's
-  locale, and lives in the vehicle sidebar where it can be changed
+- **The jurisdiction is not a fifth field.** It defaults from the user's personal setting and is
+  changed in the vehicle's edit sheet, moving to the sidebar when that exists
   ([contributing](contributing.md)). It decides units, currency and rules — and a freelancer's
   vehicles are all in one country, so asking would cost more than it is worth.
 - **Empty states do the teaching.** Not "no entries" but the two buttons that create the first one,
@@ -143,7 +148,7 @@ not a project.
   generator ([the maths](architecture.md#numbers-consumption-cost-emissions)).
 - **One primary button per screen.** On the vehicle screen that is **+ Entry** — not "Edit
   vehicle", which people need twice a year.
-- **Keyboard:** `n` new entry, `/` search, `Esc` closes the sheet.
+- **Keyboard:** `n` new entry, `Esc` closes the sheet. `/` focuses search once search exists (M5).
 - **Dark mode and 320 px width are acceptance criteria**, not afterthoughts; the timeline is rows,
   not cards, so it survives both.
 

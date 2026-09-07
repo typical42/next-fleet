@@ -16,7 +16,10 @@ OC.L10N.register(
 		Electric: 'Elektro',
 		Engine: 'Antrieb',
 		'Everything else hangs off a vehicle, so that is where a logbook starts.': 'Alles hängt am Fahrzeug – legen Sie eines an, dann beginnt das Fahrtenbuch.',
+		Generic: 'Allgemein',
+		Germany: 'Deutschland',
 		Hybrid: 'Hybrid',
+		Jurisdiction: 'Rechtsraum',
 		LPG: 'LPG',
 		'Laid up': 'Stillgelegt',
 		Manufacturer: 'Hersteller',
@@ -35,5 +38,6 @@ OC.L10N.register(
 		'Try again': 'Erneut versuchen',
 		'Unnamed vehicle': 'Fahrzeug ohne Namen',
 		Vehicles: 'Fahrzeuge',
+		'Vehicles you add from now on are kept under this country: its units, its currency and its rules. The ones you already have keep theirs.': 'Fahrzeuge, die Sie ab jetzt anlegen, werden nach den Regeln dieses Landes geführt: Einheiten, Währung und Vorschriften. Vorhandene Fahrzeuge behalten ihres.',
 	},
 	'nplurals=2; plural=(n != 1);')

@@ -135,24 +135,35 @@ Psalm analyses `lib/`, `templates/`, `tests/` and `appinfo/routes.php`. Template
 which belongs to Nextcloud's legacy template layer rather than to OCP and so is in no package here;
 `tests/Stub/template_functions.php` declares it for both Psalm and PHPUnit.
 
-`npm run build` bundles `src/main.js` into `js/nextfleet-main.mjs`; `npm run watch` does the same
-in development mode and rebuilds on save. Two bits of noise to ignore: `@nextcloud/vite-config`
+`npm run build` bundles one entry per page the app puts a bundle on: `src/main.js` into
+`js/nextfleet-main.mjs` for the app itself, and `src/settings.js` into `js/nextfleet-settings.mjs`
+for its block on the user's settings page. Vite names each output after its entry key in
+`vite.config.js`, which is what the template then asks `script()` for. `npm run watch` does the
+same in development mode and rebuilds on save. Two bits of noise to ignore: `@nextcloud/vite-config`
 sets `outDir` to the repo root on purpose, so that every build prints Vite's "build.outDir must not
 be … a parent directory of root"; and its polyfill chain pulls in `elliptic` and `crypto-browserify`,
 so `npm audit` reports seven low-severity advisories with no upstream fix. Gate CI at `--audit-level
 moderate` rather than muting the tool.
 
-The build also writes `css/nextfleet-main.css` and a hashed `css/*.chunk.css` beside the
-hand-written `css/app.css`: `@nextcloud/vue` ships a stylesheet the bundle does not carry, so
-`templates/main.php` asks for both the script and the style. The two generated files are gitignored
-and skipped by Stylelint; `css/app.css` is the only source there. The chunk carries a content hash
+The build also writes a `css/nextfleet-<entry>.css` per entry and a hashed `css/*.chunk.css` beside
+the hand-written `css/app.css`: `@nextcloud/vue` ships a stylesheet the bundle does not carry, so
+each template asks for both the script and the style. The generated files are gitignored by
+pattern — a new entry needs no new ignore line — and skipped by Stylelint; `css/app.css` is the
+only source there. The chunk carries a content hash
 and the build cannot empty a directory it shares with sources, so old ones pile up — delete them
 when they bother you, nothing reads them.
 
 `npm run lint` runs all three static frontend checks in turn — ESLint, Stylelint, then `tsc
 --noEmit` — and `npm run lint:js`, `lint:css` and `lint:types` run them one at a time. `npm test`
-is Vitest; frontend tests sit next to what they test as `src/**/*.spec.js`. The only frontend tests
-under `tests/` are Playwright's, in `tests/e2e/`; everything else there is PHPUnit's.
+is Vitest; frontend tests sit next to what they test as `src/**/*.spec.js`, and `tests/js/` holds
+the ones about the repository itself rather than about the app. `tests/e2e/` is Playwright's and
+stays out of the Vitest run; everything else under `tests/` is PHPUnit's.
+
+Vitest transforms `@nextcloud/vue` rather than letting Node load it (`server.deps.inline` in
+`vitest.config.js`). Its components import their own `.css`, which Node refuses with "Unknown file
+extension" — as a suite-level import error, so the message names the component and not the cause.
+A spec that mounts one also wants `shallowMount`: rendering `NcSelect` for real pulls in the whole
+library, and reading a stub's props says more about this app than its markup does.
 
 `@nextcloud/eslint-config` is held at 8.x, the same trap as Psalm above: version 9 needs ESLint 10
 and Node's `findPackageJSON`, which arrives in Node 22, so it installs on the Node 20 here and then
@@ -182,6 +193,11 @@ app31     nextcloud:31-apache — port 8081, same mount
 cron      nextcloud:34-apache — same image, runs cron.php every 5 min, so reminders actually fire
 mail      axllent/mailpit     — SMTP sink on :1025, web UI on :8025
 ```
+
+The file sets `name: nextfleet`, and everything the stack creates carries that prefix —
+`nextfleet_default`, `nextfleet-app-1`. Compose otherwise names the project after the directory the
+file sits in, which here is `.docker`, and a stack called `docker` collides with every other repo
+that keeps one in the same place.
 
 The bind mount is the whole trick: edit in WSL, reload the browser. `npm run watch` in the repo
 rebuilds the frontend into the same directory.
@@ -233,6 +249,9 @@ Chromium's own dependencies are system packages and `npx playwright install --wi
 root. Where that is not available, `npm run test:e2e:docker` runs the same specs inside Playwright's
 own image, which ships them, on the host network. The image tag in that script is the
 `@playwright/test` version: Playwright refuses browsers it did not build, so bump the two together.
+`npm run screenshots:docker` names the same tag a third time, and `npm update` moves the installed
+version without touching any of the three — `tests/js/playwright-pin.spec.js` measures all three
+against the lockfile so that drift is a failed test rather than a broken container.
 
 **Disable the first-run wizard on both instances** — `occ app:disable firstrunwizard`. Its modal
 covers the page on a fresh install, and Playwright waits out its timeout on the first click without

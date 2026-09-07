@@ -36,6 +36,16 @@ import { generateUrl } from '@nextcloud/router'
  */
 
 /**
+ * The personal settings screen's whole state: what this user chose, and what each choice may be.
+ * The options travel with the values because a dropdown needs both and the app has one API
+ * surface (docs/adr/0006-one-api-surface-in-v1.md).
+ *
+ * @typedef {object} Settings
+ * @property {{ jurisdiction: string }} preferences - this user's own choices
+ * @property {{ key: string, name: string }[]} jurisdictions - the registered countries, English
+ */
+
+/**
  * The row moved on since it was read, so the write was refused instead of overwriting it
  * (docs/architecture.md#concurrency). Its own class because the sheet answers it differently
  * from every other failure: the values are fine, the version is not.
@@ -95,6 +105,27 @@ export async function updateVehicle(vehicle) {
  */
 export async function recordReading(uuid, entry) {
 	return request('POST', `/api/vehicles/${uuid}/readings`, entry)
+}
+
+/**
+ * This user's settings. No identity in the URL: a session reaches its own and no others
+ * (docs/security.md).
+ *
+ * @return {Promise<Settings>} the choices and the options they are picked from
+ */
+export async function getPreferences() {
+	return request('GET', '/api/preferences')
+}
+
+/**
+ * Change a preference. It carries no token — a personal setting has one writer, so there is no
+ * race to lose (docs/architecture.md#concurrency).
+ *
+ * @param {Partial<Settings['preferences']>} fields - the preferences to change, the rest untouched
+ * @return {Promise<Settings>} the settings as the server now holds them
+ */
+export async function savePreferences(fields) {
+	return request('PUT', '/api/preferences', fields)
 }
 
 /**
