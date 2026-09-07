@@ -17,7 +17,12 @@ const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', lifecy
  * @return {import('@vue/test-utils').VueWrapper} the screen, mounted on one vehicle
  */
 function screen() {
-	return shallowMount(VehicleView, { props: { vehicle: VEHICLE } })
+	// A stub renders no slot of its own, and a button says what it is in its slot - so the two
+	// buttons of this screen would be indistinguishable without this.
+	return shallowMount(VehicleView, {
+		props: { vehicle: VEHICLE },
+		global: { renderStubDefaultSlot: true },
+	})
 }
 
 /**
@@ -29,6 +34,14 @@ function button(wrapper, text) {
 	return wrapper.findAllComponents(NcButton).find((one) => one.text() === text)
 }
 
+/**
+ * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted screen
+ * @return {any} the vehicle sheet, whether the screen is showing one or not
+ */
+function sheet(wrapper) {
+	return wrapper.findComponent(VehicleSheet)
+}
+
 describe('the vehicle screen', () => {
 	/**
 	 * One primary button per screen, and on this one it is the entry - editing a vehicle is
@@ -37,17 +50,22 @@ describe('the vehicle screen', () => {
 	it('offers the entry first and the edit beside it', () => {
 		const wrapper = screen()
 
+		// First in the markup as well as first in emphasis: reading, tab and wrapping order are
+		// the same order.
+		expect(wrapper.findAllComponents(NcButton).map((one) => one.text()))
+			.toEqual(['New entry', 'Edit vehicle'])
 		expect(button(wrapper, 'New entry').props('variant')).toBe('primary')
 		expect(button(wrapper, 'Edit vehicle').props('variant')).not.toBe('primary')
 	})
 
 	it('edits the vehicle it is showing', async () => {
 		const wrapper = screen()
-		expect(wrapper.findComponent(VehicleSheet).exists()).toBe(false)
+		expect(sheet(wrapper).exists()).toBe(false)
 
 		await button(wrapper, 'Edit vehicle').vm.$emit('click')
 
-		expect(wrapper.findComponent(VehicleSheet).props('vehicle')).toBe(VEHICLE)
+		// Equal rather than identical: a prop reaches the child through Vue's reactive proxy.
+		expect(sheet(wrapper).props('vehicle')).toEqual(VEHICLE)
 		expect(wrapper.findComponent(EntrySheet).exists()).toBe(false)
 	})
 
@@ -56,8 +74,8 @@ describe('the vehicle screen', () => {
 		const wrapper = screen()
 
 		await button(wrapper, 'Edit vehicle').vm.$emit('click')
-		await wrapper.findComponent(VehicleSheet).vm.$emit('saved', VEHICLE)
+		await sheet(wrapper).vm.$emit('saved', VEHICLE)
 
-		expect(wrapper.findComponent(VehicleSheet).exists()).toBe(false)
+		expect(sheet(wrapper).exists()).toBe(false)
 	})
 })

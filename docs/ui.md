@@ -74,7 +74,7 @@ touch. That keeps the middle free for the things you touch weekly.
 | **Overview** | All vehicles, sorted by urgency, not alphabetically. Traffic light, plate, km, next due. | Open a vehicle |
 | **Vehicle** | Header KPIs + due banner + timeline (above) | **+ Entry** |
 | **Entry sheet** | Trip / Energy / Maintenance / Odometer — see below | Save |
-| **Vehicle sheet** | Create with four fields; edit every writable one, plus lifecycle and jurisdiction | Save |
+| **Vehicle sheet** | Create with four fields; edit every writable one, plus lifecycle and jurisdiction; delete, undoably | Save |
 | **Costs** | One year, one vehicle: stacked bars per month, table below, export button | Export |
 | **Reports** | Fahrtenbuch, mileage claim, cost, CO₂ — pick a range, get a printable page ([ADR 0005](adr/0005-no-pdf-library.md)) | Print / export |
 | **Vehicle sidebar** | Master data, jurisdiction, documents, reminders (sharing from M6) | Edit inline |
@@ -115,8 +115,19 @@ Rules for all four:
   phone that may be shared or lost, to solve a problem the open sheet already solves. The driver
   loses a tap, and only if they close the tab. (The Android client will need a real offline queue.
   It will also need the clock handling in [time](architecture.md#time); neither is a v1 concern.)
+- **A refused write is the one failure that is not about the values.** A save the server refused
+  because the row moved on ([concurrency](architecture.md#concurrency)) leaves the sheet saying so,
+  and the retry becomes _Save anyway_: it reads the vehicle back and writes what is on screen under
+  the token that came with it. What is on screen wins — the person looking at it is the one who
+  knows whether the other change matters, and the message says that is what the button does.
 - Saving returns to where you were, with an undo toast. Nothing asks "are you sure?"; `deleted_at`
   ([data model](architecture.md#data-model)) makes undo the cheaper pattern.
+- **The undo outlives what it undoes.** Deleting a vehicle takes its screen with it, so the toast
+  hangs in the app shell rather than under the screen that asked. It carries the token the delete
+  answered with ([concurrency](architecture.md#concurrency)) and no clock: a way back that
+  disappears on a timer is a time limit on the only way back there is. A refused undo says so and
+  stops offering the click, because the row moved on and the next click would be refused the same
+  way.
 
 ### The QR shortcut
 

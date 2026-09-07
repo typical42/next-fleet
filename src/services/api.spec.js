@@ -4,7 +4,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ConflictError, createVehicle, getPreferences, listVehicles, recordReading, savePreferences, updateVehicle } from './api.js'
+import { ConflictError, createVehicle, deleteVehicle, getPreferences, listVehicles, recordReading, restoreVehicle, savePreferences, updateVehicle } from './api.js'
 
 vi.mock('@nextcloud/router', () => ({
 	generateUrl: (/** @type {string} */ path) => `/index.php${path}`,
@@ -125,6 +125,57 @@ describe('updateVehicle', () => {
 
 		expect(failure).toBeInstanceOf(Error)
 		expect(failure).not.toBeInstanceOf(ConflictError)
+	})
+})
+
+describe('deleteVehicle', () => {
+	/**
+	 * A DELETE has no body, so the token the write is checked against travels in the query string
+	 * (lib/Controller/VehicleController.php). What comes back is the vehicle as the delete left it,
+	 * and the token on it is the only one the undo is accepted with
+	 * (docs/architecture.md#concurrency).
+	 */
+	it('sends the token in the query string and answers with the one the undo needs', async () => {
+		const fetch = answers(200, { ...vehicle, updated_at: 1750000002 })
+
+		const deleted = await deleteVehicle(vehicle)
+
+		const [url, options] = fetch.mock.calls[0]
+		expect(url).toContain(`/apps/nextfleet/api/vehicles/${vehicle.uuid}?updated_at=1750000000`)
+		expect(options.method).toBe('DELETE')
+		expect(options.body).toBeUndefined()
+		expect(deleted.updated_at).toBe(1750000002)
+	})
+})
+
+describe('restoreVehicle', () => {
+	/**
+	 * Undo is the one write that does not advance the token, so it is checked against the very
+	 * token the delete answered with (docs/architecture.md#concurrency) - the toast holds that
+	 * vehicle and hands it back here.
+	 */
+	it('posts the token the delete answered with', async () => {
+		const deleted = { ...vehicle, updated_at: 1750000002 }
+		const fetch = answers(200, deleted)
+
+		const back = await restoreVehicle(deleted)
+
+		const [url, options] = fetch.mock.calls[0]
+		expect(url).toContain(`/apps/nextfleet/api/vehicles/${vehicle.uuid}/restore`)
+		expect(options.method).toBe('POST')
+		expect(JSON.parse(options.body)).toEqual({ updated_at: 1750000002 })
+		expect(back.uuid).toBe(vehicle.uuid)
+	})
+
+	/**
+	 * The row moved on since the delete, so the token the toast holds matches nothing. It is the
+	 * same refusal a save gets and it reaches the caller as one: the toast has to say the way back
+	 * is gone rather than claim the vehicle is here.
+	 */
+	it('raises the conflict when the token no longer matches', async () => {
+		answers(412, { message: 'Changed since you read it', conflict: true })
+
+		await expect(restoreVehicle(vehicle)).rejects.toBeInstanceOf(ConflictError)
 	})
 })
 
