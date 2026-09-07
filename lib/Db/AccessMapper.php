@@ -53,6 +53,11 @@ class AccessMapper extends BaseMapper {
 	 * @throws \OCP\DB\Exception
 	 */
 	public function findVehicleIds(string $userId, array $groupIds, array $roles): array {
+		// No role covers the operation, so no grant can - and an empty IN () would not parse.
+		if ($roles === []) {
+			return [];
+		}
+
 		$qb = $this->db->getQueryBuilder();
 		$qb->selectDistinct('vehicle_id')
 			->from($this->tableName)

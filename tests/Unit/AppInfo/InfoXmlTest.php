@@ -10,6 +10,7 @@ namespace OCA\NextFleet\Tests\Unit\AppInfo;
 
 use DOMDocument;
 use LibXMLError;
+use OCP\Settings\ISettings;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Console\Command\Command;
 
@@ -74,6 +75,39 @@ class InfoXmlTest extends TestCase {
 		// Order is the file's own business - what matters is that the two lists hold the same
 		// classes.
 		$this->assertEqualsCanonicalizing($this->commandClasses(), $registered);
+	}
+
+	/**
+	 * The same trap one directory over: Nextcloud learns a settings form from this file alone, so
+	 * an ISettings class that is not listed here never reaches a user's settings page - and it is
+	 * loadable and green under its own unit test, so nothing says it is unreachable.
+	 */
+	public function testEveryPersonalSettingIsRegistered(): void {
+		$info = simplexml_load_file(self::ROOT . '/appinfo/info.xml');
+		$this->assertNotFalse($info);
+
+		$this->assertEqualsCanonicalizing(
+			$this->settingsClasses(),
+			array_map('strval', $info->xpath('/info/settings/personal') ?: []),
+		);
+	}
+
+	/**
+	 * Every class under lib/Settings/ the settings manager could render. A stub that does not
+	 * implement ISettings yet is not one of them.
+	 *
+	 * @return list<string>
+	 */
+	private function settingsClasses(): array {
+		$classes = [];
+		foreach (glob(self::ROOT . '/lib/Settings/*.php') ?: [] as $file) {
+			$class = 'OCA\\NextFleet\\Settings\\' . basename($file, '.php');
+			if (is_subclass_of($class, ISettings::class)) {
+				$classes[] = $class;
+			}
+		}
+
+		return $classes;
 	}
 
 	/**

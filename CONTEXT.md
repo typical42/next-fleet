@@ -130,8 +130,9 @@ cadence, rates. One directory under `lib/Jurisdiction/`. Per vehicle, not per in
 _Avoid_: Country, locale, region, profile
 
 **Generic Jurisdiction**:
-The fallback: metric units, the instance's currency, no logbook ruleset, no inspection scheme, no
-rates. A report that needs a rate is unavailable under it, never zero.
+The fallback: metric units, no currency, no logbook ruleset, no inspection scheme, no rates. A
+vehicle under it states its own currency. A report that needs a rate is unavailable under it, never
+zero.
 
 **Logbook Mode**:
 The per-vehicle switch that makes a vehicle's trips append-only and auditable, under its

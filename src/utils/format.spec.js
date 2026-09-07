@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { formatCount, formatOdometer, nameOf, parseWhole, subtitleOf } from './format.js'
+import { formatCount, formatDay, formatOdometer, nameOf, parseDay, parseWhole, subtitleOf } from './format.js'
 
 vi.mock('@nextcloud/l10n', () => ({
 	getCanonicalLocale: () => 'en-GB',
@@ -100,5 +100,25 @@ describe('parseWhole', () => {
 		expect(parseWhole('full')).toBeNull()
 		expect(parseWhole('-5')).toBeNull()
 		expect(parseWhole('')).toBeNull()
+	})
+})
+
+describe('a calendar day', () => {
+	/**
+	 * A day is one fact and carries no time of day (docs/architecture.md#time). The date picker
+	 * speaks Date, so the day has to survive the trip through one - and a UTC midnight read back
+	 * with a local getter is the day before, west of Greenwich.
+	 */
+	it('survives the trip through the picker', () => {
+		expect(formatDay(parseDay('2019-03-07'))).toBe('2019-03-07')
+		expect(formatDay(parseDay('2024-01-01'))).toBe('2024-01-01')
+		expect(parseDay('2019-03-07')?.getDate()).toBe(7)
+	})
+
+	/** A vehicle that was never disposed of has no disposal day, and says so. */
+	it('is nothing when there is no day', () => {
+		expect(parseDay(null)).toBeNull()
+		expect(parseDay('')).toBeNull()
+		expect(formatDay(null)).toBe('')
 	})
 })

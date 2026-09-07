@@ -4,7 +4,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ConflictError, createVehicle, listVehicles, recordReading, updateVehicle } from './api.js'
+import { ConflictError, createVehicle, getPreferences, listVehicles, recordReading, savePreferences, updateVehicle } from './api.js'
 
 vi.mock('@nextcloud/router', () => ({
 	generateUrl: (/** @type {string} */ path) => `/index.php${path}`,
@@ -125,5 +125,44 @@ describe('updateVehicle', () => {
 
 		expect(failure).toBeInstanceOf(Error)
 		expect(failure).not.toBeInstanceOf(ConflictError)
+	})
+})
+
+const settings = {
+	preferences: { jurisdiction: 'de' },
+	jurisdictions: [{ key: 'de', name: 'Germany' }, { key: 'generic', name: 'Generic' }],
+}
+
+describe('getPreferences', () => {
+	/**
+	 * No identity in the URL: a session reaches its own settings and no others
+	 * (lib/Service/PreferencesService.php).
+	 */
+	it('asks for the settings of whoever is logged in', async () => {
+		const fetch = answers(200, settings)
+
+		const state = await getPreferences()
+
+		const [url, options] = fetch.mock.calls[0]
+		expect(url).toContain('/apps/nextfleet/api/preferences')
+		expect(options.method).toBe('GET')
+		expect(state.jurisdictions.map((one) => one.key)).toEqual(['de', 'generic'])
+	})
+})
+
+describe('savePreferences', () => {
+	/**
+	 * A preference carries no `updated_at`: it has one writer, so there is no race to lose
+	 * (docs/architecture.md#concurrency). The answer is the whole screen again, options included.
+	 */
+	it('writes the chosen value and keeps the state that comes back', async () => {
+		const fetch = answers(200, { ...settings, preferences: { jurisdiction: 'generic' } })
+
+		const saved = await savePreferences({ jurisdiction: 'generic' })
+
+		const [, options] = fetch.mock.calls[0]
+		expect(options.method).toBe('PUT')
+		expect(JSON.parse(options.body)).toEqual({ jurisdiction: 'generic' })
+		expect(saved.preferences.jurisdiction).toBe('generic')
 	})
 })

@@ -10,11 +10,13 @@ namespace OCA\NextFleet\Tests\Integration;
 
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Controller\OdometerController;
+use OCA\NextFleet\Controller\PreferencesController;
 use OCA\NextFleet\Controller\VehicleController;
 use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Service\OdometerService;
+use OCA\NextFleet\Service\PreferencesService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\DataResponse;
@@ -38,8 +40,16 @@ class VehicleIdorTest extends TestCase {
 	private const CODRIVER = 'nextfleet-test-carol';
 	private const PLATE = 'B-XY 123';
 
+	/**
+	 * The routes that reach no vehicle by identity, so a stranger gets an answer rather than a
+	 * refusal - their own fleet, their own settings. Listed rather than inferred: a route added
+	 * here is a claim that nothing in its answer belongs to anybody else.
+	 */
+	private const NAMES_NO_VEHICLE = ['vehicle#index', 'vehicle#create', 'preferences#index', 'preferences#update'];
+
 	private VehicleService $service;
 	private OdometerService $odometry;
+	private PreferencesService $settings;
 	private AccessMapper $grants;
 	private Vehicle $vehicle;
 
@@ -47,6 +57,7 @@ class VehicleIdorTest extends TestCase {
 		$container = (new Application())->getContainer();
 		$this->service = $container->get(VehicleService::class);
 		$this->odometry = $container->get(OdometerService::class);
+		$this->settings = $container->get(PreferencesService::class);
 		$this->grants = $container->get(AccessMapper::class);
 
 		$this->forgetTestRows();
@@ -85,15 +96,7 @@ class VehicleIdorTest extends TestCase {
 	 * @param array<string, mixed> $params
 	 */
 	private function controller(string $userId, array $params): VehicleController {
-		$request = $this->createMock(IRequest::class);
-		$request->method('getParams')->willReturn($params);
-
-		$user = $this->createMock(IUser::class);
-		$user->method('getUID')->willReturn($userId);
-		$session = $this->createMock(IUserSession::class);
-		$session->method('getUser')->willReturn($user);
-
-		return new VehicleController(Application::APP_ID, $request, $this->service, $session);
+		return new VehicleController(Application::APP_ID, $this->request($params), $this->service, $this->session($userId));
 	}
 
 	/**
@@ -102,15 +105,35 @@ class VehicleIdorTest extends TestCase {
 	 * @param array<string, mixed> $params
 	 */
 	private function odometer(string $userId, array $params): OdometerController {
+		return new OdometerController(Application::APP_ID, $this->request($params), $this->odometry, $this->session($userId));
+	}
+
+	/**
+	 * The same, for the routes that name no vehicle at all. They are in the sweep because every
+	 * route is: what they must not do is answer for somebody else.
+	 *
+	 * @param array<string, mixed> $params
+	 */
+	private function preferences(string $userId, array $params): PreferencesController {
+		return new PreferencesController(Application::APP_ID, $this->request($params), $this->settings, $this->session($userId));
+	}
+
+	/** @param array<string, mixed> $params */
+	private function request(array $params): IRequest {
 		$request = $this->createMock(IRequest::class);
 		$request->method('getParams')->willReturn($params);
 
+		return $request;
+	}
+
+	/** Whoever is asking, as the framework hands them to a controller. */
+	private function session(string $userId): IUserSession {
 		$user = $this->createMock(IUser::class);
 		$user->method('getUID')->willReturn($userId);
 		$session = $this->createMock(IUserSession::class);
 		$session->method('getUser')->willReturn($user);
 
-		return new OdometerController(Application::APP_ID, $request, $this->odometry, $session);
+		return $session;
 	}
 
 	/**
@@ -155,14 +178,20 @@ class VehicleIdorTest extends TestCase {
 			'vehicle#show' => $this->controller(self::STRANGER, $params)->show($uuid),
 			'vehicle#update' => $this->controller(self::STRANGER, $params)->update($uuid),
 			'vehicle#delete' => $this->controller(self::STRANGER, $params)->delete($uuid),
+			// Walked against a live vehicle on purpose: a restore that answered 404 for one would
+			// be telling a stranger which uuids exist and which are in somebody's trash.
+			'vehicle#restore' => $this->controller(self::STRANGER, $params)->restore($uuid),
 			'odometer#index' => $this->odometer(self::STRANGER, $params)->index($uuid),
 			'odometer#create' => $this->odometer(self::STRANGER, $params)->create($uuid),
+			'preferences#index' => $this->preferences(self::STRANGER, $params)->index(),
+			'preferences#update' => $this->preferences(self::STRANGER, $params)->update(),
 			default => $this->fail($route . ' is a route the IDOR sweep has never been through'),
 		};
 
-		// A route that names a vehicle refuses. The two that name none still answer - a stranger
-		// has their own fleet - so what they must not do is hand this vehicle over anyway.
-		if (in_array($route, ['vehicle#index', 'vehicle#create'], true)) {
+		// A route that names a vehicle refuses. The ones that name none still answer - a stranger
+		// has their own fleet and their own settings - so what they must not do is hand this
+		// vehicle over anyway.
+		if (in_array($route, self::NAMES_NO_VEHICLE, true)) {
 			$this->assertContains($response->getStatus(), [Http::STATUS_OK, Http::STATUS_CREATED]);
 		} else {
 			$this->assertSame(Http::STATUS_FORBIDDEN, $response->getStatus());
@@ -209,6 +238,8 @@ class VehicleIdorTest extends TestCase {
 		$this->assertSame(Http::STATUS_OK, $codriver->show($uuid)->getStatus());
 		$this->assertSame(Http::STATUS_FORBIDDEN, $codriver->update($uuid)->getStatus());
 		$this->assertSame(Http::STATUS_FORBIDDEN, $codriver->delete($uuid)->getStatus());
+		// Undo takes the right the delete took: a viewer who cannot delete cannot un-delete.
+		$this->assertSame(Http::STATUS_FORBIDDEN, $codriver->restore($uuid)->getStatus());
 	}
 
 	/**

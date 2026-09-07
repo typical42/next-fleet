@@ -79,6 +79,17 @@ class VehicleController extends Controller {
 		return $this->answer(fn (): Vehicle => $this->service->delete($this->userId(), $uuid, $token));
 	}
 
+	#[NoAdminRequired]
+	#[UserRateLimit(limit: 60, period: 60)]
+	public function restore(string $uuid): DataResponse {
+		$token = $this->token();
+		if ($token === null) {
+			return $this->refuse('updated_at is missing, so this write cannot be checked');
+		}
+
+		return $this->answer(fn (): Vehicle => $this->service->restore($this->userId(), $uuid, $token));
+	}
+
 	/**
 	 * The two answers every route shares: the vehicle a client asked for, or the reason it is
 	 * not getting one.

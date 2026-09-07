@@ -17,7 +17,10 @@ OC.L10N.register(
 		Electric: 'Electric',
 		Engine: 'Engine',
 		'Everything else hangs off a vehicle, so that is where a logbook starts.': 'Everything else hangs off a vehicle, so that is where a logbook starts.',
+		Generic: 'Generic',
+		Germany: 'Germany',
 		Hybrid: 'Hybrid',
+		Jurisdiction: 'Jurisdiction',
 		LPG: 'LPG',
 		'Laid up': 'Laid up',
 		Manufacturer: 'Manufacturer',
@@ -36,5 +39,6 @@ OC.L10N.register(
 		'Try again': 'Try again',
 		'Unnamed vehicle': 'Unnamed vehicle',
 		Vehicles: 'Vehicles',
+		'Vehicles you add from now on are kept under this country: its units, its currency and its rules. The ones you already have keep theirs.': 'Vehicles you add from now on are kept under this country: its units, its currency and its rules. The ones you already have keep theirs.',
 	},
 	'nplurals=2; plural=(n != 1);')

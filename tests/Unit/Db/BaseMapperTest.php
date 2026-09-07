@@ -68,6 +68,15 @@ class BaseMapperTest extends TestCase {
 		]);
 	}
 
+	/** The same entity after a soft delete: stamped, and carrying the token the delete left. */
+	private function deleted(int $updatedAt): Thing {
+		$thing = $this->stored($updatedAt);
+		$thing->setDeletedAt($updatedAt);
+		$thing->resetUpdatedFields();
+
+		return $thing;
+	}
+
 	private function mapper(int $now = self::NOW, string $hex = 'ffffffffffffffffffffffffffffffff'): ThingMapper {
 		$time = $this->createMock(ITimeFactory::class);
 		$time->method('getTime')->willReturn($now);
@@ -85,6 +94,7 @@ class BaseMapperTest extends TestCase {
 		$expr = $this->createMock(IExpressionBuilder::class);
 		$expr->method('eq')->willReturnCallback(fn ($x, $y) => "$x = $y");
 		$expr->method('isNull')->willReturnCallback(fn ($x) => "$x IS NULL");
+		$expr->method('isNotNull')->willReturnCallback(fn ($x) => "$x IS NOT NULL");
 
 		$qb = $this->createMock(IQueryBuilder::class);
 		$qb->method('expr')->willReturn($expr);
@@ -308,6 +318,50 @@ class BaseMapperTest extends TestCase {
 	}
 
 	/**
+	 * Undo is the stamp taken off again, and it demands a row that is actually stamped: a restore
+	 * that matched a live row would be an undo of a delete nobody did.
+	 */
+	public function testRestoreClearsTheStampOnTheRowTheClientRead(): void {
+		$thing = $this->deleted(self::NOW - 60);
+
+		$restored = $this->mapper()->restoreChecked($thing, self::NOW - 60);
+
+		$this->assertSame(['deleted_at' => null], $this->row());
+		$this->assertSame([
+			'id = 7',
+			'updated_at = ' . (self::NOW - 60),
+			'deleted_at IS NOT NULL',
+		], $this->conditions());
+		$this->assertNull($restored->getDeletedAt());
+	}
+
+	/**
+	 * The undo toast holds one token, the one the delete answered with, and the restore puts the
+	 * row back into the state that token already names - so the statement leaves it where it is.
+	 * Advancing it would refuse the second half of every undo.
+	 */
+	public function testRestoreLeavesTheTokenWhereTheDeleteLeftIt(): void {
+		$thing = $this->deleted(self::NOW - 60);
+
+		$this->mapper()->restoreChecked($thing, self::NOW - 60);
+
+		$this->assertArrayNotHasKey('updated_at', $this->row());
+		$this->assertSame(self::NOW - 60, $thing->getUpdatedAt());
+	}
+
+	/**
+	 * Nothing matched: either the row moved on since the delete, or it was never deleted. Both
+	 * are the same answer to the client - what you read is not what is there.
+	 */
+	public function testRestoreRefusesATokenTheRowNoLongerMatches(): void {
+		$this->affectedRows = 0;
+
+		$this->expectException(StaleUpdateException::class);
+
+		$this->mapper()->restoreChecked($this->deleted(self::NOW - 60), self::NOW - 3600);
+	}
+
+	/**
 	 * The uuid is the identity, and a soft-deleted row is gone as far as a read is concerned.
 	 */
 	public function testFindByUuidPassesOverDeletedRows(): void {
@@ -324,5 +378,24 @@ class BaseMapperTest extends TestCase {
 			'uuid = 0195e2f1-0000-4000-8000-000000000001',
 			'deleted_at IS NULL',
 		], $this->conditions());
+	}
+
+	/**
+	 * The one lookup that does not: a restore is after precisely the row findByUuid() passes over,
+	 * and it still has to find a live one, or an undo of a delete somebody else already undid
+	 * would answer 404 where the truth is that there was nothing to undo.
+	 */
+	public function testFindAnyByUuidReachesADeletedRow(): void {
+		$this->rows = [[
+			'id' => 7,
+			'uuid' => '0195e2f1-0000-4000-8000-000000000001',
+			'label' => 'a trailer',
+			'deleted_at' => self::NOW,
+		]];
+
+		$thing = $this->mapper()->findAnyByUuid('0195e2f1-0000-4000-8000-000000000001');
+
+		$this->assertSame(self::NOW, $thing->getDeletedAt());
+		$this->assertSame(['uuid = 0195e2f1-0000-4000-8000-000000000001'], $this->conditions());
 	}
 }

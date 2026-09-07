@@ -78,6 +78,9 @@ Beraterin oder Ihren Berater, bevor Sie sich darauf verlassen.
   <commands>
     <command>OCA\NextFleet\Command\SeedCommand</command>
   </commands>
+  <settings>
+    <personal>OCA\NextFleet\Settings\Personal</personal>
+  </settings>
   <navigations>
     <navigation>
       <name>NextFleet</name>
