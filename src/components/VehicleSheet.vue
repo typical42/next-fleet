@@ -13,7 +13,7 @@ import NcTextArea from '@nextcloud/vue/components/NcTextArea'
 import NcTextField from '@nextcloud/vue/components/NcTextField'
 import { computed, onMounted, ref } from 'vue'
 
-import { getPreferences } from '../services/api.js'
+import { ConflictError, getPreferences, getVehicle } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
 import { formatDay, jurisdictionWord, lifecycleWord, parseDay, parseWhole } from '../utils/format.js'
 
@@ -54,6 +54,24 @@ const counter = ref('')
 
 const saving = ref(false)
 const failure = ref('')
+/**
+ * The vehicle this sheet writes against - the prop until a refused write reads a newer one. The
+ * token travels from here rather than from the prop, which never moves: a retry that kept sending
+ * the token the sheet was opened with would be refused for the same reason forever.
+ *
+ * @type {import('vue').Ref<import('../services/api.js').Vehicle|null>}
+ */
+const held = ref(props.vehicle)
+/**
+ * The write that was refused because the row moved on (docs/architecture.md#concurrency), or null.
+ * Latched rather than derived from `failure`, because it says what the *next* attempt has to do:
+ * read the vehicle back first. It clears when that read has happened, and is set again if the
+ * write then loses a second race. Which write it was decides only what the message says - both
+ * buttons take the same way out.
+ *
+ * @type {import('vue').Ref<'save'|'delete'|null>}
+ */
+const refused = ref(null)
 /**
  * The vehicle, once it exists. A create sheet asks for two writes - the vehicle and its first
  * Reading - and only the second one may fail on its own, so the first is never repeated.
@@ -116,9 +134,14 @@ const disposing = computed(() => lifecycle.value?.id === 'disposed')
 
 const country = computed(() => jurisdictions.value.find((one) => one.id === jurisdiction.value) ?? null)
 
-// Which of the two writes failed decides what the sheet has to say, because only one of them can
-// be repeated: the vehicle is already there.
+// A button says what the click does, not what went wrong: while the token is stale this click
+// overwrites somebody's change - whichever write was refused, and whether or not the last attempt
+// failed for a second reason on top.
 const action = computed(() => {
+	if (refused.value !== null) {
+		return t('nextfleet', 'Save anyway')
+	}
+
 	if (failure.value) {
 		return t('nextfleet', 'Try again')
 	}
@@ -126,9 +149,30 @@ const action = computed(() => {
 	return editing.value ? t('nextfleet', 'Save') : t('nextfleet', 'Add vehicle')
 })
 
-const note = computed(() => (created.value
-	? t('nextfleet', 'The vehicle was added, but its counter reading was not: {reason}', { reason: failure.value })
-	: failure.value))
+// The message and its colour are one decision, so they are computed together: an error is
+// something the user has to answer for, a warning is something that cost them nothing.
+const note = computed(() => {
+	// Which of the two writes failed decides what a create sheet has to say, because only one of
+	// them can be repeated: the vehicle is already there.
+	if (failure.value) {
+		return created.value
+			? { type: 'warning', text: t('nextfleet', 'The vehicle was added, but its counter reading was not: {reason}', { reason: failure.value }) }
+			: { type: 'error', text: failure.value }
+	}
+
+	// The server's own words are English and name a column; this says what happened to the person
+	// who typed, and what the click they are about to repeat now does - which is not the same
+	// sentence for a save as for a delete.
+	if (refused.value === 'save') {
+		return { type: 'warning', text: t('nextfleet', 'This vehicle was changed somewhere else while you had it open. Saving again writes your values over that change.') }
+	}
+
+	if (refused.value === 'delete') {
+		return { type: 'warning', text: t('nextfleet', 'This vehicle was changed somewhere else while you had it open. Deleting again removes it as it now stands.') }
+	}
+
+	return { type: 'error', text: '' }
+})
 
 /**
  * The registration list an edit picks a country from. It is read from the settings route because
@@ -188,24 +232,72 @@ function fields() {
 }
 
 /**
- * One attempt at the write this sheet is for. A failure leaves the sheet open with every value
+ * One attempt at a write this sheet asks for. A failure leaves the sheet open with every value
  * intact and offers the retry - the open sheet is the queue (docs/ui.md).
+ *
+ * @param {() => Promise<void>} work - the write to try
+ * @param {'save'|'delete'} kind - which write it is, for the message a refusal gets
  */
-async function save() {
+async function attempt(work, kind) {
 	saving.value = true
 	failure.value = ''
 	try {
-		await (editing.value ? write() : add())
+		await work()
 	} catch (error) {
-		failure.value = error.message
+		if (error instanceof ConflictError) {
+			refused.value = kind
+		} else {
+			failure.value = error.message
+		}
 	} finally {
 		saving.value = false
 	}
 }
 
-/** The edit: one write, checked against the `updated_at` the vehicle was read with. */
+/** The write the sheet is for: the edit, or the create it was opened without a vehicle for. */
+function save() {
+	return attempt(editing.value ? write : add, 'save')
+}
+
+/** Nothing asks "are you sure?": the way back is the undo toast the screen shows (docs/ui.md). */
+function remove() {
+	return attempt(erase, 'delete')
+}
+
+/**
+ * The vehicle the next write is checked against. After a refused one it is read back first, so
+ * the attempt goes out under the token that is actually current.
+ *
+ * @return {Promise<import('../services/api.js').Vehicle>} the vehicle as the server now holds it
+ */
+async function current() {
+	if (refused.value !== null) {
+		// Read for this sheet alone rather than through the store: what comes back may be a
+		// vehicle the overview no longer lists - somebody else may have disposed of it - and
+		// putting that in the store would take this screen away from under the open sheet
+		// (src/App.vue). The write right after it is what the store hears about.
+		held.value = await getVehicle(held.value.uuid)
+		refused.value = null
+	}
+
+	return held.value
+}
+
+/**
+ * The edit: one write, checked against the `updated_at` the vehicle was read with. What is on
+ * screen wins, only the version it is written against changes.
+ */
 async function write() {
-	emit('saved', await store.save({ ...props.vehicle, ...fields() }))
+	emit('saved', await store.save({ ...await current(), ...fields() }))
+}
+
+/**
+ * The delete. It emits nothing and closes nothing: the vehicle leaves the fleet, which takes this
+ * sheet and the screen under it with it (src/App.vue). What is left of the vehicle is the way back
+ * the store holds, and the toast that offers it (src/components/UndoToast.vue).
+ */
+async function erase() {
+	await store.remove(await current())
 }
 
 /** The create: four fields, then the counter as a first Reading. */
@@ -268,10 +360,10 @@ function chosen(options, id) {
 		:size="editing ? 'normal' : 'small'"
 		@update:open="requestClose">
 		<div class="sheet" :class="{ 'sheet--roomy': editing }">
-			<NcNoteCard v-if="failure"
+			<NcNoteCard v-if="note.text"
 				class="sheet__wide"
-				:type="created ? 'warning' : 'error'"
-				:text="note" />
+				:type="note.type"
+				:text="note.text" />
 
 			<!-- Creating asks for four fields, not twelve: the rest arrives through the vehicle's
 			     own edit sheet and the hint that points at it (docs/ui.md). -->
@@ -377,6 +469,14 @@ function chosen(options, id) {
 		</div>
 
 		<template #actions>
+			<!-- First in the row and last in emphasis: the one action here nobody reaches for by
+			     accident, and the only one with a way back (docs/ui.md). -->
+			<NcButton v-if="editing"
+				variant="error"
+				:disabled="saving"
+				@click="remove">
+				{{ t('nextfleet', 'Delete vehicle') }}
+			</NcButton>
 			<NcButton :disabled="saving" @click="requestClose">
 				{{ t('nextfleet', 'Cancel') }}
 			</NcButton>

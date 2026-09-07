@@ -96,6 +96,33 @@ export async function updateVehicle(vehicle) {
 }
 
 /**
+ * Delete a vehicle. Soft, so it is undone rather than confirmed (docs/ui.md): the answer is the
+ * vehicle as the delete left it, and the token on it is the one `restoreVehicle` is checked
+ * against — no other one is accepted.
+ *
+ * @param {Vehicle} vehicle - the vehicle as it was read, `uuid` and `updated_at` included
+ * @return {Promise<Vehicle>} the vehicle as the delete left it
+ * @throws {ConflictError} when it moved on since it was read
+ */
+export async function deleteVehicle(vehicle) {
+	// A DELETE has no body, so the token travels in the query string; the controller reads both
+	// out of the request parameters (docs/architecture.md#concurrency).
+	return request('DELETE', `/api/vehicles/${vehicle.uuid}?updated_at=${vehicle.updated_at}`)
+}
+
+/**
+ * Undo a delete. It is checked against the token the delete answered with and leaves it where it
+ * is, so the toast may hand back exactly the vehicle it was given and nothing newer.
+ *
+ * @param {Vehicle} vehicle - the vehicle as the delete answered with it
+ * @return {Promise<Vehicle>} the vehicle, back in the fleet
+ * @throws {ConflictError} when it moved on since, or was never deleted
+ */
+export async function restoreVehicle(vehicle) {
+	return request('POST', `/api/vehicles/${vehicle.uuid}/restore`, { updated_at: vehicle.updated_at })
+}
+
+/**
  * Record one reading of a vehicle's counter. A Reading is only ever written, so it carries no
  * token and cannot lose a race (docs/architecture.md#concurrency).
  *

@@ -12,6 +12,7 @@ import NcContent from '@nextcloud/vue/components/NcContent'
 import NcEmptyContent from '@nextcloud/vue/components/NcEmptyContent'
 import { computed, onMounted, ref } from 'vue'
 
+import UndoToast from './components/UndoToast.vue'
 import VehicleList from './components/VehicleList.vue'
 import VehicleSheet from './components/VehicleSheet.vue'
 import { useVehiclesStore } from './store/index.js'
@@ -25,7 +26,10 @@ const selected = ref('')
 const creating = ref(false)
 const failure = ref('')
 
-const vehicle = computed(() => store.byUuid.get(selected.value))
+// Looked up in the fleet the navigation lists rather than in the whole store: a vehicle disposed
+// of in the edit sheet leaves that list (docs/ui.md), and its screen would otherwise stay open
+// with no entry to leave it by.
+const vehicle = computed(() => store.visible.find((one) => one.uuid === selected.value))
 
 onMounted(load)
 
@@ -79,5 +83,8 @@ function open(created) {
 				@select="selected = $event" />
 		</NcAppContent>
 		<VehicleSheet v-if="creating" @close="creating = false" @created="open" />
+		<!-- Outside the screens on purpose: a delete takes the screen that asked for it with the
+		     vehicle, and the way back has to outlive both. It shows itself when there is one. -->
+		<UndoToast />
 	</NcContent>
 </template>

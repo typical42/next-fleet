@@ -30,9 +30,14 @@ const editing = ref(false)
 					{{ subtitleOf(vehicle) }}
 				</p>
 			</div>
-			<NcButton variant="primary" @click="entering = true">
-				{{ t('nextfleet', 'New entry') }}
-			</NcButton>
+			<div class="vehicle__actions">
+				<NcButton variant="primary" @click="entering = true">
+					{{ t('nextfleet', 'New entry') }}
+				</NcButton>
+				<NcButton @click="editing = true">
+					{{ t('nextfleet', 'Edit vehicle') }}
+				</NcButton>
+			</div>
 		</div>
 
 		<dl class="vehicle__kpis">
@@ -41,6 +46,12 @@ const editing = ref(false)
 		</dl>
 
 		<EntrySheet v-if="entering" :vehicle="vehicle" @close="entering = false" />
+		<!-- A save is done with, so the sheet goes: what it wrote is in the store this screen
+		     reads, and a sheet still open would be a second copy of the same vehicle. -->
+		<VehicleSheet v-if="editing"
+			:vehicle="vehicle"
+			@close="editing = false"
+			@saved="editing = false" />
 	</div>
 </template>
 
@@ -53,6 +64,12 @@ const editing = ref(false)
 	display: flex;
 	align-items: start;
 	justify-content: space-between;
+	gap: calc(var(--default-grid-baseline) * 2);
+}
+
+.vehicle__actions {
+	display: flex;
+	flex-wrap: wrap;
 	gap: calc(var(--default-grid-baseline) * 2);
 }
 

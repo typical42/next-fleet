@@ -6,7 +6,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
-import { createVehicle, getVehicle, listVehicles, recordReading, updateVehicle } from '../services/api.js'
+import { createVehicle, deleteVehicle, getVehicle, listVehicles, recordReading, restoreVehicle, updateVehicle } from '../services/api.js'
 
 /** @typedef {import('../services/api.js').Vehicle} Vehicle */
 /** @typedef {import('../services/api.js').Reading} Reading */
@@ -26,6 +26,15 @@ const RANK = { active: 0, laid_up: 1 }
 export const useVehiclesStore = defineStore('vehicles', () => {
 	/** @type {import('vue').Ref<Map<string, Vehicle>>} */
 	const byUuid = ref(new Map())
+
+	/**
+	 * The vehicle the last delete answered with — the way back into the fleet, and the only place
+	 * the token that takes it is held. State rather than a return value: the screen that asks for
+	 * a delete is unmounted by it, and a Vue component that is gone emits nothing.
+	 *
+	 * @type {import('vue').Ref<Vehicle|null>}
+	 */
+	const deleted = ref(null)
 
 	const list = computed(() => [...byUuid.value.values()])
 
@@ -81,6 +90,48 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	}
 
 	/**
+	 * Delete a vehicle. It leaves the fleet rather than staying as a flagged row: `visible` hides
+	 * the disposed ones and nothing else, so a row left here would still be listed and still be
+	 * openable. A refusal is not caught, as with `save()`.
+	 *
+	 * What the delete answered with is kept, because the token on it is the only one the undo is
+	 * accepted with (docs/architecture.md#concurrency) and the screen that asked for the delete
+	 * leaves with the vehicle - it cannot hold anything. One vehicle at a time: a second delete
+	 * takes the offer of the first, which the toast has by then made and had answered.
+	 *
+	 * @param {Vehicle} vehicle - the vehicle as it was read, carrying the `updated_at` it was read with
+	 * @return {Promise<void>} when it is out of the fleet and the way back is held
+	 */
+	async function remove(vehicle) {
+		deleted.value = await deleteVehicle(vehicle)
+		byUuid.value.delete(vehicle.uuid)
+	}
+
+	/**
+	 * Undo the last delete, checked against the token that delete answered with — no newer one
+	 * exists and no older one is accepted (docs/architecture.md#concurrency). A refusal leaves the
+	 * offer standing: it is the only way back there is, and the vehicle is still deleted.
+	 *
+	 * Nothing deleted is nothing to undo, and no request: the toast is the only caller and it is
+	 * only up while there is an offer, so this is the state after a page load, not a failure.
+	 *
+	 * @return {Promise<void>} when the vehicle is back in the fleet
+	 */
+	async function restore() {
+		if (deleted.value === null) {
+			return
+		}
+
+		upsert(await restoreVehicle(deleted.value))
+		deleted.value = null
+	}
+
+	/** Let go of the way back, which is what closing the toast means. */
+	function forget() {
+		deleted.value = null
+	}
+
+	/**
 	 * Record one reading of a vehicle's counter, then read the vehicle back: `odo_value` is a
 	 * cache the server restates from the whole chain, and counting it here would be a second
 	 * implementation of the odometer rules — a wrong one as soon as a reading lands out of order.
@@ -105,5 +156,5 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 		return reading
 	}
 
-	return { byUuid, create, list, load, record, save, upsert, visible }
+	return { byUuid, create, deleted, forget, list, load, record, remove, restore, save, upsert, visible }
 })

@@ -6,16 +6,18 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createVehicle, getVehicle, listVehicles, recordReading, updateVehicle } from '../services/api.js'
+import { createVehicle, deleteVehicle, getVehicle, listVehicles, recordReading, restoreVehicle, updateVehicle } from '../services/api.js'
 import { useVehiclesStore } from './index.js'
 
 // The network is the api client's own seam (api.spec.js); what is under test here is what the
 // store does with the two answers it can get.
 vi.mock('../services/api.js', () => ({
 	createVehicle: vi.fn(),
+	deleteVehicle: vi.fn(),
 	getVehicle: vi.fn(),
 	listVehicles: vi.fn(),
 	recordReading: vi.fn(),
+	restoreVehicle: vi.fn(),
 	updateVehicle: vi.fn(),
 }))
 
@@ -169,6 +171,106 @@ describe('vehicles store', () => {
 			await expect(store.save(vehicle({ plate: 'M-XY 789' }))).rejects.toBe(refusal)
 
 			expect(store.list.map((v) => v.plate)).toEqual(['M-AB 123'])
+		})
+	})
+
+	describe('remove', () => {
+		/**
+		 * A deleted vehicle is gone from the fleet, not a row carrying a flag: `visible` hides only
+		 * the disposed ones, so a vehicle left behind here would still be listed and still be
+		 * openable. The store keeps the vehicle the delete answered with, because the token on it
+		 * is the only one the undo is accepted with (docs/architecture.md#concurrency) and the
+		 * screen that asked for the delete goes with the vehicle.
+		 */
+		it('drops the vehicle and keeps the token the undo is checked against', async () => {
+			const store = useVehiclesStore()
+			store.upsert(vehicle({ uuid: 'a' }))
+			store.upsert(vehicle({ uuid: 'b' }))
+			vi.mocked(deleteVehicle).mockResolvedValue(vehicle({ uuid: 'a', updated_at: 1750000002 }))
+
+			await store.remove(vehicle({ uuid: 'a' }))
+
+			expect(store.list.map((v) => v.uuid)).toEqual(['b'])
+			expect(store.deleted?.updated_at).toBe(1750000002)
+		})
+
+		/**
+		 * A refused delete deleted nothing, so dropping the row would take away a vehicle that is
+		 * still there - and the failure has to reach whoever asked, as it does for a save.
+		 */
+		it('lets a refused delete through and keeps the vehicle', async () => {
+			const store = useVehiclesStore()
+			store.upsert(vehicle({ uuid: 'a' }))
+			const refusal = new Error('Changed since you read it')
+			vi.mocked(deleteVehicle).mockRejectedValue(refusal)
+
+			await expect(store.remove(vehicle({ uuid: 'a' }))).rejects.toBe(refusal)
+
+			expect(store.list.map((v) => v.uuid)).toEqual(['a'])
+			expect(store.deleted).toBeNull()
+		})
+	})
+
+	describe('restore', () => {
+		/**
+		 * Undo takes the vehicle the delete answered with, and no other: the token it carries is
+		 * the one the server checks, and it is minted by the delete
+		 * (docs/architecture.md#concurrency).
+		 */
+		it('puts back the vehicle the last delete took, under the token it answered with', async () => {
+			const store = useVehiclesStore()
+			store.upsert(vehicle({ uuid: 'a', plate: 'M-AB 123' }))
+			vi.mocked(deleteVehicle).mockResolvedValue(vehicle({ uuid: 'a', updated_at: 1750000002 }))
+			vi.mocked(restoreVehicle).mockResolvedValue(vehicle({ uuid: 'a', plate: 'M-AB 123' }))
+			await store.remove(vehicle({ uuid: 'a' }))
+
+			await store.restore()
+
+			expect(restoreVehicle).toHaveBeenCalledWith(expect.objectContaining({ updated_at: 1750000002 }))
+			expect(store.list.map((v) => v.plate)).toEqual(['M-AB 123'])
+			expect(store.deleted).toBeNull()
+		})
+
+		/**
+		 * The token the store holds matched nothing, so the vehicle is still deleted. Inventing a
+		 * row for it here would put a vehicle on the overview that no write can reach, and letting
+		 * go of the token would take away the second attempt.
+		 */
+		it('lets a refused undo through and puts nothing back', async () => {
+			const store = useVehiclesStore()
+			const refusal = new Error('Changed since you read it')
+			vi.mocked(deleteVehicle).mockResolvedValue(vehicle({ uuid: 'a', updated_at: 1750000002 }))
+			vi.mocked(restoreVehicle).mockRejectedValue(refusal)
+			store.upsert(vehicle({ uuid: 'a' }))
+			await store.remove(vehicle({ uuid: 'a' }))
+
+			await expect(store.restore()).rejects.toBe(refusal)
+
+			expect(store.list).toEqual([])
+			expect(store.deleted?.uuid).toBe('a')
+		})
+
+		/** Nothing was deleted, so there is nothing to ask the server for. */
+		it('asks for nothing when there is nothing to undo', async () => {
+			const store = useVehiclesStore()
+
+			await store.restore()
+
+			expect(restoreVehicle).not.toHaveBeenCalled()
+		})
+	})
+
+	describe('forget', () => {
+		/** The way back is offered once. Letting go of it is what closing the toast means. */
+		it('lets go of the deleted vehicle', async () => {
+			const store = useVehiclesStore()
+			vi.mocked(deleteVehicle).mockResolvedValue(vehicle({ uuid: 'a', updated_at: 1750000002 }))
+			store.upsert(vehicle({ uuid: 'a' }))
+			await store.remove(vehicle({ uuid: 'a' }))
+
+			store.forget()
+
+			expect(store.deleted).toBeNull()
 		})
 	})
 })

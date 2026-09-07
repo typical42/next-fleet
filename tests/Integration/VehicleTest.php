@@ -95,6 +95,73 @@ class VehicleTest extends TestCase {
 	}
 
 	/**
+	 * The edit sheet's payload, as it sends it: every writable column at once, the numbers as the
+	 * strings a text field holds, and an emptied field as the empty string. It is the only write
+	 * that reaches `lifecycle`, `disposed_at` and the vehicle's country, so this is where those
+	 * three are proved against the real columns.
+	 */
+	public function testTheEditSheetsPayloadReachesEveryColumn(): void {
+		$vehicle = $this->service->create(self::OWNER, ['plate' => 'B-XY 123', 'jurisdiction' => 'de']);
+
+		$this->service->update(self::OWNER, $vehicle->getUuid(), $vehicle->getUpdatedAt(), [
+			'plate' => 'B-XY 999',
+			'manufacturer' => 'Volkswagen',
+			'model' => 'Caddy',
+			'vehicle_type' => 'van',
+			'engine' => 'hybrid',
+			'energy_types' => ['petrol', 'electric'],
+			'tank_ml' => '55000',
+			'battery_wh' => '13600',
+			'first_reg' => '2019-03-07',
+			'disposed_at' => '2025-06-30',
+			'vin' => 'WVWZZZ1KZAW000001',
+			'odo_unit' => 'h',
+			'purchase_price' => '1850000',
+			'residual_est' => '400000',
+			// Emptied on screen, so it travels empty and the column is cleared - a diff would
+			// leave the euros of the country this vehicle has just left.
+			'currency' => '',
+			'jurisdiction' => 'generic',
+			'lifecycle' => 'disposed',
+			'retention_months' => '120',
+			'color' => 'blue',
+			'notes' => "two rows of seats\nand a dent",
+		]);
+
+		$read = $this->service->find(self::OWNER, $vehicle->getUuid());
+		$this->assertSame('B-XY 999', $read->getPlate());
+		$this->assertSame('van', $read->getVehicleType());
+		$this->assertSame(['petrol', 'electric'], $read->getEnergyTypes());
+		$this->assertSame(13600, $read->getBatteryWh());
+		$this->assertSame('2019-03-07', $read->getFirstReg()?->format('Y-m-d'));
+		$this->assertSame('h', $read->getOdoUnit());
+		$this->assertSame(400000, $read->getResidualEst());
+		$this->assertNull($read->getCurrency());
+		$this->assertSame('generic', $read->getJurisdiction());
+		$this->assertSame('disposed', $read->getLifecycle());
+		$this->assertSame('2025-06-30', $read->getDisposedAt()?->format('Y-m-d'));
+		$this->assertSame("two rows of seats\nand a dent", $read->getNotes());
+	}
+
+	/**
+	 * Back in service, and the day it was sold on goes with the lifecycle it belonged to: the
+	 * sheet sends the disposal day empty, and empty clears the column rather than being ignored.
+	 */
+	public function testAVehicleBackInServiceLosesItsDisposalDay(): void {
+		$vehicle = $this->service->create(self::OWNER, ['lifecycle' => 'disposed', 'disposed_at' => '2025-06-30']);
+		$this->assertSame('2025-06-30', $vehicle->getDisposedAt()?->format('Y-m-d'), 'nothing to clear');
+
+		$this->service->update(self::OWNER, $vehicle->getUuid(), $vehicle->getUpdatedAt(), [
+			'lifecycle' => 'active',
+			'disposed_at' => '',
+		]);
+
+		$read = $this->service->find(self::OWNER, $vehicle->getUuid());
+		$this->assertSame('active', $read->getLifecycle());
+		$this->assertNull($read->getDisposedAt());
+	}
+
+	/**
 	 * What a new vehicle counts and prices in is its country's answer, asked through the
 	 * container that built this service (lib/Jurisdiction/Jurisdictions.php) - and the columns
 	 * really take it: euros under Germany, no currency at all under the generic profile, where
