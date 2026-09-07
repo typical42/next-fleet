@@ -17,6 +17,7 @@ path = [
     "**.md",
     "LICENSE",
     "design/**.html",
+    "design/screenshots/**.png",
     "psalm-baseline.xml",
 ]
 precedence = "aggregate"

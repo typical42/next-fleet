@@ -55,15 +55,15 @@ Beraterin oder Ihren Berater, bevor Sie sich darauf verlassen.
   <bugs>https://github.com/typical42/next-fleet/issues</bugs>
   <repository type="git">https://github.com/typical42/next-fleet</repository>
   <!--
-    - Screenshots go here, as https URLs the store can fetch. The demo fleet they show is what
-    - `occ nextfleet:seed` writes, and both it and the screens exist now - so what is left is
-    - taking the images and pushing them, because the store fetches these URLs rather than the
-    - repository:
-    -
-    -   <screenshot small-thumbnail="https://raw.githubusercontent.com/typical42/next-fleet/main/design/screenshots/overview-thumb.png">
-    -     https://raw.githubusercontent.com/typical42/next-fleet/main/design/screenshots/overview.png
-    -   </screenshot>
+    - The store fetches these by URL rather than reading the repository, so they only work once
+    - the images are on `main`. `npm run screenshots:docker` retakes them from a seeded dev
+    - container; the fleet they show is what `occ nextfleet:seed` writes.
   -->
+  <screenshot small-thumbnail="https://raw.githubusercontent.com/typical42/next-fleet/main/design/screenshots/overview-thumb.png">
+    https://raw.githubusercontent.com/typical42/next-fleet/main/design/screenshots/overview.png
+  </screenshot>
+  <screenshot>https://raw.githubusercontent.com/typical42/next-fleet/main/design/screenshots/vehicle.png</screenshot>
+  <screenshot>https://raw.githubusercontent.com/typical42/next-fleet/main/design/screenshots/entry-sheet.png</screenshot>
   <dependencies>
     <nextcloud min-version="31" max-version="34"/>
   </dependencies>
