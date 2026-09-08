@@ -16,10 +16,12 @@ import UndoToast from './components/UndoToast.vue'
 import VehicleList from './components/VehicleList.vue'
 import VehicleSheet from './components/VehicleSheet.vue'
 import { useVehiclesStore } from './store/index.js'
+import { usePreferencesStore } from './store/preferences.js'
 import OverviewView from './views/OverviewView.vue'
 import VehicleView from './views/VehicleView.vue'
 
 const store = useVehiclesStore()
+const preferences = usePreferencesStore()
 
 /** The vehicle the content area shows; empty means the overview (docs/ui.md). */
 const selected = ref('')
@@ -40,6 +42,16 @@ async function load() {
 		await store.load()
 	} catch (error) {
 		failure.value = error.message
+	}
+
+	// Read here rather than by the screen that asks about them, which would ask again on every
+	// navigation. Its own attempt, and a silent one: preferences that did not arrive cost a hint
+	// (src/components/CompleteHint.vue), and reporting that where the fleet reports its failures
+	// would put a red card over a screen that is working.
+	try {
+		await preferences.load()
+	} catch {
+		// The hint asks nothing until it knows what was already answered.
 	}
 }
 

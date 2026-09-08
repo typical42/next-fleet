@@ -5,6 +5,7 @@
 <script setup>
 import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
+import { useHotKey } from '@nextcloud/vue/composables/useHotKey'
 import { ref } from 'vue'
 
 import EntrySheet from '../components/EntrySheet.vue'
@@ -18,6 +19,14 @@ defineProps({
 
 const entering = ref(false)
 const editing = ref(false)
+
+// `n` is the primary action of the screen in view (docs/ui.md), and the shell mounts one screen
+// at a time - so the key belongs to the screen rather than to an arbiter above it. useHotKey
+// already passes over a keystroke typed into a field or aimed at an open sheet, and drops the
+// listener when the screen goes.
+useHotKey('n', () => {
+	entering.value = true
+})
 </script>
 
 <template>

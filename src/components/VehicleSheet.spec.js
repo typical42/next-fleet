@@ -5,6 +5,7 @@
 
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcDateTimePickerNative from '@nextcloud/vue/components/NcDateTimePickerNative'
+import NcDialog from '@nextcloud/vue/components/NcDialog'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import NcSelect from '@nextcloud/vue/components/NcSelect'
 import NcTextField from '@nextcloud/vue/components/NcTextField'
@@ -144,7 +145,7 @@ beforeEach(() => {
 	setActivePinia(createPinia())
 	vi.resetAllMocks()
 	vi.mocked(getPreferences).mockResolvedValue({
-		preferences: { jurisdiction: 'de' },
+		preferences: { jurisdiction: 'de', dismissed_hints: [] },
 		jurisdictions: [{ key: 'de', name: 'Germany' }, { key: 'generic', name: 'Generic' }],
 	})
 	vi.mocked(createVehicle).mockImplementation(async (fields) => ({ ...fields, uuid: 'v-new', updated_at: 1 }))
@@ -165,6 +166,33 @@ beforeEach(() => {
 })
 
 describe('the vehicle sheet, editing', () => {
+	/**
+	 * `Esc` closes the sheet and NcDialog already gives it (docs/ui.md), so nothing here listens
+	 * for the key. What is pinned is the one wire it travels along: the dialog reports itself
+	 * closed and the sheet leaves. A sheet that bound `:open` and no listener would swallow the
+	 * key silently and never reopen.
+	 */
+	it('closes when the dialog reports itself closed', async () => {
+		const wrapper = await sheet(VEHICLE)
+
+		await wrapper.findComponent(NcDialog).vm.$emit('update:open', false)
+
+		expect(wrapper.emitted('close')?.length).toBe(1)
+	})
+
+	/**
+	 * The other half of the key, and the half NcDialog does not give: its own Escape handler is a
+	 * useHotKey, and useHotKey passes over every keystroke aimed at a text field. The sheet opens
+	 * with the caret in one, so Escape at the moment somebody would press it reaches nobody.
+	 */
+	it('closes when Esc is pressed in a field', async () => {
+		const wrapper = await sheet(VEHICLE)
+
+		await wrapper.find('.sheet').trigger('keydown.esc')
+
+		expect(wrapper.emitted('close')?.length).toBe(1)
+	})
+
 	/** Everything prefilled and visibly editable (docs/ui.md) - including what the create sheet never asked. */
 	it('shows the vehicle it was given', async () => {
 		const wrapper = await sheet(VEHICLE)

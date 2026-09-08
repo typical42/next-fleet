@@ -23,7 +23,9 @@ vi.mock('../services/api.js', () => ({
 // would have to stand in for the whole library's use of it as well.
 
 const settings = {
-	preferences: { jurisdiction: 'de' },
+	// The whole envelope, dismissed hints included: this screen reads only the jurisdiction, but
+	// what the route answers with is one shape (lib/Service/PreferencesService.php).
+	preferences: { jurisdiction: 'de', dismissed_hints: [] },
 	jurisdictions: [{ key: 'de', name: 'Germany' }, { key: 'generic', name: 'Generic' }],
 }
 
@@ -69,7 +71,7 @@ beforeEach(() => {
 	vi.mocked(getPreferences).mockResolvedValue(settings)
 	vi.mocked(savePreferences).mockImplementation(
 		async (/** @type {Partial<import('../services/api.js').Settings['preferences']>} */ fields) =>
-			({ ...settings, preferences: { jurisdiction: fields.jurisdiction ?? 'de' } }),
+			({ ...settings, preferences: { ...settings.preferences, jurisdiction: fields.jurisdiction ?? 'de' } }),
 	)
 })
 
@@ -106,7 +108,7 @@ describe('settings screen', () => {
 	 * under. Selecting nothing says so; quietly showing the default would not.
 	 */
 	it('selects nothing when the stored jurisdiction is not on offer', async () => {
-		vi.mocked(getPreferences).mockResolvedValue({ ...settings, preferences: { jurisdiction: 'zz' } })
+		vi.mocked(getPreferences).mockResolvedValue({ ...settings, preferences: { ...settings.preferences, jurisdiction: 'zz' } })
 
 		const wrapper = await screen()
 

@@ -161,6 +161,53 @@ class SeedCommandTest extends TestCase {
 		$this->assertContains(['petrol', 'electric'], $hybrids);
 	}
 
+	/**
+	 * One vehicle as somebody would have left it after creating it in four fields (docs/ui.md):
+	 * no identity, no age, and no capacity for the energy it takes. That is what the "complete
+	 * this vehicle" hint asks about (src/utils/complete.js), and the demo fleet is where the
+	 * screen and the E2E find one to ask.
+	 */
+	public function testTheFleetHoldsOneVehicleTheHintHasSomethingToAskAbout(): void {
+		$this->tester()->execute(['user' => self::OWNER]);
+
+		$asked = [];
+		foreach ($this->written as $vehicle) {
+			if ($this->missingFrom($vehicle) !== []) {
+				$asked[(string)$vehicle->getPlate()] = $this->missingFrom($vehicle);
+			}
+		}
+
+		$this->assertSame(
+			['NF-NE 600' => ['vin', 'first_reg', 'tank_ml']],
+			$asked,
+			'the demo fleet asks about the wrong vehicles',
+		);
+	}
+
+	/**
+	 * What the hint would ask this vehicle, by the rule the overview applies (src/utils/complete.js):
+	 * its identity, its age, and the capacity of whatever it is filled with. Written out here
+	 * because the rule is the frontend's and the fleet is this command's - the point of the test is
+	 * that the two agree.
+	 *
+	 * @return list<string>
+	 */
+	private function missingFrom(Vehicle $vehicle): array {
+		$capacity = [
+			'petrol' => 'tank_ml',
+			'diesel' => 'tank_ml',
+			'lpg' => 'tank_ml',
+			'cng' => 'tank_ml',
+			'electric' => 'battery_wh',
+		];
+		$asked = ['vin' => $vehicle->getVin(), 'first_reg' => $vehicle->getFirstReg()];
+		foreach ($vehicle->getEnergyTypes() ?? [] as $energy) {
+			$asked[$capacity[$energy]] = $capacity[$energy] === 'tank_ml' ? $vehicle->getTankMl() : $vehicle->getBatteryWh();
+		}
+
+		return array_keys(array_filter($asked, static fn (mixed $value): bool => $value === null));
+	}
+
 	/** All three of docs/architecture.md's lifecycles, because the overview treats each one differently. */
 	public function testTheFleetHoldsOneVehicleOfEachLifecycle(): void {
 		$this->tester()->execute(['user' => self::OWNER]);

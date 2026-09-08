@@ -42,6 +42,17 @@ function sheet(wrapper) {
 	return wrapper.findComponent(VehicleSheet)
 }
 
+/**
+ * Types a key at the page rather than at the screen: the shortcut listens on the window, and
+ * where the keystroke was aimed is what decides whether it counts.
+ *
+ * @param {EventTarget} at - what the keystroke is aimed at
+ * @param {string} key - the key pressed
+ */
+function press(at, key) {
+	at.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+}
+
 describe('the vehicle screen', () => {
 	/**
 	 * One primary button per screen, and on this one it is the entry - editing a vehicle is
@@ -67,6 +78,36 @@ describe('the vehicle screen', () => {
 		// Equal rather than identical: a prop reaches the child through Vue's reactive proxy.
 		expect(sheet(wrapper).props('vehicle')).toEqual(VEHICLE)
 		expect(wrapper.findComponent(EntrySheet).exists()).toBe(false)
+	})
+
+	/**
+	 * `n` is the primary action of the screen in view (docs/ui.md), and on this screen that is
+	 * the entry - not the edit, which people need twice a year.
+	 */
+	it('opens the entry sheet when n is pressed', async () => {
+		const wrapper = screen()
+
+		press(document.body, 'n')
+		await wrapper.vm.$nextTick()
+
+		expect(wrapper.findComponent(EntrySheet).exists()).toBe(true)
+		expect(sheet(wrapper).exists()).toBe(false)
+	})
+
+	/**
+	 * A letter is also a letter somebody is typing. The sheet this screen opens is full of
+	 * fields, and `n` in one of them is an `n`, not a shortcut.
+	 */
+	it('leaves n alone when it is typed into a field', async () => {
+		const wrapper = screen()
+		const field = document.createElement('input')
+		document.body.appendChild(field)
+
+		press(field, 'n')
+		await wrapper.vm.$nextTick()
+
+		expect(wrapper.findComponent(EntrySheet).exists()).toBe(false)
+		field.remove()
 	})
 
 	/** A save is done with, so the sheet goes; the screen already reads the store for the rest. */

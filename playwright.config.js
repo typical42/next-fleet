@@ -8,9 +8,14 @@ import { defineConfig } from '@playwright/test'
 // One project per Nextcloud major in .docker/compose.yml, so a failure names the
 // version that broke rather than "the E2E run". The stack has to be up already;
 // docs/development.md has the two commands.
+// A test tagged @nc34 runs on that major alone. The bundle is one bundle and its stylesheet is one
+// stylesheet, so a test that measures the CSS answer - the responsive and dark-mode audit - would
+// re-measure the same file on every other major and double the slowest suite in the repo.
+const only34 = /@nc34/
+
 const majors = [
 	{ name: 'nc34', baseURL: process.env.NEXTFLEET_URL_NC34 ?? 'http://localhost:8080' },
-	{ name: 'nc31', baseURL: process.env.NEXTFLEET_URL_NC31 ?? 'http://localhost:8081' },
+	{ name: 'nc31', baseURL: process.env.NEXTFLEET_URL_NC31 ?? 'http://localhost:8081', grepInvert: only34 },
 ]
 
 export default defineConfig({
@@ -26,5 +31,5 @@ export default defineConfig({
 	use: {
 		browserName: 'chromium',
 	},
-	projects: majors.map(({ name, baseURL }) => ({ name, use: { baseURL } })),
+	projects: majors.map(({ name, baseURL, grepInvert }) => ({ name, grepInvert, use: { baseURL } })),
 })

@@ -7,6 +7,12 @@
 export const appPage = '/index.php/apps/nextfleet/'
 
 /**
+ * Nextcloud's own personal settings page. The app has no seventh screen: it registers a section on
+ * this one and mounts a second bundle into it (lib/Settings/Personal.php, docs/ui.md).
+ */
+export const settingsPage = '/index.php/settings/user/additional'
+
+/**
  * Signs in as the stack's admin, straight from .docker/compose.yml. Basic auth is no shortcut
  * here: Nextcloud answers a browser with a redirect to this form whatever the Authorization
  * header says, and the login page then answers 200.

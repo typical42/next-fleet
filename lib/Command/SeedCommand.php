@@ -84,6 +84,7 @@ class SeedCommand extends Command {
 				'tank_ml' => 60000,
 				'battery_wh' => 18800,
 				'first_reg' => '2022-06-01',
+				'vin' => 'YV1UZK5V9N1000200',
 				'odo_unit' => 'km',
 				'purchase_price' => 4990000,
 				'currency' => 'EUR',
@@ -112,6 +113,7 @@ class SeedCommand extends Command {
 				'energy_types' => ['diesel'],
 				'tank_ml' => 200000,
 				'first_reg' => '2017-08-09',
+				'vin' => 'WFFG313V0H1000300',
 				'odo_unit' => 'h',
 				'currency' => 'EUR',
 				'lifecycle' => 'active',
@@ -134,6 +136,7 @@ class SeedCommand extends Command {
 				'vehicle_type' => 'trailer',
 				'odo_unit' => 'km',
 				'first_reg' => '2015-04-20',
+				'vin' => 'W09HA752513F00400',
 				'lifecycle' => 'laid_up',
 				'notes' => 'Off the road for the winter.',
 			],
@@ -151,6 +154,7 @@ class SeedCommand extends Command {
 				'energy_types' => ['petrol'],
 				'tank_ml' => 52000,
 				'first_reg' => '2008-05-02',
+				'vin' => 'W0L0AHL3585000500',
 				'odo_unit' => 'km',
 				'purchase_price' => 190000,
 				'currency' => 'EUR',
@@ -162,6 +166,25 @@ class SeedCommand extends Command {
 				['days' => 900, 'value' => 214800],
 				['days' => 400, 'value' => 231500],
 				['days' => 130, 'value' => 238900],
+			],
+		],
+		[
+			// The vehicle somebody added last week and has not finished: no VIN, no first
+			// registration, and no capacity for the energy it was told it takes - the three
+			// things the "complete this vehicle" hint asks about (src/utils/complete.js), and the
+			// only vehicle here it has a question for. Every other one answers them.
+			'vehicle' => [
+				'plate' => self::DISTRICT . 'NE 600',
+				'manufacturer' => 'Renault',
+				'model' => 'Kangoo',
+				'vehicle_type' => 'van',
+				'engine' => 'petrol',
+				'energy_types' => ['petrol'],
+				'odo_unit' => 'km',
+				'lifecycle' => 'active',
+			],
+			'readings' => [
+				['days' => 40, 'value' => 62310],
 			],
 		],
 	];
