@@ -27,7 +27,10 @@ test('the demo fleet is on screen with the rows that are awkward on purpose', as
 	// The app's own content area: the navigation lists the same vehicles, and Nextcloud's chrome
 	// has landmarks of its own.
 	const overview = page.locator('#nextfleet').getByRole('main')
-	const row = (/** @type {string} */ plate) => overview.getByRole('listitem').filter({ hasText: plate })
+	// The fleet's own list: the "complete this vehicle" hint above it lists vehicles too
+	// (src/components/CompleteHint.vue).
+	const row = (/** @type {string} */ plate) => overview.locator('.overview__list')
+		.getByRole('listitem').filter({ hasText: plate })
 
 	await expect(row(hours.plate), `${demo} vehicles are missing - run occ nextfleet:seed`)
 		.toBeVisible()

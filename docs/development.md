@@ -100,8 +100,10 @@ stable components. If no single bundle spans the range, the 31 floor moves; the 
 
 **Seed data:** `occ nextfleet:seed <user>` writes a demo fleet spanning the two years before it runs
 — including the awkward rows: a flagged backwards odometer, a plug-in hybrid with both energy
-types, and a vehicle counted in hours. It powers E2E tests, screenshots for the app store, and
-manual clicking. Trips, fill-ups and a `missed_previous` gap arrive with the tables that hold them.
+types, a vehicle counted in hours, and one nobody finished creating, which is what the "complete
+this vehicle" hint has to ask about ([ui](ui.md#details-that-decide-whether-it-feels-easy)). It
+powers E2E tests, screenshots for the app store, and manual clicking. Trips, fill-ups and a
+`missed_previous` gap arrive with the tables that hold them.
 
 It writes through the services a request writes through, so a fleet it cannot produce is a fleet the
 app cannot hold, and the odometer rules decide the flags rather than the fixture. Every plate starts
@@ -164,6 +166,14 @@ Vitest transforms `@nextcloud/vue` rather than letting Node load it (`server.dep
 extension" — as a suite-level import error, so the message names the component and not the cause.
 A spec that mounts one also wants `shallowMount`: rendering `NcSelect` for real pulls in the whole
 library, and reading a stub's props says more about this app than its markup does.
+
+**A keyboard shortcut is `useHotKey` from `@nextcloud/vue`, never a listener of your own.** It
+honours the accessibility setting that turns shortcuts off, ignores a keystroke typed into a field,
+and ignores one aimed at an open dialog — so `n` belongs to the screen in view rather than to an
+arbiter above it, and a second screen needs no coordination. Its blind spot is `Escape`: `NcDialog`
+closes itself through the same composable, so the key does nothing while the caret is in a text
+field, which is where every sheet here opens. Each sheet therefore catches `Escape` inside its own
+content and stops it, and an open `NcSelect` stops it first so its dropdown still closes on its own.
 
 `@nextcloud/eslint-config` is held at 8.x, the same trap as Psalm above: version 9 needs ESLint 10
 and Node's `findPackageJSON`, which arrives in Node 22, so it installs on the Node 20 here and then
@@ -231,10 +241,21 @@ only exists in 34. Enabling the app is per service, so run the `occ` lines again
 
 `npm run test:e2e` is that check, automated: one Playwright project per major, so a failure names
 the version that broke. `m0-gate.spec.js` is the gate — the page mounts the Vue root and reports
-nothing to the console. `m1-slice.spec.js` drives the app: a vehicle created through the sheet, a
-counter reading refused and then recorded, and both read back from the server in the overview; then
-an axe audit of the overview, the vehicle screen and an open sheet. The audit is scoped to
+nothing to the console. `m1-slice.spec.js` drives the app: a vehicle created through the sheet and
+edited through it, a counter reading refused and then recorded, a save refused as stale and saved
+through on the second attempt, a delete undone from the toast, the country changed on the personal
+settings page and read back off the next vehicle, and the "complete this vehicle" hint dismissed for
+good. Then an axe audit of the overview, the vehicle screen and an open sheet, scoped to
 `#nextfleet` at the WCAG 2.1 AA tags — Nextcloud's own header is outside this app's reach.
+
+Two things about that file worth knowing before adding to it:
+
+- **A test tagged `@nc34` runs on that major alone**, because every other project would re-measure
+  the same stylesheet. The audit at 320 × 640 in dark mode is the one that wears it; the tag is
+  filtered out per project in `playwright.config.js`.
+- **A dialog is visible from the first frame of its fade-in**, so an audit taken right after
+  `toBeVisible()` measures the text against a background it is still blended with and reports a
+  contrast violation that is over in 200 ms. `opened()` waits for the opacity instead.
 
 It needs the stack up and `js/` built — without a bundle the root stays empty and the failure names
 the assertion, not the missing build. It logs in through the form — Nextcloud redirects a browser to

@@ -22,6 +22,9 @@ use Psr\Container\ContainerInterface;
  */
 class PreferencesServiceTest extends TestCase {
 	private const USER = 'alice';
+	/** Two vehicles, as the uuids the client dismisses hints by (lib/Db/BaseMapper.php). */
+	private const VEHICLE = '0195e2f1-0000-4000-8000-000000000001';
+	private const OTHER = '0195e2f1-0000-4000-8000-000000000002';
 
 	private IConfig&MockObject $config;
 
@@ -94,6 +97,11 @@ class PreferencesServiceTest extends TestCase {
 		$this->assertSame('zz', $this->service()->forUser(self::USER)['preferences']['jurisdiction']);
 	}
 
+	/** Nothing dismissed is the state everybody starts in, and it is a list rather than nothing. */
+	public function testItReadsNoDismissedHintUntilSomebodyDismissesOne(): void {
+		$this->assertSame([], $this->service()->forUser(self::USER)['preferences']['dismissed_hints']);
+	}
+
 	public function testItWritesAJurisdictionTheListOffers(): void {
 		$saved = $this->service()->write(self::USER, ['jurisdiction' => 'generic']);
 
@@ -113,6 +121,54 @@ class PreferencesServiceTest extends TestCase {
 		} catch (\InvalidArgumentException) {
 			$this->assertSame([], $this->stored);
 		}
+	}
+
+	/**
+	 * The screen sends the whole list it holds, so a dismissal is a write of everything dismissed
+	 * so far - which is also what makes the answer worth reading back.
+	 */
+	public function testItWritesTheHintsTheScreenHasDismissed(): void {
+		$saved = $this->service()->write(self::USER, ['dismissed_hints' => [self::VEHICLE, self::OTHER]]);
+
+		$this->assertSame([self::VEHICLE, self::OTHER], $saved['preferences']['dismissed_hints']);
+		$this->assertSame([self::VEHICLE, self::OTHER], $this->service()->forUser(self::USER)['preferences']['dismissed_hints']);
+	}
+
+	/**
+	 * A hint is dismissed for one vehicle, so the list holds vehicle uuids and nothing else. The
+	 * client has no other kind of dismissal to send, and a preference is not a store for whatever
+	 * arrives.
+	 *
+	 * @dataProvider notAListOfVehicles
+	 */
+	public function testItRefusesADismissalThatNamesNoVehicle(mixed $sent): void {
+		try {
+			$this->service()->write(self::USER, ['dismissed_hints' => $sent]);
+			$this->fail('a dismissal naming no vehicle was stored');
+		} catch (\InvalidArgumentException) {
+			$this->assertSame([], $this->stored);
+		}
+	}
+
+	/**
+	 * One request is one answer: a payload the route refuses changes nothing at all, or the screen
+	 * would be told nothing was stored while a preference had already moved.
+	 */
+	public function testARefusedRequestStoresNoneOfItsOtherPreferences(): void {
+		try {
+			$this->service()->write(self::USER, ['jurisdiction' => 'generic', 'dismissed_hints' => ['nope']]);
+			$this->fail('a refused request was written anyway');
+		} catch (\InvalidArgumentException) {
+			$this->assertSame([], $this->stored);
+		}
+	}
+
+	/** @return iterable<string, array{mixed}> */
+	public static function notAListOfVehicles(): iterable {
+		yield 'a single uuid rather than a list' => [self::VEHICLE];
+		yield 'a plate' => [['B-XY 123']];
+		yield 'a number' => [[42]];
+		yield 'a uuid with a character too many' => [[self::VEHICLE . 'a']];
 	}
 
 	/**

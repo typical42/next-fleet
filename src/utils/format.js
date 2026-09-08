@@ -80,6 +80,26 @@ export function jurisdictionWord(key, name = key) {
 }
 
 /**
+ * A column is a name in the database and a word on screen (docs/ui.md#languages). These are the
+ * labels the edit sheet asks by, so a hint naming a field names the one the reader will look for
+ * (src/components/VehicleSheet.vue), and they are looked up on call for the same reason as above.
+ *
+ * @param {string} column - the column, as the API spells it
+ * @return {string} the word for it, or the column where there is none
+ */
+export function fieldWord(column) {
+	/** @type {Record<string, string>} */
+	const words = {
+		vin: t('nextfleet', 'VIN'),
+		first_reg: t('nextfleet', 'First registration'),
+		tank_ml: t('nextfleet', 'Tank size (ml)'),
+		battery_wh: t('nextfleet', 'Battery capacity (Wh)'),
+	}
+
+	return words[column] ?? column
+}
+
+/**
  * @param {Partial<import('../services/api.js').Vehicle>} vehicle - the vehicle as it was read
  * @return {string} manufacturer and model, as much of the two as the vehicle carries
  */

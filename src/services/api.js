@@ -20,6 +20,11 @@ import { generateUrl } from '@nextcloud/router'
  * @property {number|null} [odo_value] - the newest Reading, cached; null until one exists
  * @property {string} [odo_unit] - `km` or `h`, the vehicle's own
  * @property {string} [lifecycle] - `active`, `laid_up` or `disposed` (CONTEXT.md)
+ * @property {string|null} [vin] - the vehicle's identity as its maker stamped it
+ * @property {string|null} [first_reg] - the day it was first registered, `YYYY-MM-DD`
+ * @property {string[]|null} [energy_types] - the energy it actually accepts (CONTEXT.md)
+ * @property {number|null} [tank_ml] - the tank, in millilitres
+ * @property {number|null} [battery_wh] - the battery, in watt-hours
  */
 
 /**
@@ -41,7 +46,9 @@ import { generateUrl } from '@nextcloud/router'
  * surface (docs/adr/0006-one-api-surface-in-v1.md).
  *
  * @typedef {object} Settings
- * @property {{ jurisdiction: string }} preferences - this user's own choices
+ * @property {{ jurisdiction: string, dismissed_hints: string[] }} preferences - this user's own
+ *   choices: the country new vehicles are kept under, and the vehicles whose "complete this
+ *   vehicle" hint they have answered
  * @property {{ key: string, name: string }[]} jurisdictions - the registered countries, English
  */
 

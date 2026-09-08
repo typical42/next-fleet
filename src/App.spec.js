@@ -10,8 +10,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App.vue'
 import UndoToast from './components/UndoToast.vue'
 import VehicleList from './components/VehicleList.vue'
-import { deleteVehicle, listVehicles } from './services/api.js'
+import { deleteVehicle, getPreferences, listVehicles } from './services/api.js'
 import { useVehiclesStore } from './store/index.js'
+import { usePreferencesStore } from './store/preferences.js'
 import OverviewView from './views/OverviewView.vue'
 import VehicleView from './views/VehicleView.vue'
 
@@ -68,6 +69,35 @@ beforeEach(() => {
 })
 
 describe('the app shell', () => {
+	/**
+	 * The hint on the overview asks about vehicles somebody may have answered for already
+	 * (src/components/CompleteHint.vue), and the answer is a preference. The shell is where it is
+	 * read, because a screen that read it for itself would ask again on every navigation.
+	 */
+	it('reads the preferences along with the fleet', async () => {
+		vi.mocked(getPreferences).mockResolvedValue({
+			preferences: { jurisdiction: 'de', dismissed_hints: [VEHICLE.uuid] },
+			jurisdictions: [],
+		})
+
+		await shell()
+
+		expect(usePreferencesStore().isDismissed(VEHICLE.uuid)).toBe(true)
+	})
+
+	/**
+	 * Preferences that did not arrive are not a fleet that did not: the fleet is the screen, and a
+	 * hint nobody can be asked about is the cheaper loss.
+	 */
+	it('shows the fleet even when the preferences could not be read', async () => {
+		vi.mocked(getPreferences).mockRejectedValue(new Error('nope'))
+
+		const wrapper = await shell()
+
+		expect(wrapper.findComponent(VehicleView).exists()).toBe(true)
+		expect(usePreferencesStore().loaded).toBe(false)
+	})
+
 	/**
 	 * A sold vehicle leaves the overview (docs/ui.md), so the screen of the one just disposed of
 	 * in the edit sheet has no entry in the list any more - and staying on it would strand the

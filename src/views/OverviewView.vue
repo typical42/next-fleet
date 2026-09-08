@@ -7,7 +7,9 @@ import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcEmptyContent from '@nextcloud/vue/components/NcEmptyContent'
 import NcListItem from '@nextcloud/vue/components/NcListItem'
+import { useHotKey } from '@nextcloud/vue/composables/useHotKey'
 
+import CompleteHint from '../components/CompleteHint.vue'
 import { formatOdometer, nameOf, subtitleOf } from '../utils/format.js'
 
 defineProps({
@@ -15,7 +17,13 @@ defineProps({
 	vehicles: { type: Array, required: true },
 })
 
-defineEmits(['new', 'select'])
+const emit = defineEmits(['new', 'select'])
+
+// `n` is the primary action of the screen in view (docs/ui.md), and the shell mounts one screen
+// at a time - so the key belongs to the screen rather than to an arbiter above it. useHotKey
+// already passes over a keystroke typed into a field or aimed at an open sheet, and drops the
+// listener when the screen goes.
+useHotKey('n', () => emit('new'))
 </script>
 
 <template>
@@ -32,7 +40,12 @@ defineEmits(['new', 'select'])
 	</NcEmptyContent>
 	<div v-else class="overview">
 		<h2>{{ t('nextfleet', 'Vehicles') }}</h2>
-		<ul>
+		<!-- Creating a vehicle asks for four fields; the rest is asked for here, once there is a
+		     fleet to ask it about (docs/ui.md). -->
+		<CompleteHint :vehicles="vehicles" @select="$emit('select', $event)" />
+		<!-- Named, because it is not the only list on this screen any more: the hint above lists
+		     vehicles too, and a row here means "a vehicle in the fleet" (tests/e2e/). -->
+		<ul class="overview__list">
 			<NcListItem v-for="vehicle in vehicles"
 				:key="vehicle.uuid"
 				:name="nameOf(vehicle)"

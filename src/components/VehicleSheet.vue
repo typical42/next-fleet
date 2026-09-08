@@ -359,7 +359,14 @@ function chosen(options, id) {
 		:open="true"
 		:size="editing ? 'normal' : 'small'"
 		@update:open="requestClose">
-		<div class="sheet" :class="{ 'sheet--roomy': editing }">
+		<!-- NcDialog closes itself on Escape, but through a useHotKey, which passes over every
+		     keystroke aimed at a text field - and this sheet opens with the caret in one. So the
+		     key is caught where the dialog cannot see it and stopped there, which keeps the
+		     mid-save guard on the one way out. An open NcSelect stops it first, so its dropdown
+		     still closes on its own. -->
+		<div class="sheet"
+			:class="{ 'sheet--roomy': editing }"
+			@keydown.esc.stop="requestClose">
 			<NcNoteCard v-if="note.text"
 				class="sheet__wide"
 				:type="note.type"

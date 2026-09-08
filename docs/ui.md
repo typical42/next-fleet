@@ -138,9 +138,14 @@ not a project.
 ### Details that decide whether it feels easy
 
 - **Ask for four fields, not twelve.** Creating a vehicle needs plate, make/model, engine and
-  current km. Tank size, VIN, first registration and inspection date arrive through a dismissible
-  "complete this vehicle" hint on the overview. A twelve-field wall on first run loses people
-  before they have a single record.
+  current km. VIN, first registration and the capacity of the energy the vehicle takes — a tank for
+  a diesel, a battery for an electric one — arrive through a dismissible "complete this vehicle"
+  hint on the overview. A twelve-field wall on first run loses people before they have a single
+  record. The hint asks per vehicle and the vehicle's name in it opens the screen the edit sheet is
+  on. Dismissing answers for that one vehicle, and it is kept with the person's preferences rather
+  than in the browser: somebody who has said "not this one" is not asked again on their laptop.
+  There is no inspection date to ask for — the next inspection is a reminder
+  ([architecture](architecture.md#data-model)).
 - **The jurisdiction is not a fifth field.** It defaults from the user's personal setting and is
   changed in the vehicle's edit sheet, moving to the sidebar when that exists
   ([contributing](contributing.md)). It decides units, currency and rules — and a freelancer's
@@ -159,7 +164,8 @@ not a project.
   generator ([the maths](architecture.md#numbers-consumption-cost-emissions)).
 - **One primary button per screen.** On the vehicle screen that is **+ Entry** — not "Edit
   vehicle", which people need twice a year.
-- **Keyboard:** `n` new entry, `Esc` closes the sheet. `/` focuses search once search exists (M5).
+- **Keyboard:** `n` starts the primary action of the screen in view — a new entry on a vehicle, a
+  new vehicle on the overview. `Esc` closes the sheet. `/` focuses search once search exists (M5).
 - **Dark mode and 320 px width are acceptance criteria**, not afterthoughts; the timeline is rows,
   not cards, so it survives both.
 

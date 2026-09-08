@@ -74,11 +74,16 @@ function requestClose() {
 		size="small"
 		@update:open="requestClose">
 		<NcNoteCard v-if="failure" type="error" :text="failure" />
+		<!-- NcDialog closes itself on Escape, but through a useHotKey, which passes over every
+		     keystroke aimed at a text field - and this sheet is one field with the caret already
+		     in it. So the key is caught where the dialog cannot see it and stopped there, which
+		     keeps the mid-save guard on the one way out. -->
 		<NcTextField v-model="value"
 			:label="t('nextfleet', 'Counter reading')"
 			:disabled="saving"
 			inputmode="decimal"
-			autofocus />
+			autofocus
+			@keydown.esc.stop="requestClose" />
 		<template #actions>
 			<NcButton :disabled="saving" @click="requestClose">
 				{{ t('nextfleet', 'Cancel') }}

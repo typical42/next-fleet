@@ -26,6 +26,13 @@ class PreferencesService {
 	 */
 	private const JURISDICTION = 'jurisdiction';
 
+	/**
+	 * The vehicles whose "complete this vehicle" hint this user has answered (docs/ui.md). A
+	 * preference rather than browser state, so the hint stays gone on the next machine - and per
+	 * vehicle, because the question is about one vehicle's missing fields and not about hints.
+	 */
+	private const DISMISSED = 'dismissed_hints';
+
 	public function __construct(
 		private IConfig $config,
 		private Jurisdictions $jurisdictions,
@@ -37,7 +44,7 @@ class PreferencesService {
 	 * from. One answer rather than two routes, because a value without its options is a dropdown
 	 * with nothing in it (docs/adr/0006-one-api-surface-in-v1.md).
 	 *
-	 * @return array{preferences: array{jurisdiction: string}, jurisdictions: list<array{key: string, name: string}>}
+	 * @return array{preferences: array{jurisdiction: string, dismissed_hints: list<string>}, jurisdictions: list<array{key: string, name: string}>}
 	 */
 	public function forUser(string $userId): array {
 		return [
@@ -51,6 +58,7 @@ class PreferencesService {
 					self::JURISDICTION,
 					Jurisdictions::DEFAULT,
 				),
+				self::DISMISSED => $this->dismissed($userId),
 			],
 			'jurisdictions' => array_map(
 				// The name is English and reaches no catalogue here; the screen translates it
@@ -70,20 +78,66 @@ class PreferencesService {
 	 * over rather than refused: Nextcloud merges its own routing parameters into every request.
 	 *
 	 * @param array<string, mixed> $fields
-	 * @return array{preferences: array{jurisdiction: string}, jurisdictions: list<array{key: string, name: string}>}
+	 * @return array{preferences: array{jurisdiction: string, dismissed_hints: list<string>}, jurisdictions: list<array{key: string, name: string}>}
 	 * @throws \InvalidArgumentException if a preference is not one of the answers it may take
 	 */
 	public function write(string $userId, array $fields): array {
+		// Read whole, then stored: one request is one answer, and a payload the second preference
+		// makes a bad request must not leave the first one changed behind a 400.
+		$values = [];
 		if (array_key_exists(self::JURISDICTION, $fields)) {
-			$this->config->setUserValue(
-				$userId,
-				Application::APP_ID,
-				self::JURISDICTION,
-				$this->registeredKey($fields[self::JURISDICTION]),
-			);
+			$values[self::JURISDICTION] = $this->registeredKey($fields[self::JURISDICTION]);
+		}
+		if (array_key_exists(self::DISMISSED, $fields)) {
+			$values[self::DISMISSED] = json_encode($this->uuids($fields[self::DISMISSED]), JSON_THROW_ON_ERROR);
+		}
+
+		foreach ($values as $key => $value) {
+			$this->config->setUserValue($userId, Application::APP_ID, $key, $value);
 		}
 
 		return $this->forUser($userId);
+	}
+
+	/**
+	 * The vehicles a dismissal names. The screen sends the whole list back, so this is a replace
+	 * and not an append - and everything in it has to look like the identity of a vehicle
+	 * (CONTEXT.md), because a preference is not a place to keep whatever a client sends.
+	 *
+	 * @return list<string>
+	 * @throws \InvalidArgumentException
+	 */
+	private function uuids(mixed $value): array {
+		if (!is_array($value)) {
+			throw new \InvalidArgumentException(self::DISMISSED . ' is a list of vehicle uuids');
+		}
+
+		$uuids = [];
+		foreach ($value as $uuid) {
+			if (!is_string($uuid) || preg_match('/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/', $uuid) !== 1) {
+				throw new \InvalidArgumentException(self::DISMISSED . ' holds something that is no vehicle uuid');
+			}
+
+			$uuids[] = $uuid;
+		}
+
+		return array_values(array_unique($uuids));
+	}
+
+	/**
+	 * The dismissed hints as they are stored: one JSON array in one config value, because they are
+	 * read and written as a whole and a key per vehicle would be a row per vehicle forever.
+	 * Anything else in there is read as nothing - a value nobody can parse is not a dismissal.
+	 *
+	 * @return list<string>
+	 */
+	private function dismissed(string $userId): array {
+		$stored = json_decode(
+			$this->config->getUserValue($userId, Application::APP_ID, self::DISMISSED, '[]'),
+			true,
+		);
+
+		return is_array($stored) ? array_values(array_filter($stored, is_string(...))) : [];
 	}
 
 	/**

@@ -50,6 +50,7 @@ class PreferencesTest extends TestCase {
 	private function forget(): void {
 		foreach ([self::OWNER, self::STRANGER] as $person) {
 			$this->config->deleteUserValue($person, Application::APP_ID, 'jurisdiction');
+			$this->config->deleteUserValue($person, Application::APP_ID, 'dismissed_hints');
 		}
 
 		$db = \OCP\Server::get(IDBConnection::class);
@@ -110,6 +111,21 @@ class PreferencesTest extends TestCase {
 		$this->assertSame('generic', $after->getJurisdiction());
 		$this->assertNull($after->getCurrency(), 'the generic profile states no currency');
 		$this->assertSame(Jurisdictions::DEFAULT, $this->vehicles->find(self::OWNER, $before->getUuid())->getJurisdiction());
+	}
+
+	/**
+	 * A dismissed hint is a preference and not browser state (docs/ui.md), so what proves it is a
+	 * second read that never saw the first request: the same answer reaches a reloaded page and a
+	 * different browser, because neither of them is where it is kept.
+	 */
+	public function testADismissedHintIsStillDismissedForTheNextSession(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, [])->getUuid();
+
+		$saved = $this->controller(['dismissed_hints' => [$vehicle]])->update();
+
+		$this->assertSame(Http::STATUS_OK, $saved->getStatus());
+		$this->assertSame([$vehicle], $saved->getData()['preferences']['dismissed_hints']);
+		$this->assertSame([$vehicle], $this->controller()->index()->getData()['preferences']['dismissed_hints']);
 	}
 
 	/** The screen offers the registration list, so the list is what it may send back. */
