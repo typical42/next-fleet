@@ -117,11 +117,14 @@ trait SchemaExpectations {
 		$this->assertSame(['id'], $primary->getColumns());
 	}
 
-	public function testHoldsTheThreeTablesMilestoneOneNeedsAndNoOthers(): void {
+	public function testHoldsTheTablesTheMilestonesSoFarNeedAndNoOthers(): void {
 		$tables = $this->fleetTableNames();
 		sort($tables);
 
-		$this->assertSame(['fleet_access', 'fleet_odo_readings', 'fleet_vehicles'], $tables);
+		$this->assertSame(
+			['fleet_access', 'fleet_audit', 'fleet_odo_readings', 'fleet_trips', 'fleet_vehicles'],
+			$tables,
+		);
 	}
 
 	public function testVehiclesHoldsTheDataModelsColumnsAndNoOthers(): void {
@@ -172,6 +175,43 @@ trait SchemaExpectations {
 		]);
 	}
 
+	public function testTripsHoldsTheDataModelsColumnsAndNoOthers(): void {
+		$this->assertTable('fleet_trips', [
+			'vehicle_id' => 'bigint, not null',
+			// Both ends are the user's own instants, so each carries the offset it was entered
+			// at: a trip ending 00:30 in Berlin belongs to the previous day in UTC.
+			'started_at' => 'bigint, not null',
+			'started_at_off' => 'integer, not null',
+			'ended_at' => 'bigint, not null',
+			'ended_at_off' => 'integer, not null',
+			// A claim, not a Reading - comparing it with the preceding Reading is what produces
+			// gap detection.
+			'start_odo' => 'bigint, null',
+			// One of the two is what the driver entered; the other the service derives.
+			'end_odo' => 'bigint, null',
+			'distance' => 'bigint, null',
+			'from_label' => 'string(255), null',
+			'to_label' => 'string(255), null',
+			'purpose' => 'string(255), null',
+			'partner' => 'string(255), null',
+			'category' => 'string(16), not null',
+			// A Reconciliation Trip, created to close a Gap.
+			'reconciled' => 'boolean, null, default false',
+		]);
+	}
+
+	public function testAuditHoldsTheDataModelsColumnsAndNoOthers(): void {
+		$this->assertTable('fleet_audit', [
+			// Which table the row is about, and which row in it. No foreign key: the audit
+			// outlives what it describes.
+			'entity' => 'string(32), not null',
+			'entity_id' => 'bigint, not null',
+			// What changed, and any fact the change carried - late, derived. Who and when are
+			// `created_by` and `created_at`, which every row has.
+			'diff_json' => 'json, not null',
+		]);
+	}
+
 	public function testAccessHoldsTheDataModelsColumnsAndNoOthers(): void {
 		$this->assertTable('fleet_access', [
 			'vehicle_id' => 'bigint, not null',
@@ -201,6 +241,16 @@ trait SchemaExpectations {
 			'fleet_acc_grantee_idx' => 'index(grantee)',
 			'fleet_acc_uuid_uniq' => 'unique(uuid)',
 		], $this->indexes('fleet_access'));
+
+		$this->assertSame([
+			'fleet_trip_uuid_uniq' => 'unique(uuid)',
+			'fleet_trip_veh_start_idx' => 'index(vehicle_id, started_at)',
+		], $this->indexes('fleet_trips'));
+
+		$this->assertSame([
+			'fleet_aud_entity_idx' => 'index(entity, entity_id)',
+			'fleet_aud_uuid_uniq' => 'unique(uuid)',
+		], $this->indexes('fleet_audit'));
 	}
 
 	/**

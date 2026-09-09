@@ -9,17 +9,17 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Tests\Unit\Migration;
 
 use Doctrine\DBAL\Schema\Table;
-use OCA\NextFleet\Migration\Version000001Date20260101000000;
 use OCA\NextFleet\Tests\Fixture\SchemaWrapper;
+use OCA\NextFleet\Tests\MigrationSteps as Steps;
 use OCA\NextFleet\Tests\SchemaExpectations;
 use OCP\DB\ISchemaWrapper;
 use OCP\Migration\IOutput;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The first migration run against a real Doctrine schema instead of a server: what it declares.
+ * The migrations run against a real Doctrine schema instead of a server: what they declare.
  * tests/Integration/SchemaTest.php runs the same expectations against what MariaDB then makes
- * of it.
+ * of them.
  */
 class SchemaTest extends TestCase {
 	use SchemaExpectations;
@@ -29,15 +29,17 @@ class SchemaTest extends TestCase {
 	private function migrate(): SchemaWrapper {
 		if ($this->migrated === null) {
 			$schema = new SchemaWrapper();
-			$returned = (new Version000001Date20260101000000())->changeSchema(
-				$this->createMock(IOutput::class),
-				static fn (): ISchemaWrapper => $schema,
-				[],
-			);
+			foreach (Steps::inOrder() as $step) {
+				$returned = $step->changeSchema(
+					$this->createMock(IOutput::class),
+					static fn (): ISchemaWrapper => $schema,
+					[],
+				);
 
-			// A migration that keeps its schema to itself changes nothing: MigrationService
-			// applies what comes back, and null means "no schema change".
-			$this->assertSame($schema, $returned);
+				// A migration that keeps its schema to itself changes nothing: MigrationService
+				// applies what comes back, and null means "no schema change".
+				$this->assertSame($schema, $returned);
+			}
 
 			$this->migrated = $schema;
 		}

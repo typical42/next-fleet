@@ -70,9 +70,9 @@ data, which in Germany brings the works council into it. Therefore:
 - **Under Logbook Mode retention cannot go below the jurisdiction's required period**, and the field
   says why it is clamped.
 - **Erasing a driver pseudonymises, it does not delete**
-  ([ADR 0008](adr/0008-erasing-a-driver-pseudonymises.md)). `driver_uid` is replaced and the records
-  stay: they are the vehicle owner's logbook, and under Logbook Mode they carry a retention duty. A
-  co-driver leaving must not shred someone else's tax evidence.
+  ([ADR 0008](adr/0008-erasing-a-driver-pseudonymises.md)). The user id on their records is replaced
+  and the records stay: they are the vehicle owner's logbook, and under Logbook Mode they carry a
+  retention duty. A co-driver leaving must not shred someone else's tax evidence.
 - Full per-user data export and per-vehicle export, wired into Nextcloud's own user-deletion hooks.
   The per-vehicle export is also what a buyer gets when a vehicle is sold — v1 transfers no
   ownership between users ([data model](architecture.md#data-model)).

@@ -193,6 +193,21 @@ describe('the vehicle sheet, editing', () => {
 		expect(wrapper.emitted('close')?.length).toBe(1)
 	})
 
+	/**
+	 * Escape in a date field belongs to the picker the browser opened over it, not to the sheet.
+	 * Chromium dismisses that picker on the key and delivers the keydown to the input all the same,
+	 * so a sheet that took it would close over nineteen filled-in fields the moment somebody backed
+	 * out of a calendar. The picker stops it where an open NcSelect stops it.
+	 */
+	it('stays open when Esc is pressed in a date field', async () => {
+		const wrapper = await sheet({ ...VEHICLE, lifecycle: 'disposed', disposed_at: '2025-06-30' })
+
+		await day(wrapper, 'First registration').trigger('keydown.esc')
+		await day(wrapper, 'Disposed on').trigger('keydown.esc')
+
+		expect(wrapper.emitted('close')).toBeUndefined()
+	})
+
 	/** Everything prefilled and visibly editable (docs/ui.md) - including what the create sheet never asked. */
 	it('shows the vehicle it was given', async () => {
 		const wrapper = await sheet(VEHICLE)

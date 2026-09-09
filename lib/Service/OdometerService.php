@@ -10,6 +10,7 @@ namespace OCA\NextFleet\Service;
 
 use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Db\OdoReadingMapper;
+use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 
@@ -26,6 +27,9 @@ class OdometerService {
 	 * The other source types name tables that arrive with M2.
 	 */
 	private const MANUAL = 'manual';
+
+	/** The Reading a Trip leaves behind, which points back at the journey that wrote it. */
+	private const TRIP = 'trip';
 
 	/**
 	 * What M1 writes. `reset` and `correction` are the answers to the follow-up question a
@@ -56,16 +60,84 @@ class OdometerService {
 		$readAt = $this->count('read_at', $fields['read_at'] ?? null);
 		[$value, $origin] = $this->valueOf((int)$vehicle->getId(), $readAt, $fields);
 
+		return $this->write(
+			$vehicle,
+			$userId,
+			$readAt,
+			$this->offset('read_at_off', $fields['read_at_off'] ?? null),
+			$value,
+			$origin,
+			self::MANUAL,
+			null,
+		);
+	}
+
+	/**
+	 * The one Reading a Trip writes, at the moment it ended (rule 5). `start_odo` is a claim about
+	 * the counter and never a Reading - comparing the two is what gap detection is made of.
+	 *
+	 * The vehicle is passed in rather than looked up: the caller has already reached it through
+	 * `VehicleService::reach`, and a second gate here would be a second place to forget one.
+	 *
+	 * @throws \InvalidArgumentException if the trip ended on neither a counter nor a distance
+	 * @throws \OCP\DB\Exception
+	 */
+	public function fromTrip(Vehicle $vehicle, Trip $trip): OdoReading {
+		$endOdo = $trip->getEndOdo();
+		$distance = $trip->getDistance();
+		if ($endOdo !== null) {
+			[$value, $origin] = [$endOdo, self::OBSERVED];
+		} elseif ($distance !== null) {
+			// Counted from where the vehicle stood when the journey began, and not from
+			// `start_odo`: that one is the driver's claim, and rule 6 counts from a Reading.
+			[$value, $origin] = [
+				$this->derive((int)$vehicle->getId(), $trip->getStartedAt(), $distance),
+				self::DERIVED,
+			];
+		} else {
+			throw new \InvalidArgumentException('a trip writes its Reading off a counter or a distance');
+		}
+
+		return $this->write(
+			$vehicle,
+			$trip->getCreatedBy(),
+			$trip->getEndedAt(),
+			$trip->getEndedAtOff(),
+			$value,
+			$origin,
+			self::TRIP,
+			(int)$trip->getId(),
+		);
+	}
+
+	/**
+	 * The insert every Reading goes through, and the restating that follows it. What differs
+	 * between an Odometer Entry and an Entry with content of its own is only where the numbers
+	 * came from, which is the caller's to say.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	private function write(
+		Vehicle $vehicle,
+		string $userId,
+		int $readAt,
+		int $readAtOff,
+		int $value,
+		string $origin,
+		string $sourceType,
+		?int $sourceId,
+	): OdoReading {
 		$reading = new OdoReading();
 		$reading->setVehicleId((int)$vehicle->getId());
 		$reading->setCreatedBy($userId);
 		$reading->setReadAt($readAt);
-		$reading->setReadAtOff($this->offset('read_at_off', $fields['read_at_off'] ?? null));
+		$reading->setReadAtOff($readAtOff);
 		$reading->setValue($value);
 		$reading->setKind(self::READING);
 		$reading->setOrigin($origin);
 		$reading->setFlagged(false);
-		$reading->setSourceType(self::MANUAL);
+		$reading->setSourceType($sourceType);
+		$reading->setSourceId($sourceId);
 
 		$written = $this->readings->insert($reading);
 
@@ -142,13 +214,25 @@ class OdometerService {
 			throw new \InvalidArgumentException('a reading is a value or a distance, not both');
 		}
 
-		$base = $this->readings->findNewestAtOrBefore($vehicleId, $readAt);
+		return [$this->derive($vehicleId, $readAt, $this->count('distance', $distance)), self::DERIVED];
+	}
+
+	/**
+	 * Rule 6's arithmetic, in the one place that does it: the newest reading at or before the
+	 * moment the distance started running, plus the distance. An Odometer Entry counts from the
+	 * moment it was read at, a Trip from the moment it set off - the caller says which.
+	 *
+	 * @throws \InvalidArgumentException if the vehicle has no reading that early
+	 * @throws \OCP\DB\Exception
+	 */
+	private function derive(int $vehicleId, int $from, int $distance): int {
+		$base = $this->readings->findNewestAtOrBefore($vehicleId, $from);
 		if ($base === null) {
 			// Adding a distance to nothing would invent a counter that starts at the distance.
 			throw new \InvalidArgumentException('distance has no earlier reading to count from');
 		}
 
-		return [$base->getValue() + $this->count('distance', $distance), self::DERIVED];
+		return $base->getValue() + $distance;
 	}
 
 	/**
