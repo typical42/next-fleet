@@ -174,6 +174,10 @@ arbiter above it, and a second screen needs no coordination. Its blind spot is `
 closes itself through the same composable, so the key does nothing while the caret is in a text
 field, which is where every sheet here opens. Each sheet therefore catches `Escape` inside its own
 content and stops it, and an open `NcSelect` stops it first so its dropdown still closes on its own.
+`NcDateTimePickerNative` does not, so each one is given `@keydown.esc.stop`: the browser draws its
+picker over the input and closes it on the key, but the keydown lands on the input either way, and
+the sheet would take it and close over every filled-in field. Nothing says whether a native picker
+is open, so a date field keeps `Escape` whether one is or not.
 
 `@nextcloud/eslint-config` is held at 8.x, the same trap as Psalm above: version 9 needs ESLint 10
 and Node's `findPackageJSON`, which arrives in Node 22, so it installs on the Node 20 here and then

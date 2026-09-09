@@ -165,7 +165,8 @@ not a project.
 - **One primary button per screen.** On the vehicle screen that is **+ Entry** — not "Edit
   vehicle", which people need twice a year.
 - **Keyboard:** `n` starts the primary action of the screen in view — a new entry on a vehicle, a
-  new vehicle on the overview. `Esc` closes the sheet. `/` focuses search once search exists (M5).
+  new vehicle on the overview. `Esc` closes the sheet — except in a date field, where it belongs to
+  the picker the browser opened. `/` focuses search once search exists (M5).
 - **Dark mode and 320 px width are acceptance criteria**, not afterthoughts; the timeline is rows,
   not cards, so it survives both.
 

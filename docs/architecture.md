@@ -47,6 +47,7 @@ erDiagram
     REMINDERS ||--o{ REMINDER_NOTIFICATIONS : "one row per channel"
     BOOKINGS ||--o| TRIPS : becomes
     TRIPS ||--o{ AUDIT : "revisions, Logbook Mode only"
+    VEHICLES ||--o{ AUDIT : "every flip of the mode"
 ```
 
 Tables (prefix `fleet_`; Nextcloud prepends `oc_`, so names stay under 27 characters):
@@ -55,14 +56,14 @@ Tables (prefix `fleet_`; Nextcloud prepends `oc_`, so names stay under 27 charac
 |---|---|
 | `fleet_vehicles` | `user_id` (owner), `plate`, `manufacturer`, `model`, `vehicle_type`, `engine`, `energy_types`, `tank_ml`, `battery_wh`, `first_reg`, `vin`, `odo_value` (cache), `odo_unit` (km/h), `purchase_price`, `residual_est`, `currency`, `jurisdiction`, `logbook_mode`, `lifecycle`, `disposed_at`, `folder_file_id`, `retention_months`, `color`, `notes` |
 | `fleet_odo_readings` | `vehicle_id`, `read_at`, `read_at_off`, `value`, `kind` (reading/reset/correction), `origin` (observed/derived), `flagged`, `source_type` (manual/trip/energy/maintenance), `source_id` |
-| `fleet_trips` | `vehicle_id`, `started_at`, `ended_at`, `start_odo` (nullable claim), `end_odo`, `distance`, `cost_center`, `from_label`, `to_label`, `purpose`, `partner`, `category` (business/private/commute), `driver_uid`, `reconciled` |
+| `fleet_trips` | `vehicle_id`, `started_at`, `started_at_off`, `ended_at`, `ended_at_off`, `start_odo` (nullable claim), `end_odo`, `distance`, `from_label`, `to_label`, `purpose`, `partner`, `category` (business/private/commute), `reconciled` |
 | `fleet_energy` | `vehicle_id`, `filled_at`, `odo`, `energy` (petrol/diesel/lpg/cng/electric), `amount` (ml or Wh, per `energy`), `unit_price`, `total`, `vat_rate`, `full_tank`, `missed_previous`, `station`, `is_dc`, `location_kind` (home/public) |
 | `fleet_maintenance` | `vehicle_id`, `type` (service/repair/inspection/tyres/upgrade), `done_at`, `odo`, `title`, `vendor`, `cost`, `vat_rate`, `notes`, `reminder_id` |
 | `fleet_expenses` | `vehicle_id`, `spent_at`, `category` (insurance/tax/toll/parking/fine/lease/other), `amount`, `vat_rate`, `notes` |
 | `fleet_reminders` | `vehicle_id`, `template_key` (nullable — seeded templates translate, user titles do not), `title`, `due_date`, `due_odo`, `mode` (date/odo/either), `lead_days`, `lead_odo`, `recur_months`, `recur_odo`, `state`, `snoozed_until`, `cal_uid`, `cal_uri` |
 | `fleet_reminder_notifications` | `reminder_id`, `channel` (app/mail/calendar), `sent_at` |
 | `fleet_documents` | `vehicle_id`, `file_id`, `kind` (registration/insurance/manual/receipt/photo), `linked_type`, `linked_id` |
-| `fleet_audit` | `entity`, `entity_id`, `user_id`, `changed_at`, `diff_json` — only written under Logbook Mode |
+| `fleet_audit` | `entity`, `entity_id`, `diff_json` — only written under Logbook Mode |
 | `fleet_access` | `vehicle_id`, `grantee`, `grantee_type` (user/group), `role` (manager/driver/viewer) |
 | `fleet_bookings` *(M6+)* | `vehicle_id`, `user_id`, `starts_at`, `ends_at`, `purpose`, `state` |
 
@@ -97,6 +98,12 @@ pause), `disposed` (sold or scrapped, with `disposed_at` — reminders stop, the
 overview, records stay for the retention period). A boolean cannot tell a Saisonkennzeichen from a
 scrapyard.
 
+**An audit row's author and instant are `created_by` and `created_at`.** It is written in the same
+transaction as the change it records and never updated, so a `user_id` and a `changed_at` of its own
+would be two more places for one fact to disagree. What kind of change it was — a void, a late edit,
+a mode flip, a reconciliation — is in `diff_json` and not in a column: the trail has to describe
+tables that do not exist yet.
+
 There is deliberately **no `hu_due` column**. The next inspection is a reminder produced by an
 inspection scheme ([contributing](contributing.md)) — a German date in a core table would be a
 second source of truth and a country the core is not supposed to know.
@@ -116,8 +123,9 @@ that where NC 34 no longer does. The default is what a flag nobody touched means
 
 **Indexes are part of the schema, not an optimisation:** a unique index on `uuid` everywhere, so the
 database states the identity too; `(vehicle_id, <time column>)` on every child table, `(user_id)` on
-vehicles, `(vehicle_id, read_at)` on readings, `(grantee)` on access. QBMapper hides the query, not
-the missing index.
+vehicles, `(vehicle_id, read_at)` on readings, `(vehicle_id, started_at)` on trips, `(grantee)` on
+access, `(entity, entity_id)` on the audit trail, which hangs off a row rather than a vehicle.
+QBMapper hides the query, not the missing index.
 
 ### Time
 

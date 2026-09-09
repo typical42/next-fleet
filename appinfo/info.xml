@@ -46,7 +46,7 @@ dass das Ergebnis von einem Finanzamt, einer Prüferin oder einem Gericht anerka
 und Sätze stammen aus öffentlichen Quellen, können falsch sein und veralten. Fragen Sie Ihre eigene
 Beraterin oder Ihren Berater, bevor Sie sich darauf verlassen.
   ]]></description>
-  <version>0.0.1</version>
+  <version>0.0.2</version>
   <licence>AGPL-3.0-or-later</licence>
   <author>Johannes Kolb</author>
   <namespace>NextFleet</namespace>

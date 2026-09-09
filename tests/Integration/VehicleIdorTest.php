@@ -11,12 +11,14 @@ namespace OCA\NextFleet\Tests\Integration;
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Controller\OdometerController;
 use OCA\NextFleet\Controller\PreferencesController;
+use OCA\NextFleet\Controller\TripController;
 use OCA\NextFleet\Controller\VehicleController;
 use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\PreferencesService;
+use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\DataResponse;
@@ -49,6 +51,7 @@ class VehicleIdorTest extends TestCase {
 
 	private VehicleService $service;
 	private OdometerService $odometry;
+	private TripService $journeys;
 	private PreferencesService $settings;
 	private AccessMapper $grants;
 	private Vehicle $vehicle;
@@ -57,6 +60,7 @@ class VehicleIdorTest extends TestCase {
 		$container = (new Application())->getContainer();
 		$this->service = $container->get(VehicleService::class);
 		$this->odometry = $container->get(OdometerService::class);
+		$this->journeys = $container->get(TripService::class);
 		$this->settings = $container->get(PreferencesService::class);
 		$this->grants = $container->get(AccessMapper::class);
 
@@ -83,10 +87,12 @@ class VehicleIdorTest extends TestCase {
 			->where($qb->expr()->in('grantee', $qb->createNamedParameter($people, $qb::PARAM_STR_ARRAY)));
 		$qb->executeStatement();
 
-		$qb = $db->getQueryBuilder();
-		$qb->delete('fleet_odo_readings')
-			->where($qb->expr()->in('created_by', $qb->createNamedParameter($people, $qb::PARAM_STR_ARRAY)));
-		$qb->executeStatement();
+		foreach (['fleet_odo_readings', 'fleet_trips'] as $table) {
+			$qb = $db->getQueryBuilder();
+			$qb->delete($table)
+				->where($qb->expr()->in('created_by', $qb->createNamedParameter($people, $qb::PARAM_STR_ARRAY)));
+			$qb->executeStatement();
+		}
 	}
 
 	/**
@@ -106,6 +112,15 @@ class VehicleIdorTest extends TestCase {
 	 */
 	private function odometer(string $userId, array $params): OdometerController {
 		return new OdometerController(Application::APP_ID, $this->request($params), $this->odometry, $this->session($userId));
+	}
+
+	/**
+	 * The same again, for the trips.
+	 *
+	 * @param array<string, mixed> $params
+	 */
+	private function trip(string $userId, array $params): TripController {
+		return new TripController(Application::APP_ID, $this->request($params), $this->journeys, $this->session($userId));
 	}
 
 	/**
@@ -170,6 +185,12 @@ class VehicleIdorTest extends TestCase {
 			'value' => 999999,
 			'read_at' => 1750000000,
 			'read_at_off' => 120,
+			'started_at' => 1750000000,
+			'started_at_off' => 120,
+			'ended_at' => 1750005400,
+			'ended_at_off' => 120,
+			'end_odo' => 999999,
+			'category' => 'business',
 		];
 
 		$response = match ($route) {
@@ -183,6 +204,7 @@ class VehicleIdorTest extends TestCase {
 			'vehicle#restore' => $this->controller(self::STRANGER, $params)->restore($uuid),
 			'odometer#index' => $this->odometer(self::STRANGER, $params)->index($uuid),
 			'odometer#create' => $this->odometer(self::STRANGER, $params)->create($uuid),
+			'trip#create' => $this->trip(self::STRANGER, $params)->create($uuid),
 			'preferences#index' => $this->preferences(self::STRANGER, $params)->index(),
 			'preferences#update' => $this->preferences(self::STRANGER, $params)->update(),
 			default => $this->fail($route . ' is a route the IDOR sweep has never been through'),

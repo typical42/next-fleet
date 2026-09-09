@@ -329,6 +329,15 @@ async function add() {
 	emit('created', created.value)
 }
 
+/**
+ * The Escape a native date picker is dismissed with. The browser draws that picker over the input
+ * and closes it on the key, but the keydown reaches the input all the same - so without the `.stop`
+ * this handler is here to carry, backing out of a calendar would close the sheet over nineteen
+ * filled-in fields. An open NcSelect stops the key the same way; the difference is that nothing
+ * says whether a native picker is open, so the field keeps the key whether one is or not.
+ */
+function keepPicker() {}
+
 /** A sheet that is mid-save has values nobody has an answer for yet, so it does not close. */
 function requestClose() {
 	if (!saving.value) {
@@ -413,7 +422,8 @@ function chosen(options, id) {
 					:disabled="saving" />
 				<NcDateTimePickerNative v-model="firstReg"
 					type="date"
-					:label="t('nextfleet', 'First registration')" />
+					:label="t('nextfleet', 'First registration')"
+					@keydown.esc.stop="keepPicker" />
 				<NcSelect v-model="odoUnit"
 					:options="units"
 					:input-label="t('nextfleet', 'Counter unit')"
@@ -460,7 +470,8 @@ function chosen(options, id) {
 				<NcDateTimePickerNative v-if="disposing"
 					v-model="disposedAt"
 					type="date"
-					:label="t('nextfleet', 'Disposed on')" />
+					:label="t('nextfleet', 'Disposed on')"
+					@keydown.esc.stop="keepPicker" />
 				<NcTextField v-model="retentionMonths"
 					:label="t('nextfleet', 'Retention (months)')"
 					:disabled="saving"

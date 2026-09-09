@@ -26,6 +26,10 @@ return [
 		['name' => 'odometer#index', 'url' => '/api/vehicles/{uuid}/readings', 'verb' => 'GET'],
 		['name' => 'odometer#create', 'url' => '/api/vehicles/{uuid}/readings', 'verb' => 'POST'],
 
+		// A Trip is reached the same way, and writes the one Reading it left on the counter
+		// (docs/architecture.md#odometer-rules).
+		['name' => 'trip#create', 'url' => '/api/vehicles/{uuid}/trips', 'verb' => 'POST'],
+
 		// The session user's own settings - no identity in the URL, because there is only ever
 		// one set of them to reach (lib/Service/PreferencesService.php).
 		['name' => 'preferences#index', 'url' => '/api/preferences', 'verb' => 'GET'],

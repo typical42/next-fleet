@@ -120,6 +120,30 @@ test('a vehicle is edited from its own screen, and disposing of it takes it off 
 	})
 })
 
+test('Esc in a date field is the picker\'s, and everywhere else the sheet\'s', async ({ page }) => {
+	const plate = `${plates}escape`
+	await add(page, plate, Number(starting))
+	await page.goto(appPage)
+	await open(page, plate)
+
+	await page.getByRole('button', { name: 'Edit vehicle' }).click()
+	const sheet = page.getByRole('dialog', { name: 'Edit vehicle' })
+	await sheet.getByRole('textbox', { name: 'VIN' }).fill('W0L000051T2123456')
+
+	// The browser draws the date picker over the input and closes it on Escape, but the keydown
+	// reaches the input all the same - and the sheet's own handler is one bubble above it. Vitest
+	// cannot open a native picker, and it cannot see this listener travel through two layers of
+	// `$attrs` onto the input either; this is where that is proved.
+	await sheet.getByLabel('First registration').press('Escape')
+	await expect(sheet).toBeVisible()
+	await expect(sheet.getByRole('textbox', { name: 'VIN' })).toHaveValue('W0L000051T2123456')
+
+	// The other half: the key still closes the sheet from the field the caret is usually in, which
+	// is the half NcDialog's own handler does not give (docs/development.md).
+	await sheet.getByRole('textbox', { name: 'VIN' }).press('Escape')
+	await expect(sheet).toBeHidden()
+})
+
 test('a stale edit is refused, and the second attempt saves what was typed', async ({ page }) => {
 	const plate = `${plates}conflict`
 	const vehicle = await add(page, plate, Number(starting))

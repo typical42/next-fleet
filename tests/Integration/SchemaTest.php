@@ -10,8 +10,8 @@ namespace OCA\NextFleet\Tests\Integration;
 
 use Doctrine\DBAL\Schema\Schema;
 use Doctrine\DBAL\Schema\Table;
-use OCA\NextFleet\Migration\Version000001Date20260101000000;
 use OCA\NextFleet\Tests\Fixture\SchemaWrapper;
+use OCA\NextFleet\Tests\MigrationSteps as Steps;
 use OCA\NextFleet\Tests\SchemaExpectations;
 use OCP\DB\ISchemaWrapper;
 use OCP\IConfig;
@@ -21,8 +21,8 @@ use OCP\Server;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The first migration on a real database: the three tables are dropped and rebuilt from the
- * step itself, along the path MigrationService takes, and what the database made of them is
+ * The migrations on a real database: the tables are dropped and rebuilt from the steps
+ * themselves, along the path MigrationService takes, and what the database made of them is
  * then measured against the same expectations the unit test uses.
  *
  * It empties the app's tables, so it belongs in a dev container and nowhere near data anyone
@@ -40,13 +40,13 @@ class SchemaTest extends TestCase {
 		}
 
 		$db = Server::get(IDBConnection::class);
-		foreach (['fleet_vehicles', 'fleet_odo_readings', 'fleet_access'] as $table) {
+		foreach (Steps::tables() as $table) {
 			if ($db->tableExists($table)) {
 				$db->dropTable($table);
 			}
 		}
 
-		// The step is handed the database as it now is, and the diff between that and what it
+		// Each step is handed the database as it now is, and the diff between that and what it
 		// leaves behind is the migration.
 		$schema = $db->createSchema();
 		$wrapper = new SchemaWrapper(
@@ -55,11 +55,13 @@ class SchemaTest extends TestCase {
 			$db->getDatabasePlatform(),
 		);
 
-		(new Version000001Date20260101000000())->changeSchema(
-			$this->createMock(IOutput::class),
-			static fn (): ISchemaWrapper => $wrapper,
-			[],
-		);
+		foreach (Steps::inOrder() as $step) {
+			$step->changeSchema(
+				$this->createMock(IOutput::class),
+				static fn (): ISchemaWrapper => $wrapper,
+				[],
+			);
+		}
 		$db->migrateToSchema($schema);
 
 		self::$live = $db->createSchema();
