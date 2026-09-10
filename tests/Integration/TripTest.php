@@ -81,6 +81,22 @@ class TripTest extends TestCase {
 	}
 
 	/**
+	 * One trip of an hour and a half through the service, ending on whichever of the two the case
+	 * hands it - and under whichever category, the business one being what a logbook is kept for.
+	 *
+	 * @param array<string, mixed> $ending
+	 */
+	private function record(string $vehicleUuid, int $startedAt, array $ending): Trip {
+		return $this->service->record(self::AUTHOR, $vehicleUuid, $ending + [
+			'started_at' => $startedAt,
+			'started_at_off' => 0,
+			'ended_at' => $startedAt + 5400,
+			'ended_at_off' => 0,
+			'category' => Trip::BUSINESS,
+		]);
+	}
+
+	/**
 	 * Every column survives the round trip, the two that a starting value would otherwise drop
 	 * included: an offset of zero is a trip entered in UTC, and `reconciled` left alone is a trip
 	 * nobody reconciled - both are facts, and a NOT NULL column would refuse the row if the
@@ -155,14 +171,7 @@ class TripTest extends TestCase {
 		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 123']);
 		$uuid = $vehicle->getUuid();
 
-		$trip = $this->service->record(self::AUTHOR, $uuid, [
-			'started_at' => 1750000000,
-			'started_at_off' => 0,
-			'ended_at' => 1750005400,
-			'ended_at_off' => 0,
-			'end_odo' => 120450,
-			'category' => Trip::BUSINESS,
-		]);
+		$trip = $this->record($uuid, 1750000000, ['end_odo' => 120450]);
 
 		$readings = $this->odometer->list(self::AUTHOR, $uuid);
 		$this->assertCount(1, $readings);
@@ -181,23 +190,9 @@ class TripTest extends TestCase {
 	public function testADistanceOnlyTripCountsFromTheReadingItSetOffFrom(): void {
 		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 124']);
 		$uuid = $vehicle->getUuid();
-		$this->service->record(self::AUTHOR, $uuid, [
-			'started_at' => 1750000000,
-			'started_at_off' => 0,
-			'ended_at' => 1750005400,
-			'ended_at_off' => 0,
-			'end_odo' => 120450,
-			'category' => Trip::BUSINESS,
-		]);
+		$this->record($uuid, 1750000000, ['end_odo' => 120450]);
 
-		$trip = $this->service->record(self::AUTHOR, $uuid, [
-			'started_at' => 1750100000,
-			'started_at_off' => 0,
-			'ended_at' => 1750105400,
-			'ended_at_off' => 0,
-			'distance' => 140,
-			'category' => Trip::PRIVATE,
-		]);
+		$trip = $this->record($uuid, 1750100000, ['distance' => 140, 'category' => Trip::PRIVATE]);
 
 		$this->assertSame(140, $trip->getDistance());
 		$this->assertNull($trip->getEndOdo());
@@ -206,6 +201,34 @@ class TripTest extends TestCase {
 		$this->assertSame(120590, $readings[1]->getValue());
 		$this->assertSame(OdometerService::DERIVED, $readings[1]->getOrigin());
 		$this->assertSame(120590, $this->vehicles->find(self::AUTHOR, $uuid)->getOdoValue());
+	}
+
+	/**
+	 * The other half of rule 6, across both tables: the counter a later trip ended on discredits the
+	 * counted Readings the distance-only trips before it left behind, and rewrites none of them. Only
+	 * the instance says the flag reaches the column - it is written by a statement of its own, on rows
+	 * the transaction that wrote them has already committed.
+	 */
+	public function testACounterALaterTripEndedOnFlagsTheCountedReadingsBeforeIt(): void {
+		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 125']);
+		$uuid = $vehicle->getUuid();
+		$this->record($uuid, 1750000000, ['end_odo' => 120000]);
+		$this->record($uuid, 1750100000, ['distance' => 400]);
+		$this->record($uuid, 1750200000, ['distance' => 400]);
+
+		$this->record($uuid, 1750300000, ['end_odo' => 120300]);
+
+		$readings = $this->odometer->list(self::AUTHOR, $uuid);
+		$this->assertCount(4, $readings);
+		$chain = [];
+		foreach ($readings as $reading) {
+			$chain[$reading->getValue()] = $reading->getFlagged();
+		}
+		$this->assertSame(
+			[120000 => false, 120400 => true, 120800 => true, 120300 => false],
+			$chain,
+		);
+		$this->assertSame(120300, $this->vehicles->find(self::AUTHOR, $uuid)->getOdoValue());
 	}
 
 	/**

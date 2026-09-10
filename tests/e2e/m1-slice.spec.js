@@ -6,11 +6,10 @@
 import { AxeBuilder } from '@axe-core/playwright'
 import { expect, test } from '@playwright/test'
 
-import { api, appPage, login, settingsPage } from './app.js'
+import { add, api, appPage, choice, login, open, removeVehicles, row, settingsPage } from './app.js'
 
 // Every vehicle this file makes wears this prefix, and every run deletes what it finds under it
-// before starting. Cleaning up front rather than afterwards leaves a failed run's rows where a
-// human can look at them, and still makes the next run find one vehicle rather than two.
+// before starting.
 const plates = 'E2E-'
 
 // What the create sheet fills in, and what the vehicle screen must then say back. The grouping is
@@ -51,7 +50,10 @@ test('a vehicle and a reading of its counter both reach the list', async ({ page
 	await expect(page.getByRole('heading', { name: plate })).toBeVisible()
 
 	await page.getByRole('button', { name: 'New entry' }).click()
-	const entry = page.getByRole('dialog', { name: 'Odometer' })
+	const entry = page.getByRole('dialog', { name: 'New entry' })
+	// The sheet opens on a trip, which is what a logbook is for; the counter on its own is the
+	// escape hatch beside it (docs/ui.md).
+	await choice(entry, 'Odometer').click()
 
 	// A counter is whole, so `7,2` is a question for the driver rather than a number to round
 	// (docs/ui.md). The sheet stays open with the value it was given.
@@ -282,7 +284,7 @@ test('the screens pass an axe audit', async ({ page }) => {
 	// the focus and give it back. NcDialog teleports itself to <body>, so auditing the app's own
 	// root would scan the screen behind it and report the sheet as clean without looking at it.
 	await page.getByRole('button', { name: 'New entry' }).click()
-	await opened(page.getByRole('dialog', { name: 'Odometer' }))
+	await opened(page.getByRole('dialog', { name: 'New entry' }))
 	await audit(page, 'the entry sheet', ['#nextfleet', '[role="dialog"]'])
 })
 
@@ -305,7 +307,7 @@ test.describe('at 320 x 640, in the dark', { tag: '@nc34' }, () => {
 		await open(page, plate)
 		await audit(page, 'the vehicle screen')
 
-		const entry = page.getByRole('dialog', { name: 'Odometer' })
+		const entry = page.getByRole('dialog', { name: 'New entry' })
 		await page.getByRole('button', { name: 'New entry' }).click()
 		await opened(entry)
 		await audit(page, 'the entry sheet', ['#nextfleet', '[role="dialog"]'])
@@ -362,20 +364,6 @@ async function opened(sheet) {
 }
 
 /**
- * A vehicle's row on the overview. The navigation lists the same vehicles and Nextcloud's chrome
- * has landmarks of its own, so the row is the one in the app's own content area - and in the
- * fleet's own list, because the hint above it lists vehicles as well.
- *
- * @param {import('@playwright/test').Page} page - a page showing the overview
- * @param {string} plate - the label to find it by
- * @return {import('@playwright/test').Locator} the row
- */
-function row(page, plate) {
-	return page.locator('#nextfleet').getByRole('main').locator('.overview__list')
-		.getByRole('listitem').filter({ hasText: plate })
-}
-
-/**
  * What the "complete this vehicle" hint asks about one vehicle.
  *
  * @param {import('@playwright/test').Page} page - a page showing the overview
@@ -400,38 +388,6 @@ function option(page, label) {
 }
 
 /**
- * Opens a vehicle from the overview rather than from the navigation, which is behind a toggle at
- * 320 px - the row is the way in at every width.
- *
- * @param {import('@playwright/test').Page} page - a page showing the overview
- * @param {string} plate - the label to find it by
- */
-async function open(page, plate) {
-	await row(page, plate).locator('.list-item__anchor').click()
-	await expect(page.getByRole('heading', { name: plate })).toBeVisible()
-}
-
-/**
- * A vehicle with a counter, written the short way. The screens are what this file tests; getting
- * one on screen to test them is not.
- *
- * @param {import('@playwright/test').Page} page - a page on a signed-in Nextcloud
- * @param {string} plate - the label to find it by
- * @param {number} value - its counter, as a first Reading
- * @return {Promise<any>} the vehicle as the server made it
- */
-async function add(page, plate, value) {
-	const vehicle = await api(page, { method: 'POST', path: '/api/vehicles', body: { plate } })
-	await api(page, {
-		method: 'POST',
-		path: `/api/vehicles/${vehicle.uuid}/readings`,
-		body: { value, read_at: Math.floor(Date.now() / 1000), read_at_off: 0 },
-	})
-
-	return vehicle
-}
-
-/**
  * The other writer. It reads the vehicle for itself and writes it back, which moves the token every
  * open sheet is still holding the old one of (docs/architecture.md#concurrency).
  *
@@ -446,22 +402,4 @@ async function bump(page, uuid, color) {
 		path: `/api/vehicles/${uuid}`,
 		body: { updated_at: vehicle.updated_at, color },
 	})
-}
-
-/**
- * @param {import('@playwright/test').Page} page - a page on a signed-in Nextcloud
- * @param {string} prefix - the plate prefix this file owns
- */
-async function removeVehicles(page, prefix) {
-	const fleet = await api(page, { method: 'GET', path: '/api/vehicles' })
-	for (const vehicle of fleet) {
-		if (String(vehicle.plate ?? '').startsWith(prefix)) {
-			await api(page, {
-				method: 'DELETE',
-				// A DELETE carries no body, so the token it is checked against travels in the
-				// query string (docs/architecture.md#concurrency).
-				path: `/api/vehicles/${vehicle.uuid}?updated_at=${vehicle.updated_at}`,
-			})
-		}
-	}
 }

@@ -33,6 +33,8 @@ use PHPUnit\Framework\TestCase;
  */
 class TripServiceTest extends TestCase {
 	private const VEHICLE = '0195e2f1-0000-4000-8000-000000000001';
+	/** What the gate hands back for that uuid, and so the id every row here is written under. */
+	private const VEHICLE_ID = 7;
 	private const OWNER = 'alice';
 	private const DRIVER = 'carol';
 	private const STRANGER = 'bob';
@@ -44,6 +46,7 @@ class TripServiceTest extends TestCase {
 	private int $nextTripId = 1;
 	private int $nextReadingId = 1;
 	private ?int $cached = null;
+	private ?OdometerService $odometer = null;
 
 	private TripMapper&MockObject $tripMapper;
 	private OdoReadingMapper&MockObject $readingMapper;
@@ -57,6 +60,7 @@ class TripServiceTest extends TestCase {
 		$this->nextTripId = 1;
 		$this->nextReadingId = 1;
 		$this->cached = null;
+		$this->odometer = null;
 
 		// Stores rather than expectations, for the reason OdometerServiceTest keeps them: what a
 		// trip is worth is what the vehicle shows once the row is in.
@@ -142,22 +146,40 @@ class TripServiceTest extends TestCase {
 	}
 
 	private function service(): TripService {
-		return new TripService(
-			$this->tripMapper,
-			new OdometerService($this->readingMapper, $this->vehicles, $this->fleet),
-			$this->fleet,
-			$this->db,
-		);
+		return new TripService($this->tripMapper, $this->odometer(), $this->fleet, $this->db);
+	}
+
+	/**
+	 * One odometer, the way the container hands out one: a case that writes an Odometer Entry of its
+	 * own reaches the same service the trips went through.
+	 */
+	private function odometer(): OdometerService {
+		return $this->odometer ??= new OdometerService($this->readingMapper, $this->vehicles, $this->fleet);
 	}
 
 	private function vehicle(): Vehicle {
 		return Vehicle::fromRow([
-			'id' => 7,
+			'id' => self::VEHICLE_ID,
 			'uuid' => self::VEHICLE,
 			'user_id' => self::OWNER,
 			'odo_unit' => 'km',
 			'updated_at' => 1750000000,
 		]);
+	}
+
+	/**
+	 * The vehicle's odometer as the timeline shows it: what each Reading holds, and whether it is
+	 * still waiting for its follow-up question.
+	 *
+	 * @return array<int, bool>
+	 */
+	private function chain(): array {
+		$chain = [];
+		foreach ($this->ordered(self::VEHICLE_ID) as $reading) {
+			$chain[$reading->getValue()] = $reading->getFlagged();
+		}
+
+		return $chain;
 	}
 
 	/**
@@ -178,15 +200,15 @@ class TripServiceTest extends TestCase {
 
 	/**
 	 * A trip as the sheet posts one with the toggle the other way round: a distance, and no counter
-	 * at either end.
+	 * at either end. How long it ran matters to where its Reading lands, so a case that cares says.
 	 *
 	 * @return array<string, mixed>
 	 */
-	private function covered(int $startedAt, int $distance): array {
+	private function covered(int $startedAt, int $distance, int $ranFor = 5400): array {
 		return [
 			'started_at' => $startedAt,
 			'started_at_off' => 120,
-			'ended_at' => $startedAt + 5400,
+			'ended_at' => $startedAt + $ranFor,
 			'ended_at_off' => 120,
 			'distance' => $distance,
 			'category' => Trip::BUSINESS,
@@ -289,13 +311,60 @@ class TripServiceTest extends TestCase {
 		$this->assertSame(121000, $this->cached);
 	}
 
+	/**
+	 * The shape only a trip can make. A Reading is written at `ended_at` and counted from
+	 * `started_at` (rules 5 and 6), so a long journey's counted row lands after counters that were
+	 * read while it was still running - and below them, because the kilometres it added were counted
+	 * from before they were read. Observed beats derived: the counted row is flagged, the counter
+	 * nobody computed stands, and neither number is rewritten.
+	 *
+	 * An Odometer Entry counts from the moment it is written at and can never produce this.
+	 */
+	public function testACounterReadDuringALongTripDiscreditsWhatThatTripCounted(): void {
+		$service = $this->service();
+		$service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120000));
+		$service->record(self::OWNER, self::VEHICLE, $this->drove(1750100000, 120500));
+
+		$service->record(self::OWNER, self::VEHICLE, $this->covered(1750006000, 100, 194000));
+
+		$this->assertSame([120000 => false, 120500 => false, 120100 => true], $this->chain());
+		// Rule 2 all the same: what the vehicle shows is the newest row by date, flag or no flag.
+		$this->assertSame(120100, $this->cached);
+	}
+
+	/**
+	 * There is one chain, whatever wrote it. An Odometer Entry somebody typed discredits the
+	 * Readings a distance-only trip left behind exactly as a trip's own counter does - the rows are
+	 * judged by where their number came from, never by which table it names.
+	 */
+	public function testAnOdometerEntryDiscreditsTheCountedRowsATripLeftBehind(): void {
+		$service = $this->service();
+		$service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120000));
+		$service->record(self::OWNER, self::VEHICLE, $this->covered(1750100000, 400));
+
+		$this->odometer()->record(self::OWNER, self::VEHICLE, [
+			'read_at' => 1750200000,
+			'read_at_off' => 120,
+			'value' => 120100,
+		]);
+
+		$this->assertSame([120000 => false, 120400 => true, 120100 => false], $this->chain());
+		$this->assertSame(
+			['trip', 'trip', 'manual'],
+			array_map(
+				static fn (OdoReading $reading): string => $reading->getSourceType(),
+				$this->ordered(self::VEHICLE_ID),
+			),
+		);
+	}
+
 	/** The trip is written under the vehicle the route named, and the person who posted it. */
 	public function testATripBelongsToTheVehicleAndTheDriverWhoEnteredIt(): void {
 		$this->service()->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
 
-		$this->assertSame(7, $this->trips[0]->getVehicleId());
+		$this->assertSame(self::VEHICLE_ID, $this->trips[0]->getVehicleId());
 		$this->assertSame(self::OWNER, $this->trips[0]->getCreatedBy());
-		$this->assertSame(7, $this->readings[0]->getVehicleId());
+		$this->assertSame(self::VEHICLE_ID, $this->readings[0]->getVehicleId());
 		$this->assertSame(self::OWNER, $this->readings[0]->getCreatedBy());
 	}
 

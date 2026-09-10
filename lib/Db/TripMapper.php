@@ -43,4 +43,15 @@ class TripMapper extends BaseMapper {
 
 		return $this->findEntities($qb);
 	}
+
+	/**
+	 * One page of the timeline's trips, newest first (docs/architecture.md#the-timeline). A trip is
+	 * dated by when it set off, which is the index the table carries and the date the row shows.
+	 *
+	 * @return list<Trip>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findBefore(int $vehicleId, int $at, int $id, int $limit): array {
+		return $this->findEntities($this->pageBefore('started_at', $vehicleId, $at, $id, $limit));
+	}
 }

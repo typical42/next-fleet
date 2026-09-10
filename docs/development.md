@@ -251,8 +251,10 @@ through on the second attempt, a delete undone from the toast, the country chang
 settings page and read back off the next vehicle, and the "complete this vehicle" hint dismissed for
 good. Then an axe audit of the overview, the vehicle screen and an open sheet, scoped to
 `#nextfleet` at the WCAG 2.1 AA tags — Nextcloud's own header is outside this app's reach.
+`m2-slice.spec.js` does the same for the logbook: a trip entered as a counter and a trip entered as
+a distance, both moving the vehicle's counter, and a refused one leaving the sheet open.
 
-Two things about that file worth knowing before adding to it:
+Three things about those files worth knowing before adding to them:
 
 - **A test tagged `@nc34` runs on that major alone**, because every other project would re-measure
   the same stylesheet. The audit at 320 × 640 in dark mode is the one that wears it; the tag is
@@ -260,15 +262,20 @@ Two things about that file worth knowing before adding to it:
 - **A dialog is visible from the first frame of its fade-in**, so an audit taken right after
   `toBeVisible()` measures the text against a background it is still blended with and reports a
   contrast violation that is over in 200 ms. `opened()` waits for the opacity instead.
+- **What every spec file shares lives in `app.js`** — signing in, the API, the overview row, opening
+  a vehicle, making one, and the sweep each file starts with.
 
 It needs the stack up and `js/` built — without a bundle the root stays empty and the failure names
 the assertion, not the missing build. It logs in through the form — Nextcloud redirects a browser to
 `/login` whatever `Authorization` header it carries, so basic auth is no shortcut.
 `NEXTFLEET_URL_NC34` and `NEXTFLEET_URL_NC31` override the two ports.
 
-Every vehicle the run makes wears an `E2E-` plate and each run deletes what it finds under that
-prefix before it starts. Cleaning up front rather than afterwards leaves a failed run's rows where
-they can be looked at, and still makes the next run find one vehicle rather than two.
+Every vehicle the run makes wears a plate its own spec file owns — `E2E-` for the M1 slice,
+`M2-E2E-` for the M2 one — and each file deletes what it finds under its prefix before it starts.
+Cleaning up front rather than afterwards leaves a failed run's rows where they can be looked at, and
+still makes the next run find one vehicle rather than two. The prefixes have to stay disjoint:
+Playwright runs the files at once, and a sweep that matched another file's plates would delete a
+vehicle out from under a test still using it.
 
 Chromium's own dependencies are system packages and `npx playwright install --with-deps` needs
 root. Where that is not available, `npm run test:e2e:docker` runs the same specs inside Playwright's

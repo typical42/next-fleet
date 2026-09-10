@@ -181,6 +181,35 @@ abstract class BaseMapper extends QBMapper {
 		return $this->findEntity($this->byUuid($uuid));
 	}
 
+	/**
+	 * One page of one vehicle's rows, newest first: the live ones strictly before `($at, $id)` in
+	 * `($instant, id)` order, which is the order the timeline reads in reverse
+	 * (docs/architecture.md#the-timeline). The tie-break is `id` because two rows can carry the
+	 * same instant and a page boundary that is not a total order drops or repeats one.
+	 *
+	 * The query rather than the rows: which of a table's rows are timeline rows at all is the
+	 * table's own business, and it is one `andWhere` away.
+	 */
+	protected function pageBefore(string $instant, int $vehicleId, int $at, int $id, int $limit): IQueryBuilder {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->tableName)
+			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->isNull('deleted_at'))
+			->andWhere($qb->expr()->orX(
+				$qb->expr()->lt($instant, $qb->createNamedParameter($at, IQueryBuilder::PARAM_INT)),
+				$qb->expr()->andX(
+					$qb->expr()->eq($instant, $qb->createNamedParameter($at, IQueryBuilder::PARAM_INT)),
+					$qb->expr()->lt('id', $qb->createNamedParameter($id, IQueryBuilder::PARAM_INT)),
+				),
+			))
+			->orderBy($instant, 'DESC')
+			->addOrderBy('id', 'DESC')
+			->setMaxResults($limit);
+
+		return $qb;
+	}
+
 	private function byUuid(string $uuid): IQueryBuilder {
 		$qb = $this->db->getQueryBuilder();
 		$qb->select('*')

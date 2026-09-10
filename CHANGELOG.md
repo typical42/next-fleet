@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- The entry sheet asks what is being entered — a trip or a counter reading — and opens on the trip.
+  A trip is entered with the counter it ended on or with the kilometres it covered, whichever the
+  driver knows, and the counter it set off on is prefilled from the vehicle.
+- A counter a trip actually ended on discredits the Readings the distance-only trips before it
+  counted: those rows are flagged and none of them is rewritten. A counter still below the last row
+  standing is flagged too, so both questions get asked.
 - A trip may carry the kilometres it covered instead of the counter it ended on. Its Reading is
   counted from the newest one at or before the moment it set off, and marked derived. A trip that
   carries both, or neither, is refused.
