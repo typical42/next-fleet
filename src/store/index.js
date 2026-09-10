@@ -6,7 +6,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
-import { createVehicle, deleteVehicle, getVehicle, listVehicles, recordReading, restoreVehicle, updateVehicle } from '../services/api.js'
+import { createVehicle, deleteVehicle, getVehicle, listVehicles, recordReading, recordTrip, restoreVehicle, updateVehicle } from '../services/api.js'
 
 /** @typedef {import('../services/api.js').Vehicle} Vehicle */
 /** @typedef {import('../services/api.js').Reading} Reading */
@@ -132,29 +132,55 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	}
 
 	/**
-	 * Record one reading of a vehicle's counter, then read the vehicle back: `odo_value` is a
-	 * cache the server restates from the whole chain, and counting it here would be a second
-	 * implementation of the odometer rules — a wrong one as soon as a reading lands out of order.
-	 *
-	 * The re-read may fail on its own, and by then the Reading is written. Raising that would
-	 * offer the sheet a retry which writes the Reading a second time, and nothing refuses a
-	 * duplicate — two equal readings are not a contradiction. So the counter stays stale until
-	 * the next load, which is the cheaper wrong.
+	 * Record one reading of a vehicle's counter.
 	 *
 	 * @param {string} uuid - the vehicle the counter belongs to
 	 * @param {object} entry - what the sheet holds: the value, and the offset it was read at
 	 * @return {Promise<Reading>} the reading as the server judged it
 	 */
 	async function record(uuid, entry) {
-		const reading = await recordReading(uuid, entry)
+		return counted(uuid, () => recordReading(uuid, entry))
+	}
+
+	/**
+	 * Record one trip. It writes a Reading of its own — the counter it ended on, or the distance
+	 * counted onto the chain (docs/architecture.md#odometer-rules).
+	 *
+	 * @param {string} uuid - the vehicle that drove it
+	 * @param {object} trip - what the sheet holds (src/services/api.js)
+	 * @return {Promise<import('../services/api.js').Trip>} the trip as the server wrote it
+	 */
+	async function log(uuid, trip) {
+		return counted(uuid, () => recordTrip(uuid, trip))
+	}
+
+	/**
+	 * One write that moves a vehicle's counter, and the read of the vehicle that follows it:
+	 * `odo_value` is a cache the server restates from the whole chain, and counting it here would
+	 * be a second implementation of the odometer rules — a wrong one as soon as a row lands out of
+	 * order.
+	 *
+	 * The re-read may fail on its own, and by then the write has landed. Raising that would offer
+	 * the sheet a retry which writes the entry a second time, and nothing refuses a duplicate —
+	 * two equal readings are not a contradiction. So the counter stays stale until the next load,
+	 * which is the cheaper wrong. A refused write is another matter: it never reached the vehicle,
+	 * and the sheet is what has to say so (docs/ui.md).
+	 *
+	 * @template T
+	 * @param {string} uuid - the vehicle the counter belongs to
+	 * @param {() => Promise<T>} write - the write to make
+	 * @return {Promise<T>} what the write answered with
+	 */
+	async function counted(uuid, write) {
+		const written = await write()
 		try {
 			upsert(await getVehicle(uuid))
 		} catch {
 			// See above: the write stands, only this view of it is behind.
 		}
 
-		return reading
+		return written
 	}
 
-	return { byUuid, create, deleted, forget, list, load, record, remove, restore, save, upsert, visible }
+	return { byUuid, create, deleted, forget, list, load, log, record, remove, restore, save, upsert, visible }
 })

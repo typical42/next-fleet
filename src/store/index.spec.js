@@ -6,7 +6,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createVehicle, deleteVehicle, getVehicle, listVehicles, recordReading, restoreVehicle, updateVehicle } from '../services/api.js'
+import { createVehicle, deleteVehicle, getVehicle, listVehicles, recordReading, recordTrip, restoreVehicle, updateVehicle } from '../services/api.js'
 import { useVehiclesStore } from './index.js'
 
 // The network is the api client's own seam (api.spec.js); what is under test here is what the
@@ -17,6 +17,7 @@ vi.mock('../services/api.js', () => ({
 	getVehicle: vi.fn(),
 	listVehicles: vi.fn(),
 	recordReading: vi.fn(),
+	recordTrip: vi.fn(),
 	restoreVehicle: vi.fn(),
 	updateVehicle: vi.fn(),
 }))
@@ -144,6 +145,56 @@ describe('vehicles store', () => {
 
 			expect(getVehicle).not.toHaveBeenCalled()
 			expect(store.list[0].odo_value).toBe(148000)
+		})
+	})
+
+	describe('log', () => {
+		/**
+		 * A trip writes a Reading of its own (docs/architecture.md#odometer-rules), so the counter
+		 * moves for the same reason `record` does — and it is read back for the same reason: the
+		 * new value is the server's to compute, whether the trip stated it or was counted a
+		 * distance onto the chain.
+		 */
+		it('re-reads the vehicle the trip moved', async () => {
+			const store = useVehiclesStore()
+			store.upsert(vehicle({ uuid: 'a', odo_value: 148320 }))
+			vi.mocked(recordTrip).mockResolvedValue(/** @type {any} */ ({ uuid: 't1', end_odo: 148402 }))
+			vi.mocked(getVehicle).mockResolvedValue(vehicle({ uuid: 'a', odo_value: 148402 }))
+
+			const trip = await store.log('a', { ended_at: 1750000000, end_odo: 148402 })
+
+			expect(trip.uuid).toBe('t1')
+			expect(getVehicle).toHaveBeenCalledWith('a')
+			expect(store.list[0].odo_value).toBe(148402)
+		})
+
+		/**
+		 * The trip is written by then, and it wrote a Reading with it. Offering the sheet a retry
+		 * would log the journey twice, and nothing refuses a duplicate.
+		 */
+		it('does not report a written trip as failed because the vehicle would not come back', async () => {
+			const store = useVehiclesStore()
+			store.upsert(vehicle({ uuid: 'a', odo_value: 148320 }))
+			vi.mocked(recordTrip).mockResolvedValue(/** @type {any} */ ({ uuid: 't1', end_odo: 148402 }))
+			vi.mocked(getVehicle).mockRejectedValue(new Error('The server answered 503'))
+
+			const trip = await store.log('a', { ended_at: 1750000000, end_odo: 148402 })
+
+			expect(trip.uuid).toBe('t1')
+			expect(store.list[0].odo_value).toBe(148320)
+		})
+
+		/** A trip the server refused never reached the vehicle, so the sheet has to hear the refusal. */
+		it('lets a refused trip through and leaves the vehicle alone', async () => {
+			const store = useVehiclesStore()
+			store.upsert(vehicle({ uuid: 'a', odo_value: 148320 }))
+			const refusal = new Error('a trip carries end_odo or distance')
+			vi.mocked(recordTrip).mockRejectedValue(refusal)
+
+			await expect(store.log('a', { ended_at: 1750000000 })).rejects.toBe(refusal)
+
+			expect(getVehicle).not.toHaveBeenCalled()
+			expect(store.list[0].odo_value).toBe(148320)
 		})
 	})
 

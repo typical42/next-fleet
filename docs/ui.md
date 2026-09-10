@@ -85,12 +85,17 @@ preference belongs to the person, so it lives where a person looks for their pre
 
 ### The entry sheet, in detail
 
-This is the screen the app lives or dies by. One `+` opens four choices, each a sheet, each with
-**one required field**:
+This is the screen the app lives or dies by. One `+` opens one sheet, and a chooser at the top of it
+picks which of four kinds is being entered — each with **one required field**. The chooser rather
+than four buttons, because the kind is a decision the driver may change after seeing the fields, and
+a phone has room for one sheet at a time. It opens on the trip, which is what a logbook is for:
 
 - **Trip** — end odometer *or* distance, whichever the driver happens to know. Toggle between them.
   Giving the distance is not the same as giving the odometer, and the app does not pretend otherwise
-  ([odometer rules](architecture.md#odometer-rules)). Date defaults to now; route, purpose and
+  ([odometer rules](architecture.md#odometer-rules)). Neither counter is prefilled, and that is the
+  one exception to the rule below: the counter a trip set off on is a *claim* about what the
+  dashboard read, and filling it in from the vehicle would answer the question gap detection exists
+  to ask. Both moments default to now; route, purpose and
   partner autocomplete from this vehicle's own history, which is what keeps six spellings of one
   client out of the reports.
 - **Energy** — amount and total price. Which energy types are offered comes from the vehicle's

@@ -33,6 +33,14 @@ use OCP\DB\Types;
  * @method void setSourceId(?int $sourceId)
  */
 class OdoReading extends BaseEntity implements \JsonSerializable {
+	/**
+	 * An Odometer Entry is its own Reading and carries nothing beyond the number (CONTEXT.md), so
+	 * it is a row of the timeline in its own right. Every other source type names the Entry that
+	 * wrote the Reading, and that Entry is the row - `trip` is the only one M2 has.
+	 */
+	public const MANUAL = 'manual';
+	public const TRIP = 'trip';
+
 	protected int $vehicleId = 0;
 	protected int $readAt = 0;
 	protected int $readAtOff = 0;

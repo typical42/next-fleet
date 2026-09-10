@@ -23,15 +23,6 @@ class OdometerService {
 	public const DERIVED = 'derived';
 
 	/**
-	 * An Odometer Entry is its own Reading and carries nothing beyond the number (CONTEXT.md).
-	 * The other source types name tables that arrive with M2.
-	 */
-	private const MANUAL = 'manual';
-
-	/** The Reading a Trip leaves behind, which points back at the journey that wrote it. */
-	private const TRIP = 'trip';
-
-	/**
 	 * What M1 writes. `reset` and `correction` are the answers to the follow-up question a
 	 * flagged row asks, and only an answered `reset` starts a new segment (rule 3) - so they
 	 * arrive with the timeline that asks it, not with a client that may pick a word.
@@ -67,7 +58,7 @@ class OdometerService {
 			$this->offset('read_at_off', $fields['read_at_off'] ?? null),
 			$value,
 			$origin,
-			self::MANUAL,
+			OdoReading::MANUAL,
 			null,
 		);
 	}
@@ -105,7 +96,7 @@ class OdometerService {
 			$trip->getEndedAtOff(),
 			$value,
 			$origin,
-			self::TRIP,
+			OdoReading::TRIP,
 			(int)$trip->getId(),
 		);
 	}

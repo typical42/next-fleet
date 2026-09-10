@@ -41,6 +41,28 @@ import { generateUrl } from '@nextcloud/router'
  */
 
 /**
+ * One journey (CONTEXT.md). The counter it ended on and the kilometres it covered are two facts
+ * and never computed into one another, so exactly one of them is filled in
+ * (docs/architecture.md#odometer-rules).
+ *
+ * @typedef {object} Trip
+ * @property {string} uuid - identity
+ * @property {number} started_at - when it set off, seconds
+ * @property {number} started_at_off - the UTC offset it set off at, minutes
+ * @property {number} ended_at - when it arrived, seconds
+ * @property {number} ended_at_off - the UTC offset it arrived at, minutes
+ * @property {number|null} start_odo - the counter the driver claims it set off on
+ * @property {number|null} end_odo - the counter it ended on
+ * @property {number|null} distance - the kilometres it covered, when no counter was read
+ * @property {string|null} from_label - where it set off
+ * @property {string|null} to_label - where it arrived
+ * @property {string|null} purpose - why it was driven
+ * @property {string|null} partner - the business contact it visited
+ * @property {string} category - `business`, `private` or `commute` (CONTEXT.md)
+ * @property {boolean} reconciled - the app wrote it to close a Gap; never a field a client fills in
+ */
+
+/**
  * The personal settings screen's whole state: what this user chose, and what each choice may be.
  * The options travel with the values because a dropdown needs both and the app has one API
  * surface (docs/adr/0006-one-api-surface-in-v1.md).
@@ -139,6 +161,20 @@ export async function restoreVehicle(vehicle) {
  */
 export async function recordReading(uuid, entry) {
 	return request('POST', `/api/vehicles/${uuid}/readings`, entry)
+}
+
+/**
+ * Record one trip. Like a Reading it hangs off its vehicle and carries no token — a trip is
+ * written, and under Logbook Mode revised through the audit trail rather than overwritten
+ * (docs/architecture.md#concurrency).
+ *
+ * @param {string} uuid - the vehicle that drove it
+ * @param {object} trip - what the sheet holds: the two instants with their offsets, the category,
+ *   an end counter or a distance, and whatever of the route the driver typed
+ * @return {Promise<Trip>} the trip as the server wrote it
+ */
+export async function recordTrip(uuid, trip) {
+	return request('POST', `/api/vehicles/${uuid}/trips`, trip)
 }
 
 /**

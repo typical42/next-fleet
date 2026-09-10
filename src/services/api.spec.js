@@ -4,7 +4,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ConflictError, createVehicle, deleteVehicle, getPreferences, listVehicles, recordReading, restoreVehicle, savePreferences, updateVehicle } from './api.js'
+import { ConflictError, createVehicle, deleteVehicle, getPreferences, listVehicles, recordReading, recordTrip, restoreVehicle, savePreferences, updateVehicle } from './api.js'
 
 vi.mock('@nextcloud/router', () => ({
 	generateUrl: (/** @type {string} */ path) => `/index.php${path}`,
@@ -80,6 +80,26 @@ describe('recordReading', () => {
 		expect(url).toContain(`/apps/nextfleet/api/vehicles/${vehicle.uuid}/readings`)
 		expect(options.method).toBe('POST')
 		expect(reading.origin).toBe('observed')
+	})
+})
+
+describe('recordTrip', () => {
+	/**
+	 * A trip hangs off its vehicle and carries no token either: it is written, and under Logbook
+	 * Mode later revised through the audit trail rather than overwritten
+	 * (docs/architecture.md#concurrency). What comes back is the row the server wrote, which is
+	 * not what was sent - `reconciled` is the app's to set (lib/Service/TripService.php).
+	 */
+	it('posts to the vehicle the trip belongs to and answers with the row the server wrote', async () => {
+		const fetch = answers(201, { uuid: 't1', end_odo: 148402, distance: null, reconciled: false })
+
+		const trip = await recordTrip(vehicle.uuid, { ended_at: 1750000000, end_odo: 148402 })
+
+		const [url, options] = fetch.mock.calls[0]
+		expect(url).toContain(`/apps/nextfleet/api/vehicles/${vehicle.uuid}/trips`)
+		expect(options.method).toBe('POST')
+		expect(JSON.parse(options.body)).toEqual({ ended_at: 1750000000, end_odo: 148402 })
+		expect(trip.reconciled).toBe(false)
 	})
 })
 
