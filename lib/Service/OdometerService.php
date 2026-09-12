@@ -136,6 +136,35 @@ class OdometerService {
 	}
 
 	/**
+	 * The Reading a trip left on the counter follows that trip into the trash and back out of it.
+	 * The journey and the number it left behind are one fact (rule 5), so a Reading standing on a
+	 * voided trip would hold the vehicle's kilometres at a journey nobody claims any more - and on
+	 * a row the timeline no longer shows, which leaves nothing on screen to explain the figure.
+	 *
+	 * Which way it goes is the trip's to say: the Reading is stamped exactly as its trip is. The
+	 * checked write is against the Reading as this method just read it, because nothing else
+	 * writes a Reading's `deleted_at` - the concurrency token a client holds is the trip's, and
+	 * the caller has already spent it on the trip itself.
+	 *
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the Reading is not as it was read
+	 * @throws \OCP\DB\Exception
+	 */
+	public function followTrip(Vehicle $vehicle, Trip $trip): void {
+		$reading = $this->readings->findAnyForTrip((int)$vehicle->getId(), (int)$trip->getId());
+		if ($reading === null) {
+			throw new \RuntimeException('the trip has no Reading of its own to follow it');
+		}
+
+		if ($trip->getDeletedAt() === null) {
+			$this->readings->restoreChecked($reading, $reading->getUpdatedAt());
+		} else {
+			$this->readings->softDelete($reading, $reading->getUpdatedAt());
+		}
+
+		$this->settle($vehicle);
+	}
+
+	/**
 	 * One vehicle's odometer, oldest first - the order the timeline reads in (docs/ui.md).
 	 *
 	 * @return list<OdoReading>
@@ -150,17 +179,40 @@ class OdometerService {
 	}
 
 	/**
-	 * Reads the vehicle's whole odometer back, decides every flag from scratch and caches the
-	 * newest value on the vehicle. Nothing is ever incremented in place, so two drivers logging
-	 * at once cannot corrupt a running total (rule 2).
-	 *
-	 * The whole chain, not a window around the new row: a bounded pass has to know how far a
-	 * contradiction can reach backwards, and getting that wrong is silent. One indexed query
-	 * per entry is what a vehicle's lifetime of readings costs.
+	 * The chain as it now stands, and the row the caller just wrote picked back out of it.
 	 *
 	 * @throws \OCP\DB\Exception
 	 */
 	private function restate(Vehicle $vehicle, string $uuid): OdoReading {
+		foreach ($this->settle($vehicle) as $reading) {
+			if ($reading->getUuid() === $uuid) {
+				return $reading;
+			}
+		}
+
+		throw new \RuntimeException('the reading just written is not among the vehicle\'s');
+	}
+
+	/**
+	 * Reads the vehicle's whole odometer back, decides every flag from scratch and caches the
+	 * newest value on the vehicle. Nothing is ever incremented in place, so two drivers logging
+	 * at once cannot corrupt a running total (rule 2).
+	 *
+	 * The whole chain, not a window around the row that changed: a bounded pass has to know how
+	 * far a contradiction can reach backwards, and getting that wrong is silent. That is also why
+	 * a Reading leaving the chain settles it the same way one arriving does - a flag a row put on
+	 * its neighbours goes with it. One indexed query per entry is what a vehicle's lifetime of
+	 * readings costs.
+	 *
+	 * What is settled is the flags and the cache, never a value: a derived row whose base has just
+	 * been voided keeps the number it was counted with, because rule 6 corrects no derived value
+	 * and a recomputed one would be a counter nobody ever read. The kilometres that journey
+	 * covered are a fact of their own.
+	 *
+	 * @return list<OdoReading> the chain the caller's write left behind
+	 * @throws \OCP\DB\Exception
+	 */
+	private function settle(Vehicle $vehicle): array {
 		$readings = $this->readings->findAllForVehicle((int)$vehicle->getId());
 
 		foreach ($this->flags($readings) as $index => $flagged) {
@@ -174,13 +226,7 @@ class OdometerService {
 			$readings === [] ? null : end($readings)->getValue(),
 		);
 
-		foreach ($readings as $reading) {
-			if ($reading->getUuid() === $uuid) {
-				return $reading;
-			}
-		}
-
-		throw new \RuntimeException('the reading just written is not among the vehicle\'s');
+		return $readings;
 	}
 
 	/**

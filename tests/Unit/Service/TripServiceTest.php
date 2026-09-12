@@ -10,6 +10,7 @@ namespace OCA\NextFleet\Tests\Unit\Service;
 
 use OCA\NextFleet\Db\Audit;
 use OCA\NextFleet\Db\AuditMapper;
+use OCA\NextFleet\Db\BaseEntity;
 use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Db\OdoReadingMapper;
 use OCA\NextFleet\Db\Trip;
@@ -17,10 +18,12 @@ use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Exception\AccessDeniedException;
+use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
+use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\IDBConnection;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
@@ -40,6 +43,13 @@ class TripServiceTest extends TestCase {
 	private const OWNER = 'alice';
 	private const DRIVER = 'carol';
 	private const STRANGER = 'bob';
+	/** Someone who may add to the logbook but not take anything out of it. */
+	private const KEEPER = 'dave';
+
+	/** The clock the fake mappers stamp a row with, and the token a client then holds. */
+	private const ENTERED_AT = 1750500000;
+	/** The moment a void happens, which is both the stamp and the token it leaves behind. */
+	private const VOIDED_AT = 1750600000;
 
 	/** The trips the mapper stands for, in insertion order. @var list<Trip> */
 	private array $trips = [];
@@ -80,11 +90,38 @@ class TripServiceTest extends TestCase {
 		$this->tripMapper->method('insert')->willReturnCallback(function (Trip $trip): Trip {
 			$trip->setId($this->nextTripId);
 			$trip->setUuid('0195e2f1-1111-4000-8000-00000000000' . $this->nextTripId++);
+			$trip->setCreatedAt(self::ENTERED_AT);
+			$trip->setUpdatedAt(self::ENTERED_AT);
 			$this->trips[] = $trip;
 			$this->calls[] = 'trip';
 
 			return $trip;
 		});
+		$this->tripMapper->method('findByUuid')
+			->willReturnCallback(fn (string $uuid): Trip => $this->tripNamed($uuid, false));
+		$this->tripMapper->method('findAnyByUuid')
+			->willReturnCallback(fn (string $uuid): Trip => $this->tripNamed($uuid, true));
+		$this->tripMapper->method('softDelete')->willReturnCallback(
+			function (Trip $trip, int $expectedUpdatedAt): Trip {
+				$this->checked($trip, $expectedUpdatedAt, null);
+				$trip->setDeletedAt(self::VOIDED_AT);
+				$trip->setUpdatedAt(self::VOIDED_AT);
+				$this->calls[] = 'void';
+
+				return $trip;
+			},
+		);
+		$this->tripMapper->method('restoreChecked')->willReturnCallback(
+			function (Trip $trip, int $expectedUpdatedAt): Trip {
+				// The mirror predicate, and the token stays where the void put it
+				// (docs/architecture.md#concurrency).
+				$this->checked($trip, $expectedUpdatedAt, self::VOIDED_AT);
+				$trip->setDeletedAt(null);
+				$this->calls[] = 'unvoid';
+
+				return $trip;
+			},
+		);
 
 		$this->auditMapper = $this->createMock(AuditMapper::class);
 		$this->auditMapper->method('insert')->willReturnCallback(function (Audit $row): Audit {
@@ -99,6 +136,8 @@ class TripServiceTest extends TestCase {
 			function (OdoReading $reading): OdoReading {
 				$reading->setId($this->nextReadingId);
 				$reading->setUuid('0195e2f1-0000-4000-8000-00000000000' . $this->nextReadingId++);
+				$reading->setCreatedAt(self::ENTERED_AT);
+				$reading->setUpdatedAt(self::ENTERED_AT);
 				$this->readings[] = $reading;
 
 				return $reading;
@@ -111,6 +150,38 @@ class TripServiceTest extends TestCase {
 		);
 		$this->readingMapper->method('findAllForVehicle')
 			->willReturnCallback(fn (int $vehicleId): array => $this->ordered($vehicleId));
+		$this->readingMapper->method('findAnyForTrip')->willReturnCallback(
+			function (int $vehicleId, int $tripId): ?OdoReading {
+				foreach ($this->readings as $reading) {
+					if ($reading->getVehicleId() === $vehicleId
+						&& $reading->getSourceType() === OdoReading::TRIP
+						&& $reading->getSourceId() === $tripId) {
+						return $reading;
+					}
+				}
+
+				return null;
+			},
+		);
+		$this->readingMapper->method('softDelete')->willReturnCallback(
+			function (OdoReading $reading, int $expectedUpdatedAt): OdoReading {
+				$this->checked($reading, $expectedUpdatedAt, null);
+				$reading->setDeletedAt(self::VOIDED_AT);
+				$reading->setUpdatedAt(self::VOIDED_AT);
+				$this->calls[] = 'reading';
+
+				return $reading;
+			},
+		);
+		$this->readingMapper->method('restoreChecked')->willReturnCallback(
+			function (OdoReading $reading, int $expectedUpdatedAt): OdoReading {
+				$this->checked($reading, $expectedUpdatedAt, self::VOIDED_AT);
+				$reading->setDeletedAt(null);
+				$this->calls[] = 'reading';
+
+				return $reading;
+			},
+		);
 		$this->readingMapper->method('findNewestAtOrBefore')->willReturnCallback(
 			function (int $vehicleId, int $readAt): ?OdoReading {
 				$earlier = array_filter(
@@ -135,6 +206,7 @@ class TripServiceTest extends TestCase {
 			function (string $userId, string $operation): Vehicle {
 				$allowed = match ($userId) {
 					self::OWNER => true,
+					self::KEEPER => $operation !== VehicleAccess::DELETE,
 					self::DRIVER => $operation === VehicleAccess::VIEW,
 					default => false,
 				};
@@ -158,15 +230,44 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
+	 * The trip that uuid names, as the two lookups answer: one passes over a voided row, the other
+	 * is the one caller that wants it.
+	 *
+	 * @throws DoesNotExistException
+	 */
+	private function tripNamed(string $uuid, bool $anyState): Trip {
+		foreach ($this->trips as $trip) {
+			if ($trip->getUuid() === $uuid && ($anyState || $trip->getDeletedAt() === null)) {
+				return $trip;
+			}
+		}
+
+		throw new DoesNotExistException('no trip ' . $uuid);
+	}
+
+	/**
+	 * What every checked write is checked against (docs/architecture.md#concurrency): the row as
+	 * the client read it, in the state the statement's predicate names.
+	 *
+	 * @throws StaleUpdateException
+	 */
+	private function checked(BaseEntity $row, int $expectedUpdatedAt, ?int $deletedAt): void {
+		if ($row->getUpdatedAt() !== $expectedUpdatedAt || $row->getDeletedAt() !== $deletedAt) {
+			throw new StaleUpdateException('row ' . $row->getId() . ' is not the row that was read');
+		}
+	}
+
+	/**
 	 * One vehicle's readings in the order rule 1 puts them in, which is the order both mapper
-	 * reads answer in.
+	 * reads answer in. A voided one is out of it, as it is out of the query.
 	 *
 	 * @return list<OdoReading>
 	 */
 	private function ordered(int $vehicleId): array {
 		$rows = array_values(array_filter(
 			$this->readings,
-			static fn (OdoReading $reading): bool => $reading->getVehicleId() === $vehicleId,
+			static fn (OdoReading $reading): bool
+				=> $reading->getVehicleId() === $vehicleId && $reading->getDeletedAt() === null,
 		));
 		usort($rows, static fn (OdoReading $a, OdoReading $b): int
 			=> [$a->getReadAt(), $a->getId()] <=> [$b->getReadAt(), $b->getId()]);
@@ -651,6 +752,246 @@ class TripServiceTest extends TestCase {
 		$this->assertSame('begin', $this->calls[0]);
 		$this->assertSame('commit', end($this->calls));
 		$this->assertSame(['trip', 'audit'], array_slice($this->calls, 1, -1));
+	}
+
+	/**
+	 * The task: a delete voids, it does not remove (docs/features.md#logbook-mode). The row stays
+	 * where it was with `deleted_at` stamped on it, which is what the trash, the undo and the
+	 * Fahrtenbuch export all read it back through.
+	 */
+	public function testDeletingATripVoidsItRatherThanRemovingIt(): void {
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+
+		$voided = $service->delete(self::OWNER, self::VEHICLE, $trip->getUuid(), $trip->getUpdatedAt());
+
+		$this->assertSame(self::VOIDED_AT, $voided->getDeletedAt());
+		$this->assertCount(1, $this->trips);
+		$this->assertSame($trip->getUuid(), $this->trips[0]->getUuid());
+	}
+
+	/**
+	 * The trip and its Reading are one fact (rule 5), so the Reading goes where the trip goes. A
+	 * counter left standing on a journey nobody claims any more would put the vehicle's kilometres
+	 * on a row the timeline no longer shows and nothing can explain.
+	 */
+	public function testTheReadingAVoidedTripLeftGoesWithIt(): void {
+		$service = $this->service();
+		$service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120000));
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750100000, 120500));
+
+		$service->delete(self::OWNER, self::VEHICLE, $trip->getUuid(), $trip->getUpdatedAt());
+
+		$this->assertSame([120000 => false], $this->chain());
+		$this->assertSame(120000, $this->cached);
+	}
+
+	/**
+	 * What the chain says is decided again once a row leaves it (rule 3). The counter that
+	 * discredited the kilometres a distance-only trip counted is gone with the trip that carried
+	 * it, so those rows stand again - the flag was never a fact about them on their own.
+	 */
+	public function testTheRowsAVoidedCounterDiscreditedStandAgain(): void {
+		$service = $this->service();
+		$service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120000));
+		$service->record(self::OWNER, self::VEHICLE, $this->covered(1750100000, 400));
+		$doubted = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750200000, 120100));
+		$this->assertSame([120000 => false, 120400 => true, 120100 => false], $this->chain());
+
+		$service->delete(self::OWNER, self::VEHICLE, $doubted->getUuid(), $doubted->getUpdatedAt());
+
+		$this->assertSame([120000 => false, 120400 => false], $this->chain());
+		$this->assertSame(120400, $this->cached);
+	}
+
+	/**
+	 * A void under the mode is recorded like every other change: who, when, and what it did to the
+	 * row. `deleted_at` is the column that changed, so it is the diff - the row's own instant says
+	 * when the trail was written, and those are two different moments only when one of them is
+	 * wrong.
+	 */
+	public function testAVoidUnderLogbookModeIsRecordedInTheTrail(): void {
+		$this->logbookMode = true;
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+
+		$service->delete(self::OWNER, self::VEHICLE, $trip->getUuid(), $trip->getUpdatedAt());
+
+		$this->assertCount(2, $this->audits);
+		$void = $this->audits[1];
+		$this->assertSame(Audit::TRIP, $void->getEntity());
+		$this->assertSame((int)$trip->getId(), $void->getEntityId());
+		$this->assertSame(self::OWNER, $void->getCreatedBy());
+		$this->assertSame(
+			['change' => 'voided', 'fields' => ['deleted_at' => [null, self::VOIDED_AT]]],
+			$void->getDiffJson(),
+		);
+	}
+
+	/**
+	 * Off the mode a delete is a delete: the row is still kept, because that is what `deleted_at`
+	 * is for, but nobody is keeping evidence and no trail claims otherwise.
+	 */
+	public function testAVoidOnAVehicleWithoutTheModeLeavesNoAuditRow(): void {
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+
+		$voided = $service->delete(self::OWNER, self::VEHICLE, $trip->getUuid(), $trip->getUpdatedAt());
+
+		$this->assertSame(self::VOIDED_AT, $voided->getDeletedAt());
+		$this->assertSame([], $this->audits);
+	}
+
+	/**
+	 * The three writes a void is - the stamp, the row that records it, the Reading that goes with
+	 * the trip - are one transaction, for the reason the trip and its Reading are.
+	 */
+	public function testTheVoidItsTrailAndItsReadingAreOneTransaction(): void {
+		$this->logbookMode = true;
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+		$entering = count($this->calls);
+
+		$service->delete(self::OWNER, self::VEHICLE, $trip->getUuid(), $trip->getUpdatedAt());
+
+		$this->assertSame(
+			['begin', 'void', 'audit', 'reading', 'commit'],
+			array_slice($this->calls, $entering),
+		);
+	}
+
+	/**
+	 * Voiding the row a distance was counted from rewrites nothing. Rule 6 never corrects a derived
+	 * value, and this is the same rule from the other side: the kilometres that journey covered are
+	 * a fact of their own, and a recomputed number would be a counter nobody ever read.
+	 */
+	public function testVoidingTheRowADistanceWasCountedFromLeavesTheCountedNumberAlone(): void {
+		$service = $this->service();
+		$base = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120000));
+		$service->record(self::OWNER, self::VEHICLE, $this->covered(1750100000, 400));
+
+		$service->delete(self::OWNER, self::VEHICLE, $base->getUuid(), $base->getUpdatedAt());
+
+		$this->assertSame([120400 => false], $this->chain());
+		$this->assertSame(120400, $this->cached);
+	}
+
+	/**
+	 * Undo, the gesture this app deletes with everywhere (docs/ui.md), and it brings back both
+	 * rows: a trip whose counter stayed in the trash would be a journey the vehicle never drove.
+	 * The token is the one the void answered with, which is the one the undo toast holds.
+	 */
+	public function testUndoBringsBackTheTripAndTheCounterItEndedOn(): void {
+		$service = $this->service();
+		$service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120000));
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750100000, 120500));
+		$voided = $service->delete(self::OWNER, self::VEHICLE, $trip->getUuid(), $trip->getUpdatedAt());
+
+		$back = $service->restore(self::OWNER, self::VEHICLE, $trip->getUuid(), $voided->getUpdatedAt());
+
+		$this->assertNull($back->getDeletedAt());
+		$this->assertSame([120000 => false, 120500 => false], $this->chain());
+		$this->assertSame(120500, $this->cached);
+	}
+
+	/**
+	 * An undo is a change like any other, so it is recorded like any other. A trail that stopped
+	 * at the void would leave an auditor reading "voided" over a trip the export lists as driven,
+	 * and nothing to say which of the two happened last.
+	 */
+	public function testAnUndoUnderLogbookModeIsRecordedInTheTrailToo(): void {
+		$this->logbookMode = true;
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+		$voided = $service->delete(self::OWNER, self::VEHICLE, $trip->getUuid(), $trip->getUpdatedAt());
+
+		$service->restore(self::OWNER, self::VEHICLE, $trip->getUuid(), $voided->getUpdatedAt());
+
+		$this->assertCount(3, $this->audits);
+		$this->assertSame(
+			['change' => 'restored', 'fields' => ['deleted_at' => [self::VOIDED_AT, null]]],
+			$this->audits[2]->getDiffJson(),
+		);
+		$this->assertSame(self::OWNER, $this->audits[2]->getCreatedBy());
+	}
+
+	/**
+	 * Taking a journey out of the logbook is not the same right as putting one in, and undo takes
+	 * the right the void took: somebody who may drive the car and log what they drove may not make
+	 * either disappear.
+	 *
+	 * @dataProvider voids
+	 */
+	public function testAGrantToAddATripIsNotAGrantToVoidOne(string $method): void {
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+
+		$this->expectException(AccessDeniedException::class);
+
+		$service->$method(self::KEEPER, self::VEHICLE, $trip->getUuid(), $trip->getUpdatedAt());
+	}
+
+	/**
+	 * A uuid is all it takes to name a trip, so the gate is what stands between a stranger and one.
+	 * Nothing is written on the way to the refusal - the trip stands, and so does the counter.
+	 *
+	 * @dataProvider voids
+	 */
+	public function testAStrangerVoidsNothing(string $method): void {
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+
+		try {
+			$service->$method(self::STRANGER, self::VEHICLE, $trip->getUuid(), $trip->getUpdatedAt());
+			$this->fail('a stranger reached a trip');
+		} catch (AccessDeniedException) {
+			$this->assertNull($this->trips[0]->getDeletedAt());
+			$this->assertSame(120450, $this->cached);
+			$this->assertSame([], $this->audits);
+		}
+	}
+
+	/**
+	 * A trip is reached through the vehicle it hangs off, and only through it. The uuid alone
+	 * would otherwise be a second way in: one vehicle of their own is all somebody would need to
+	 * take a journey out of anybody else's logbook.
+	 *
+	 * @dataProvider voids
+	 */
+	public function testATripOfAnotherVehicleIsNotReachableThroughThisOne(string $method): void {
+		$elsewhere = $this->onAnotherVehicle();
+
+		$this->expectException(DoesNotExistException::class);
+
+		$this->service()->$method(self::OWNER, self::VEHICLE, $elsewhere->getUuid(), self::ENTERED_AT);
+	}
+
+	/**
+	 * Both ways out of the trash, walked by every case about who may use them: they take the same
+	 * right and reach the same rows.
+	 *
+	 * @return iterable<string, array{string}>
+	 */
+	public static function voids(): iterable {
+		yield 'delete' => ['delete'];
+		yield 'restore' => ['restore'];
+	}
+
+	/**
+	 * One trip on a vehicle this route does not name, straight into the store - the service can
+	 * only write trips on the vehicle its gate hands back, which is the one it must not be.
+	 */
+	private function onAnotherVehicle(): Trip {
+		$trip = new Trip();
+		$trip->setId(99);
+		$trip->setUuid('0195e2f1-2222-4000-8000-000000000099');
+		$trip->setVehicleId(self::VEHICLE_ID + 1);
+		$trip->setCreatedBy(self::OWNER);
+		$trip->setCreatedAt(self::ENTERED_AT);
+		$trip->setUpdatedAt(self::ENTERED_AT);
+		$this->trips[] = $trip;
+
+		return $trip;
 	}
 
 	/**

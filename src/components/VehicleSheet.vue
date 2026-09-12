@@ -7,11 +7,12 @@ import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcDateTimePickerNative from '@nextcloud/vue/components/NcDateTimePickerNative'
 import NcDialog from '@nextcloud/vue/components/NcDialog'
+import NcFormBoxSwitch from '@nextcloud/vue/components/NcFormBoxSwitch'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import NcSelect from '@nextcloud/vue/components/NcSelect'
 import NcTextArea from '@nextcloud/vue/components/NcTextArea'
 import NcTextField from '@nextcloud/vue/components/NcTextField'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 import { ConflictError, getPreferences, getVehicle } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
@@ -127,6 +128,32 @@ const energyTypes = ref((props.vehicle?.energy_types ?? [])
 const odoUnit = ref(chosen(units.value, props.vehicle?.odo_unit ?? 'km'))
 const lifecycle = ref(chosen(lifecycles.value, props.vehicle?.lifecycle ?? 'active'))
 const jurisdiction = ref(text(props.vehicle?.jurisdiction))
+// A column nobody ever wrote is null rather than false, which is the same answer to the question
+// this switch asks (docs/architecture.md#data-model).
+const logbookMode = ref(props.vehicle?.logbook_mode === true)
+
+/**
+ * Whether switching the mode off has been answered for. The gesture is not intercepted - the
+ * switch says what the driver last asked for, and the question stands between that and the save,
+ * which is the moment anything is written anyway.
+ */
+const confirmedOff = ref(false)
+
+// Switching a vehicle out of the mode ends the period its trips are read under
+// (docs/features.md#logbook-mode), so it is asked about; switching it on takes nothing away and is
+// one gesture. Derived from the vehicle rather than latched, so putting the switch back answers
+// the question by itself - and from the vehicle the next write is checked against rather than the
+// one the sheet opened with, because somebody else switching the mode on while this sheet sat open
+// turns a plain save into a switching-off that nobody here has decided on.
+const askingOff = computed(() => held.value?.logbook_mode === true && !logbookMode.value && !confirmedOff.value)
+
+// One answer per question: switching back on and off again is a second switching off, and a
+// confirmation that outlived the first would let it through unasked.
+watch(logbookMode, (on) => {
+	if (on) {
+		confirmedOff.value = false
+	}
+})
 
 // The disposal day is a fact about a disposed vehicle and about no other, so it appears with that
 // lifecycle and is written away again with any other one - see fields().
@@ -224,6 +251,7 @@ function fields() {
 		residual_est: residualEst.value,
 		currency: currency.value,
 		jurisdiction: jurisdiction.value,
+		logbook_mode: logbookMode.value,
 		lifecycle: lifecycle.value?.id ?? '',
 		retention_months: retentionMonths.value,
 		color: color.value,
@@ -254,8 +282,16 @@ async function attempt(work, kind) {
 	}
 }
 
-/** The write the sheet is for: the edit, or the create it was opened without a vehicle for. */
+/**
+ * The write the sheet is for: the edit, or the create it was opened without a vehicle for. An
+ * unanswered question holds it, the way a save in flight holds the way out - the greyed button
+ * says so, and this is the rule the button only shows.
+ */
 function save() {
+	if (askingOff.value) {
+		return Promise.resolve()
+	}
+
 	return attempt(editing.value ? write : add, 'save')
 }
 
@@ -286,9 +322,18 @@ async function current() {
 /**
  * The edit: one write, checked against the `updated_at` the vehicle was read with. What is on
  * screen wins, only the version it is written against changes.
+ *
+ * The question is asked again once the vehicle is in hand, because reading it back is the first
+ * moment this sheet can know that saving would now switch the mode off - the vehicle it opened
+ * with was not under the mode, and the one it is about to write over is.
  */
 async function write() {
-	emit('saved', await store.save({ ...await current(), ...fields() }))
+	const vehicle = await current()
+	if (askingOff.value) {
+		return
+	}
+
+	emit('saved', await store.save({ ...vehicle, ...fields() }))
 }
 
 /**
@@ -423,6 +468,7 @@ function chosen(options, id) {
 				<NcDateTimePickerNative v-model="firstReg"
 					type="date"
 					:label="t('nextfleet', 'First registration')"
+					:disabled="saving"
 					@keydown.esc.stop="keepPicker" />
 				<NcSelect v-model="odoUnit"
 					:options="units"
@@ -461,6 +507,25 @@ function chosen(options, id) {
 					:clearable="false"
 					label="label"
 					@update:model-value="jurisdiction = $event?.id ?? jurisdiction" />
+				<!-- The switch the vehicle's logbook rules hang off (docs/features.md#logbook-mode),
+				     beside the country whose ruleset it invokes. -->
+				<NcFormBoxSwitch v-model="logbookMode"
+					class="sheet__wide"
+					:label="t('nextfleet', 'Logbook mode')"
+					:description="t('nextfleet', 'Trips are recorded with an audit trail, and a delete voids the trip instead of removing it.')"
+					:disabled="saving" />
+				<div v-if="askingOff" class="sheet__wide sheet__question">
+					<NcNoteCard type="warning"
+						:text="t('nextfleet', 'Switching Logbook mode off ends the audited period for this vehicle. What is already recorded stays as it is.')" />
+					<div class="sheet__answers">
+						<NcButton :disabled="saving" @click="logbookMode = true">
+							{{ t('nextfleet', 'Keep it on') }}
+						</NcButton>
+						<NcButton variant="warning" :disabled="saving" @click="confirmedOff = true">
+							{{ t('nextfleet', 'Switch it off') }}
+						</NcButton>
+					</div>
+				</div>
 				<NcSelect v-model="lifecycle"
 					:options="lifecycles"
 					:input-label="t('nextfleet', 'Lifecycle')"
@@ -471,6 +536,7 @@ function chosen(options, id) {
 					v-model="disposedAt"
 					type="date"
 					:label="t('nextfleet', 'Disposed on')"
+					:disabled="saving"
 					@keydown.esc.stop="keepPicker" />
 				<NcTextField v-model="retentionMonths"
 					:label="t('nextfleet', 'Retention (months)')"
@@ -498,7 +564,9 @@ function chosen(options, id) {
 			<NcButton :disabled="saving" @click="requestClose">
 				{{ t('nextfleet', 'Cancel') }}
 			</NcButton>
-			<NcButton variant="primary" :disabled="saving" @click="save">
+			<!-- The one question this sheet asks stands in the way of the write and of nothing
+			     else, because the write is the moment anything happens. -->
+			<NcButton variant="primary" :disabled="saving || askingOff" @click="save">
 				{{ action }}
 			</NcButton>
 		</template>
@@ -509,6 +577,19 @@ function chosen(options, id) {
 .sheet {
 	display: grid;
 	gap: calc(var(--default-grid-baseline) * 2);
+}
+
+/* The question and the two answers to it read as one block, whatever the grid does around them. */
+.sheet__question {
+	display: grid;
+	gap: calc(var(--default-grid-baseline) * 2);
+}
+
+.sheet__answers {
+	display: flex;
+	flex-wrap: wrap;
+	gap: calc(var(--default-grid-baseline) * 2);
+	justify-content: end;
 }
 
 /* One column on a phone; two once there is room, so twenty fields are not twenty screens. */

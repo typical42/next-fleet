@@ -29,6 +29,11 @@ return [
 		// A Trip is reached the same way, and writes the one Reading it left on the counter
 		// (docs/architecture.md#odometer-rules).
 		['name' => 'trip#create', 'url' => '/api/vehicles/{uuid}/trips', 'verb' => 'POST'],
+		// A delete voids under Logbook Mode (docs/features.md#logbook-mode), and undo is its own
+		// verb and path for the reason a vehicle's is: it is not a write to the trip, it is a
+		// write to whether there is one.
+		['name' => 'trip#delete', 'url' => '/api/vehicles/{uuid}/trips/{trip}', 'verb' => 'DELETE'],
+		['name' => 'trip#restore', 'url' => '/api/vehicles/{uuid}/trips/{trip}/restore', 'verb' => 'POST'],
 
 		// What happened to the vehicle, every table at once and a page at a time
 		// (docs/architecture.md#the-timeline). `odometer#index` stays where it is: the counter on

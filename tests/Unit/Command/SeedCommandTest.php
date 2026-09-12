@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Tests\Unit\Command;
 
 use OCA\NextFleet\Command\SeedCommand;
+use OCA\NextFleet\Db\AuditMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
@@ -17,6 +18,7 @@ use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\IConfig;
+use OCP\IDBConnection;
 use OCP\IUserManager;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
@@ -95,7 +97,16 @@ class SeedCommandTest extends TestCase {
 			/** @param class-string $id */
 			static fn (string $id): object => new $id(),
 		);
-		$fleet = new VehicleService($this->mapper, $access, $config, new Jurisdictions($container));
+		// The seeded fleet is created, never updated, so nothing here reaches the audit trail or
+		// the transaction an update is written in.
+		$fleet = new VehicleService(
+			$this->mapper,
+			$access,
+			$config,
+			new Jurisdictions($container),
+			$this->createMock(AuditMapper::class),
+			$this->createMock(IDBConnection::class),
+		);
 
 		return new CommandTester(new SeedCommand($this->users, $fleet, $this->odometer, $time));
 	}

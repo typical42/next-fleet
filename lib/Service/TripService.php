@@ -13,6 +13,7 @@ use OCA\NextFleet\Db\AuditMapper;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
+use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Db\TTransactional;
 use OCP\IDBConnection;
 
@@ -65,6 +66,8 @@ class TripService {
 	 * (docs/architecture.md#data-model).
 	 */
 	private const CREATED = 'created';
+	private const VOIDED = 'voided';
+	private const RESTORED = 'restored';
 
 	/** What an audit row does not restate: it carries its own author, instant and identity. */
 	private const BOOKKEEPING = ['uuid', 'created_at', 'updated_at', 'deleted_at', 'created_by'];
@@ -103,13 +106,84 @@ class TripService {
 		// vehicle's cache with it, so two drivers logging a shared car at once can meet the
 		// database's own deadlock detection - and a 500 there loses the trip the driver typed.
 		// The replay is safe because BaseMapper::insert re-marks every column on the entity.
-		return $this->atomicRetry(function () use ($vehicle, $trip): Trip {
+		return $this->atomicRetry(function () use ($userId, $vehicle, $trip): Trip {
 			$written = $this->trips->insert($trip);
-			$this->trail($vehicle, $written);
+			$this->trail($vehicle, $written, $userId, self::CREATED, $this->stated($written));
 			$this->odometer->fromTrip($vehicle, $written);
 
 			return $written;
 		}, $this->db);
+	}
+
+	/**
+	 * Voids one trip: the row survives with `deleted_at` stamped on it
+	 * (docs/features.md#logbook-mode), which is what the trash, the undo and the export read it
+	 * back through.
+	 *
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete on this vehicle
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the trip has changed since
+	 * @throws \OCP\DB\Exception
+	 */
+	public function delete(string $userId, string $vehicleUuid, string $tripUuid, int $expectedUpdatedAt): Trip {
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::DELETE, $vehicleUuid);
+
+		// The trip is looked up inside the transaction, not before it: a replay after a deadlock
+		// has to start from the row as the database has it, and an entity a rolled-back statement
+		// already stamped would be written back a second time with nothing left to change.
+		return $this->atomicRetry(function () use ($userId, $vehicle, $tripUuid, $expectedUpdatedAt): Trip {
+			$trip = $this->on($vehicle, $this->trips->findByUuid($tripUuid));
+			$voided = $this->trips->softDelete($trip, $expectedUpdatedAt);
+			$this->trail($vehicle, $voided, $userId, self::VOIDED, [
+				'deleted_at' => [null, $voided->getDeletedAt()],
+			]);
+			$this->odometer->followTrip($vehicle, $voided);
+
+			return $voided;
+		}, $this->db);
+	}
+
+	/**
+	 * Undo, and it takes the right the void took. The lookup ignores `deleted_at` - the row it is
+	 * after is precisely the one a live read passes over - and the token is the one the void
+	 * answered with, which is the one the undo toast holds (docs/architecture.md#concurrency).
+	 *
+	 * @param int $expectedUpdatedAt the `updated_at` the void answered with
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete on this vehicle
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the trip has changed since, or was never voided
+	 * @throws \OCP\DB\Exception
+	 */
+	public function restore(string $userId, string $vehicleUuid, string $tripUuid, int $expectedUpdatedAt): Trip {
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::DELETE, $vehicleUuid);
+
+		return $this->atomicRetry(function () use ($userId, $vehicle, $tripUuid, $expectedUpdatedAt): Trip {
+			$voided = $this->on($vehicle, $this->trips->findAnyByUuid($tripUuid));
+			$stamp = $voided->getDeletedAt();
+			$back = $this->trips->restoreChecked($voided, $expectedUpdatedAt);
+			$this->trail($vehicle, $back, $userId, self::RESTORED, ['deleted_at' => [$stamp, null]]);
+			$this->odometer->followTrip($vehicle, $back);
+
+			return $back;
+		}, $this->db);
+	}
+
+	/**
+	 * The trip, where it hangs off the vehicle the route named. A uuid alone would be a second way
+	 * in: one vehicle of their own is all somebody would need to reach a journey in anybody else's
+	 * logbook, and the gate upstream only ever asked about the vehicle.
+	 *
+	 * Not found rather than refused, for the reason a restore looks a stranger's uuid up the same
+	 * way every other route does: an answer that told them apart would tell them which uuids exist.
+	 *
+	 * @throws DoesNotExistException
+	 */
+	private function on(Vehicle $vehicle, Trip $trip): Trip {
+		if ($trip->getVehicleId() !== (int)$vehicle->getId()) {
+			throw new DoesNotExistException('trip ' . $trip->getUuid() . ' is not on this vehicle');
+		}
+
+		return $trip;
 	}
 
 	/**
@@ -126,18 +200,22 @@ class TripService {
 	 * flip racing that write is recorded on the vehicle itself, with the instant it took effect,
 	 * which is what says on which side of it a trip falls.
 	 *
+	 * The author is whoever made the change, never the trip's `created_by`: a trip somebody else
+	 * entered is one this person voided, and the trail is about the change.
+	 *
+	 * @param array<string, array{mixed, mixed}> $fields each changed column as `[before, after]`
 	 * @throws \OCP\DB\Exception
 	 */
-	private function trail(Vehicle $vehicle, Trip $trip): void {
+	private function trail(Vehicle $vehicle, Trip $trip, string $userId, string $change, array $fields): void {
 		if ($vehicle->getLogbookMode() !== true) {
 			return;
 		}
 
 		$row = new Audit();
-		$row->setCreatedBy($trip->getCreatedBy());
+		$row->setCreatedBy($userId);
 		$row->setEntity(Audit::TRIP);
 		$row->setEntityId((int)$trip->getId());
-		$row->setDiffJson(['change' => self::CREATED, 'fields' => $this->stated($trip)]);
+		$row->setDiffJson(['change' => $change, 'fields' => $fields]);
 		$this->audit->insert($row);
 	}
 

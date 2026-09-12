@@ -86,23 +86,33 @@ The strict-logbook feature is a *ruleset*, and Germany's is the first one we imp
 German tax authorities accept an electronic logbook only if entries are timely, complete and
 [protected against unnoticed later changes](https://www.haufe.de/personal/entgelt/nachbesserungen-im-fahrtenbuch-sind-unzulaessig_78_170740.html);
 mandatory fields are plate, date, start and end odometer, full destination, purpose and the business
-partner visited. Private trips need only the kilometres.
+partner visited. Private trips need only the kilometres. A commute states the journey and not its
+reason — its category is the whole reason — so it is asked for the plate, the date and both
+counters and for nothing else.
 
 So: with the mode on, trips become append-only. Edits write a new revision plus a `fleet_audit`
 row. Off by default — private users do not need the friction.
 
 **A delete voids, it does not remove.** `deleted_at` is set, the row survives, an audit row records
-who and when, and the export lists the trip as voided. Undo stays the default gesture everywhere in
-the app ([entry sheet](ui.md#the-entry-sheet-in-detail)); under this mode it simply cannot destroy
-evidence.
+who and when, and the export lists the trip as voided. The Reading the trip left on the counter goes
+with it ([rule 5](architecture.md#odometer-rules)). Undo stays the default gesture everywhere in
+the app ([entry sheet](ui.md#the-entry-sheet-in-detail)) and is recorded in its turn; under this mode
+it simply cannot destroy evidence.
 
 **Switching the mode on locks nothing retroactively**
 ([ADR 0003](adr/0003-logbook-mode-does-not-lock-the-past.md)). The export states the date the mode
 began. Claiming integrity for records that never had it is worse than admitting the gap.
 
+**Every flip is a `fleet_audit` row on the vehicle**, on the way off as well as on, and that trail
+is what the export reads the periods off. A vehicle created with the mode already on has been under
+it since it was created, so the first period needs no row of its own to begin. Switching off is
+allowed — a mode that could only ever go on would be a trap, not a setting — and it asks first
+([UI](ui.md#details-that-decide-whether-it-feels-easy)).
+
 **The lock delay belongs to the ruleset**, not to the core: `ILogbookRules` supplies it, and the
 German value carries its source URL ([contributing](contributing.md)). Days, not weeks — timeliness
-is the entire point.
+is the entire point. Germany's is seven, and the same ruleset states the ten years a record is kept
+for, a floor under the vehicle's own retention period ([legal](legal.md)).
 
 **Closing a gap creates one trip, with a confirmation, and only a private one.** Never a batch. A
 private trip legally needs only the kilometres; a business trip needs a purpose and a partner that

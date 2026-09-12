@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Germany states what it requires of a logbook: a business trip names the plate, the date, both
+  counters, where it went, why and whom it visited; a commute states the journey and not its reason;
+  a private trip needs only the kilometres it already carries. An entry stays timely for seven days,
+  a record is kept for ten years, and the requirement is cited by URL. A country that requires no
+  logbook says so, and under it Logbook Mode still keeps trips append-only and audited.
+- A trip is deleted by voiding it: `DELETE /api/vehicles/{uuid}/trips/{trip}` stamps `deleted_at`,
+  the row survives, and the Reading the trip left on the counter goes with it, so the vehicle stands
+  where it did before the journey. `POST …/trips/{trip}/restore` brings both back on the token the
+  delete answered with. Under Logbook Mode each of the two leaves a `fleet_audit` row, in the same
+  transaction as the write.
+- Logbook Mode is switched on and off per vehicle, in the vehicle's edit sheet beside its lifecycle
+  and its country. Every flip leaves a `fleet_audit` row on the vehicle, in the same transaction as
+  the write, which is how an export later states the periods the mode was on. Switching off asks
+  first; switching on does not.
+- The vehicle sheet's two date pickers stop taking input while a save is in flight, like every field
+  beside them.
 - A vehicle under Logbook Mode keeps an audit trail: every trip written on it leaves a `fleet_audit`
   row naming the trip and listing the fields it was written with, in the same transaction as the
   trip itself. Off the mode nothing is recorded.

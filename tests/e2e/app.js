@@ -101,6 +101,19 @@ export function choice(within, label) {
 }
 
 /**
+ * A switch, as a finger reaches it: the checkbox behind it sits under the toggle graphic at
+ * `z-index: -1`, so a click aimed at the input itself is taken by what is drawn over it. The
+ * label is what a finger and a screen reader both use, and `for` carries the click to the input.
+ *
+ * @param {import('@playwright/test').Locator} within - the sheet or screen the switch is on
+ * @param {string} label - the word beside it (docs/ui.md#languages)
+ * @return {import('@playwright/test').Locator} what to click
+ */
+export function toggle(within, label) {
+	return within.locator('label').filter({ hasText: label })
+}
+
+/**
  * Audits what the app itself renders. Nextcloud's own header and settings menu are outside this
  * app's reach, so including them would fail the run on somebody else's markup.
  *

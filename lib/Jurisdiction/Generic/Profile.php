@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Jurisdiction\Generic;
 
 use OCA\NextFleet\Jurisdiction\IJurisdiction;
+use OCA\NextFleet\Jurisdiction\ILogbookRules;
 
 /**
  * What an install in a country nobody has written gets: metric units and no currency, so a
@@ -29,6 +30,11 @@ class Profile implements IJurisdiction {
 	}
 
 	public function currency(): ?string {
+		return null;
+	}
+
+	/** No country's requirements to state, and inventing some would be worse than stating none. */
+	public function logbookRules(): ?ILogbookRules {
 		return null;
 	}
 }

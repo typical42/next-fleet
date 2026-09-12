@@ -8,7 +8,9 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Controller;
 
+use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Exception\AccessDeniedException;
+use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\TripService;
 use OCP\AppFramework\Controller;
 use OCP\AppFramework\Db\DoesNotExistException;
@@ -40,17 +42,81 @@ class TripController extends Controller {
 	#[NoAdminRequired]
 	#[UserRateLimit(limit: 60, period: 60)]
 	public function create(string $uuid): DataResponse {
-		try {
-			$trip = $this->service->record($this->userId(), $uuid, $this->request->getParams());
+		return $this->answer(
+			fn (): Trip => $this->service->record($this->userId(), $uuid, $this->request->getParams()),
+			Http::STATUS_CREATED,
+		);
+	}
 
-			return new DataResponse($trip, Http::STATUS_CREATED);
+	/**
+	 * A delete voids (docs/features.md#logbook-mode), and answers with the row it left behind so
+	 * the undo toast holds the token the restore is checked against.
+	 *
+	 * @param string $trip the trip's uuid
+	 */
+	#[NoAdminRequired]
+	#[UserRateLimit(limit: 60, period: 60)]
+	public function delete(string $uuid, string $trip): DataResponse {
+		$token = $this->token();
+		if ($token === null) {
+			return $this->refuse('updated_at is missing, so this write cannot be checked');
+		}
+
+		return $this->answer(fn (): Trip => $this->service->delete($this->userId(), $uuid, $trip, $token));
+	}
+
+	/**
+	 * @param string $trip the trip's uuid
+	 */
+	#[NoAdminRequired]
+	#[UserRateLimit(limit: 60, period: 60)]
+	public function restore(string $uuid, string $trip): DataResponse {
+		$token = $this->token();
+		if ($token === null) {
+			return $this->refuse('updated_at is missing, so this write cannot be checked');
+		}
+
+		return $this->answer(fn (): Trip => $this->service->restore($this->userId(), $uuid, $trip, $token));
+	}
+
+	/**
+	 * The two answers every route here shares: the trip a client asked for, or the reason it is
+	 * not getting one.
+	 *
+	 * @param callable():Trip $work
+	 */
+	private function answer(callable $work, int $status = Http::STATUS_OK): DataResponse {
+		try {
+			return new DataResponse($work(), $status);
 		} catch (DoesNotExistException) {
 			return new DataResponse(['message' => 'No such vehicle'], Http::STATUS_NOT_FOUND);
 		} catch (AccessDeniedException) {
 			return new DataResponse(['message' => 'Not yours'], Http::STATUS_FORBIDDEN);
+		} catch (StaleUpdateException) {
+			// `conflict` is what tells this apart from Nextcloud's own failed CSRF check, which
+			// is a 412 as well (docs/architecture.md#concurrency).
+			return new DataResponse(
+				['message' => 'Changed since you read it', 'conflict' => true],
+				Http::STATUS_PRECONDITION_FAILED,
+			);
 		} catch (\InvalidArgumentException $e) {
-			return new DataResponse(['message' => $e->getMessage()], Http::STATUS_BAD_REQUEST);
+			return $this->refuse($e->getMessage());
 		}
+	}
+
+	private function refuse(string $message): DataResponse {
+		return new DataResponse(['message' => $message], Http::STATUS_BAD_REQUEST);
+	}
+
+	/**
+	 * The `updated_at` the client read, which the write is checked against
+	 * (docs/architecture.md#concurrency). A DELETE has no body, so it travels in the query
+	 * string; both arrive as request parameters.
+	 */
+	private function token(): ?int {
+		$token = filter_var($this->request->getParams()['updated_at'] ?? null, FILTER_VALIDATE_INT);
+
+		return $token === false ? null : $token;
 	}
 
 	private function userId(): string {
