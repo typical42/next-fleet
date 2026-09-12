@@ -103,6 +103,29 @@ class OdoReadingMapper extends BaseMapper {
 	}
 
 	/**
+	 * The one Reading a trip left on the counter (rule 5), whatever state it is in. `deleted_at`
+	 * is not filtered for the reason `findAnyByUuid` does not filter it: the caller is the one
+	 * that voids the Reading with its trip and brings it back with it, so a voided one is
+	 * precisely the row it is after.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findAnyForTrip(int $vehicleId, int $tripId): ?OdoReading {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->tableName)
+			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->eq('source_type', $qb->createNamedParameter(OdoReading::TRIP)))
+			->andWhere($qb->expr()->eq('source_id', $qb->createNamedParameter($tripId, IQueryBuilder::PARAM_INT)));
+
+		try {
+			return $this->findEntity($qb);
+		} catch (DoesNotExistException) {
+			return null;
+		}
+	}
+
+	/**
 	 * The reading a distance counts from: the newest one at or before that moment, in the same
 	 * order. Null when the vehicle has none yet, which is a distance with nothing to add to.
 	 *

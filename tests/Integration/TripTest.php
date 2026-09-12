@@ -14,7 +14,7 @@ use OCA\NextFleet\Db\AuditMapper;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
-use OCA\NextFleet\Db\VehicleMapper;
+use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleService;
@@ -38,7 +38,6 @@ class TripTest extends TestCase {
 	private TripService $service;
 	private OdometerService $odometer;
 	private VehicleService $vehicles;
-	private VehicleMapper $vehicleRows;
 
 	protected function setUp(): void {
 		$container = (new Application())->getContainer();
@@ -47,7 +46,6 @@ class TripTest extends TestCase {
 		$this->service = $container->get(TripService::class);
 		$this->odometer = $container->get(OdometerService::class);
 		$this->vehicles = $container->get(VehicleService::class);
-		$this->vehicleRows = $container->get(VehicleMapper::class);
 		$this->forgetTestRows();
 	}
 
@@ -235,13 +233,14 @@ class TripTest extends TestCase {
 		$this->assertSame(120300, $this->vehicles->find(self::AUTHOR, $uuid)->getOdoValue());
 	}
 
-	/**
-	 * The switch itself is task 10's, so the column is flipped here the way the vehicle sheet
-	 * will: on the row the test just read, through the checked write every update goes through.
-	 */
+	/** Switched on the way the vehicle edit sheet switches it, through the service. */
 	private function underLogbookMode(Vehicle $vehicle): void {
-		$vehicle->setLogbookMode(true);
-		$this->vehicleRows->updateChecked($vehicle, $vehicle->getUpdatedAt());
+		$this->vehicles->update(
+			self::AUTHOR,
+			$vehicle->getUuid(),
+			$vehicle->getUpdatedAt(),
+			['logbook_mode' => true],
+		);
 	}
 
 	/**
@@ -284,6 +283,92 @@ class TripTest extends TestCase {
 
 		$this->assertSame([], $this->audit->findForEntity(Audit::TRIP, (int)$trip->getId()));
 		$this->assertSame(120450, $this->vehicles->find(self::AUTHOR, $vehicle->getUuid())->getOdoValue());
+	}
+
+	/**
+	 * The task against the real database: the row survives its own delete, it is out of every read
+	 * that asks for the vehicle's trips, and the Reading it left goes with it - so the vehicle
+	 * stands where it stood before the journey nobody claims any more.
+	 */
+	public function testVoidingATripKeepsTheRowAndTakesItsCounterWithIt(): void {
+		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 128']);
+		$uuid = $vehicle->getUuid();
+		$this->record($uuid, 1750000000, ['end_odo' => 120000]);
+		$trip = $this->record($uuid, 1750100000, ['end_odo' => 120500]);
+
+		$voided = $this->service->delete(self::AUTHOR, $uuid, $trip->getUuid(), $trip->getUpdatedAt());
+
+		$this->assertNotNull($voided->getDeletedAt());
+		$this->assertSame($trip->getUuid(), $this->trips->findAnyByUuid($trip->getUuid())->getUuid());
+		$this->assertCount(1, $this->trips->findAllForVehicle((int)$vehicle->getId()));
+		$readings = $this->odometer->list(self::AUTHOR, $uuid);
+		$this->assertCount(1, $readings);
+		$this->assertSame(120000, $readings[0]->getValue());
+		$this->assertSame(120000, $this->vehicles->find(self::AUTHOR, $uuid)->getOdoValue());
+	}
+
+	/**
+	 * Undo, against the real statements: both rows come back on the token the void answered with,
+	 * and the vehicle is where the journey left it.
+	 */
+	public function testUndoBringsTheTripAndItsCounterBack(): void {
+		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 129']);
+		$uuid = $vehicle->getUuid();
+		$this->record($uuid, 1750000000, ['end_odo' => 120000]);
+		$trip = $this->record($uuid, 1750100000, ['end_odo' => 120500]);
+		$voided = $this->service->delete(self::AUTHOR, $uuid, $trip->getUuid(), $trip->getUpdatedAt());
+
+		$back = $this->service->restore(self::AUTHOR, $uuid, $trip->getUuid(), $voided->getUpdatedAt());
+
+		$this->assertNull($back->getDeletedAt());
+		$this->assertCount(2, $this->trips->findAllForVehicle((int)$vehicle->getId()));
+		$this->assertCount(2, $this->odometer->list(self::AUTHOR, $uuid));
+		$this->assertSame(120500, $this->vehicles->find(self::AUTHOR, $uuid)->getOdoValue());
+	}
+
+	/**
+	 * The trail of a trip that was voided and brought back: three rows, in the order they happened,
+	 * as the JSON column gave them back. An auditor reading the last one knows the trip stands.
+	 */
+	public function testTheVoidAndTheUndoAreBothInTheTrailOfThatTrip(): void {
+		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 130']);
+		$uuid = $vehicle->getUuid();
+		$this->underLogbookMode($vehicle);
+		$trip = $this->record($uuid, 1750000000, ['end_odo' => 120450]);
+
+		$voided = $this->service->delete(self::AUTHOR, $uuid, $trip->getUuid(), $trip->getUpdatedAt());
+		$this->service->restore(self::AUTHOR, $uuid, $trip->getUuid(), $voided->getUpdatedAt());
+
+		$trail = $this->audit->findForEntity(Audit::TRIP, (int)$trip->getId());
+		$stamp = $voided->getDeletedAt();
+		$this->assertSame(
+			['created', 'voided', 'restored'],
+			array_map(static fn (Audit $row): string => $row->getDiffJson()['change'], $trail),
+		);
+		$this->assertSame(['deleted_at' => [null, $stamp]], $trail[1]->getDiffJson()['fields']);
+		$this->assertSame(['deleted_at' => [$stamp, null]], $trail[2]->getDiffJson()['fields']);
+	}
+
+	/**
+	 * The concurrency token is the statement's own predicate (docs/architecture.md#concurrency), so
+	 * a void that lost the race writes nothing at all - not the stamp, not the trail, and not the
+	 * Reading that would have gone with it.
+	 */
+	public function testAVoidThatLostTheRaceChangesNothing(): void {
+		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 131']);
+		$uuid = $vehicle->getUuid();
+		$this->underLogbookMode($vehicle);
+		$trip = $this->record($uuid, 1750000000, ['end_odo' => 120450]);
+
+		try {
+			$this->service->delete(self::AUTHOR, $uuid, $trip->getUuid(), $trip->getUpdatedAt() - 1);
+			$this->fail('a void wrote under a token nobody held');
+		} catch (StaleUpdateException) {
+			$this->assertNull($this->trips->findAnyByUuid($trip->getUuid())->getDeletedAt());
+			$this->assertCount(1, $this->odometer->list(self::AUTHOR, $uuid));
+			$this->assertSame(120450, $this->vehicles->find(self::AUTHOR, $uuid)->getOdoValue());
+			$this->assertCount(1, $this->audit->findForEntity(Audit::TRIP, (int)$trip->getId()));
+		}
 	}
 
 	/**

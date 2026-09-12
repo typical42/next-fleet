@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Jurisdiction\De;
 
 use OCA\NextFleet\Jurisdiction\IJurisdiction;
+use OCA\NextFleet\Jurisdiction\ILogbookRules;
 
 /** Germany, the first jurisdiction (plan.md). */
 class Profile implements IJurisdiction {
@@ -26,5 +27,14 @@ class Profile implements IJurisdiction {
 
 	public function currency(): ?string {
 		return 'EUR';
+	}
+
+	/**
+	 * Built here rather than injected: the ruleset answers out of its own constants and takes
+	 * nothing. The first one that needs a clock or a rate table takes it in this profile's
+	 * constructor, which the container already builds (`Jurisdictions`).
+	 */
+	public function logbookRules(): ?ILogbookRules {
+		return new LogbookRules();
 	}
 }

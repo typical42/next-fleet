@@ -23,7 +23,7 @@ The interfaces stay — as ordinary internal seams, not as public API:
 | Seam | Interface | First implementation |
 |---|---|---|
 | Jurisdiction profile | `IJurisdiction` — key, display name, units, currency, the defaults a new vehicle takes. Plate format and document kinds arrive with the feature that reads them | `de`, `generic` |
-| Logbook ruleset | `ILogbookRules` — required fields per trip category, lock delay, retention, validation findings | German Fahrtenbuch ([logbook mode](features.md#logbook-mode)) |
+| Logbook ruleset | `ILogbookRules` — required fields per trip category, lock delay, retention period, the URL the requirement is written at. What it answers, never what follows from it: the finding a missing field produces is the core's | German Fahrtenbuch ([logbook mode](features.md#logbook-mode)) |
 | Inspection regime | `IInspectionScheme` — names, cadence, first-due rule → reminder templates | HU/AU (24 months, 36 for new cars) |
 | Rates over time | `IRateProvider` — mileage allowance, VAT, emission factors, **each valid from a date** | 0,30 €/km, German grid factor |
 | Report renderer | `IReportRenderer` — range in, printable HTML out ([ADR 0005](adr/0005-no-pdf-library.md)) | Fahrtenbuch, mileage claim |
@@ -37,9 +37,11 @@ for the country `Jurisdictions::DEFAULT` names, naming another first. A key nobo
 resolves to `generic` rather than throwing: a vehicle registered under a country a later release
 dropped must still open.
 
-The profile is the only seam M1 fills; the rest stay empty interfaces until the milestone that needs
-them ([milestones](../plan.md#milestones)). The other classes already sitting in
-`lib/Jurisdiction/De/` are placeholders for those milestones, empty and wired to nothing.
+A seam is filled by the milestone that needs it ([milestones](../plan.md#milestones)) — the profile
+in M1, the logbook ruleset in M2 — and the classes waiting for the later ones sit in
+`lib/Jurisdiction/De/` empty and wired to nothing. A profile reaches its country's ruleset through
+`IJurisdiction::logbookRules()`, which answers null where there is none; the core asks the vehicle's
+jurisdiction and never the class.
 
 **The generic profile is the other one.** Metric units, no currency, no logbook ruleset, no inspection
 scheme, no rates. A vehicle under it states its own currency — an instance-wide one would be a

@@ -12,9 +12,9 @@ use OCP\DB\Types;
 
 /**
  * One recorded change, one property per column of `fleet_audit`
- * (docs/architecture.md#data-model). Written only under Logbook Mode, and only ever inserted:
- * who and when are `createdBy` and `createdAt`, which the row carries anyway and which no update
- * may touch.
+ * (docs/architecture.md#data-model). Written only where Logbook Mode is what makes the change worth
+ * recording - which includes the flip that ends it - and only ever inserted: who and when are
+ * `createdBy` and `createdAt`, which the row carries anyway and which no update may touch.
  *
  * `entity` says which table `entityId` points into. There is no foreign key - the trail has to
  * outlive an erasure of what it describes.

@@ -5,7 +5,7 @@
 
 import { expect, test } from '@playwright/test'
 
-import { add, api, appPage, audit, choice, login, open, removeVehicles } from './app.js'
+import { add, api, appPage, audit, choice, login, open, removeVehicles, toggle } from './app.js'
 
 // Every vehicle this file makes wears this prefix, and every run deletes what it finds under it
 // before starting. It has to be disjoint from every other spec file's prefix: Playwright runs the
@@ -125,6 +125,49 @@ test('a trip the server refuses leaves the sheet open with every value in it', a
 	await expect(entry).toBeVisible()
 	await expect(entry.getByRole('textbox', { name: 'Purpose' })).toHaveValue('Kundentermin')
 	await expect(entry.getByRole('button', { name: 'Try again' })).toBeVisible()
+})
+
+/**
+ * The switch that puts a vehicle under its jurisdiction's logbook rules
+ * (docs/features.md#logbook-mode). The checkbox behind it is drawn under the toggle it looks like,
+ * so vitest cannot say that a finger reaches it; this is where that is proved.
+ */
+test('Logbook mode is switched on with one gesture and off with an answer', async ({ page }) => {
+	const plate = `${plates}${Date.now()}`
+	const vehicle = await add(page, plate, starting)
+	await page.goto(appPage)
+	await open(page, plate)
+
+	await page.getByRole('button', { name: 'Edit vehicle' }).click()
+	const sheet = page.getByRole('dialog', { name: 'Edit vehicle' })
+	const mode = sheet.getByRole('switch', { name: 'Logbook mode' })
+	await expect(mode).not.toBeChecked()
+
+	// On takes something on rather than away, so it asks nothing.
+	await toggle(sheet, 'Logbook mode').click()
+	await expect(mode).toBeChecked()
+	await sheet.getByRole('button', { name: 'Save' }).click()
+	await expect(sheet).toBeHidden()
+	expect((await api(page, { method: 'GET', path: `/api/vehicles/${vehicle.uuid}` })).logbook_mode).toBe(true)
+
+	// Off ends the period an auditor reads this vehicle's trips under, so it stands in the way of
+	// the save until it is answered.
+	await page.getByRole('button', { name: 'Edit vehicle' }).click()
+	await expect(mode).toBeChecked()
+	await toggle(sheet, 'Logbook mode').click()
+	await expect(sheet.getByRole('button', { name: 'Switch it off' })).toBeVisible()
+	await expect(sheet.getByRole('button', { name: 'Save' })).toBeDisabled()
+
+	// The way back the question offers puts the switch where it was, and takes itself away with it.
+	await sheet.getByRole('button', { name: 'Keep it on' }).click()
+	await expect(mode).toBeChecked()
+	await expect(sheet.getByRole('button', { name: 'Switch it off' })).toBeHidden()
+
+	await toggle(sheet, 'Logbook mode').click()
+	await sheet.getByRole('button', { name: 'Switch it off' }).click()
+	await sheet.getByRole('button', { name: 'Save' }).click()
+	await expect(sheet).toBeHidden()
+	expect((await api(page, { method: 'GET', path: `/api/vehicles/${vehicle.uuid}` })).logbook_mode).toBe(false)
 })
 
 /**

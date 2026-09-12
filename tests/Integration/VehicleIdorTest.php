@@ -43,6 +43,8 @@ class VehicleIdorTest extends TestCase {
 	private const STRANGER = 'nextfleet-test-bob';
 	private const CODRIVER = 'nextfleet-test-carol';
 	private const PLATE = 'B-XY 123';
+	/** A trip uuid nothing wrote: the refusal must come before the lookup that would miss it. */
+	private const NO_SUCH_TRIP = '0195e2f1-1111-4000-8000-00000000dead';
 
 	/**
 	 * The routes that reach no vehicle by identity, so a stranger gets an answer rather than a
@@ -218,6 +220,11 @@ class VehicleIdorTest extends TestCase {
 			'odometer#index' => $this->odometer(self::STRANGER, $params)->index($uuid),
 			'odometer#create' => $this->odometer(self::STRANGER, $params)->create($uuid),
 			'trip#create' => $this->trip(self::STRANGER, $params)->create($uuid),
+			// Walked against a trip that is not there: the gate is the vehicle's, so a stranger
+			// is refused before any uuid of a trip is looked up, and a 404 here would be the
+			// answer telling them so.
+			'trip#delete' => $this->trip(self::STRANGER, $params)->delete($uuid, self::NO_SUCH_TRIP),
+			'trip#restore' => $this->trip(self::STRANGER, $params)->restore($uuid, self::NO_SUCH_TRIP),
 			'timeline#index' => $this->timeline(self::STRANGER, $params)->index($uuid),
 			'preferences#index' => $this->preferences(self::STRANGER, $params)->index(),
 			'preferences#update' => $this->preferences(self::STRANGER, $params)->update(),

@@ -20,4 +20,13 @@ class ProfileTest extends JurisdictionTestCase {
 	public static function profile(): IJurisdiction {
 		return new Generic\Profile();
 	}
+
+	/**
+	 * No logbook ruleset (CONTEXT.md, Generic Jurisdiction), which is not the same as an empty
+	 * one: under it Logbook Mode still keeps trips append-only and audited, it simply requires
+	 * no fields. A ruleset here would be this app inventing a country's law.
+	 */
+	public function testItRequiresNoLogbookOfItsOwn(): void {
+		$this->assertNull(static::profile()->logbookRules());
+	}
 }

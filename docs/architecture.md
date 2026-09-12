@@ -100,9 +100,11 @@ scrapyard.
 
 **An audit row's author and instant are `created_by` and `created_at`.** It is written in the same
 transaction as the change it records and never updated, so a `user_id` and a `changed_at` of its own
-would be two more places for one fact to disagree. What kind of change it was — a void, a late edit,
-a mode flip, a reconciliation — is in `diff_json` and not in a column: the trail has to describe
-tables that do not exist yet.
+would be two more places for one fact to disagree. What kind of change it was — a void, the undo of
+one, a late edit, a mode flip, a reconciliation — is in `diff_json` and not in a column: the trail
+has to describe tables that do not exist yet. **An undo is a change too**: a trail that stopped at
+the void would say "voided" over a trip the export lists as driven, and nothing would say which of
+the two happened last.
 
 **`diff_json` is `{"change": …, "fields": {…}}`**, each field a `[before, after]` pair. A creation's
 pairs all start at null; a field nobody stated is not in them, because a diff that lists what did not
@@ -207,7 +209,10 @@ This is where logbooks quietly break. Six rules, decided once:
 5. **An Entry writes exactly one Reading**, at the moment it happened: a trip at `ended_at`, a
    fill-up at `filled_at`, maintenance at `done_at`. A trip's `start_odo` is a *claim*, not a
    reading — comparing it with the previous reading is precisely what produces gap detection
-   ([backlog](features.md#feature-backlog)).
+   ([backlog](features.md#feature-backlog)). The Reading goes where its Entry goes: voiding the
+   Entry voids the Reading and the undo brings both back, in one transaction. A Reading left
+   standing on a voided trip would hold the vehicle's counter at a journey nobody claims any more,
+   on a row the timeline no longer shows.
 6. **Observed beats derived.** A driver who enters a distance instead of an end odometer leaves
    `start_odo` null; the Reading written at `ended_at` is *(latest reading at or before
    `started_at`) + distance*, marked `origin = derived`. Consumption requires **observed** readings

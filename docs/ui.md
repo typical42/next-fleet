@@ -83,7 +83,7 @@ touch. That keeps the middle free for the things you touch weekly.
 | **Overview** | All vehicles, sorted by urgency, not alphabetically. Traffic light, plate, km, next due. | Open a vehicle |
 | **Vehicle** | Header KPIs + due banner + timeline (above) | **+ Entry** |
 | **Entry sheet** | Trip / Energy / Maintenance / Odometer — see below | Save |
-| **Vehicle sheet** | Create with four fields; edit every writable one, plus lifecycle and jurisdiction; delete, undoably | Save |
+| **Vehicle sheet** | Create with four fields; edit every writable one, plus lifecycle, jurisdiction and [logbook mode](features.md#logbook-mode); delete, undoably | Save |
 | **Costs** | One year, one vehicle: stacked bars per month, table below, export button | Export |
 | **Reports** | Fahrtenbuch, mileage claim, cost, CO₂ — pick a range, get a printable page ([ADR 0005](adr/0005-no-pdf-library.md)) | Print / export |
 | **Vehicle sidebar** | Master data, jurisdiction, documents, reminders (sharing from M6) | Edit inline |
@@ -164,6 +164,11 @@ not a project.
   changed in the vehicle's edit sheet, moving to the sidebar when that exists
   ([contributing](contributing.md)). It decides units, currency and rules — and a freelancer's
   vehicles are all in one country, so asking would cost more than it is worth.
+- **Switching [logbook mode](features.md#logbook-mode) off is the one thing that asks.** It is the
+  one thing undo does not reach: switching it back on is a second flip in the audit trail, not a way
+  back from the first. The switch itself is never blocked — it says what the driver last asked for —
+  and the question stands between it and the save, which is when anything happens. Switching on asks
+  nothing: it takes something on rather than away.
 - **Empty states do the teaching.** Not "no entries" but the two buttons that create the first one,
   plus the QR offer. `NcEmptyContent` with a real call to action.
 - **Numbers get context.** `6,4 l/100 km` alone means nothing; `6,4 l/100 km  ▲ 0,3 vs. average`

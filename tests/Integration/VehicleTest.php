@@ -10,6 +10,8 @@ namespace OCA\NextFleet\Tests\Integration;
 
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Controller\VehicleController;
+use OCA\NextFleet\Db\Audit;
+use OCA\NextFleet\Db\AuditMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\VehicleService;
@@ -33,9 +35,12 @@ class VehicleTest extends TestCase {
 	private const STRANGER = 'nextfleet-test-bob';
 
 	private VehicleService $service;
+	private AuditMapper $audit;
 
 	protected function setUp(): void {
-		$this->service = (new Application())->getContainer()->get(VehicleService::class);
+		$container = (new Application())->getContainer();
+		$this->service = $container->get(VehicleService::class);
+		$this->audit = $container->get(AuditMapper::class);
 		$this->forgetTestVehicles();
 	}
 
@@ -46,10 +51,13 @@ class VehicleTest extends TestCase {
 	/** The rows this suite invents, gone for real - a soft delete would outlive the run. */
 	private function forgetTestVehicles(): void {
 		$db = \OCP\Server::get(IDBConnection::class);
-		$qb = $db->getQueryBuilder();
-		$qb->delete('fleet_vehicles')
-			->where($qb->expr()->in('user_id', $qb->createNamedParameter([self::OWNER, self::STRANGER], $qb::PARAM_STR_ARRAY)));
-		$qb->executeStatement();
+		$people = [self::OWNER, self::STRANGER];
+		foreach (['fleet_vehicles' => 'user_id', 'fleet_audit' => 'created_by'] as $table => $column) {
+			$qb = $db->getQueryBuilder();
+			$qb->delete($table)
+				->where($qb->expr()->in($column, $qb->createNamedParameter($people, $qb::PARAM_STR_ARRAY)));
+			$qb->executeStatement();
+		}
 	}
 
 	/**
@@ -159,6 +167,58 @@ class VehicleTest extends TestCase {
 		$read = $this->service->find(self::OWNER, $vehicle->getUuid());
 		$this->assertSame('active', $read->getLifecycle());
 		$this->assertNull($read->getDisposedAt());
+	}
+
+	/**
+	 * The mode switched on and off again, as the trail kept it. Only the instance says that the
+	 * two rows committed alongside the writes they describe, that `Types::JSON` gave the nested
+	 * pair back as it went in, and that the order they come back in is the order they happened.
+	 */
+	public function testEveryFlipOfTheModeIsInTheTrailOfTheVehicle(): void {
+		$vehicle = $this->service->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$uuid = $vehicle->getUuid();
+
+		$on = $this->service->update(self::OWNER, $uuid, $vehicle->getUpdatedAt(), ['logbook_mode' => true]);
+		$this->assertTrue($this->service->find(self::OWNER, $uuid)->getLogbookMode());
+		// A save that says nothing about the mode sits between the two flips, so what comes back
+		// is the flips and not the saves.
+		$saved = $this->service->update(self::OWNER, $uuid, $on->getUpdatedAt(), ['plate' => 'B-ZZ 9']);
+		$this->service->update(self::OWNER, $uuid, $saved->getUpdatedAt(), ['logbook_mode' => false]);
+
+		$trail = $this->audit->findForEntity(Audit::VEHICLE, (int)$vehicle->getId());
+		$this->assertSame(
+			[
+				['change' => 'switched', 'fields' => ['logbook_mode' => [false, true]]],
+				['change' => 'switched', 'fields' => ['logbook_mode' => [true, false]]],
+			],
+			array_map(static fn (Audit $row): array => $row->getDiffJson(), $trail),
+		);
+		$this->assertSame([self::OWNER, self::OWNER], array_map(
+			static fn (Audit $row): string => $row->getCreatedBy(),
+			$trail,
+		));
+		$this->assertFalse($this->service->find(self::OWNER, $uuid)->getLogbookMode());
+	}
+
+	/**
+	 * A refused write leaves no trail. The row and the audit row are one write, so the flip that
+	 * lost the race did not happen and nothing may say it did.
+	 */
+	public function testAFlipThatLostTheRaceIsNotInTheTrail(): void {
+		$vehicle = $this->service->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$stale = $vehicle->getUpdatedAt();
+		$this->service->update(self::OWNER, $vehicle->getUuid(), $stale, ['plate' => 'B-ZZ 9']);
+
+		try {
+			$this->service->update(self::OWNER, $vehicle->getUuid(), $stale, ['logbook_mode' => true]);
+			$this->fail('the stale flip was written');
+		} catch (StaleUpdateException) {
+		}
+
+		$this->assertSame([], $this->audit->findForEntity(Audit::VEHICLE, (int)$vehicle->getId()));
+		// Cast, because a column nobody has written is null rather than false - which is the same
+		// answer to "is this vehicle under the mode" (docs/architecture.md#data-model).
+		$this->assertFalse((bool)$this->service->find(self::OWNER, $vehicle->getUuid())->getLogbookMode());
 	}
 
 	/**

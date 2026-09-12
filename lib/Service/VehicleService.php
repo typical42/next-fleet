@@ -9,19 +9,25 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Service;
 
 use OCA\NextFleet\AppInfo\Application;
+use OCA\NextFleet\Db\Audit;
+use OCA\NextFleet\Db\AuditMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Exception\AccessDeniedException;
 use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCP\AppFramework\Db\DoesNotExistException;
+use OCP\AppFramework\Db\TTransactional;
 use OCP\IConfig;
+use OCP\IDBConnection;
 
 /**
  * Everything a vehicle is written under, so the controller carries none of it: which columns a
  * request may decide, what they have to look like, and what the ones it leaves out become.
  */
 class VehicleService {
+	use TTransactional;
+
 	/** CONTEXT.md's vocabulary, and the only words these columns take. */
 	private const VEHICLE_TYPES = ['car', 'van', 'trailer', 'tractor', 'generator'];
 	private const ENGINES = ['petrol', 'diesel', 'lpg', 'cng', 'electric', 'hybrid'];
@@ -80,11 +86,20 @@ class VehicleService {
 	private const VEHICLE_TYPE_FALLBACK = 'car';
 	private const LIFECYCLE_FALLBACK = 'active';
 
+	/**
+	 * What kind of change the audit row records, a key in `diff_json` rather than a column
+	 * (docs/architecture.md#data-model). This service writes the one kind: the Logbook Mode
+	 * switch being flipped.
+	 */
+	private const SWITCHED = 'switched';
+
 	public function __construct(
 		private VehicleMapper $mapper,
 		private VehicleAccess $access,
 		private IConfig $config,
 		private Jurisdictions $jurisdictions,
+		private AuditMapper $audit,
+		private IDBConnection $db,
 	) {
 	}
 
@@ -164,9 +179,49 @@ class VehicleService {
 	 */
 	public function update(string $userId, string $uuid, int $expectedUpdatedAt, array $fields): Vehicle {
 		$vehicle = $this->reach($userId, VehicleAccess::EDIT, $uuid);
+		$was = $vehicle->getLogbookMode() === true;
 		$this->apply($vehicle, $fields);
 
-		return $this->mapper->updateChecked($vehicle, $expectedUpdatedAt);
+		return $this->atomic(function () use ($userId, $vehicle, $expectedUpdatedAt, $was): Vehicle {
+			$written = $this->mapper->updateChecked($vehicle, $expectedUpdatedAt);
+			$this->trail($userId, $written, $was);
+
+			return $written;
+		}, $this->db);
+	}
+
+	/**
+	 * The audit row a flip of the Logbook Mode leaves on the vehicle, and the only row this
+	 * service writes: the mode is what the export reads the periods it was on off
+	 * (docs/features.md#logbook-mode), and a flip nobody recorded would leave the export with
+	 * trips it cannot place on either side of it.
+	 *
+	 * Only a flip. An update that states the mode it already had changed nothing, and a trail
+	 * that says otherwise makes an auditor count periods that never began. `null` and `false`
+	 * are the same answer here - the column is three-valued (docs/architecture.md#data-model),
+	 * but a vehicle nobody ever switched is off, not in a third state.
+	 *
+	 * Where the first period begins is not a row: a vehicle created with the mode already on
+	 * has been under it since it was created, which is `created_at` and nothing this has to
+	 * state.
+	 *
+	 * Inside the caller's transaction on purpose, the reason TripService::trail() gives.
+	 *
+	 * @param bool $was the mode as the row carried it before the request was applied
+	 * @throws \OCP\DB\Exception
+	 */
+	private function trail(string $userId, Vehicle $vehicle, bool $was): void {
+		$now = $vehicle->getLogbookMode() === true;
+		if ($now === $was) {
+			return;
+		}
+
+		$row = new Audit();
+		$row->setCreatedBy($userId);
+		$row->setEntity(Audit::VEHICLE);
+		$row->setEntityId((int)$vehicle->getId());
+		$row->setDiffJson(['change' => self::SWITCHED, 'fields' => ['logbook_mode' => [$was, $now]]]);
+		$this->audit->insert($row);
 	}
 
 	/**

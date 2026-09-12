@@ -5,6 +5,7 @@
 
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcDateTimePickerNative from '@nextcloud/vue/components/NcDateTimePickerNative'
+import NcFormBoxSwitch from '@nextcloud/vue/components/NcFormBoxSwitch'
 import NcDialog from '@nextcloud/vue/components/NcDialog'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import NcSelect from '@nextcloud/vue/components/NcSelect'
@@ -98,6 +99,15 @@ function field(wrapper, label) {
  */
 function dropdown(wrapper, label) {
 	return wrapper.findAllComponents(NcSelect).find((/** @type {any} */ one) => one.props('inputLabel') === label)
+}
+
+/**
+ * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted sheet
+ * @param {string} label - the label beside the switch
+ * @return {any} the switch, or undefined when the sheet does not show it
+ */
+function toggle(wrapper, label) {
+	return wrapper.findAllComponents(NcFormBoxSwitch).find((one) => one.props('label') === label)
 }
 
 /**
@@ -208,6 +218,31 @@ describe('the vehicle sheet, editing', () => {
 		expect(wrapper.emitted('close')).toBeUndefined()
 	})
 
+	/**
+	 * Mid-save the sheet has values nobody has an answer for yet, so nothing on it takes another
+	 * one - the date pickers with the fields beside them. A picker left open over a write in
+	 * flight would collect a day the save it belongs to had already gone without.
+	 */
+	it('takes no more input while a save is in flight', async () => {
+		/** @type {(vehicle: any) => void} */
+		let settle = () => {}
+		vi.mocked(updateVehicle).mockReturnValue(new Promise((resolve) => {
+			settle = resolve
+		}))
+		const wrapper = await sheet({ ...VEHICLE, lifecycle: 'disposed', disposed_at: '2025-06-30' })
+
+		await saveButton(wrapper).vm.$emit('click')
+
+		// The picker declares no `disabled` prop of its own, so the attribute travels through its
+		// `$attrs` to the real input the way every other attribute on it does.
+		expect(day(wrapper, 'First registration').attributes('disabled')).toBeDefined()
+		expect(day(wrapper, 'Disposed on').attributes('disabled')).toBeDefined()
+		expect(field(wrapper, 'VIN').props('disabled')).toBe(true)
+
+		settle({ ...VEHICLE, updated_at: 1700000900 })
+		await flushPromises()
+	})
+
 	/** Everything prefilled and visibly editable (docs/ui.md) - including what the create sheet never asked. */
 	it('shows the vehicle it was given', async () => {
 		const wrapper = await sheet(VEHICLE)
@@ -254,12 +289,138 @@ describe('the vehicle sheet, editing', () => {
 			residual_est: '400000',
 			currency: 'EUR',
 			jurisdiction: 'de',
+			logbook_mode: false,
 			lifecycle: 'active',
 			retention_months: '120',
 			color: '',
 			notes: 'two rows of seats',
 		}))
 		expect(emitted(wrapper, 'saved').updated_at).toBe(1700000900)
+	})
+
+	/**
+	 * The switch that puts a vehicle under its jurisdiction's logbook rules
+	 * (docs/features.md#logbook-mode), beside the lifecycle and the country it belongs with.
+	 * Switching on asks nothing: it takes something on rather than away.
+	 */
+	it('switches the mode on with one gesture', async () => {
+		const wrapper = await sheet(VEHICLE)
+		expect(toggle(wrapper, 'Logbook mode').props('modelValue')).toBe(false)
+
+		await toggle(wrapper, 'Logbook mode').vm.$emit('update:modelValue', true)
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ logbook_mode: true }))
+	})
+
+	/** A vehicle already under the mode opens with the switch saying so. */
+	it('shows the mode the vehicle is already kept under', async () => {
+		const wrapper = await sheet({ ...VEHICLE, logbook_mode: true })
+
+		expect(toggle(wrapper, 'Logbook mode').props('modelValue')).toBe(true)
+	})
+
+	/**
+	 * Switching off is allowed and asks first: it ends the period an auditor reads the vehicle's
+	 * trips under, and that is not something to do by brushing a switch. The question stands in
+	 * the way of the save rather than of the switch, because nothing is written until then
+	 * anyway.
+	 */
+	it('asks before it switches the mode off', async () => {
+		const wrapper = await sheet({ ...VEHICLE, logbook_mode: true })
+
+		await toggle(wrapper, 'Logbook mode').vm.$emit('update:modelValue', false)
+
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe(
+			'Switching Logbook mode off ends the audited period for this vehicle. What is already recorded stays as it is.',
+		)
+		expect(saveButton(wrapper).props('disabled')).toBe(true)
+
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(updateVehicle).not.toHaveBeenCalled()
+	})
+
+	/** Answered, the question goes and the save writes what the switch says. */
+	it('switches the mode off once that is confirmed', async () => {
+		const wrapper = await sheet({ ...VEHICLE, logbook_mode: true })
+
+		await toggle(wrapper, 'Logbook mode').vm.$emit('update:modelValue', false)
+		await button(wrapper, 'Switch it off').vm.$emit('click')
+		expect(wrapper.findComponent(NcNoteCard).exists()).toBe(false)
+
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ logbook_mode: false }))
+	})
+
+	/**
+	 * The other answer, and the way back the question offers: the switch goes back on, the
+	 * question goes with it, and the save writes the mode the vehicle came in under.
+	 */
+	it('keeps the mode on when the question is answered the other way', async () => {
+		const wrapper = await sheet({ ...VEHICLE, logbook_mode: true })
+
+		await toggle(wrapper, 'Logbook mode').vm.$emit('update:modelValue', false)
+		await button(wrapper, 'Keep it on').vm.$emit('click')
+
+		expect(toggle(wrapper, 'Logbook mode').props('modelValue')).toBe(true)
+		expect(wrapper.findComponent(NcNoteCard).exists()).toBe(false)
+
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ logbook_mode: true }))
+	})
+
+	/**
+	 * One answer per question. Switching back on and off again is a second switching off, and a
+	 * confirmation that outlived the first one would let the second through unasked.
+	 */
+	it('asks again when the mode is switched off a second time', async () => {
+		const wrapper = await sheet({ ...VEHICLE, logbook_mode: true })
+
+		await toggle(wrapper, 'Logbook mode').vm.$emit('update:modelValue', false)
+		await button(wrapper, 'Switch it off').vm.$emit('click')
+		await toggle(wrapper, 'Logbook mode').vm.$emit('update:modelValue', true)
+		await toggle(wrapper, 'Logbook mode').vm.$emit('update:modelValue', false)
+
+		expect(button(wrapper, 'Switch it off')).toBeDefined()
+		expect(saveButton(wrapper).props('disabled')).toBe(true)
+	})
+
+	/**
+	 * The question is about the vehicle the next write is checked against, not about the one the
+	 * sheet was opened with. Somebody else switching the mode on while this sheet sat open makes
+	 * _Save anyway_ a switching-off, and it has to be asked about like any other - the switch
+	 * never said "on", so nobody on this screen has decided anything yet.
+	 */
+	it('asks when saving through a conflict would switch the mode off', async () => {
+		vi.mocked(updateVehicle).mockRejectedValueOnce(new ConflictError('Changed since you read it'))
+		vi.mocked(getVehicle).mockResolvedValue(
+			/** @type {any} */ ({ ...VEHICLE, updated_at: 1700009999, logbook_mode: true }),
+		)
+		const wrapper = await sheet(VEHICLE)
+
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(button(wrapper, 'Switch it off')).toBeDefined()
+		expect(updateVehicle).toHaveBeenCalledTimes(1)
+
+		await button(wrapper, 'Switch it off').vm.$emit('click')
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(updateVehicle).toHaveBeenLastCalledWith(expect.objectContaining({
+			updated_at: 1700009999,
+			logbook_mode: false,
+		}))
 	})
 
 	/** A disposal day is a fact about a disposed vehicle and about no other one. */

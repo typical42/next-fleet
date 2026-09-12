@@ -20,6 +20,7 @@ import { generateUrl } from '@nextcloud/router'
  * @property {number|null} [odo_value] - the newest Reading, cached; null until one exists
  * @property {string} [odo_unit] - `km` or `h`, the vehicle's own
  * @property {string} [lifecycle] - `active`, `laid_up` or `disposed` (CONTEXT.md)
+ * @property {boolean|null} [logbook_mode] - under its jurisdiction's logbook rules; null is off
  * @property {string|null} [vin] - the vehicle's identity as its maker stamped it
  * @property {string|null} [first_reg] - the day it was first registered, `YYYY-MM-DD`
  * @property {string[]|null} [energy_types] - the energy it actually accepts (CONTEXT.md)

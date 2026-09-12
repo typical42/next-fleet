@@ -42,4 +42,12 @@ interface IJurisdiction {
 	 * an answer: "I don't know" has to break nothing.
 	 */
 	public function currency(): ?string;
+
+	/**
+	 * The ruleset a vehicle under this jurisdiction keeps its logbook by, or null where the
+	 * country requires none - the generic profile's answer, and the one every caller has to
+	 * tolerate. Null is not an empty ruleset: Logbook Mode still keeps trips append-only and
+	 * audited under it, because that part is the core's (docs/features.md#logbook-mode).
+	 */
+	public function logbookRules(): ?ILogbookRules;
 }

@@ -85,7 +85,14 @@ class VehicleServiceTest extends TestCase {
 	}
 
 	private function service(): VehicleService {
-		return new VehicleService($this->mapper, $this->access, $this->config, $this->jurisdictions());
+		return new VehicleService(
+			$this->mapper,
+			$this->access,
+			$this->config,
+			$this->jurisdictions(),
+			$this->audit,
+			$this->db,
+		);
 	}
 
 	/**
@@ -332,6 +339,68 @@ class VehicleServiceTest extends TestCase {
 
 		$off = $this->service()->update(self::OWNER, self::UUID, 1750000000, ['logbook_mode' => false]);
 		$this->assertFalse($off->getLogbookMode());
+	}
+
+	/**
+	 * The flip is how the export later reconstructs the periods the mode was on
+	 * (docs/features.md#logbook-mode), so it is recorded on the vehicle itself, and between the
+	 * transaction's boundaries with the write it describes: a switch that landed without its row
+	 * would leave the export with trips it cannot place on either side of it.
+	 */
+	public function testSwitchingTheModeOnIsRecordedOnTheVehicle(): void {
+		$this->mapper->method('findByUuid')->willReturn($this->stored());
+		$this->mapper->method('updateChecked')->willReturnCallback(function (Vehicle $vehicle): Vehicle {
+			$this->calls[] = 'vehicle';
+
+			return $vehicle;
+		});
+
+		$this->service()->update(self::OWNER, self::UUID, 1750000000, ['logbook_mode' => true]);
+
+		$this->assertCount(1, $this->audits);
+		$this->assertSame(Audit::VEHICLE, $this->audits[0]->getEntity());
+		$this->assertSame(7, $this->audits[0]->getEntityId());
+		$this->assertSame(self::OWNER, $this->audits[0]->getCreatedBy());
+		$this->assertSame(
+			['change' => 'switched', 'fields' => ['logbook_mode' => [false, true]]],
+			$this->audits[0]->getDiffJson(),
+		);
+		$this->assertSame(['begin', 'vehicle', 'audit', 'commit'], $this->calls);
+	}
+
+	/**
+	 * Switching off is a flip like the other one and is recorded like it. An export that could
+	 * see a mode begin but not end would state a period that is still running.
+	 */
+	public function testSwitchingTheModeOffIsRecordedToo(): void {
+		$vehicle = $this->stored();
+		$vehicle->setLogbookMode(true);
+		$this->mapper->method('findByUuid')->willReturn($vehicle);
+		$this->mapper->method('updateChecked')->willReturnArgument(0);
+
+		$this->service()->update(self::OWNER, self::UUID, 1750000000, ['logbook_mode' => false]);
+
+		$this->assertCount(1, $this->audits);
+		$this->assertSame(
+			['change' => 'switched', 'fields' => ['logbook_mode' => [true, false]]],
+			$this->audits[0]->getDiffJson(),
+		);
+	}
+
+	/**
+	 * The trail records flips, not saves. A sheet sends every writable column on every save
+	 * (docs/ui.md), so a row per save would be a trail of periods that never began - and the
+	 * `false` a sheet sends for a vehicle nobody ever switched restates the column's own default
+	 * rather than turning anything off.
+	 */
+	public function testASaveThatLeavesTheModeAsItWasRecordsNothing(): void {
+		$this->mapper->method('findByUuid')->willReturn($this->stored());
+		$this->mapper->method('updateChecked')->willReturnArgument(0);
+
+		$this->service()->update(self::OWNER, self::UUID, 1750000000, ['plate' => 'B-ZZ 9']);
+		$this->service()->update(self::OWNER, self::UUID, 1750000000, ['logbook_mode' => false]);
+
+		$this->assertSame([], $this->audits);
 	}
 
 	/** Denied before the write, not after it: the row is not touched at all. */
