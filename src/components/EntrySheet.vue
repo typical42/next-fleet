@@ -15,14 +15,16 @@ import NcTextField from '@nextcloud/vue/components/NcTextField'
 import { computed, ref } from 'vue'
 
 import { useVehiclesStore } from '../store/index.js'
-import { parseWhole } from '../utils/format.js'
+import { CATEGORIES, categoryWord, parseWhole } from '../utils/format.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
 	vehicle: { type: Object, required: true },
 })
 
-const emit = defineEmits(['close'])
+// Two things, because the screen behind needs them apart: `saved` is what happened to the vehicle,
+// `close` is what happened to the sheet, and a cancel is only the second.
+const emit = defineEmits(['close', 'saved'])
 
 const store = useVehiclesStore()
 
@@ -60,12 +62,9 @@ const saving = ref(false)
 const failure = ref('')
 
 // A code in the database and a word on screen (docs/ui.md#languages), looked up on render because
-// the catalogue is registered by the page and not by this module.
-const categories = computed(() => [
-	{ id: 'business', label: t('nextfleet', 'Business') },
-	{ id: 'private', label: t('nextfleet', 'Private') },
-	{ id: 'commute', label: t('nextfleet', 'Commute') },
-])
+// the catalogue is registered by the page and not by this module. The words are the timeline's as
+// well, so they are read from the one place that has them (src/utils/format.js).
+const categories = computed(() => CATEGORIES.map((id) => ({ id, label: categoryWord(id) })))
 
 // The category the logbook exists for: a business trip is the one Germany asks the questions about
 // (docs/features.md#logbook-mode), so it is the one the sheet offers to answer them for.
@@ -80,6 +79,7 @@ async function save() {
 	failure.value = ''
 	try {
 		await (kind.value === 'trip' ? trip() : reading())
+		emit('saved')
 		emit('close')
 	} catch (error) {
 		failure.value = error.message

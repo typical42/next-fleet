@@ -60,6 +60,32 @@ export function lifecycleWord(lifecycle) {
 }
 
 /**
+ * What a trip may be driven for, in the order it is offered (CONTEXT.md). The order is one fact and
+ * the words below are another: the words change with the language, this does not.
+ *
+ * @type {string[]}
+ */
+export const CATEGORIES = ['business', 'private', 'commute']
+
+/**
+ * A category is a code in the database and a word on screen (docs/ui.md#languages), looked up on
+ * call for the same reason as the lifecycle above.
+ *
+ * @param {string} category - `business`, `private` or `commute` (CONTEXT.md)
+ * @return {string} the word for it, or the code where there is none
+ */
+export function categoryWord(category) {
+	/** @type {Record<string, string>} */
+	const words = {
+		business: t('nextfleet', 'Business'),
+		private: t('nextfleet', 'Private'),
+		commute: t('nextfleet', 'Commute'),
+	}
+
+	return words[category] ?? category
+}
+
+/**
  * A country is a code in the config and a word on screen (docs/ui.md#languages). The words live
  * here rather than in lib/Jurisdiction/, because the catalogues are the frontend's, and they are
  * looked up on call because the catalogue is registered by the page and not by this module.
@@ -154,6 +180,79 @@ export function parseWhole(input) {
 	}
 
 	return GROUPED.test(typed) ? Number(typed.replace(/\D/g, '')) : null
+}
+
+/**
+ * The day a row belongs to, short, as the reader's locale writes it. The month is the sticky header
+ * above it (docs/ui.md), so the row itself says only the day and the month it repeats.
+ *
+ * @param {number} instant - when it happened, seconds
+ * @param {number} offset - the UTC offset it happened at, minutes
+ * @param {string} [locale] - defaults to the one Nextcloud resolved for this session
+ * @return {string} the day, `03.09.` in German and `03/09` in English
+ */
+export function shortDate(instant, offset, locale = getCanonicalLocale()) {
+	return new Intl.DateTimeFormat(locale, { day: '2-digit', month: '2-digit', timeZone: 'UTC' })
+		.format(local(instant, offset))
+}
+
+/**
+ * The month a row belongs to, as the sticky header names it.
+ *
+ * @param {number} instant - when it happened, seconds
+ * @param {number} offset - the UTC offset it happened at, minutes
+ * @param {string} [locale] - defaults to the one Nextcloud resolved for this session
+ * @return {string} the month and its year
+ */
+export function formatMonth(instant, offset, locale = getCanonicalLocale()) {
+	return new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric', timeZone: 'UTC' })
+		.format(local(instant, offset))
+}
+
+/**
+ * The moment as the markup states it: the wall clock the entry was made against, with the offset it
+ * was made at. Anything reading the markup rather than the rendered text - a screen reader, a
+ * scraper - gets the day the row is filed under, which the plain UTC instant would contradict
+ * across midnight (docs/architecture.md#time).
+ *
+ * @param {number} instant - when it happened, seconds
+ * @param {number} offset - the UTC offset it happened at, minutes
+ * @return {string} the moment, `2026-09-03T01:30:00+02:00`
+ */
+export function isoInstant(instant, offset) {
+	const size = Math.abs(offset)
+	const zone = [Math.floor(size / 60), size % 60].map((part) => String(part).padStart(2, '0')).join(':')
+
+	return `${local(instant, offset).toISOString().slice(0, 19)}${offset < 0 ? '-' : '+'}${zone}`
+}
+
+/**
+ * What groups rows under one header. A key rather than the header's own words, because the words
+ * are the locale's and two months of two years could otherwise be written alike.
+ *
+ * @param {number} instant - when it happened, seconds
+ * @param {number} offset - the UTC offset it happened at, minutes
+ * @return {string} the month, `YYYY-MM`
+ */
+export function monthKey(instant, offset) {
+	return local(instant, offset).toISOString().slice(0, 7)
+}
+
+/**
+ * An instant as the clock the entry was made against read it. A user-facing instant is two facts -
+ * the UTC second and the offset it was entered at (docs/architecture.md#time) - and a Fahrtenbuch is
+ * judged on local calendar dates, so a trip ending 00:30 in Berlin belongs to that day and not to
+ * the one UTC is still on.
+ *
+ * The offset is added and the result read back in UTC, which is what keeps the answer off the
+ * machine the browser happens to be running on.
+ *
+ * @param {number} instant - when it happened, seconds
+ * @param {number} offset - the UTC offset it happened at, minutes
+ * @return {Date} that wall clock, to be read with UTC getters and formatters
+ */
+function local(instant, offset) {
+	return new Date((instant + offset * 60) * 1000)
 }
 
 /**

@@ -4,7 +4,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ConflictError, createVehicle, deleteVehicle, getPreferences, listVehicles, recordReading, recordTrip, restoreVehicle, savePreferences, updateVehicle } from './api.js'
+import { ConflictError, createVehicle, deleteVehicle, getPreferences, listVehicles, readTimeline, recordReading, recordTrip, restoreVehicle, savePreferences, updateVehicle } from './api.js'
 
 vi.mock('@nextcloud/router', () => ({
 	generateUrl: (/** @type {string} */ path) => `/index.php${path}`,
@@ -100,6 +100,50 @@ describe('recordTrip', () => {
 		expect(options.method).toBe('POST')
 		expect(JSON.parse(options.body)).toEqual({ ended_at: 1750000000, end_odo: 148402 })
 		expect(trip.reconciled).toBe(false)
+	})
+})
+
+describe('readTimeline', () => {
+	const page = { rows: [{ type: 'trip', occurred_at: 1750000000, occurred_at_off: 120 }], next: null }
+
+	/**
+	 * The chip and the scroll position are the query string's, and both are optional: a request
+	 * that sends neither asks for the newest rows of every kind
+	 * (lib/Controller/TimelineController.php).
+	 */
+	it('asks for the newest rows of every kind when nothing narrows it', async () => {
+		const fetch = answers(200, page)
+
+		const answered = await readTimeline(vehicle.uuid, {})
+
+		const [url, options] = fetch.mock.calls[0]
+		expect(url).toBe(`/index.php/apps/nextfleet/api/vehicles/${vehicle.uuid}/timeline`)
+		expect(options.method).toBe('GET')
+		expect(options.body).toBeUndefined()
+		expect(answered.rows).toHaveLength(1)
+	})
+
+	/**
+	 * The cursor is the server's own word handed back (docs/architecture.md#the-timeline), so it
+	 * travels as it was given - `:` and all, which is what encoding it as a parameter is for.
+	 */
+	it('sends the chip and the cursor it was handed', async () => {
+		const fetch = answers(200, page)
+
+		await readTimeline(vehicle.uuid, { type: 'trip', cursor: '1750000000:trip:42' })
+
+		const [url] = fetch.mock.calls[0]
+		expect(url).toContain('type=trip')
+		expect(url).toContain(`cursor=${encodeURIComponent('1750000000:trip:42')}`)
+	})
+
+	/** A chip that narrows nothing is the absent parameter, not an empty one the server refuses. */
+	it('leaves out what was not narrowed', async () => {
+		const fetch = answers(200, page)
+
+		await readTimeline(vehicle.uuid, { type: '', cursor: null })
+
+		expect(fetch.mock.calls[0][0]).not.toContain('?')
 	})
 })
 

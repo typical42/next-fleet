@@ -63,6 +63,27 @@ import { generateUrl } from '@nextcloud/router'
  */
 
 /**
+ * One thing that happened to a vehicle, whatever table it was written in
+ * (docs/architecture.md#the-timeline). The Entry itself sits under its own kind's key, and a trip
+ * carries the Reading it left on the counter — the journey and the counter it moved are one row on
+ * screen (docs/architecture.md#odometer-rules, rule 5).
+ *
+ * @typedef {object} Entry
+ * @property {string} type - `trip` or `odometer`
+ * @property {number} occurred_at - when it happened, seconds; a trip is placed where it set off
+ * @property {number} occurred_at_off - the UTC offset it happened at, minutes
+ * @property {Trip} [trip] - the journey, when that is what this row is
+ * @property {Reading} [odometer] - the counter reading, when that is what this row is
+ * @property {Reading|null} [reading] - the Reading a trip left on the counter
+ */
+
+/**
+ * @typedef {object} TimelinePage
+ * @property {Entry[]} rows - at most fifty, newest first
+ * @property {string|null} next - the cursor the next page starts at, null on the last page
+ */
+
+/**
  * The personal settings screen's whole state: what this user chose, and what each choice may be.
  * The options travel with the values because a dropdown needs both and the app has one API
  * surface (docs/adr/0006-one-api-surface-in-v1.md).
@@ -175,6 +196,32 @@ export async function recordReading(uuid, entry) {
  */
 export async function recordTrip(uuid, trip) {
 	return request('POST', `/api/vehicles/${uuid}/trips`, trip)
+}
+
+/**
+ * One page of one vehicle's timeline, newest first (docs/architecture.md#the-timeline). The merge
+ * is the server's, so a client asks for a page and scrolls; it never holds two tables to work out
+ * which rows come first.
+ *
+ * @param {string} uuid - the vehicle whose timeline to read
+ * @param {object} at - where in it to read
+ * @param {string|null} [at.type] - the chip: one kind of Entry, or nothing for all of them
+ * @param {string|null} [at.cursor] - what the last page answered with, or nothing for the newest
+ * @return {Promise<TimelinePage>} the rows and the cursor the next page starts at
+ */
+export async function readTimeline(uuid, { type, cursor }) {
+	const query = new URLSearchParams()
+	for (const [name, value] of Object.entries({ type, cursor })) {
+		if (value) {
+			query.set(name, value)
+		}
+	}
+
+	// A filter that narrows nothing is the absent parameter: an empty one is a word the timeline
+	// never handed out, and it is refused rather than read as "everything".
+	const asked = query.toString()
+
+	return request('GET', `/api/vehicles/${uuid}/timeline${asked === '' ? '' : `?${asked}`}`)
 }
 
 /**

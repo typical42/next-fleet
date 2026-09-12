@@ -104,6 +104,11 @@ would be two more places for one fact to disagree. What kind of change it was �
 a mode flip, a reconciliation — is in `diff_json` and not in a column: the trail has to describe
 tables that do not exist yet.
 
+**`diff_json` is `{"change": …, "fields": {…}}`**, each field a `[before, after]` pair. A creation's
+pairs all start at null; a field nobody stated is not in them, because a diff that lists what did not
+change buries what did. Anything the change itself carried — that an edit was late, that a trip was
+derived rather than observed — is a further key beside those two.
+
 There is deliberately **no `hu_due` column**. The next inspection is a reminder produced by an
 inspection scheme ([contributing](contributing.md)) — a German date in a core table would be a
 second source of truth and a country the core is not supposed to know.
@@ -210,6 +215,39 @@ This is where logbooks quietly break. Six rules, decided once:
    a later observed reading contradicts the derived chain, the observed value wins and the derived
    rows are flagged — never silently corrected. Winning is not an alibi: if that reading is still
    below the last row left standing, it is flagged too, and both questions get asked.
+
+### The timeline
+
+One vehicle, one timeline ([ui](ui.md)): every table that dates a row, merged into one order,
+newest first, fifty rows at a time. `GET /api/vehicles/{uuid}/timeline`, `?type=` the chip and
+`?cursor=` the scroll position.
+
+**The merge is the server's, because the paging is.** A client that asked each table for fifty rows
+would have to hold both to know which fifty come first, and that gets worse with every table M3
+adds.
+
+**The order is `(occurred_at, kind, id)`.** Two rows really do share an instant — a trip entered at
+the moment the counter was read, an import that dates a day's rows alike — so the instant alone is
+not a total order, and a page boundary that is not a total order silently drops a row or serves it
+twice. `kind` breaks the tie between tables, `id` inside one. A kind ranks by its place in a fixed
+list, never by its name, so that the merge and the cursor cannot end up ranking differently; a new
+kind goes at the end of that list, because re-ordering it would re-order pages somebody is already
+scrolling through.
+
+**The cursor is that key**, `<instant>:<kind>:<id>`, and it is the server's own word handed back —
+one a client invented names a place in an order it cannot see, so it is refused rather than read as
+"start at the top". Each table is asked for fifty-one rows, which is what says whether a next page
+exists; a page that answers with no cursor is the last one, so nobody fetches an empty page to find
+out.
+
+**A row is an Entry, not a written row.** A trip carries the Reading it left on the counter
+([rule 5](#odometer-rules)), so the journey and the counter it moved are one row on screen — which
+is why the Readings query selects only `source_type = 'manual'`, the Entries that are their own
+Reading (CONTEXT.md). Listing the rest would show every trip twice. Voided rows are out of the read
+entirely; the Fahrtenbuch export asks its own question.
+
+`odometer#index` stays where it is. The counter's own chain — flags, segments, what the vehicle
+stands at — is a different question from what happened to the vehicle.
 
 ## Nextcloud integration
 

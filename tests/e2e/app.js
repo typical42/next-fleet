@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+import { AxeBuilder } from '@axe-core/playwright'
 import { expect } from '@playwright/test'
 
 /** Where the app answers. Every project in playwright.config.js reaches it on its own port. */
@@ -91,12 +92,46 @@ export async function open(page, plate) {
  * click is taken by the element around it, so a click on the input would land outside the
  * viewport. The name is still the radio's, which is what a screen reader announces.
  *
- * @param {import('@playwright/test').Locator} sheet - the sheet the chooser is in
+ * @param {import('@playwright/test').Locator} within - the sheet or screen the chooser is on
  * @param {string} label - the word on screen (docs/ui.md#languages)
  * @return {import('@playwright/test').Locator} what to click
  */
-export function choice(sheet, label) {
-	return sheet.getByRole('radio', { name: label }).locator('xpath=..')
+export function choice(within, label) {
+	return within.getByRole('radio', { name: label }).locator('xpath=..')
+}
+
+/**
+ * Audits what the app itself renders. Nextcloud's own header and settings menu are outside this
+ * app's reach, so including them would fail the run on somebody else's markup.
+ *
+ * @param {import('@playwright/test').Page} page - the page as it stands
+ * @param {string} screen - what it is showing, so a failure names it
+ * @param {string[]} [within] - the subtrees the app owns on that screen
+ */
+export async function audit(page, screen, within = ['#nextfleet']) {
+	const builder = new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+	for (const selector of within) {
+		builder.include(selector)
+	}
+
+	const audited = await builder.analyze()
+
+	// The offending element is in the message, because the rule alone rarely says which one it is.
+	expect(audited.violations.map((violation) =>
+		`${screen}: ${violation.id} — ${violation.help} — ${violation.nodes.map((node) => node.target.join(' ')).join(', ')}`))
+		.toEqual([])
+}
+
+/**
+ * Waits for a sheet to be all the way open. A dialog fades in, and it counts as visible from the
+ * first frame of that: an audit taken there measures the text against a background it is still
+ * blended with and reports a contrast violation that was over in 200 ms.
+ *
+ * @param {import('@playwright/test').Locator} sheet - the dialog that was just asked for
+ */
+export async function opened(sheet) {
+	await expect(sheet).toBeVisible()
+	await expect(sheet).toHaveCSS('opacity', '1')
 }
 
 /**

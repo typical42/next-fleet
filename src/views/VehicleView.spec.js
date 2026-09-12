@@ -4,12 +4,21 @@
  */
 
 import NcButton from '@nextcloud/vue/components/NcButton'
-import { shallowMount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { flushPromises, shallowMount } from '@vue/test-utils'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import EntrySheet from '../components/EntrySheet.vue'
+import Timeline from '../components/Timeline.vue'
 import VehicleSheet from '../components/VehicleSheet.vue'
+import { readTimeline } from '../services/api.js'
 import VehicleView from './VehicleView.vue'
+
+// The timeline is mounted for real below, so its one call out is stubbed here. What it does with
+// the answer is its own question (src/components/Timeline.spec.js).
+vi.mock('../services/api.js', async (original) => ({
+	...await original(),
+	readTimeline: vi.fn(),
+}))
 
 const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', lifecycle: 'active' }
 
@@ -18,12 +27,19 @@ const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', lifecy
  */
 function screen() {
 	// A stub renders no slot of its own, and a button says what it is in its slot - so the two
-	// buttons of this screen would be indistinguishable without this.
+	// buttons of this screen would be indistinguishable without this. The timeline is the one child
+	// left unstubbed: what this screen has to get right is that it reads again after a write, and a
+	// stub has no reading to do.
 	return shallowMount(VehicleView, {
 		props: { vehicle: VEHICLE },
-		global: { renderStubDefaultSlot: true },
+		global: { renderStubDefaultSlot: true, stubs: { Timeline: false } },
 	})
 }
+
+beforeEach(() => {
+	vi.resetAllMocks()
+	vi.mocked(readTimeline).mockResolvedValue(/** @type {any} */ ({ rows: [], next: null }))
+})
 
 /**
  * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted screen
@@ -108,6 +124,40 @@ describe('the vehicle screen', () => {
 
 		expect(wrapper.findComponent(EntrySheet).exists()).toBe(false)
 		field.remove()
+	})
+
+	/**
+	 * One timeline per vehicle, and it is this screen's middle (docs/ui.md) - the vehicle it is
+	 * showing, not the one that happens to be first in the fleet.
+	 */
+	it('shows the timeline of the vehicle it is on', async () => {
+		const wrapper = screen()
+		await flushPromises()
+
+		expect(/** @type {any} */ (wrapper.findComponent(Timeline)).props('vehicle')).toEqual(VEHICLE)
+		expect(readTimeline).toHaveBeenCalledWith('v-1', { type: '', cursor: null })
+	})
+
+	/**
+	 * The row that was just entered is the one the driver is looking for, so the list is read back
+	 * rather than left a page behind. A sheet that was cancelled wrote nothing and costs no read.
+	 */
+	it('reads the timeline back once an entry is written, and not when one is cancelled', async () => {
+		const wrapper = screen()
+		await flushPromises()
+
+		press(document.body, 'n')
+		await wrapper.vm.$nextTick()
+		await wrapper.findComponent(EntrySheet).vm.$emit('close')
+		await flushPromises()
+		expect(readTimeline).toHaveBeenCalledTimes(1)
+
+		press(document.body, 'n')
+		await wrapper.vm.$nextTick()
+		await wrapper.findComponent(EntrySheet).vm.$emit('saved')
+		await flushPromises()
+
+		expect(readTimeline).toHaveBeenCalledTimes(2)
 	})
 
 	/** A save is done with, so the sheet goes; the screen already reads the store for the rest. */

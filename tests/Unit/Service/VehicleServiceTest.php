@@ -8,6 +8,8 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Unit\Service;
 
+use OCA\NextFleet\Db\Audit;
+use OCA\NextFleet\Db\AuditMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Exception\AccessDeniedException;
@@ -15,6 +17,7 @@ use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\IConfig;
+use OCP\IDBConnection;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use Psr\Container\ContainerInterface;
@@ -29,13 +32,41 @@ class VehicleServiceTest extends TestCase {
 	private const DRIVER = 'carol';
 	private const STRANGER = 'bob';
 
+	/** The trail, in the order it was written. @var list<Audit> */
+	private array $audits = [];
+	/** Every write and every transaction boundary, in the order they happened. @var list<string> */
+	private array $calls = [];
+
 	private VehicleMapper&MockObject $mapper;
 	private IConfig&MockObject $config;
 	private VehicleAccess&MockObject $access;
+	private AuditMapper&MockObject $audit;
+	private IDBConnection&MockObject $db;
 
 	protected function setUp(): void {
+		$this->audits = [];
+		$this->calls = [];
+
 		$this->mapper = $this->createMock(VehicleMapper::class);
 		$this->mapper->method('insert')->willReturnArgument(0);
+
+		$this->audit = $this->createMock(AuditMapper::class);
+		$this->audit->method('insert')->willReturnCallback(function (Audit $row): Audit {
+			$this->audits[] = $row;
+			$this->calls[] = 'audit';
+
+			return $row;
+		});
+
+		// Both boundaries are recorded rather than counted, so a case can say not only that the
+		// two writes happened but that they happened between them.
+		$this->db = $this->createMock(IDBConnection::class);
+		$this->db->method('beginTransaction')->willReturnCallback(function (): void {
+			$this->calls[] = 'begin';
+		});
+		$this->db->method('commit')->willReturnCallback(function (): void {
+			$this->calls[] = 'commit';
+		});
 
 		$this->config = $this->createMock(IConfig::class);
 		$this->config->method('getUserValue')->willReturnArgument(3);
@@ -285,6 +316,22 @@ class VehicleServiceTest extends TestCase {
 		$vehicle = $this->service()->update(self::OWNER, self::UUID, 1750000000, ['plate' => 'B-ZZ 9']);
 
 		$this->assertSame('B-ZZ 9', $vehicle->getPlate());
+	}
+
+	/**
+	 * The switch the vehicle edit sheet carries (docs/features.md#logbook-mode), a column a
+	 * request decides like the lifecycle beside it. Switching off is a write like any other: a
+	 * mode that could only ever go on would be a trap, not a setting.
+	 */
+	public function testTheModeIsSwitchedOnAndOffPerVehicle(): void {
+		$this->mapper->method('findByUuid')->willReturn($this->stored());
+		$this->mapper->method('updateChecked')->willReturnArgument(0);
+
+		$on = $this->service()->update(self::OWNER, self::UUID, 1750000000, ['logbook_mode' => true]);
+		$this->assertTrue($on->getLogbookMode());
+
+		$off = $this->service()->update(self::OWNER, self::UUID, 1750000000, ['logbook_mode' => false]);
+		$this->assertFalse($off->getLogbookMode());
 	}
 
 	/** Denied before the write, not after it: the row is not touched at all. */

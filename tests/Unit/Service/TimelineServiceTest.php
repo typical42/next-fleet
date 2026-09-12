@@ -57,7 +57,6 @@ class TimelineServiceTest extends TestCase {
 		$this->trips->method('findBefore')->willReturnCallback(
 			fn (int $vehicleId, int $at, int $id, int $limit): array => $this->before(
 				$this->tripRows,
-				static fn (Trip $trip): array => [$trip->getStartedAt(), (int)$trip->getId()],
 				$vehicleId,
 				[$at, $id],
 				$limit,
@@ -71,7 +70,6 @@ class TimelineServiceTest extends TestCase {
 					$this->readingRows,
 					static fn (OdoReading $row): bool => $row->getSourceType() === OdoReading::MANUAL,
 				)),
-				static fn (OdoReading $row): array => [$row->getReadAt(), (int)$row->getId()],
 				$vehicleId,
 				[$at, $id],
 				$limit,
@@ -110,21 +108,32 @@ class TimelineServiceTest extends TestCase {
 	 * What both mapper reads answer: one vehicle's rows strictly before `(instant, id)`, newest
 	 * first, at most `$limit` of them.
 	 *
-	 * @template T of Trip|OdoReading
-	 * @param list<T> $rows
-	 * @param callable(T): array{int, int} $key
+	 * @param list<Trip|OdoReading> $rows
 	 * @param array{int, int} $before
-	 * @return list<T>
+	 * @return list<Trip|OdoReading>
 	 */
-	private function before(array $rows, callable $key, int $vehicleId, array $before, int $limit): array {
+	private function before(array $rows, int $vehicleId, array $before, int $limit): array {
 		$mine = array_values(array_filter(
 			$rows,
 			static fn (Trip|OdoReading $row): bool => $row->getVehicleId() === $vehicleId
-				&& $key($row) < $before,
+				&& self::key($row) < $before,
 		));
-		usort($mine, static fn (Trip|OdoReading $a, Trip|OdoReading $b): int => $key($b) <=> $key($a));
+		usort($mine, static fn (Trip|OdoReading $a, Trip|OdoReading $b): int => self::key($b) <=> self::key($a));
 
 		return array_slice($mine, 0, $limit);
+	}
+
+	/**
+	 * What both reads order by: when the row happened, then its id. A trip is dated by when it set
+	 * off and a Reading by when it was read - one fact under two tables' names.
+	 *
+	 * @return array{int, int}
+	 */
+	private static function key(Trip|OdoReading $row): array {
+		return [
+			$row instanceof Trip ? $row->getStartedAt() : $row->getReadAt(),
+			(int)$row->getId(),
+		];
 	}
 
 	private function service(): TimelineService {

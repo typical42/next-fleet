@@ -74,6 +74,33 @@ class TimelineControllerTest extends TestCase {
 	}
 
 	/**
+	 * A chip or a cursor that arrives as an array - `?type[]=trip` - is as much a request this
+	 * route never handed out as a forged word, and gets the same 400. The framework casts int,
+	 * float and bool for a controller and nothing else, so a `?string` parameter would have made
+	 * this a 500 and a logged exception instead.
+	 *
+	 * @dataProvider notEvenWords
+	 * @param array<int, string> $sent
+	 */
+	public function testAChipOrACursorThatIsNotEvenAWordIsRefusedRatherThanFatal(array $sent, bool $asChip): void {
+		$this->service->expects($this->never())->method('page');
+
+		$response = $asChip
+			? $this->controller()->index(self::UUID, $sent)
+			: $this->controller()->index(self::UUID, null, $sent);
+
+		$this->assertSame(Http::STATUS_BAD_REQUEST, $response->getStatus());
+	}
+
+	/**
+	 * @return iterable<string, array{array<int, string>, bool}>
+	 */
+	public static function notEvenWords(): iterable {
+		yield 'the chip' => [['trip'], true];
+		yield 'the cursor' => [['1750000000:trip:4'], false];
+	}
+
+	/**
 	 * The three refusals a read can meet, each as the status the screen acts on: a uuid that is
 	 * nobody's, a vehicle that is not this user's, and a chip or a cursor this route never handed
 	 * out.

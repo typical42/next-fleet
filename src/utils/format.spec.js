@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { formatCount, formatDay, formatOdometer, nameOf, parseDay, parseWhole, subtitleOf } from './format.js'
+import { categoryWord, formatCount, formatDay, formatMonth, formatOdometer, isoInstant, monthKey, nameOf, parseDay, parseWhole, shortDate, subtitleOf } from './format.js'
 
 vi.mock('@nextcloud/l10n', () => ({
 	getCanonicalLocale: () => 'en-GB',
@@ -120,5 +120,64 @@ describe('a calendar day', () => {
 		expect(parseDay(null)).toBeNull()
 		expect(parseDay('')).toBeNull()
 		expect(formatDay(null)).toBe('')
+	})
+})
+
+/**
+ * Half past midnight in Berlin on the 3rd, which is half past eleven the evening before in UTC. A
+ * Fahrtenbuch is judged on local calendar dates (docs/architecture.md#time), so the pair is what
+ * says which day a row belongs to - the instant on its own says the wrong one.
+ */
+const BERLIN_NIGHT = { at: 1788391800, off: 120 }
+
+/** An hour into September in Berlin, still August in UTC: the same question at a month boundary. */
+const BERLIN_FIRST = { at: 1788217200, off: 120 }
+
+describe('an instant on screen', () => {
+	/** The day the driver was living in, with the separators the reader's locale writes. */
+	it('is the day the offset it was entered at puts it on', () => {
+		expect(shortDate(BERLIN_NIGHT.at, BERLIN_NIGHT.off, 'de-DE')).toBe('03.09.')
+		expect(shortDate(BERLIN_NIGHT.at, BERLIN_NIGHT.off, 'en-GB')).toBe('03/09')
+	})
+
+	/**
+	 * The same instant read without its offset is the 2nd, which is the whole reason the offset is
+	 * stored beside it (docs/adr/0007-time-is-an-instant-plus-an-offset.md).
+	 */
+	it('is a different day without its offset', () => {
+		expect(shortDate(BERLIN_NIGHT.at, 0, 'de-DE')).toBe('02.09.')
+	})
+
+	/**
+	 * What a machine reads off the markup, and it has to be the moment the text beside it states -
+	 * the plain UTC instant names the day before, which is what anyone not reading the rendered
+	 * text would be told.
+	 */
+	it('states the same moment to a machine as to a reader', () => {
+		expect(isoInstant(BERLIN_NIGHT.at, BERLIN_NIGHT.off)).toBe('2026-09-03T01:30:00+02:00')
+		expect(isoInstant(BERLIN_NIGHT.at, 0)).toBe('2026-09-02T23:30:00+00:00')
+		// Newfoundland is half an hour off the hour, and west of Greenwich.
+		expect(isoInstant(BERLIN_NIGHT.at, -150)).toBe('2026-09-02T21:00:00-02:30')
+	})
+
+	/** The sticky header's word, and the key that groups the rows under it (docs/ui.md). */
+	it('names its month and groups by it', () => {
+		expect(formatMonth(BERLIN_FIRST.at, BERLIN_FIRST.off, 'de-DE')).toBe('September 2026')
+		expect(monthKey(BERLIN_FIRST.at, BERLIN_FIRST.off)).toBe('2026-09')
+		expect(monthKey(BERLIN_FIRST.at, 0)).toBe('2026-08')
+	})
+})
+
+describe('categoryWord', () => {
+	/** A category is a code in the database and a word on screen (docs/ui.md#languages). */
+	it('has a word for every category a trip is entered under', () => {
+		expect(categoryWord('business')).toBe('Business')
+		expect(categoryWord('private')).toBe('Private')
+		expect(categoryWord('commute')).toBe('Commute')
+	})
+
+	/** Untranslated beats missing: the row still says what the journey was driven for. */
+	it('falls back to the code it was given', () => {
+		expect(categoryWord('something-else')).toBe('something-else')
 	})
 })

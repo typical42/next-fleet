@@ -77,22 +77,27 @@ class TimelineService {
 
 		usort($keyed, static fn (array $a, array $b): int => $b['key'] <=> $a['key']);
 		$page = array_slice($keyed, 0, self::PAGE);
+		$last = end($page);
 
 		return [
 			'rows' => $this->withReadings($vehicleId, array_column($page, 'row')),
-			'next' => count($keyed) > self::PAGE ? implode(':', end($page)['key']) : null,
+			// The cursor names the kind rather than its rank: it is read back by the next request,
+			// and a number would pin the ranking into every client's scroll position.
+			'next' => count($keyed) > self::PAGE
+				? $last['key'][0] . ':' . $last['row']['type'] . ':' . $last['key'][2]
+				: null,
 		];
 	}
 
 	/**
-	 * One row, with the key it is ordered and paged by: the moment it happened, then its kind,
-	 * then the row's own id.
+	 * One row, with the key it is ordered and paged by: the moment it happened, then where its kind
+	 * ranks, then the row's own id.
 	 *
-	 * @return array{key: array{int, string, int}, row: array<string, mixed>}
+	 * @return array{key: array{int, int, int}, row: array<string, mixed>}
 	 */
 	private function row(string $type, int $occurredAt, int $offset, Trip|OdoReading $entry): array {
 		return [
-			'key' => [$occurredAt, $type, (int)$entry->getId()],
+			'key' => [$occurredAt, self::rank($type), (int)$entry->getId()],
 			'row' => [
 				'type' => $type,
 				'occurred_at' => $occurredAt,
@@ -100,6 +105,16 @@ class TimelineService {
 				$type => $entry,
 			],
 		];
+	}
+
+	/**
+	 * Where a kind sorts against another at the same instant: its place in TYPES. The merge and the
+	 * cursor read it from here rather than each deciding for itself - two rankings that agree by
+	 * the alphabet would part company the day a kind is added, and part company silently, at a page
+	 * boundary inside one instant.
+	 */
+	private static function rank(string $type): int {
+		return (int)array_search($type, self::TYPES, true);
 	}
 
 	/**
@@ -177,7 +192,7 @@ class TimelineService {
 			throw new \InvalidArgumentException('cursor is not one this timeline handed out');
 		}
 
-		$rank = (int)array_search($parts[1], self::TYPES, true);
+		$rank = self::rank($parts[1]);
 		$from = [];
 		foreach (self::TYPES as $index => $type) {
 			$from[$type] = match (true) {

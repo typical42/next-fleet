@@ -37,8 +37,8 @@ class VehicleService {
 	 *
 	 * What is missing is the point. `uuid` is the identity and `user_id`/`created_by` the
 	 * provenance, so a request cannot choose them; `odo_value` is a cache recomputed from the
-	 * Readings (docs/architecture.md#odometer-rules); `logbook_mode` waits for M2 and
-	 * `folder_file_id` for the documents that fill the folder.
+	 * Readings (docs/architecture.md#odometer-rules); and `folder_file_id` waits for the documents
+	 * that fill the folder.
 	 *
 	 * @var array<string, array{string, string, int|list<string>|null}>
 	 */
@@ -59,6 +59,7 @@ class VehicleService {
 		'residual_est' => ['setResidualEst', 'number', null],
 		'currency' => ['setCurrency', 'text', 3],
 		'jurisdiction' => ['setJurisdiction', 'text', 8],
+		'logbook_mode' => ['setLogbookMode', 'flag', null],
 		'lifecycle' => ['setLifecycle', 'word', self::LIFECYCLES],
 		'retention_months' => ['setRetentionMonths', 'count', null],
 		'color' => ['setColor', 'text', 32],
@@ -272,7 +273,7 @@ class VehicleService {
 	 * @param int|list<string>|null $limit
 	 * @throws \InvalidArgumentException
 	 */
-	private function read(string $column, string $kind, int|array|null $limit, mixed $value): string|int|array|\DateTime|null {
+	private function read(string $column, string $kind, int|array|null $limit, mixed $value): string|int|bool|array|\DateTime|null {
 		if (is_string($value)) {
 			$value = trim($value);
 		}
@@ -286,6 +287,7 @@ class VehicleService {
 			'set' => $this->set($column, $value, is_array($limit) ? $limit : []),
 			'number' => $this->number($column, $value, false),
 			'count' => $this->number($column, $value, true),
+			'flag' => $this->flag($column, $value),
 			'date' => $this->date($column, $value),
 			default => throw new \InvalidArgumentException($column . ' has no readable kind'),
 		};
@@ -346,6 +348,22 @@ class VehicleService {
 		}
 
 		return $number;
+	}
+
+	/**
+	 * A boolean column, which a form posts as a word and JSON as itself. `false` never reaches
+	 * here as an empty value - only `''` does, and that is a field nobody answered, which for a
+	 * three-valued boolean column is its own state (docs/architecture.md#data-model).
+	 *
+	 * @throws \InvalidArgumentException
+	 */
+	private function flag(string $column, mixed $value): bool {
+		$flag = filter_var($value, FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE);
+		if ($flag === null) {
+			throw new \InvalidArgumentException($column . ' is true or false');
+		}
+
+		return $flag;
 	}
 
 	/**
