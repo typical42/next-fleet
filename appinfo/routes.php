@@ -30,6 +30,11 @@ return [
 		// (docs/architecture.md#odometer-rules).
 		['name' => 'trip#create', 'url' => '/api/vehicles/{uuid}/trips', 'verb' => 'POST'],
 
+		// What happened to the vehicle, every table at once and a page at a time
+		// (docs/architecture.md#the-timeline). `odometer#index` stays where it is: the counter on
+		// its own is a different question from the vehicle's history.
+		['name' => 'timeline#index', 'url' => '/api/vehicles/{uuid}/timeline', 'verb' => 'GET'],
+
 		// The session user's own settings - no identity in the URL, because there is only ever
 		// one set of them to reach (lib/Service/PreferencesService.php).
 		['name' => 'preferences#index', 'url' => '/api/preferences', 'verb' => 'GET'],

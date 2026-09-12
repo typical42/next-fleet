@@ -305,6 +305,21 @@ describe('the entry sheet', () => {
 		expect(recordTrip).toHaveBeenCalledWith('v-1', expect.objectContaining({ end_odo: 148402 }))
 	})
 
+	/**
+	 * The screen behind the sheet is the one listing what was just written, and a sheet that only
+	 * reports itself closed tells it nothing: a cancel closes too (src/views/VehicleView.vue).
+	 */
+	it('reports the write, which closing on a cancel does not', async () => {
+		const wrapper = sheet()
+
+		await wrapper.findComponent(NcDialog).vm.$emit('update:open', false)
+		expect(wrapper.emitted('saved')).toBeUndefined()
+
+		await record(wrapper, { 'End counter': '148402' })
+
+		expect(wrapper.emitted('saved')?.length).toBe(1)
+	})
+
 	/** The escape hatch still writes one Reading, at the moment it was read (docs/ui.md). */
 	it('records a plain counter reading under the odometer', async () => {
 		const wrapper = sheet()

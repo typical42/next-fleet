@@ -11,6 +11,7 @@ namespace OCA\NextFleet\Tests\Integration;
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Controller\OdometerController;
 use OCA\NextFleet\Controller\PreferencesController;
+use OCA\NextFleet\Controller\TimelineController;
 use OCA\NextFleet\Controller\TripController;
 use OCA\NextFleet\Controller\VehicleController;
 use OCA\NextFleet\Db\Access;
@@ -18,6 +19,7 @@ use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\PreferencesService;
+use OCA\NextFleet\Service\TimelineService;
 use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Http;
@@ -52,6 +54,7 @@ class VehicleIdorTest extends TestCase {
 	private VehicleService $service;
 	private OdometerService $odometry;
 	private TripService $journeys;
+	private TimelineService $history;
 	private PreferencesService $settings;
 	private AccessMapper $grants;
 	private Vehicle $vehicle;
@@ -61,6 +64,7 @@ class VehicleIdorTest extends TestCase {
 		$this->service = $container->get(VehicleService::class);
 		$this->odometry = $container->get(OdometerService::class);
 		$this->journeys = $container->get(TripService::class);
+		$this->history = $container->get(TimelineService::class);
 		$this->settings = $container->get(PreferencesService::class);
 		$this->grants = $container->get(AccessMapper::class);
 
@@ -121,6 +125,15 @@ class VehicleIdorTest extends TestCase {
 	 */
 	private function trip(string $userId, array $params): TripController {
 		return new TripController(Application::APP_ID, $this->request($params), $this->journeys, $this->session($userId));
+	}
+
+	/**
+	 * And again, for the one read that shows everything at once.
+	 *
+	 * @param array<string, mixed> $params
+	 */
+	private function timeline(string $userId, array $params): TimelineController {
+		return new TimelineController(Application::APP_ID, $this->request($params), $this->history, $this->session($userId));
 	}
 
 	/**
@@ -205,6 +218,7 @@ class VehicleIdorTest extends TestCase {
 			'odometer#index' => $this->odometer(self::STRANGER, $params)->index($uuid),
 			'odometer#create' => $this->odometer(self::STRANGER, $params)->create($uuid),
 			'trip#create' => $this->trip(self::STRANGER, $params)->create($uuid),
+			'timeline#index' => $this->timeline(self::STRANGER, $params)->index($uuid),
 			'preferences#index' => $this->preferences(self::STRANGER, $params)->index(),
 			'preferences#update' => $this->preferences(self::STRANGER, $params)->update(),
 			default => $this->fail($route . ' is a route the IDOR sweep has never been through'),

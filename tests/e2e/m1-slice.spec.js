@@ -3,10 +3,9 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-import { AxeBuilder } from '@axe-core/playwright'
 import { expect, test } from '@playwright/test'
 
-import { add, api, appPage, choice, login, open, removeVehicles, row, settingsPage } from './app.js'
+import { add, api, appPage, audit, choice, login, open, opened, removeVehicles, row, settingsPage } from './app.js'
 
 // Every vehicle this file makes wears this prefix, and every run deletes what it finds under it
 // before starting.
@@ -64,7 +63,9 @@ test('a vehicle and a reading of its counter both reach the list', async ({ page
 	await entry.getByRole('textbox', { name: 'Counter reading' }).fill(recorded)
 	await entry.getByRole('button', { name: 'Try again' }).click()
 	await expect(entry).toBeHidden()
-	await expect(page.getByText(counter)).toBeVisible()
+	// The KPI, not just anywhere on the screen: the timeline below it states the same number on the
+	// row it wrote, and the vehicle's own counter is what this line is about.
+	await expect(page.locator('.vehicle__kpis').getByText(counter)).toBeVisible()
 
 	// A reload is what proves the server kept both: the overview is read back from it, and it is
 	// the only screen that shows a vehicle's name and its counter in one line.
@@ -328,40 +329,6 @@ test.describe('at 320 x 640, in the dark', { tag: '@nc34' }, () => {
 		await audit(page, 'the personal settings', ['#nextfleet-settings'])
 	})
 })
-
-/**
- * Audits what the app itself renders. Nextcloud's own header and settings menu are outside this
- * app's reach, so including them would fail the run on somebody else's markup.
- *
- * @param {import('@playwright/test').Page} page - the page as it stands
- * @param {string} screen - what it is showing, so a failure names it
- * @param {string[]} [within] - the subtrees the app owns on that screen
- */
-async function audit(page, screen, within = ['#nextfleet']) {
-	const builder = new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
-	for (const selector of within) {
-		builder.include(selector)
-	}
-
-	const audited = await builder.analyze()
-
-	// The offending element is in the message, because the rule alone rarely says which one it is.
-	expect(audited.violations.map((violation) =>
-		`${screen}: ${violation.id} — ${violation.help} — ${violation.nodes.map((node) => node.target.join(' ')).join(', ')}`))
-		.toEqual([])
-}
-
-/**
- * Waits for a sheet to be all the way open. A dialog fades in, and it counts as visible from the
- * first frame of that: an audit taken there measures the text against a background it is still
- * blended with and reports a contrast violation that was over in 200 ms.
- *
- * @param {import('@playwright/test').Locator} sheet - the dialog that was just asked for
- */
-async function opened(sheet) {
-	await expect(sheet).toBeVisible()
-	await expect(sheet).toHaveCSS('opacity', '1')
-}
 
 /**
  * What the "complete this vehicle" hint asks about one vehicle.

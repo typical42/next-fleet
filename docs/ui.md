@@ -36,8 +36,11 @@ The obvious layout gives each table a tab: Trips, Energy, Maintenance, Expenses.
 
 So the vehicle has **one timeline** of everything — trips, fill-ups, maintenance, expenses,
 reminders — newest first, with filter chips above it:
-`All · Trips · Energy · Maintenance · Costs`. One place to look, one place to search, and the tabs
-collapse from six to three.
+`All · Trips · Odometer · Energy · Maintenance · Costs`. One place to look, one place to search, and
+the tabs collapse from six to three. A chip per kind of Entry, so the odometer has one too: a
+counter somebody read is a thing that happened to the vehicle, even though the counter's own chain
+is a different question and keeps its own route
+([architecture](architecture.md#the-timeline)).
 
 The timeline is also where flagged records get resolved. An odometer that went backwards shows the
 follow-up question there — cluster swap, or a mistake? — instead of interrupting the person who
@@ -52,7 +55,7 @@ entered it ([odometer rules](architecture.md#odometer-rules)).
 │ ● M-EV 7   ⛔   │  │ ● Oil change in ~2 400 km (est. Nov)        │   │
 │                 │  └────────────────────────────────────────────┘   │
 │ Reports         │                                                    │
-│ ─────────────── │  Timeline  [All][Trips][Energy][Maint.][Costs]     │
+│ ─────────────── │  Timeline [All][Trips][Odo.][Energy][Maint.][Cost] │
 │ Settings        │  ───────────────────────────────────────────────   │
 │                 │  03.09.  ⛽ Energy    48,2 l   82,10 €   6,1 l/100 │
 │                 │  02.09.  🚗 Munich → Augsburg   82 km   business   │
@@ -62,7 +65,13 @@ entered it ([odometer rules](architecture.md#odometer-rules)).
 
 The timeline pages: 50 rows, then more on scroll, with the month a sticky header. Five years of a
 company car is thousands of rows, and the screen people open most often is not the place to
-discover that.
+discover that. The scroll is the bottom of the list coming into view; the button sitting there is
+what a browser without an observer, and a page the server refused, still have.
+
+A row states one figure, and it is the one the driver gave — the kilometres a trip covered, or the
+counter it ended on, never both and never one worked out from the other
+([odometer rules](architecture.md#odometer-rules)). A flagged Reading is carried on the row it
+belongs to, as a word rather than a colour.
 
 The right sidebar holds the vehicle's own data and documents — the things you set once and rarely
 touch. That keeps the middle free for the things you touch weekly.

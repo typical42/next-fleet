@@ -13,6 +13,8 @@ use OCA\NextFleet\Db\Audit;
 use OCA\NextFleet\Db\AuditMapper;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\TripMapper;
+use OCA\NextFleet\Db\Vehicle;
+use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleService;
@@ -36,6 +38,7 @@ class TripTest extends TestCase {
 	private TripService $service;
 	private OdometerService $odometer;
 	private VehicleService $vehicles;
+	private VehicleMapper $vehicleRows;
 
 	protected function setUp(): void {
 		$container = (new Application())->getContainer();
@@ -44,6 +47,7 @@ class TripTest extends TestCase {
 		$this->service = $container->get(TripService::class);
 		$this->odometer = $container->get(OdometerService::class);
 		$this->vehicles = $container->get(VehicleService::class);
+		$this->vehicleRows = $container->get(VehicleMapper::class);
 		$this->forgetTestRows();
 	}
 
@@ -229,6 +233,57 @@ class TripTest extends TestCase {
 			$chain,
 		);
 		$this->assertSame(120300, $this->vehicles->find(self::AUTHOR, $uuid)->getOdoValue());
+	}
+
+	/**
+	 * The switch itself is task 10's, so the column is flipped here the way the vehicle sheet
+	 * will: on the row the test just read, through the checked write every update goes through.
+	 */
+	private function underLogbookMode(Vehicle $vehicle): void {
+		$vehicle->setLogbookMode(true);
+		$this->vehicleRows->updateChecked($vehicle, $vehicle->getUpdatedAt());
+	}
+
+	/**
+	 * The task against the real database: the trail of one trip, as the JSON column gave it back.
+	 * Only the instance says a nested diff survives `Types::JSON` and that the row committed
+	 * alongside the trip it describes rather than with it.
+	 */
+	public function testATripUnderLogbookModeIsRecordedInTheTrailOfThatTrip(): void {
+		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 126']);
+		$uuid = $vehicle->getUuid();
+		$this->underLogbookMode($vehicle);
+
+		$trip = $this->record($uuid, 1750000000, ['end_odo' => 120450, 'purpose' => 'Kundentermin']);
+
+		$trail = $this->audit->findForEntity(Audit::TRIP, (int)$trip->getId());
+		$this->assertCount(1, $trail);
+		$this->assertSame(self::AUTHOR, $trail[0]->getCreatedBy());
+		$this->assertSame([
+			'change' => 'created',
+			'fields' => [
+				'started_at' => [null, 1750000000],
+				'started_at_off' => [null, 0],
+				'ended_at' => [null, 1750005400],
+				'ended_at_off' => [null, 0],
+				'end_odo' => [null, 120450],
+				'purpose' => [null, 'Kundentermin'],
+				'category' => [null, Trip::BUSINESS],
+			],
+		], $trail[0]->getDiffJson());
+	}
+
+	/**
+	 * Off the mode nothing is recorded, and the trip is written all the same. A vehicle that only
+	 * accepted a trip when somebody was watching would be the wrong half of the feature.
+	 */
+	public function testATripOnAVehicleOutsideTheModeIsWrittenAndLeavesNoTrail(): void {
+		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 127']);
+
+		$trip = $this->record($vehicle->getUuid(), 1750000000, ['end_odo' => 120450]);
+
+		$this->assertSame([], $this->audit->findForEntity(Audit::TRIP, (int)$trip->getId()));
+		$this->assertSame(120450, $this->vehicles->find(self::AUTHOR, $vehicle->getUuid())->getOdoValue());
 	}
 
 	/**

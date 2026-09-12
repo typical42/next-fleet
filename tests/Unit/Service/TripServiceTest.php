@@ -8,6 +8,8 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Unit\Service;
 
+use OCA\NextFleet\Db\Audit;
+use OCA\NextFleet\Db\AuditMapper;
 use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Db\OdoReadingMapper;
 use OCA\NextFleet\Db\Trip;
@@ -43,13 +45,20 @@ class TripServiceTest extends TestCase {
 	private array $trips = [];
 	/** The readings the odometer wrote. @var list<OdoReading> */
 	private array $readings = [];
+	/** The audit trail, in the order it was written. @var list<Audit> */
+	private array $audits = [];
+	/** Every write and every transaction boundary, in the order they happened. @var list<string> */
+	private array $calls = [];
 	private int $nextTripId = 1;
 	private int $nextReadingId = 1;
 	private ?int $cached = null;
+	/** Whether the vehicle the gate hands back is under Logbook Mode. */
+	private bool $logbookMode = false;
 	private ?OdometerService $odometer = null;
 
 	private TripMapper&MockObject $tripMapper;
 	private OdoReadingMapper&MockObject $readingMapper;
+	private AuditMapper&MockObject $auditMapper;
 	private VehicleMapper&MockObject $vehicles;
 	private VehicleService&MockObject $fleet;
 	private IDBConnection&MockObject $db;
@@ -57,9 +66,12 @@ class TripServiceTest extends TestCase {
 	protected function setUp(): void {
 		$this->trips = [];
 		$this->readings = [];
+		$this->audits = [];
+		$this->calls = [];
 		$this->nextTripId = 1;
 		$this->nextReadingId = 1;
 		$this->cached = null;
+		$this->logbookMode = false;
 		$this->odometer = null;
 
 		// Stores rather than expectations, for the reason OdometerServiceTest keeps them: what a
@@ -69,8 +81,17 @@ class TripServiceTest extends TestCase {
 			$trip->setId($this->nextTripId);
 			$trip->setUuid('0195e2f1-1111-4000-8000-00000000000' . $this->nextTripId++);
 			$this->trips[] = $trip;
+			$this->calls[] = 'trip';
 
 			return $trip;
+		});
+
+		$this->auditMapper = $this->createMock(AuditMapper::class);
+		$this->auditMapper->method('insert')->willReturnCallback(function (Audit $row): Audit {
+			$this->audits[] = $row;
+			$this->calls[] = 'audit';
+
+			return $row;
 		});
 
 		$this->readingMapper = $this->createMock(OdoReadingMapper::class);
@@ -125,7 +146,15 @@ class TripServiceTest extends TestCase {
 			},
 		);
 
+		// Both boundaries are recorded rather than counted, so a case can say not only that the
+		// writes happened but that they happened between the two.
 		$this->db = $this->createMock(IDBConnection::class);
+		$this->db->method('beginTransaction')->willReturnCallback(function (): void {
+			$this->calls[] = 'begin';
+		});
+		$this->db->method('commit')->willReturnCallback(function (): void {
+			$this->calls[] = 'commit';
+		});
 	}
 
 	/**
@@ -146,7 +175,13 @@ class TripServiceTest extends TestCase {
 	}
 
 	private function service(): TripService {
-		return new TripService($this->tripMapper, $this->odometer(), $this->fleet, $this->db);
+		return new TripService(
+			$this->tripMapper,
+			$this->auditMapper,
+			$this->odometer(),
+			$this->fleet,
+			$this->db,
+		);
 	}
 
 	/**
@@ -163,6 +198,7 @@ class TripServiceTest extends TestCase {
 			'uuid' => self::VEHICLE,
 			'user_id' => self::OWNER,
 			'odo_unit' => 'km',
+			'logbook_mode' => $this->logbookMode,
 			'updated_at' => 1750000000,
 		]);
 	}
@@ -495,6 +531,126 @@ class TripServiceTest extends TestCase {
 		$this->expectException(AccessDeniedException::class);
 
 		$this->service()->record(self::DRIVER, self::VEHICLE, $this->drove(1750000000, 120450));
+	}
+
+	/**
+	 * The task: under Logbook Mode a trip is not just written, it is recorded as having been
+	 * written (docs/features.md#logbook-mode). The row points at the trip through the table it
+	 * names and the id it carries, and its author and instant are its own two common columns.
+	 */
+	public function testATripWrittenUnderLogbookModeLeavesAnAuditRow(): void {
+		$this->logbookMode = true;
+
+		$trip = $this->service()->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+
+		$this->assertCount(1, $this->audits);
+		$this->assertSame(Audit::TRIP, $this->audits[0]->getEntity());
+		$this->assertSame((int)$trip->getId(), $this->audits[0]->getEntityId());
+		$this->assertSame(self::OWNER, $this->audits[0]->getCreatedBy());
+	}
+
+	/**
+	 * Off the mode there is no trail. A private driver never asked for one, and a row written
+	 * anyway would claim an integrity the vehicle's records do not have
+	 * (docs/adr/0003-logbook-mode-does-not-lock-the-past.md).
+	 */
+	public function testATripOnAVehicleWithoutTheModeLeavesNoAuditRow(): void {
+		$this->service()->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+
+		$this->assertSame([], $this->audits);
+	}
+
+	/**
+	 * The diff is what the driver stated, each field as the pair an auditor reads: nothing before
+	 * it, because the trip is new. The row's own author and dating are not in it - the audit row
+	 * carries those itself.
+	 */
+	public function testTheAuditRowCarriesTheFieldsTheTripWasWrittenWith(): void {
+		$this->logbookMode = true;
+
+		$this->service()->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450) + [
+			'to_label' => 'Düsseldorf, Königsallee 12',
+			'purpose' => 'Kundentermin',
+		]);
+
+		$this->assertSame([
+			'change' => 'created',
+			'fields' => [
+				'started_at' => [null, 1750000000],
+				'started_at_off' => [null, 120],
+				'ended_at' => [null, 1750005400],
+				'ended_at_off' => [null, 120],
+				'end_odo' => [null, 120450],
+				'to_label' => [null, 'Düsseldorf, Königsallee 12'],
+				'purpose' => [null, 'Kundentermin'],
+				'category' => [null, 'business'],
+			],
+		], $this->audits[0]->getDiffJson());
+	}
+
+	/**
+	 * A field the driver left empty did not change, so it is not in the diff: a trail that lists
+	 * what stayed as it was buries what did not. `reconciled` is the one column that is false
+	 * rather than absent when nobody touched it, and it is left out for the same reason.
+	 */
+	public function testAFieldTheDriverLeftEmptyIsNotInTheDiff(): void {
+		$this->logbookMode = true;
+
+		$this->service()->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+
+		$this->assertSame(
+			['started_at', 'started_at_off', 'ended_at', 'ended_at_off', 'end_odo', 'category'],
+			array_keys($this->audits[0]->getDiffJson()['fields']),
+		);
+	}
+
+	/**
+	 * The trail's vocabulary is the trip's columns, and it is read off the wire form because that
+	 * is the one place this app spells them out. This is what holds the two together: an edit to
+	 * what the client reads that is not meant for the audit trail fails here rather than quietly
+	 * giving later rows a different field set from the ones already written.
+	 */
+	public function testTheAuditRowNamesEveryColumnATripCarries(): void {
+		$this->logbookMode = true;
+
+		$this->service()->record(self::OWNER, self::VEHICLE, [
+			'started_at' => 1750000000,
+			'started_at_off' => 120,
+			'ended_at' => 1750005400,
+			'ended_at_off' => 120,
+			'start_odo' => 120310,
+			'end_odo' => 120450,
+			'from_label' => 'Köln, Hauptbahnhof',
+			'to_label' => 'Düsseldorf, Königsallee 12',
+			'purpose' => 'Kundentermin',
+			'partner' => 'Meyer GmbH',
+			'category' => Trip::BUSINESS,
+		]);
+
+		// `distance` is missing because a trip states its end once: this one is a counter trip
+		// (rule 6). `reconciled` is missing because only the app sets it, in a task of its own.
+		$this->assertSame(
+			[
+				'started_at', 'started_at_off', 'ended_at', 'ended_at_off', 'start_odo', 'end_odo',
+				'from_label', 'to_label', 'purpose', 'partner', 'category',
+			],
+			array_keys($this->audits[0]->getDiffJson()['fields']),
+		);
+	}
+
+	/**
+	 * The row and the change it records are one write, for the reason the trip and its Reading
+	 * are: a trail that outlives a rolled-back trip, or a trip that outlives its missing row, is
+	 * evidence of something that did not happen either way.
+	 */
+	public function testTheAuditRowIsWrittenInsideTheSameTransactionAsTheTrip(): void {
+		$this->logbookMode = true;
+
+		$this->service()->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+
+		$this->assertSame('begin', $this->calls[0]);
+		$this->assertSame('commit', end($this->calls));
+		$this->assertSame(['trip', 'audit'], array_slice($this->calls, 1, -1));
 	}
 
 	/**
