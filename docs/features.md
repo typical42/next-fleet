@@ -33,7 +33,7 @@ everything else waits.
 - **v1** — Fahrtenbuch export with the business/private/commute split, as HTML the browser prints
   ([ADR 0005](adr/0005-no-pdf-library.md)).
 - **v1** — **Gap detection.** A Fahrtenbuch must be gapless, and the app knows the kilometres
-  between one trip's end and the next one's start. Show unaccounted km per month and close them one
+  between the counter before a trip and the counter the trip claims to start on. Show unaccounted km per month and close them one
   at a time ([logbook mode](#logbook-mode)). Nothing in [the prior art](#what-existing-tools-teach-us)
   does this, and it is exactly what an audit looks for.
 - **v1** — **QR sticker per vehicle.** A printed code for the glovebox; scanning opens the quick-add
@@ -90,8 +90,33 @@ partner visited. Private trips need only the kilometres. A commute states the jo
 reason — its category is the whole reason — so it is asked for the plate, the date and both
 counters and for nothing else.
 
-So: with the mode on, trips become append-only. Edits write a new revision plus a `fleet_audit`
-row. Off by default — private users do not need the friction.
+So: with the mode on, trips become append-only. An edit rewrites the trip in place and writes a
+`fleet_audit` row holding the diff; that row is the revision, not a second trip row. Off by default
+— private users do not need the friction.
+
+**What the logbook asks is computed for every vehicle and said only under the mode.** One rule, for
+completeness and for gap detection alike, so the app has one rule and not two: a vehicle whose mode
+goes on shows at once what its existing trips lack, and nobody keeping no logbook is asked.
+
+**Incomplete is a flag.** A trip missing a field its ruleset requires is saved, never refused, and
+the timeline lists it as incomplete with the fields it still lacks. The answer is computed on read,
+never stored, so a ruleset that changes changes it for every trip. A distance trip has no counters,
+so as a business trip it is asked for both, and the way to answer is to edit it into a trip with
+its counters.
+
+**A Gap is a claim above the counter.** A trip's `start_odo` is what the driver says the counter
+read, and the Reading before the trip — the newest at or before its start, never the trip's own —
+is what it is measured against ([rule 5](architecture.md#odometer-rules)). A claim above it leaves
+the difference unaccounted; a claim at or below it opens no Gap. A distance trip claims nothing and
+is never measured. A Reading that is flagged is already a question, and a cluster swap looks like a
+typo from here, so a claim measured against one opens no Gap until that question is answered. A Gap
+belongs to the month the trip set off in, and that month's header states the total.
+
+**A Gap is closed by a confirmation, one Gap at a time.** It names the kilometres and the two moments
+that bracket them, and creates one private trip marked `reconciled`. Its audit row says the
+kilometres were derived, not observed. Never a batch, and never a business trip: the app knows how
+far the vehicle went, not why. Afterwards it edits like any other trip, audited and late past the
+lock delay. No request sets or clears `reconciled`. The mode records writes; it refuses none.
 
 **A delete voids, it does not remove.** `deleted_at` is set, the row survives, an audit row records
 who and when, and the export lists the trip as voided. The Reading the trip left on the counter goes
@@ -112,7 +137,10 @@ allowed — a mode that could only ever go on would be a trap, not a setting —
 **The lock delay belongs to the ruleset**, not to the core: `ILogbookRules` supplies it, and the
 German value carries its source URL ([contributing](contributing.md)). Days, not weeks — timeliness
 is the entire point. Germany's is seven, and the same ruleset states the ten years a record is kept
-for, a floor under the vehicle's own retention period ([legal](legal.md)).
+for, a floor under the vehicle's own retention period ([legal](legal.md)). An edit after the delay
+is allowed, and its audit row says `late`. The delay runs from the end of the journey, and from the
+earlier end when the edit re-dates it, so moving an old trip to yesterday does not restart the
+clock. A jurisdiction with no ruleset has no delay, so nothing under it is late.
 
 **Closing a gap creates one trip, with a confirmation, and only a private one.** Never a batch. A
 private trip legally needs only the kilometres; a business trip needs a purpose and a partner that

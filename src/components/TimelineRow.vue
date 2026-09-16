@@ -4,16 +4,28 @@
 -->
 <script setup>
 import { t } from '@nextcloud/l10n'
+import NcButton from '@nextcloud/vue/components/NcButton'
 import { computed } from 'vue'
 
-import { categoryWord, formatCount, isoInstant, shortDate } from '../utils/format.js'
+import { categoryWord, fieldWords, formatCount, isoInstant, shortDate } from '../utils/format.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Entry>} */
 	entry: { type: Object, required: true },
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
 	vehicle: { type: Object, required: true },
+	/**
+	 * The Gap this trip's claim opened, if any. The timeline hands it over only under Logbook Mode,
+	 * the only place a Gap is said (docs/features.md#logbook-mode).
+	 *
+	 * @type {import('vue').PropType<import('../services/api.js').Gap|null>}
+	 */
+	gap: { type: Object, default: null },
 })
+
+defineEmits(['closeGap'])
+
+const unaccounted = computed(() => (props.gap === null ? '' : `${formatCount(props.gap.distance)} ${props.vehicle.odo_unit}`))
 
 const trip = computed(() => props.entry.trip)
 const odometer = computed(() => props.entry.odometer)
@@ -63,6 +75,9 @@ const tail = computed(() => (trip.value === undefined ? '' : categoryWord(trip.v
  * that Reading are one row.
  */
 const inQuestion = computed(() => (trip.value === undefined ? odometer.value : props.entry.reading)?.flagged === true)
+
+/** Said only under Logbook Mode (docs/features.md#logbook-mode). */
+const missingWords = computed(() => (props.vehicle.logbook_mode === true ? fieldWords(props.entry.missing ?? []) : ''))
 </script>
 
 <template>
@@ -74,8 +89,24 @@ const inQuestion = computed(() => (trip.value === undefined ? odometer.value : p
 		<span class="row__figure">{{ figure }}</span>
 		<span class="row__tail">
 			{{ tail }}
+			<!-- Closed a Gap: the counter's arithmetic, not a journey somebody recorded (CONTEXT.md). -->
+			<span v-if="trip?.reconciled === true">{{ t('nextfleet', 'Reconciled') }}</span>
 			<!-- A word, not a colour: status is never colour alone (docs/ui.md). -->
 			<span v-if="inQuestion" class="row__flag">{{ t('nextfleet', 'In question') }}</span>
+			<template v-if="missingWords">
+				<span class="row__flag">{{ t('nextfleet', 'Incomplete') }}</span>
+				<!-- The words are ours, and Vue escapes what it interpolates. -->
+				<span>{{ t('nextfleet', 'Still missing: {fields}', { fields: { value: missingWords, escape: false } }) }}</span>
+			</template>
+		</span>
+		<!-- Offered on the trip that opened the Gap, because a Gap is closed one at a time (CONTEXT.md). -->
+		<span v-if="unaccounted" class="row__gap">
+			<span class="row__flag">
+				{{ t('nextfleet', '{distance} unaccounted before this trip', { distance: { value: unaccounted, escape: false } }) }}
+			</span>
+			<NcButton variant="tertiary" size="small" @click="$emit('closeGap', gap)">
+				{{ t('nextfleet', 'Close gap') }}
+			</NcButton>
 		</span>
 	</li>
 </template>
@@ -119,5 +150,14 @@ const inQuestion = computed(() => (trip.value === undefined ? odometer.value : p
 
 .row__flag {
 	color: var(--color-warning-text);
+}
+
+.row__gap {
+	grid-column: 2 / -1;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: calc(var(--default-grid-baseline) * 2);
+	font-size: 0.9em;
 }
 </style>

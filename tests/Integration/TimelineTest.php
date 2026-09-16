@@ -173,6 +173,55 @@ class TimelineTest extends TestCase {
 	}
 
 	/**
+	 * The container wires the vehicle's own ruleset into the page, on a vehicle not under Logbook
+	 * Mode (docs/features.md#logbook-mode). What Germany requires is tests/Country/De's; this only
+	 * needs one field it requires that the trip leaves out, and one the trip states.
+	 */
+	public function testABusinessTripMissingAFieldDeRequiresIsListedAsIncomplete(): void {
+		$this->assertSame('de', $this->vehicles->find(self::AUTHOR, $this->uuid)->getJurisdiction());
+		$this->trip(1750000000, 120450);
+		$this->entry(1750100000, 120500);
+
+		$rows = $this->timeline->page(self::AUTHOR, $this->uuid, null, null)['rows'];
+
+		$this->assertArrayNotHasKey('missing', $rows[0]);
+		$this->assertContains('partner', $rows[1]['missing']);
+		$this->assertNotContains('end_odo', $rows[1]['missing']);
+	}
+
+	/**
+	 * A Gap against the real chain, and gone from it with the Reading it was measured against:
+	 * voiding a trip voids its Reading (rule 5), and only the instance says the chain the Gaps are
+	 * read off leaves a voided Reading out.
+	 */
+	public function testAClaimAboveTheReadingBeforeItIsAGapMeasuredOnlyAgainstWhatStands(): void {
+		$this->entry(1750000000, 120000);
+		$before = $this->trip(1750100000, 120450);
+		$claiming = $this->trips->record(self::AUTHOR, $this->uuid, [
+			'started_at' => 1750200000,
+			'started_at_off' => 120,
+			'ended_at' => 1750205400,
+			'ended_at_off' => 120,
+			'start_odo' => 120600,
+			'end_odo' => 120700,
+			'category' => Trip::PRIVATE,
+		]);
+
+		$this->assertSame([[
+			'trip' => $claiming->getUuid(),
+			'distance' => 150,
+			'from_at' => 1750105400,
+			'from_at_off' => 120,
+			'to_at' => 1750200000,
+			'to_at_off' => 120,
+		]], $this->timeline->gaps(self::AUTHOR, $this->uuid));
+
+		$this->trips->delete(self::AUTHOR, $this->uuid, $before->getUuid(), $before->getUpdatedAt());
+
+		$this->assertSame([600], array_column($this->timeline->gaps(self::AUTHOR, $this->uuid), 'distance'));
+	}
+
+	/**
 	 * The chip, as the database narrows it: one kind of Entry and nothing else about the vehicle.
 	 */
 	public function testAChipNarrowsTheTimelineToOneKind(): void {

@@ -10,6 +10,7 @@ namespace OCA\NextFleet\Jurisdiction\Generic;
 
 use OCA\NextFleet\Jurisdiction\IJurisdiction;
 use OCA\NextFleet\Jurisdiction\ILogbookRules;
+use OCA\NextFleet\Jurisdiction\IReportRenderer;
 
 /**
  * What an install in a country nobody has written gets: metric units and no currency, so a
@@ -35,6 +36,11 @@ class Profile implements IJurisdiction {
 
 	/** No country's requirements to state, and inventing some would be worse than stating none. */
 	public function logbookRules(): ?ILogbookRules {
+		return null;
+	}
+
+	/** The generic report is M5's (plan.md). Until then there is no export, not an empty one. */
+	public function logbookRenderer(): ?IReportRenderer {
 		return null;
 	}
 }

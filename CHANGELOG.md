@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- A Gap is closed one at a time. Under Logbook Mode the trip that opened it offers to close it, and
+  a confirmation naming the kilometres and the two moments writes one private distance trip marked
+  `reconciled`, whose Reading lands on the claim. `POST /api/vehicles/{uuid}/gaps/{trip}/close`
+  takes the Gap as the driver confirmed it and answers 412 `conflict` when it has moved since. Under
+  the mode its audit row is `created` with `derived: true`. It edits like any other trip, and
+  `reconciled` is never set or cleared by a request.
+- Gap detection: a trip that sets off above the Reading before it leaves the kilometres in between
+  unaccounted. `GET /api/vehicles/{uuid}/gaps` lists them for every vehicle, each with the two
+  moments that bracket it. Under Logbook Mode the timeline's month header states the month's total.
+- A trip can be edited: `PUT /api/vehicles/{uuid}/trips/{trip}` takes the whole trip and the token
+  it was read with, and rewrites the row in place. A field the request leaves out is emptied, so a
+  distance trip can become a counter trip. When the journey moves, its Reading moves with it in the
+  same transaction. Under Logbook Mode the edit leaves an `edited` audit row with what changed, and
+  an edit after the ruleset's lock delay is still allowed and marked `late`.
+- A trip missing a field its jurisdiction requires is saved and flagged, never refused. Under
+  Logbook Mode its timeline row says it is incomplete and names what is still missing, in the words
+  the sheets ask by. The timeline's trip rows carry `missing` for every vehicle.
 - Germany states what it requires of a logbook: a business trip names the plate, the date, both
   counters, where it went, why and whom it visited; a commute states the journey and not its reason;
   a private trip needs only the kilometres it already carries. An entry stays timely for seven days,

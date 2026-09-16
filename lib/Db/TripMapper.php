@@ -45,6 +45,27 @@ class TripMapper extends BaseMapper {
 	}
 
 	/**
+	 * The trips of one vehicle that set off in `[from, to)`, oldest first as findAllForVehicle()
+	 * orders them - voided ones included. This is the Fahrtenbuch export's own question
+	 * (docs/features.md#logbook-mode): a voided trip is listed there, as voided.
+	 *
+	 * @return list<Trip>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findAnyStartedBetween(int $vehicleId, int $from, int $to): array {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->tableName)
+			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->gte('started_at', $qb->createNamedParameter($from, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->lt('started_at', $qb->createNamedParameter($to, IQueryBuilder::PARAM_INT)))
+			->orderBy('started_at', 'ASC')
+			->addOrderBy('id', 'ASC');
+
+		return $this->findEntities($qb);
+	}
+
+	/**
 	 * One page of the timeline's trips, newest first (docs/architecture.md#the-timeline). A trip is
 	 * dated by when it set off, which is the index the table carries and the date the row shows.
 	 *

@@ -13,8 +13,12 @@ use OCA\NextFleet\Db\AuditMapper;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
+use OCA\NextFleet\Db\VehicleMapper;
+use OCA\NextFleet\Exception\StaleUpdateException;
+use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Db\TTransactional;
+use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\IDBConnection;
 
 /**
@@ -66,6 +70,7 @@ class TripService {
 	 * (docs/architecture.md#data-model).
 	 */
 	private const CREATED = 'created';
+	private const EDITED = 'edited';
 	private const VOIDED = 'voided';
 	private const RESTORED = 'restored';
 
@@ -77,6 +82,10 @@ class TripService {
 		private AuditMapper $audit,
 		private OdometerService $odometer,
 		private VehicleService $fleet,
+		private Jurisdictions $jurisdictions,
+		private ITimeFactory $time,
+		private Gaps $gaps,
+		private VehicleMapper $vehicles,
 		private IDBConnection $db,
 	) {
 	}
@@ -113,6 +122,129 @@ class TripService {
 
 			return $written;
 		}, $this->db);
+	}
+
+	/**
+	 * Closes one Gap as one Reconciliation Trip (CONTEXT.md): private, over the Gap's kilometres, from
+	 * the Reading before it to the start of the trip that claimed it. A distance and not a counter, so
+	 * its Reading is counted from that Reading and lands on the claim (rule 6).
+	 *
+	 * The Gap is named by the trip that opened it and found again here, not taken from the request.
+	 * The client states what it showed the driver, and a Gap that has moved since - a trip entered,
+	 * voided or edited between the read and the confirmation - is not the one they confirmed.
+	 *
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not write this vehicle
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException
+	 * @throws StaleUpdateException if the vehicle has no such Gap any more
+	 * @throws \OCP\DB\Exception
+	 */
+	public function reconcile(string $userId, string $vehicleUuid, string $tripUuid, int $distance, int $fromAt, int $toAt): Trip {
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
+
+		return $this->atomicRetry(function () use ($userId, $vehicle, $tripUuid, $distance, $fromAt, $toAt): Trip {
+			// A second confirmation of the same Gap - another tab, another driver - waits here for
+			// this one to commit, and then finds nothing left to close.
+			$this->vehicles->hold((int)$vehicle->getId());
+			$gap = $this->gap($vehicle, $tripUuid, $distance, $fromAt, $toAt);
+
+			$trip = new Trip();
+			$trip->setVehicleId((int)$vehicle->getId());
+			$trip->setCreatedBy($userId);
+			$trip->setCategory(Trip::PRIVATE);
+			$trip->setStartedAt($gap['from_at']);
+			$trip->setStartedAtOff($gap['from_at_off']);
+			$trip->setEndedAt($gap['to_at']);
+			$trip->setEndedAtOff($gap['to_at_off']);
+			$trip->setDistance($gap['distance']);
+			$trip->setReconciled(true);
+
+			$written = $this->trips->insert($trip);
+			// Nobody drove this and wrote it down: the kilometres are what the counter says went
+			// unrecorded, and an auditor reading the trail has to be able to tell the two apart.
+			$this->trail($vehicle, $written, $userId, self::CREATED, $this->stated($written), ['derived' => true]);
+			$this->odometer->fromTrip($vehicle, $written);
+
+			return $written;
+		}, $this->db);
+	}
+
+	/**
+	 * The Gap the driver confirmed, as the vehicle has it now.
+	 *
+	 * @return array{trip: string, distance: int, from_at: int, from_at_off: int, to_at: int, to_at_off: int}
+	 * @throws StaleUpdateException
+	 * @throws \OCP\DB\Exception
+	 */
+	private function gap(Vehicle $vehicle, string $tripUuid, int $distance, int $fromAt, int $toAt): array {
+		foreach ($this->gaps->of($vehicle) as $gap) {
+			if ($gap['trip'] === $tripUuid && $gap['distance'] === $distance && $gap['from_at'] === $fromAt && $gap['to_at'] === $toAt) {
+				return $gap;
+			}
+		}
+
+		throw new StaleUpdateException('no gap of ' . $distance . ' before trip ' . $tripUuid);
+	}
+
+	/**
+	 * Rewrites one trip in place, and the Reading with it when the journey moved. Append-only is the
+	 * audit row, not a second trip row (docs/features.md#logbook-mode): under the mode the diff is
+	 * the revision.
+	 *
+	 * The request is the whole trip, as `record()` takes it - a field it leaves out is one the
+	 * driver emptied. Keeping what it leaves out, as a vehicle's update does, would leave no way to
+	 * turn a distance trip into a counter trip, and that is how a business trip answers the counters
+	 * it is asked for.
+	 *
+	 * @param array<string, mixed> $fields
+	 * @param int $expectedUpdatedAt the `updated_at` the client read
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not write this vehicle
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the trip has changed since
+	 * @throws \InvalidArgumentException if a field is not what its column holds
+	 * @throws \OCP\DB\Exception
+	 */
+	public function update(string $userId, string $vehicleUuid, string $tripUuid, int $expectedUpdatedAt, array $fields): Trip {
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
+
+		// Looked up inside the transaction for the reason delete() gives.
+		return $this->atomicRetry(function () use ($userId, $vehicle, $tripUuid, $expectedUpdatedAt, $fields): Trip {
+			$trip = $this->on($vehicle, $this->trips->findByUuid($tripUuid));
+			$was = clone $trip;
+			$this->apply($trip, $fields);
+			$edited = $this->trips->updateChecked($trip, $expectedUpdatedAt);
+
+			$changed = $this->changed($was, $edited);
+			// A save that changed nothing is not a revision, for the reason a vehicle's trail only
+			// records a flip.
+			if ($changed !== []) {
+				$this->trail($vehicle, $edited, $userId, self::EDITED, $changed, [
+					'late' => $this->late($vehicle, $was, $edited),
+				]);
+			}
+			$this->odometer->followEdit($vehicle, $was, $edited);
+
+			return $edited;
+		}, $this->db);
+	}
+
+	/**
+	 * Whether the edit arrives after the ruleset's lock delay (`ILogbookRules::lockDelayDays()`).
+	 * It is allowed either way; the trail says which.
+	 *
+	 * The delay runs from the earlier of the two ends, the journey as recorded or as restated: an
+	 * edit that re-dates an old trip to yesterday would otherwise restart the clock it is measured
+	 * by. A day is 86 400 seconds of the server's clock, not the driver's calendar day - a delay
+	 * of days has no use for the hour a timezone moves it by.
+	 */
+	private function late(Vehicle $vehicle, Trip $was, Trip $trip): bool {
+		$rules = $this->jurisdictions->get($vehicle->getJurisdiction())->logbookRules();
+		if ($rules === null) {
+			return false;
+		}
+
+		$ended = min($was->getEndedAt(), $trip->getEndedAt());
+
+		return $this->time->getTime() > $ended + $rules->lockDelayDays() * 86400;
 	}
 
 	/**
@@ -204,9 +336,10 @@ class TripService {
 	 * entered is one this person voided, and the trail is about the change.
 	 *
 	 * @param array<string, array{mixed, mixed}> $fields each changed column as `[before, after]`
+	 * @param array<string, mixed> $carried what the change itself carried, such as that it was late
 	 * @throws \OCP\DB\Exception
 	 */
-	private function trail(Vehicle $vehicle, Trip $trip, string $userId, string $change, array $fields): void {
+	private function trail(Vehicle $vehicle, Trip $trip, string $userId, string $change, array $fields, array $carried = []): void {
 		if ($vehicle->getLogbookMode() !== true) {
 			return;
 		}
@@ -215,8 +348,27 @@ class TripService {
 		$row->setCreatedBy($userId);
 		$row->setEntity(Audit::TRIP);
 		$row->setEntityId((int)$trip->getId());
-		$row->setDiffJson(['change' => $change, 'fields' => $fields]);
+		$row->setDiffJson(['change' => $change, 'fields' => $fields] + $carried);
 		$this->audit->insert($row);
+	}
+
+	/**
+	 * The columns an edit changed, each as `[before, after]`, in the vocabulary `stated()` reads.
+	 *
+	 * @return array<string, array{mixed, mixed}>
+	 */
+	private function changed(Trip $was, Trip $trip): array {
+		$before = array_diff_key($was->jsonSerialize(), array_flip(self::BOOKKEEPING));
+		$after = array_diff_key($trip->jsonSerialize(), array_flip(self::BOOKKEEPING));
+
+		$changed = [];
+		foreach ($after as $column => $value) {
+			if ($before[$column] !== $value) {
+				$changed[$column] = [$before[$column], $value];
+			}
+		}
+
+		return $changed;
 	}
 
 	/**
@@ -252,13 +404,11 @@ class TripService {
 	private function apply(Trip $trip, array $fields): void {
 		foreach (self::WRITABLE as $column => [$setter, $kind, $limit]) {
 			$value = $this->read($column, $kind, $limit, $fields[$column] ?? null);
-			if ($value === null) {
-				if (in_array($column, self::REQUIRED, true)) {
-					throw new \InvalidArgumentException($column . ' is a field every trip carries');
-				}
-				continue;
+			if ($value === null && in_array($column, self::REQUIRED, true)) {
+				throw new \InvalidArgumentException($column . ' is a field every trip carries');
 			}
 
+			// A null is written too: on an edit it is a field the driver emptied (update()).
 			$trip->$setter($value);
 		}
 

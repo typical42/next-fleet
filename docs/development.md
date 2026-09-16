@@ -252,7 +252,8 @@ settings page and read back off the next vehicle, and the "complete this vehicle
 good. Then an axe audit of the overview, the vehicle screen and an open sheet, scoped to
 `#nextfleet` at the WCAG 2.1 AA tags — Nextcloud's own header is outside this app's reach.
 `m2-slice.spec.js` does the same for the logbook: a trip entered as a counter and a trip entered as
-a distance, both moving the vehicle's counter, and a refused one leaving the sheet open.
+a distance, both moving the vehicle's counter, a refused one leaving the sheet open, an incomplete
+one saved and asked for the rest, and Logbook Mode switched on and off.
 
 Three things about those files worth knowing before adding to them:
 

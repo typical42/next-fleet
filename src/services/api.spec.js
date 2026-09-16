@@ -4,7 +4,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ConflictError, createVehicle, deleteVehicle, getPreferences, listVehicles, readTimeline, recordReading, recordTrip, restoreVehicle, savePreferences, updateVehicle } from './api.js'
+import { closeGap, ConflictError, createVehicle, deleteVehicle, getPreferences, listVehicles, readGaps, readTimeline, recordReading, recordTrip, restoreVehicle, savePreferences, updateVehicle } from './api.js'
 
 vi.mock('@nextcloud/router', () => ({
 	generateUrl: (/** @type {string} */ path) => `/index.php${path}`,
@@ -144,6 +144,46 @@ describe('readTimeline', () => {
 		await readTimeline(vehicle.uuid, { type: '', cursor: null })
 
 		expect(fetch.mock.calls[0][0]).not.toContain('?')
+	})
+})
+
+describe('closeGap', () => {
+	/**
+	 * The Gap is named by the trip that opened it, and what the driver confirmed travels with it:
+	 * the server closes nothing that no longer matches (lib/Service/TripService.php).
+	 */
+	it('posts what the driver confirmed and answers with the trip that closed it', async () => {
+		const fetch = answers(201, { uuid: 't-9', category: 'private', distance: 40, reconciled: true })
+
+		const trip = await closeGap(vehicle.uuid, { trip: 't-1', distance: 40, from_at: 1750000000, from_at_off: 120, to_at: 1750100000, to_at_off: 120 })
+
+		const [url, options] = fetch.mock.calls[0]
+		expect(url).toBe(`/index.php/apps/nextfleet/api/vehicles/${vehicle.uuid}/gaps/t-1/close`)
+		expect(options.method).toBe('POST')
+		expect(JSON.parse(options.body)).toEqual({ distance: 40, from_at: 1750000000, to_at: 1750100000 })
+		expect(trip.reconciled).toBe(true)
+	})
+
+	/** A Gap that moved since it was read is a conflict, which the screen answers by reading again. */
+	it('throws a conflict when the Gap has moved', async () => {
+		answers(412, { message: 'Changed since you read it', conflict: true })
+
+		await expect(closeGap(vehicle.uuid, { trip: 't-1', distance: 40, from_at: 1, from_at_off: 0, to_at: 2, to_at_off: 0 }))
+			.rejects.toBeInstanceOf(ConflictError)
+	})
+})
+
+describe('readGaps', () => {
+	/** The vehicle's Gaps, from the route beside its timeline (lib/Controller/TimelineController.php). */
+	it('reads the Gaps of the vehicle it names', async () => {
+		const fetch = answers(200, [{ trip: 't-1', distance: 40 }])
+
+		const answered = await readGaps(vehicle.uuid)
+
+		const [url, options] = fetch.mock.calls[0]
+		expect(url).toBe(`/index.php/apps/nextfleet/api/vehicles/${vehicle.uuid}/gaps`)
+		expect(options.method).toBe('GET')
+		expect(answered).toHaveLength(1)
 	})
 })
 

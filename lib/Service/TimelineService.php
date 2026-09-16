@@ -12,6 +12,7 @@ use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Db\OdoReadingMapper;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\TripMapper;
+use OCA\NextFleet\Db\Vehicle;
 
 /**
  * The one timeline a vehicle has (docs/ui.md): everything that happened to it, merged into one
@@ -36,7 +37,23 @@ class TimelineService {
 		private TripMapper $trips,
 		private OdoReadingMapper $readings,
 		private VehicleService $fleet,
+		private Completeness $completeness,
+		private Gaps $gaps,
 	) {
+	}
+
+	/**
+	 * Every Gap in one vehicle's logbook, for the month headers to state
+	 * (docs/architecture.md#the-timeline). Not paged: a month's figure is the whole month's, and a
+	 * header that grew as its rows scrolled in would state a number that is not yet true.
+	 *
+	 * @return list<array{trip: string, distance: int, from_at: int, from_at_off: int, to_at: int, to_at_off: int}>
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not see this vehicle
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException
+	 * @throws \OCP\DB\Exception
+	 */
+	public function gaps(string $userId, string $vehicleUuid): array {
+		return $this->gaps->of($this->fleet->reach($userId, VehicleAccess::VIEW, $vehicleUuid));
 	}
 
 	/**
@@ -45,7 +62,7 @@ class TimelineService {
 	 *
 	 * A row names its kind and the moment it happened, and carries the Entry itself under that
 	 * kind's key. A trip carries the Reading it left on the counter as well, so the screen shows
-	 * one row for the two.
+	 * one row for the two, and the fields its jurisdiction requires that it leaves unstated.
 	 *
 	 * @param ?string $type one of TYPES, or null for all of them
 	 * @param ?string $cursor what a previous page answered with, or null for the newest rows
@@ -80,7 +97,7 @@ class TimelineService {
 		$last = end($page);
 
 		return [
-			'rows' => $this->withReadings($vehicleId, array_column($page, 'row')),
+			'rows' => $this->withMissing($vehicle, $this->withReadings($vehicleId, array_column($page, 'row'))),
 			// The cursor names the kind rather than its rank: it is read back by the next request,
 			// and a number would pin the ranking into every client's scroll position.
 			'next' => count($keyed) > self::PAGE
@@ -142,6 +159,23 @@ class TimelineService {
 		foreach ($rows as $index => $row) {
 			if ($row['type'] === self::TRIP) {
 				$rows[$index]['reading'] = $byTrip[(int)$row[self::TRIP]->getId()] ?? null;
+			}
+		}
+
+		return $rows;
+	}
+
+	/**
+	 * What each trip on the page leaves unstated of what its jurisdiction requires. Measured on
+	 * every vehicle; the screen decides whether to say so (docs/features.md#logbook-mode).
+	 *
+	 * @param list<array<string, mixed>> $rows
+	 * @return list<array<string, mixed>>
+	 */
+	private function withMissing(Vehicle $vehicle, array $rows): array {
+		foreach ($rows as $index => $row) {
+			if ($row['type'] === self::TRIP) {
+				$rows[$index]['missing'] = $this->completeness->missing($vehicle, $row[self::TRIP]);
 			}
 		}
 

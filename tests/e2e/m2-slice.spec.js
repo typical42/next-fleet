@@ -127,6 +127,67 @@ test('a trip the server refuses leaves the sheet open with every value in it', a
 	await expect(entry.getByRole('button', { name: 'Try again' })).toBeVisible()
 })
 
+/** docs/features.md#logbook-mode: saved, flagged, and asked for the rest in the sheet's words. */
+test('a business trip missing what the logbook requires is saved and asks for the rest', async ({ page }) => {
+	const plate = `${plates}${Date.now()}`
+	const vehicle = await api(page, { method: 'POST', path: '/api/vehicles', body: { plate, logbook_mode: true } })
+	await api(page, {
+		method: 'POST',
+		path: `/api/vehicles/${vehicle.uuid}/readings`,
+		body: { value: starting, read_at: Math.floor(Date.now() / 1000), read_at_off: 0 },
+	})
+	await page.goto(appPage)
+	await open(page, plate)
+
+	await page.getByRole('button', { name: 'New entry' }).click()
+	const entry = page.getByRole('dialog', { name: 'New entry' })
+	await entry.getByRole('textbox', { name: 'End counter' }).fill(ended)
+	await entry.getByRole('textbox', { name: 'Destination' }).fill('Augsburg')
+	await entry.getByRole('button', { name: 'Save' }).click()
+	await expect(entry).toBeHidden()
+
+	const trip = page.locator('.timeline').getByRole('listitem').first()
+	await expect(trip).toContainText('Augsburg')
+	await expect(trip).toContainText('Incomplete')
+	await expect(trip).toContainText('Still missing: Start counter, Purpose, Business partner')
+})
+
+/**
+ * docs/features.md#logbook-mode: a trip that sets off above the counter before it leaves the
+ * difference unaccounted, and the month it set off in says so.
+ */
+test('the month a trip set off above the counter in states the kilometres nobody accounted for', async ({ page }) => {
+	const plate = `${plates}${Date.now()}`
+	const vehicle = await api(page, { method: 'POST', path: '/api/vehicles', body: { plate, logbook_mode: true } })
+	await api(page, {
+		method: 'POST',
+		path: `/api/vehicles/${vehicle.uuid}/readings`,
+		body: { value: starting, read_at: Math.floor(Date.UTC(2026, 6, 1, 8, 0) / 1000), read_at_off: 120 },
+	})
+	const at = Math.floor(Date.UTC(2026, 7, 3, 8, 0) / 1000)
+	await api(page, {
+		method: 'POST',
+		path: `/api/vehicles/${vehicle.uuid}/trips`,
+		body: {
+			started_at: at,
+			started_at_off: 120,
+			ended_at: at + 3600,
+			ended_at_off: 120,
+			category: 'private',
+			start_odo: starting + 80,
+			end_odo: starting + 120,
+		},
+	})
+
+	await page.goto(appPage)
+	await open(page, plate)
+
+	const months = page.locator('.timeline__month')
+	await expect(months).toHaveCount(2)
+	await expect(months.first()).toContainText('80 km unaccounted')
+	await expect(months.last()).not.toContainText('unaccounted')
+})
+
 /**
  * The switch that puts a vehicle under its jurisdiction's logbook rules
  * (docs/features.md#logbook-mode). The checkbox behind it is drawn under the toggle it looks like,
@@ -219,6 +280,37 @@ test.describe('the month above the rows', { tag: '@nc34' }, () => {
 })
 
 /**
+ * One Gap, one confirmation, one private trip the app marks reconciled - and the month header has
+ * nothing left to state (docs/features.md#logbook-mode).
+ */
+test('a Gap is closed by one confirmed private trip', async ({ page }) => {
+	const plate = `${plates}gap-${Date.now()}`
+	const vehicle = await api(page, { method: 'POST', path: '/api/vehicles', body: { plate, logbook_mode: true } })
+	// The second journey says it set off 8 km above where the first one ended.
+	for (const [hour, ending, claim] of [[8, 148402, undefined], [12, 148484, 148410]]) {
+		const at = Math.floor(Date.UTC(2026, 6, 15, hour, 0) / 1000)
+		await api(page, {
+			method: 'POST',
+			path: `/api/vehicles/${vehicle.uuid}/trips`,
+			body: { started_at: at, started_at_off: 120, ended_at: at + 3600, ended_at_off: 120, category: 'business', start_odo: claim, end_odo: ending },
+		})
+	}
+
+	await page.goto(appPage)
+	await open(page, plate)
+	await expect(page.locator('.timeline__gap')).toHaveText('8 km unaccounted')
+
+	await page.locator('.timeline').getByRole('button', { name: 'Close gap' }).click()
+	const question = page.getByRole('dialog', { name: 'Close gap' })
+	await expect(question).toContainText('Record 8 km driven between')
+	await question.getByRole('button', { name: 'Record private trip' }).click()
+	await expect(question).toBeHidden()
+
+	await expect(page.locator('.timeline__gap')).toHaveCount(0)
+	await expect(page.locator('.timeline').getByRole('listitem').filter({ hasText: 'Reconciled' })).toHaveCount(1)
+})
+
+/**
  * Dark mode and 320 px are acceptance criteria for the timeline, not afterthoughts - the list is
  * rows rather than cards so that it survives both (docs/ui.md). One major, for the reason the M1
  * audit gives: the answer is CSS and there is one copy of it.
@@ -231,12 +323,20 @@ test.describe('at 320 x 640, in the dark', { tag: '@nc34' }, () => {
 		// just as a prefix. `M2-E2E-small` contains `E2E-small`, and the M1 slice finds the hint's
 		// row for its vehicle with a `hasText` filter - which would then match two rows.
 		const plate = `${plates}dark`
-		const vehicle = await add(page, plate, starting)
+		// Under Logbook Mode, so the audit covers what the mode adds to the list: a month header
+		// stating a Gap and the rows saying what they lack (docs/features.md#logbook-mode).
+		const vehicle = await api(page, { method: 'POST', path: '/api/vehicles', body: { plate, logbook_mode: true } })
+		await api(page, {
+			method: 'POST',
+			path: `/api/vehicles/${vehicle.uuid}/readings`,
+			body: { value: starting, read_at: Math.floor(Date.now() / 1000), read_at_off: 0 },
+		})
 		// Written through the API rather than through the sheet: what is being audited is the list,
 		// and several months of it is what makes a sticky header a sticky header. Both journeys end
-		// above the counter `add` read today, so that reading is flagged and the audit covers the
-		// question the timeline puts as well (docs/architecture.md#odometer-rules).
-		for (const [month, ending] of [[6, 148402], [7, 148484]]) {
+		// above the counter read today, so that reading is flagged and the audit covers the question
+		// the timeline puts as well (docs/architecture.md#odometer-rules). The second sets off above
+		// where the first ended, which is the Gap.
+		for (const [month, ending, claim] of [[6, 148402, undefined], [7, 148484, 148410]]) {
 			const at = Math.floor(Date.UTC(2026, month, 15, 8, 0) / 1000)
 			await api(page, {
 				method: 'POST',
@@ -248,6 +348,7 @@ test.describe('at 320 x 640, in the dark', { tag: '@nc34' }, () => {
 					ended_at_off: 120,
 					category: 'business',
 					to_label: 'Augsburg',
+					start_odo: claim,
 					end_odo: ending,
 				},
 			})
@@ -256,7 +357,10 @@ test.describe('at 320 x 640, in the dark', { tag: '@nc34' }, () => {
 		await page.goto(appPage)
 		await open(page, plate)
 		await expect(page.locator('.timeline__month')).toHaveCount(3)
-		await expect(page.locator('.row__flag')).toHaveCount(1)
+		await expect(page.locator('.timeline__gap')).toHaveCount(1)
+		// The flagged reading's question, each business trip's missing purpose and partner, and the
+		// Gap offered for closing on the trip that opened it.
+		await expect(page.locator('.row__flag')).toHaveCount(4)
 		await audit(page, 'the vehicle screen, timeline and all')
 	})
 })

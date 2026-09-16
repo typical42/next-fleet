@@ -11,9 +11,10 @@ import TimelineRow from './TimelineRow.vue'
 // The locale decides the separators and the date order, and it is the reader's rather than the
 // language's (docs/ui.md#languages) - so it is pinned here, or every assertion below would depend
 // on the machine the suite runs on.
-vi.mock('@nextcloud/l10n', () => ({
+// `t` stays the real one: with no catalogue loaded it answers in English, placeholders filled.
+vi.mock('@nextcloud/l10n', async (importOriginal) => ({
+	...(/** @type {object} */ (await importOriginal())),
 	getCanonicalLocale: () => 'en-GB',
-	t: (/** @type {string} */ app, /** @type {string} */ text) => text,
 }))
 
 const VEHICLE = { uuid: 'v-1', odo_unit: 'km' }
@@ -112,6 +113,56 @@ describe('a timeline row', () => {
 		expect(row(journey({ distance: 82 }, { value: 148402, origin: 'derived', flagged: true })).text())
 			.toContain('In question')
 		expect(row(counter({ value: 148320 })).text()).not.toContain('In question')
+	})
+
+	/** The row asks for what the trip lacks in the words the entry sheet asked by. */
+	it('asks an incomplete trip for what it lacks under Logbook Mode', () => {
+		const wrapper = row(
+			{ ...journey({ distance: 82 }), missing: ['start_odo', 'end_odo', 'partner'] },
+			{ ...VEHICLE, logbook_mode: true },
+		)
+
+		expect(wrapper.text()).toContain('Incomplete')
+		expect(wrapper.text()).toContain('Still missing: Start counter, End counter, Business partner')
+	})
+
+	/** docs/features.md#logbook-mode */
+	it('says nothing about completeness off the mode, or of a complete trip', () => {
+		const incomplete = { ...journey({ distance: 82 }), missing: ['partner'] }
+
+		expect(row(incomplete).text()).not.toContain('Incomplete')
+		expect(row(incomplete, { ...VEHICLE, logbook_mode: null }).text()).not.toContain('Still missing')
+		expect(row({ ...journey({ distance: 82 }), missing: [] }, { ...VEHICLE, logbook_mode: true }).text())
+			.not.toContain('Incomplete')
+	})
+
+	/**
+	 * A Gap is closed one at a time (CONTEXT.md), so the offer sits on the trip whose claim opened it
+	 * rather than on the month's total. The row only offers; the confirmation is the timeline's.
+	 */
+	it('offers to close the Gap before the trip that opened it', async () => {
+		const gap = { trip: 't-1', distance: 1250, from_at: 1788220000, from_at_off: 120, to_at: 1788391800, to_at_off: 120 }
+		const wrapper = mount(TimelineRow, {
+			props: { entry: journey({ start_odo: 149652, end_odo: 149734 }), vehicle: { ...VEHICLE, logbook_mode: true }, gap },
+		})
+
+		expect(wrapper.text()).toContain('1,250 km unaccounted before this trip')
+		await wrapper.get('button').trigger('click')
+
+		expect(wrapper.emitted('closeGap')).toEqual([[gap]])
+	})
+
+	/** The trip that closed a Gap is the app's arithmetic, and the row says so rather than pass it off as a journey. */
+	it('says a trip was written to close a Gap', () => {
+		expect(row(journey({ distance: 1250, category: 'private', reconciled: true })).text()).toContain('Reconciled')
+		expect(row(journey({ distance: 82, reconciled: false })).text()).not.toContain('Reconciled')
+	})
+
+	it('offers nothing for a trip that opened no Gap', () => {
+		const wrapper = row(journey({ distance: 82 }), { ...VEHICLE, logbook_mode: true })
+
+		expect(wrapper.find('button').exists()).toBe(false)
+		expect(wrapper.text()).not.toContain('unaccounted')
 	})
 
 	/**

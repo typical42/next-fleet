@@ -68,6 +68,13 @@ company car is thousands of rows, and the screen people open most often is not t
 discover that. The scroll is the bottom of the list coming into view; the button sitting there is
 what a browser without an observer, and a page the server refused, still have.
 
+Under Logbook Mode the month header also states the month's unaccounted kilometres
+([logbook mode](features.md#logbook-mode)). It is the whole month's figure from the first page on,
+never the sum of the rows scrolled in so far. The trip that opened a Gap says so on its row and
+offers *Close gap*; the question names the kilometres and the two moments, and a confirmation writes
+one private trip whose row reads *Reconciled*. The offer sits on the row, not on the header, because
+a Gap is closed one at a time.
+
 A row states one figure, and it is the one the driver gave — the kilometres a trip covered, or the
 counter it ended on, never both and never one worked out from the other
 ([odometer rules](architecture.md#odometer-rules)). A flagged Reading is carried on the row it

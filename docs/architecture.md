@@ -109,7 +109,9 @@ the two happened last.
 **`diff_json` is `{"change": …, "fields": {…}}`**, each field a `[before, after]` pair. A creation's
 pairs all start at null; a field nobody stated is not in them, because a diff that lists what did not
 change buries what did. Anything the change itself carried — that an edit was late, that a trip was
-derived rather than observed — is a further key beside those two.
+derived rather than observed — is a further key beside those two. The words so far: `created`,
+`edited` (always with `late`, true or false), `voided`, `restored` and `switched`. A Reconciliation
+Trip is `created` with `derived: true`. An edit that changed nothing writes no row.
 
 There is deliberately **no `hu_due` column**. The next inspection is a reminder produced by an
 inspection scheme ([contributing](contributing.md)) — a German date in a core table would be a
@@ -212,7 +214,10 @@ This is where logbooks quietly break. Six rules, decided once:
    ([backlog](features.md#feature-backlog)). The Reading goes where its Entry goes: voiding the
    Entry voids the Reading and the undo brings both back, in one transaction. A Reading left
    standing on a voided trip would hold the vehicle's counter at a journey nobody claims any more,
-   on a row the timeline no longer shows.
+   on a row the timeline no longer shows. An edit restates the same Reading in the same
+   transaction: its date follows the journey's end, and its number is counted again only when the
+   counter, the distance or the start changed. An edit to the end time, where the trip went or why
+   leaves the number alone, so a counted value is never recounted behind the driver's back.
 6. **Observed beats derived.** A driver who enters a distance instead of an end odometer leaves
    `start_odo` null; the Reading written at `ended_at` is *(latest reading at or before
    `started_at`) + distance*, marked `origin = derived`. Consumption requires **observed** readings
@@ -250,6 +255,22 @@ out.
 is why the Readings query selects only `source_type = 'manual'`, the Entries that are their own
 Reading (CONTEXT.md). Listing the rest would show every trip twice. Voided rows are out of the read
 entirely; the Fahrtenbuch export asks its own question.
+
+A trip row also carries `missing`, the fields its ruleset requires and it leaves unstated
+([logbook mode](features.md#logbook-mode)).
+
+**The Gaps are a route of their own**, `GET /api/vehicles/{uuid}/gaps`, and are not paged. A month
+header states the whole month's, and a figure that grew as rows scrolled in would state a number
+that is not true yet. Each Gap names the trip that opened it, the distance and the two moments that
+bracket it. The screen sums them per month and reads them only under Logbook Mode.
+
+**A Gap is closed** by `POST /api/vehicles/{uuid}/gaps/{trip}/close`, carrying the distance and the
+two moments the driver confirmed. The server finds the Gap again and closes it only if all three
+still match; otherwise it answers 412 `conflict`, like a stale token. It holds the vehicle's row
+before it looks, so two confirmations of one Gap at once close it once and refuse the other. The
+Reconciliation Trip runs
+from the Reading before the Gap to the start of the trip that claimed it and carries the Gap's
+distance, so rule 6 counts its Reading onto the claim and the Gap is gone on the next read.
 
 `odometer#index` stays where it is. The counter's own chain — flags, segments, what the vehicle
 stands at — is a different question from what happened to the vehicle.

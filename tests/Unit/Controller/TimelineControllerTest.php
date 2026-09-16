@@ -100,6 +100,26 @@ class TimelineControllerTest extends TestCase {
 		yield 'the cursor' => [['1750000000:trip:4'], false];
 	}
 
+	public function testTheGapsAreTheServiceAnswerForTheSessionUser(): void {
+		$gaps = [['trip' => 'a trip', 'distance' => 40, 'from_at' => 1, 'from_at_off' => 0, 'to_at' => 2, 'to_at_off' => 0]];
+		$this->service->expects($this->once())
+			->method('gaps')
+			->with('alice', self::UUID)
+			->willReturn($gaps);
+
+		$response = $this->controller()->gaps(self::UUID);
+
+		$this->assertSame(Http::STATUS_OK, $response->getStatus());
+		$this->assertSame($gaps, $response->getData());
+	}
+
+	/** @dataProvider refusals */
+	public function testARefusedGapsReadAnswersWithItsOwnStatus(\Throwable $thrown, int $status): void {
+		$this->service->method('gaps')->willThrowException($thrown);
+
+		$this->assertSame($status, $this->controller()->gaps(self::UUID)->getStatus());
+	}
+
 	/**
 	 * The three refusals a read can meet, each as the status the screen acts on: a uuid that is
 	 * nobody's, a vehicle that is not this user's, and a chip or a cursor this route never handed

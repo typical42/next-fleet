@@ -40,13 +40,28 @@ class TimelineController extends Controller {
 	 */
 	#[NoAdminRequired]
 	public function index(string $uuid, mixed $type = null, mixed $cursor = null): DataResponse {
+		return $this->answer(fn (): array => $this->service->page(
+			$this->userId(),
+			$uuid,
+			$this->word('type', $type),
+			$this->word('cursor', $cursor),
+		));
+	}
+
+	/** The Gaps the month headers state, for the whole timeline at once. */
+	#[NoAdminRequired]
+	public function gaps(string $uuid): DataResponse {
+		return $this->answer(fn (): array => $this->service->gaps($this->userId(), $uuid));
+	}
+
+	/**
+	 * The refusals both reads share, each as the status the screen acts on.
+	 *
+	 * @param callable(): array<array-key, mixed> $read
+	 */
+	private function answer(callable $read): DataResponse {
 		try {
-			return new DataResponse($this->service->page(
-				$this->userId(),
-				$uuid,
-				$this->word('type', $type),
-				$this->word('cursor', $cursor),
-			));
+			return new DataResponse($read());
 		} catch (DoesNotExistException) {
 			return new DataResponse(['message' => 'No such vehicle'], Http::STATUS_NOT_FOUND);
 		} catch (AccessDeniedException) {

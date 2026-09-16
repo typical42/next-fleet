@@ -50,4 +50,11 @@ interface IJurisdiction {
 	 * audited under it, because that part is the core's (docs/features.md#logbook-mode).
 	 */
 	public function logbookRules(): ?ILogbookRules;
+
+	/**
+	 * How a logbook kept under this jurisdiction prints, or null where there is no export for it.
+	 * Apart from the ruleset because a ruleset answers what is required and never returns HTML
+	 * (docs/contributing.md).
+	 */
+	public function logbookRenderer(): ?IReportRenderer;
 }

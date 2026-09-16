@@ -84,8 +84,8 @@ The span between two Observed Readings that consumption may be computed over. A 
 reset ends one.
 
 **Gap**:
-Kilometres between one Trip's end and the next one's start that no record accounts for. Closed one
-at a time by a Reconciliation Trip, never in bulk.
+Kilometres before a Trip that no record accounts for: its `start_odo` above the Reading before it.
+Closed one at a time by a Reconciliation Trip, never in bulk.
 
 **Reconciliation Trip**:
 A private Trip created to close a Gap. Marked in the audit trail as derived rather than observed.

@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { categoryWord, formatCount, formatDay, formatMonth, formatOdometer, isoInstant, monthKey, nameOf, parseDay, parseWhole, shortDate, subtitleOf } from './format.js'
+import { categoryWord, formatCount, formatDay, fullMoment, formatMonth, formatOdometer, isoInstant, monthKey, nameOf, parseDay, parseWhole, shortDate, subtitleOf } from './format.js'
 
 vi.mock('@nextcloud/l10n', () => ({
 	getCanonicalLocale: () => 'en-GB',
@@ -144,6 +144,15 @@ describe('an instant on screen', () => {
 	 * The same instant read without its offset is the 2nd, which is the whole reason the offset is
 	 * stored beside it (docs/adr/0007-time-is-an-instant-plus-an-offset.md).
 	 */
+	/**
+	 * A moment a question names on its own, with no month header above it to say the rest: the whole
+	 * date and the wall clock the entry was made against.
+	 */
+	it('is named whole when nothing around it gives the month and year', () => {
+		expect(fullMoment(BERLIN_NIGHT.at, BERLIN_NIGHT.off, 'de-DE')).toBe('03.09.2026, 01:30')
+		expect(fullMoment(BERLIN_NIGHT.at, BERLIN_NIGHT.off, 'en-GB')).toBe('3 Sept 2026, 01:30')
+	})
+
 	it('is a different day without its offset', () => {
 		expect(shortDate(BERLIN_NIGHT.at, 0, 'de-DE')).toBe('02.09.')
 	})

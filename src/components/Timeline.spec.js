@@ -11,7 +11,8 @@ import NcRadioGroupButton from '@nextcloud/vue/components/NcRadioGroupButton'
 import { flushPromises, shallowMount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { readTimeline } from '../services/api.js'
+import { closeGap, ConflictError, readGaps, readTimeline } from '../services/api.js'
+import { fullMoment } from '../utils/format.js'
 import Timeline from './Timeline.vue'
 import TimelineRow from './TimelineRow.vue'
 
@@ -20,6 +21,8 @@ import TimelineRow from './TimelineRow.vue'
 vi.mock('../services/api.js', async (original) => ({
 	...await original(),
 	readTimeline: vi.fn(),
+	readGaps: vi.fn(),
+	closeGap: vi.fn(),
 }))
 
 const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', odo_unit: 'km' }
@@ -34,15 +37,29 @@ const AUGUST = [
 ]
 
 /**
+ * Two Gaps the September rows opened, one of them bracketed from August: a Gap belongs to the month
+ * of the trip whose claim opened it.
+ */
+const GAPS = [
+	{ trip: 't-2', distance: 40, from_at: 1786780000, from_at_off: 120, to_at: 1788217200, to_at_off: 120 },
+	{ trip: 't-1', distance: 1250, from_at: 1788220000, from_at_off: 120, to_at: 1788391800, to_at_off: 120 },
+]
+
+/**
  * The timeline, mounted and done with its first read. shallowMount, so the rows are counted rather
  * than re-read: what one of them says is TimelineRow's own question (TimelineRow.spec.js).
  *
+ * @param {object} [vehicle] - the vehicle it is opened on
  * @return {Promise<import('@vue/test-utils').VueWrapper>} the mounted timeline
  */
-async function timeline() {
+async function timeline(vehicle = VEHICLE) {
 	const wrapper = shallowMount(Timeline, {
-		props: { vehicle: VEHICLE },
-		global: { renderStubDefaultSlot: true },
+		props: { vehicle },
+		global: {
+			renderStubDefaultSlot: true,
+			// The question's buttons are in the dialog's own slot, which a plain stub drops.
+			stubs: { NcDialog: { template: '<div class="dialog"><slot /><slot name="actions" /></div>' } },
+		},
 	})
 	await flushPromises()
 
@@ -83,6 +100,164 @@ function more(wrapper) {
 beforeEach(() => {
 	vi.resetAllMocks()
 	vi.mocked(readTimeline).mockResolvedValue(/** @type {any} */ ({ rows: [...SEPTEMBER, ...AUGUST], next: null }))
+	vi.mocked(readGaps).mockResolvedValue(GAPS)
+})
+
+describe('the month header under Logbook Mode', () => {
+	const LOGBOOK = { ...VEHICLE, logbook_mode: true }
+
+	/**
+	 * What the logbook asks is said only under the mode (docs/features.md#logbook-mode), and a
+	 * month's header states all of that month's Gaps at once, however far down the rows are read.
+	 */
+	it('states the unaccounted kilometres of the month the Gaps were opened in', async () => {
+		const wrapper = await timeline(LOGBOOK)
+
+		expect(readGaps).toHaveBeenCalledWith('v-1')
+		const [september, august] = months(wrapper)
+		expect(september).toContain('1,290 km unaccounted')
+		expect(august).not.toContain('unaccounted')
+	})
+
+	/** A vehicle that keeps no logbook is asked nothing, so nothing is read for it either. */
+	it('says nothing of Gaps off the mode', async () => {
+		const wrapper = await timeline()
+
+		expect(readGaps).not.toHaveBeenCalled()
+		expect(months(wrapper).join(' ')).not.toContain('unaccounted')
+	})
+
+	/**
+	 * A header that said nothing because the Gaps never arrived would read as a gapless month. So a
+	 * refused read of them is a refused list, and the retry asks for both again.
+	 */
+	it('refuses the list rather than state a month without its Gaps, and retries both', async () => {
+		vi.mocked(readGaps).mockRejectedValueOnce(new Error('The server answered 500'))
+		const wrapper = await timeline(LOGBOOK)
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('The server answered 500')
+		expect(months(wrapper)).toHaveLength(0)
+
+		await more(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(readGaps).toHaveBeenCalledTimes(2)
+		expect(months(wrapper)[0]).toContain('1,290 km unaccounted')
+	})
+
+	/** Switching the mode on is when the question starts to be asked, on the screen already open. */
+	it('reads the Gaps when the mode is switched on under it', async () => {
+		const wrapper = await timeline()
+
+		await wrapper.setProps({ vehicle: LOGBOOK })
+		await flushPromises()
+
+		expect(months(wrapper)[0]).toContain('1,290 km unaccounted')
+	})
+})
+
+describe('closing a Gap', () => {
+	const LOGBOOK = { ...VEHICLE, logbook_mode: true }
+
+	/**
+	 * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted timeline
+	 * @param {string} label - what the button says
+	 * @return {any} the button
+	 */
+	function button(wrapper, label) {
+		return wrapper.findAllComponents(NcButton).find((one) => one.text() === label)
+	}
+
+	/**
+	 * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted timeline
+	 * @param {string} uuid - the trip whose row offers it
+	 * @return {Promise<void>} when the question is on screen
+	 */
+	async function offer(wrapper, uuid) {
+		const opened = /** @type {any} */ (wrapper.findAllComponents(TimelineRow)
+			.find((/** @type {any} */ one) => one.props('entry').trip?.uuid === uuid))
+		await opened.vm.$emit('closeGap', opened.props('gap'))
+		await flushPromises()
+	}
+
+	/** Each trip is handed the Gap its own claim opened, and nothing else is handed one. */
+	it('hands each trip the Gap its claim opened', async () => {
+		const wrapper = await timeline(LOGBOOK)
+
+		const gaps = wrapper.findAllComponents(TimelineRow).map((/** @type {any} */ one) => one.props('gap'))
+		expect(gaps).toEqual([GAPS[1], null, GAPS[0]])
+	})
+
+	/**
+	 * One Gap, confirmed on its own terms: the kilometres and the two moments that bracket them, so
+	 * the driver agrees to exactly what the server will write (docs/features.md#logbook-mode).
+	 */
+	it('asks first, naming the kilometres and the two moments', async () => {
+		const wrapper = await timeline(LOGBOOK)
+
+		await offer(wrapper, 't-1')
+
+		const question = wrapper.get('.dialog').text()
+		expect(question).toContain('1,250 km')
+		expect(question).toContain(fullMoment(GAPS[1].from_at, GAPS[1].from_at_off))
+		expect(question).toContain(fullMoment(GAPS[1].to_at, GAPS[1].to_at_off))
+		expect(closeGap).not.toHaveBeenCalled()
+	})
+
+	it('closes nothing when the question is cancelled', async () => {
+		const wrapper = await timeline(LOGBOOK)
+		await offer(wrapper, 't-1')
+
+		await button(wrapper, 'Cancel').vm.$emit('click')
+		await flushPromises()
+
+		expect(wrapper.find('.dialog').exists()).toBe(false)
+		expect(closeGap).not.toHaveBeenCalled()
+	})
+
+	/** The row it wrote and the header it emptied are both on screen once it is closed. */
+	it('closes the confirmed Gap and reads the timeline again', async () => {
+		vi.mocked(closeGap).mockResolvedValue(/** @type {any} */ ({ uuid: 't-9', reconciled: true }))
+		const wrapper = await timeline(LOGBOOK)
+		await offer(wrapper, 't-1')
+
+		await button(wrapper, 'Record private trip').vm.$emit('click')
+		await flushPromises()
+
+		expect(closeGap).toHaveBeenCalledWith('v-1', GAPS[1])
+		expect(readTimeline).toHaveBeenCalledTimes(2)
+		expect(readGaps).toHaveBeenCalledTimes(2)
+		expect(wrapper.find('.dialog').exists()).toBe(false)
+	})
+
+	/** A refusal keeps the question open and says why, and the confirmation is the retry. */
+	it('keeps the question open when the server refuses', async () => {
+		vi.mocked(closeGap).mockRejectedValueOnce(new Error('The server answered 500'))
+		const wrapper = await timeline(LOGBOOK)
+		await offer(wrapper, 't-1')
+
+		await button(wrapper, 'Record private trip').vm.$emit('click')
+		await flushPromises()
+
+		expect(wrapper.get('.dialog').findComponent(NcNoteCard).props('text')).toBe('The server answered 500')
+		expect(button(wrapper, 'Try again').props('disabled')).toBe(false)
+	})
+
+	/**
+	 * A Gap that moved since it was read is not the one on screen, so confirming it again cannot
+	 * help. The list behind the question is read again, and the question offers no second try.
+	 */
+	it('offers no second try at a Gap that has moved, and reads the list again', async () => {
+		vi.mocked(closeGap).mockRejectedValueOnce(new ConflictError('Changed since you read it'))
+		const wrapper = await timeline(LOGBOOK)
+		await offer(wrapper, 't-1')
+
+		await button(wrapper, 'Record private trip').vm.$emit('click')
+		await flushPromises()
+
+		expect(wrapper.get('.dialog').findComponent(NcNoteCard).props('text')).toContain('changed')
+		expect(button(wrapper, 'Record private trip').props('disabled')).toBe(true)
+		expect(readGaps).toHaveBeenCalledTimes(2)
+	})
 })
 
 describe('the timeline', () => {

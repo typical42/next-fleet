@@ -76,12 +76,27 @@ import { generateUrl } from '@nextcloud/router'
  * @property {Trip} [trip] - the journey, when that is what this row is
  * @property {Reading} [odometer] - the counter reading, when that is what this row is
  * @property {Reading|null} [reading] - the Reading a trip left on the counter
+ * @property {string[]} [missing] - what a trip's jurisdiction requires and it leaves unstated,
+ *   measured on every vehicle
  */
 
 /**
  * @typedef {object} TimelinePage
  * @property {Entry[]} rows - at most fifty, newest first
  * @property {string|null} next - the cursor the next page starts at, null on the last page
+ */
+
+/**
+ * Kilometres before a trip that no record accounts for (CONTEXT.md), bracketed by the Reading before
+ * the trip and the trip's start.
+ *
+ * @typedef {object} Gap
+ * @property {string} trip - the uuid of the trip whose `start_odo` opened it
+ * @property {number} distance - how far, in the vehicle's `odo_unit`
+ * @property {number} from_at - when the Reading before it was read, seconds
+ * @property {number} from_at_off - the UTC offset that Reading was read at, minutes
+ * @property {number} to_at - when the trip set off, seconds
+ * @property {number} to_at_off - the UTC offset it set off at, minutes
  */
 
 /**
@@ -223,6 +238,34 @@ export async function readTimeline(uuid, { type, cursor }) {
 	const asked = query.toString()
 
 	return request('GET', `/api/vehicles/${uuid}/timeline${asked === '' ? '' : `?${asked}`}`)
+}
+
+/**
+ * Every Gap in one vehicle's logbook, oldest first. Not paged: a month header states the whole
+ * month's (docs/architecture.md#the-timeline).
+ *
+ * @param {string} uuid - the vehicle whose Gaps to read
+ * @return {Promise<Gap[]>} the Gaps
+ */
+export async function readGaps(uuid) {
+	return request('GET', `/api/vehicles/${uuid}/gaps`)
+}
+
+/**
+ * Close one Gap as one private trip the server marks reconciled (docs/features.md#logbook-mode). The
+ * Gap travels as the driver confirmed it, and the server closes nothing that no longer matches.
+ *
+ * @param {string} uuid - the vehicle the Gap is in
+ * @param {Gap} gap - the Gap as it was read and confirmed
+ * @return {Promise<Trip>} the trip that closed it
+ * @throws {ConflictError} when the Gap has moved or been closed since it was read
+ */
+export async function closeGap(uuid, gap) {
+	return request('POST', `/api/vehicles/${uuid}/gaps/${gap.trip}/close`, {
+		distance: gap.distance,
+		from_at: gap.from_at,
+		to_at: gap.to_at,
+	})
 }
 
 /**
