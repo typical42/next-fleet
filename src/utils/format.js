@@ -107,8 +107,9 @@ export function jurisdictionWord(key, name = key) {
 
 /**
  * A column is a name in the database and a word on screen (docs/ui.md#languages). These are the
- * labels the edit sheet asks by, so a hint naming a field names the one the reader will look for
- * (src/components/VehicleSheet.vue), and they are looked up on call for the same reason as above.
+ * labels the sheets ask by, so a hint naming a field names the one the reader will look for
+ * (src/components/VehicleSheet.vue, src/components/EntrySheet.vue), and they are looked up on call
+ * for the same reason as above.
  *
  * @param {string} column - the column, as the API spells it
  * @return {string} the word for it, or the column where there is none
@@ -120,9 +121,25 @@ export function fieldWord(column) {
 		first_reg: t('nextfleet', 'First registration'),
 		tank_ml: t('nextfleet', 'Tank size (ml)'),
 		battery_wh: t('nextfleet', 'Battery capacity (Wh)'),
+		// What a logbook ruleset may require of a trip (lib/Jurisdiction/ILogbookRules.php).
+		plate: t('nextfleet', 'Registration plate'),
+		started_at: t('nextfleet', 'Departure'),
+		start_odo: t('nextfleet', 'Start counter'),
+		end_odo: t('nextfleet', 'End counter'),
+		to_label: t('nextfleet', 'Destination'),
+		purpose: t('nextfleet', 'Purpose'),
+		partner: t('nextfleet', 'Business partner'),
 	}
 
 	return words[column] ?? column
+}
+
+/**
+ * @param {string[]} columns - the fields a hint or a row asks for, in the order it asks
+ * @return {string} their words, as one list for a sentence to carry
+ */
+export function fieldWords(columns) {
+	return columns.map(fieldWord).join(', ')
 }
 
 /**
@@ -193,6 +210,20 @@ export function parseWhole(input) {
  */
 export function shortDate(instant, offset, locale = getCanonicalLocale()) {
 	return new Intl.DateTimeFormat(locale, { day: '2-digit', month: '2-digit', timeZone: 'UTC' })
+		.format(local(instant, offset))
+}
+
+/**
+ * A moment named on its own, where no month header says which month and year it is in - a question
+ * put to the driver about it, say.
+ *
+ * @param {number} instant - when it happened, seconds
+ * @param {number} offset - the UTC offset it happened at, minutes
+ * @param {string} [locale] - defaults to the one Nextcloud resolved for this session
+ * @return {string} the date and the time, `03.09.2026, 01:30` in German
+ */
+export function fullMoment(instant, offset, locale = getCanonicalLocale()) {
+	return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' })
 		.format(local(instant, offset))
 }
 

@@ -29,6 +29,7 @@ return [
 		// A Trip is reached the same way, and writes the one Reading it left on the counter
 		// (docs/architecture.md#odometer-rules).
 		['name' => 'trip#create', 'url' => '/api/vehicles/{uuid}/trips', 'verb' => 'POST'],
+		['name' => 'trip#update', 'url' => '/api/vehicles/{uuid}/trips/{trip}', 'verb' => 'PUT'],
 		// A delete voids under Logbook Mode (docs/features.md#logbook-mode), and undo is its own
 		// verb and path for the reason a vehicle's is: it is not a write to the trip, it is a
 		// write to whether there is one.
@@ -39,6 +40,11 @@ return [
 		// (docs/architecture.md#the-timeline). `odometer#index` stays where it is: the counter on
 		// its own is a different question from the vehicle's history.
 		['name' => 'timeline#index', 'url' => '/api/vehicles/{uuid}/timeline', 'verb' => 'GET'],
+		// Unpaged, beside it: a month header states the whole month's Gaps, not the page's.
+		['name' => 'timeline#gaps', 'url' => '/api/vehicles/{uuid}/gaps', 'verb' => 'GET'],
+		// A Gap is named by the trip whose claim opened it, and closing one writes a trip - so it is
+		// the trips' controller that answers (docs/features.md#logbook-mode).
+		['name' => 'trip#reconcile', 'url' => '/api/vehicles/{uuid}/gaps/{trip}/close', 'verb' => 'POST'],
 
 		// The session user's own settings - no identity in the URL, because there is only ever
 		// one set of them to reach (lib/Service/PreferencesService.php).

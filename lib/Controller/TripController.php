@@ -49,6 +49,26 @@ class TripController extends Controller {
 	}
 
 	/**
+	 * An edit, allowed whenever it arrives: under Logbook Mode its audit row says whether it came
+	 * after the ruleset's lock delay (docs/features.md#logbook-mode), and the answer is the row as
+	 * it now stands, with the token the next write is checked against.
+	 *
+	 * @param string $trip the trip's uuid
+	 */
+	#[NoAdminRequired]
+	#[UserRateLimit(limit: 60, period: 60)]
+	public function update(string $uuid, string $trip): DataResponse {
+		$token = $this->token();
+		if ($token === null) {
+			return $this->refuse('updated_at is missing, so this write cannot be checked');
+		}
+
+		return $this->answer(
+			fn (): Trip => $this->service->update($this->userId(), $uuid, $trip, $token, $this->request->getParams()),
+		);
+	}
+
+	/**
 	 * A delete voids (docs/features.md#logbook-mode), and answers with the row it left behind so
 	 * the undo toast holds the token the restore is checked against.
 	 *
@@ -77,6 +97,30 @@ class TripController extends Controller {
 		}
 
 		return $this->answer(fn (): Trip => $this->service->restore($this->userId(), $uuid, $trip, $token));
+	}
+
+	/**
+	 * Closes one Gap as one Reconciliation Trip (docs/features.md#logbook-mode), and answers with
+	 * that trip. The Gap is named by the trip whose claim opened it; the kilometres and the two
+	 * moments are what the driver confirmed, and the service closes nothing that no longer matches
+	 * them.
+	 *
+	 * @param string $trip the uuid of the trip whose claim opened the Gap
+	 */
+	#[NoAdminRequired]
+	#[UserRateLimit(limit: 60, period: 60)]
+	public function reconcile(string $uuid, string $trip): DataResponse {
+		$distance = $this->whole('distance');
+		$fromAt = $this->whole('from_at');
+		$toAt = $this->whole('to_at');
+		if ($distance === null || $fromAt === null || $toAt === null) {
+			return $this->refuse('distance, from_at and to_at name the gap being closed');
+		}
+
+		return $this->answer(
+			fn (): Trip => $this->service->reconcile($this->userId(), $uuid, $trip, $distance, $fromAt, $toAt),
+			Http::STATUS_CREATED,
+		);
 	}
 
 	/**
@@ -111,12 +155,17 @@ class TripController extends Controller {
 	/**
 	 * The `updated_at` the client read, which the write is checked against
 	 * (docs/architecture.md#concurrency). A DELETE has no body, so it travels in the query
-	 * string; both arrive as request parameters.
+	 * string; a PUT carries it in the body beside the fields. Both arrive as request parameters.
 	 */
 	private function token(): ?int {
-		$token = filter_var($this->request->getParams()['updated_at'] ?? null, FILTER_VALIDATE_INT);
+		return $this->whole('updated_at');
+	}
 
-		return $token === false ? null : $token;
+	/** One whole number from the request, or null when it is absent or is not one. */
+	private function whole(string $name): ?int {
+		$number = filter_var($this->request->getParams()[$name] ?? null, FILTER_VALIDATE_INT);
+
+		return $number === false ? null : $number;
 	}
 
 	private function userId(): string {

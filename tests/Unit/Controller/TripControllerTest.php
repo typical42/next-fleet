@@ -140,12 +140,29 @@ class TripControllerTest extends TestCase {
 	}
 
 	/**
+	 * An edit hands the service the whole request as the trip's fields and the token it carries as
+	 * the check, and answers with the row as it now stands - the next token among it.
+	 */
+	public function testAnEditedTripComesBackAsTheServerWroteIt(): void {
+		$this->params = ['uuid' => self::UUID, 'trip' => self::TRIP, 'updated_at' => '1750000009', 'end_odo' => '148320'];
+		$this->service->expects($this->once())
+			->method('update')
+			->with('alice', self::UUID, self::TRIP, 1750000009, $this->params)
+			->willReturn($this->stored());
+
+		$response = $this->controller()->update(self::UUID, self::TRIP);
+
+		$this->assertSame(Http::STATUS_OK, $response->getStatus());
+		$this->assertSame(148320, $response->getData()->jsonSerialize()['end_odo']);
+	}
+
+	/**
 	 * A write that arrives without the token cannot be checked at all, so it is refused before it
 	 * reaches the service - the answer a vehicle's own delete gives.
 	 *
-	 * @dataProvider voids
+	 * @dataProvider checkedWrites
 	 */
-	public function testAVoidWithoutTheTokenIsRefused(string $method): void {
+	public function testAWriteWithoutTheTokenIsRefused(string $method): void {
 		$this->params = ['uuid' => self::UUID, 'trip' => self::TRIP];
 		$this->service->expects($this->never())->method($method);
 
@@ -158,9 +175,9 @@ class TripControllerTest extends TestCase {
 	 * The row moved on between the read and the write, which is a 412 carrying `conflict` - what
 	 * tells it apart from Nextcloud's own failed CSRF check, a 412 as well.
 	 *
-	 * @dataProvider voids
+	 * @dataProvider checkedWrites
 	 */
-	public function testAVoidThatLostTheRaceAnswersConflict(string $method): void {
+	public function testAWriteThatLostTheRaceAnswersConflict(string $method): void {
 		$this->params = ['uuid' => self::UUID, 'trip' => self::TRIP, 'updated_at' => '1750000009'];
 		$this->service->method($method)->willThrowException(new StaleUpdateException('moved on'));
 
@@ -171,13 +188,66 @@ class TripControllerTest extends TestCase {
 	}
 
 	/**
-	 * Both ways out of the trash answer alike, because they are the same write in two directions.
+	 * Every write to a trip that exists is checked against the token the client read, so all three
+	 * answer a missing or a stale one alike.
 	 *
 	 * @return iterable<string, array{string}>
 	 */
-	public static function voids(): iterable {
+	public static function checkedWrites(): iterable {
+		yield 'update' => ['update'];
 		yield 'delete' => ['delete'];
 		yield 'restore' => ['restore'];
+	}
+
+	/**
+	 * Closing a Gap creates a trip, so it answers 201 with the trip it created. What the driver
+	 * confirmed travels as three numbers and reaches the service as three integers.
+	 */
+	public function testAClosedGapComesBackAsTheTripThatClosedIt(): void {
+		$this->params = ['uuid' => self::UUID, 'trip' => self::TRIP, 'distance' => '200', 'from_at' => '1749990000', 'to_at' => 1750000000];
+		$this->service->expects($this->once())
+			->method('reconcile')
+			->with('alice', self::UUID, self::TRIP, 200, 1749990000, 1750000000)
+			->willReturn($this->stored());
+
+		$response = $this->controller()->reconcile(self::UUID, self::TRIP);
+
+		$this->assertSame(Http::STATUS_CREATED, $response->getStatus());
+		$this->assertSame(self::TRIP, $response->getData()->jsonSerialize()['uuid']);
+	}
+
+	/**
+	 * A confirmation without all three is not a confirmation of anything, and is refused before it
+	 * reaches the service.
+	 *
+	 * @dataProvider unconfirmed
+	 * @param array<string, mixed> $confirmed
+	 */
+	public function testAConfirmationMissingWhatWasConfirmedIsRefused(array $confirmed): void {
+		$this->params = ['uuid' => self::UUID, 'trip' => self::TRIP] + $confirmed;
+		$this->service->expects($this->never())->method('reconcile');
+
+		$this->assertSame(Http::STATUS_BAD_REQUEST, $this->controller()->reconcile(self::UUID, self::TRIP)->getStatus());
+	}
+
+	/**
+	 * @return iterable<string, array{array<string, mixed>}>
+	 */
+	public static function unconfirmed(): iterable {
+		yield 'no kilometres' => [['from_at' => '1749990000', 'to_at' => '1750000000']];
+		yield 'no start' => [['distance' => '200', 'to_at' => '1750000000']];
+		yield 'an end that is no number' => [['distance' => '200', 'from_at' => '1749990000', 'to_at' => 'yesterday']];
+	}
+
+	/** A Gap that moved since the driver read it is the conflict a stale token is. */
+	public function testAGapThatMovedAnswersConflict(): void {
+		$this->params = ['uuid' => self::UUID, 'trip' => self::TRIP, 'distance' => '200', 'from_at' => '1749990000', 'to_at' => '1750000000'];
+		$this->service->method('reconcile')->willThrowException(new StaleUpdateException('no such gap'));
+
+		$response = $this->controller()->reconcile(self::UUID, self::TRIP);
+
+		$this->assertSame(Http::STATUS_PRECONDITION_FAILED, $response->getStatus());
+		$this->assertTrue($response->getData()['conflict']);
 	}
 
 	/** The same trip after a void: the row survives, stamped and re-tokened. */

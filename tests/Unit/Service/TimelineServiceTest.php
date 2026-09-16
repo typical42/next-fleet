@@ -14,11 +14,17 @@ use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Exception\AccessDeniedException;
+use OCA\NextFleet\Jurisdiction\IJurisdiction;
+use OCA\NextFleet\Jurisdiction\ILogbookRules;
+use OCA\NextFleet\Jurisdiction\Jurisdictions;
+use OCA\NextFleet\Service\Completeness;
+use OCA\NextFleet\Service\Gaps;
 use OCA\NextFleet\Service\TimelineService;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
+use Psr\Container\ContainerInterface;
 
 /**
  * The one timeline a vehicle has (docs/ui.md): trips and Odometer Entries merged into one order,
@@ -74,6 +80,15 @@ class TimelineServiceTest extends TestCase {
 				[$at, $id],
 				$limit,
 			),
+		);
+
+		// What gap detection reads: every trip and the whole chain, oldest first. What it makes of
+		// them is GapsTest's.
+		$this->trips->method('findAllForVehicle')->willReturnCallback(
+			fn (int $vehicleId): array => array_reverse($this->before($this->tripRows, $vehicleId, [PHP_INT_MAX, PHP_INT_MAX], PHP_INT_MAX)),
+		);
+		$this->readings->method('findAllForVehicle')->willReturnCallback(
+			fn (int $vehicleId): array => array_reverse($this->before($this->readingRows, $vehicleId, [PHP_INT_MAX, PHP_INT_MAX], PHP_INT_MAX)),
 		);
 
 		$this->readings->method('findForTrips')->willReturnCallback(
@@ -137,7 +152,30 @@ class TimelineServiceTest extends TestCase {
 	}
 
 	private function service(): TimelineService {
-		return new TimelineService($this->trips, $this->readings, $this->fleet);
+		return new TimelineService(
+			$this->trips,
+			$this->readings,
+			$this->fleet,
+			$this->completeness(),
+			new Gaps($this->trips, $this->readings),
+		);
+	}
+
+	/**
+	 * Measured against a ruleset that asks a business trip for its partner and nothing else. What a
+	 * trip misses is CompletenessTest's; what this states is that the row carries the answer.
+	 */
+	private function completeness(): Completeness {
+		$rules = $this->createMock(ILogbookRules::class);
+		$rules->method('mandatoryFields')->willReturnCallback(
+			static fn (string $category): array => $category === Trip::BUSINESS ? ['partner'] : [],
+		);
+		$profile = $this->createMock(IJurisdiction::class);
+		$profile->method('logbookRules')->willReturn($rules);
+		$container = $this->createMock(ContainerInterface::class);
+		$container->method('get')->willReturn($profile);
+
+		return new Completeness(new Jurisdictions($container));
 	}
 
 	/** One journey in the store, dated as the driver entered it. */
@@ -320,6 +358,22 @@ class TimelineServiceTest extends TestCase {
 		$this->assertSame($reading, $rows[0]['reading']);
 	}
 
+	/** The vehicle the gate hands back here is not under Logbook Mode (docs/features.md#logbook-mode). */
+	public function testATripRowSaysWhatItLeavesUnstatedWhetherOrNotTheModeIsOn(): void {
+		$bare = $this->trip(1750000000);
+		$stated = $this->trip(1750100000);
+		$stated->setPartner('Muster GmbH');
+		$this->entry(1750200000);
+
+		$rows = $this->service()->page(self::OWNER, self::VEHICLE, null, null)['rows'];
+
+		$this->assertArrayNotHasKey('missing', $rows[0]);
+		$this->assertSame($stated, $rows[1]['trip']);
+		$this->assertSame([], $rows[1]['missing']);
+		$this->assertSame($bare, $rows[2]['trip']);
+		$this->assertSame(['partner'], $rows[2]['missing']);
+	}
+
 	/**
 	 * A co-driver who may look at the vehicle may read its timeline: the route shows what is
 	 * already theirs to see, and asks the gate for exactly that.
@@ -342,6 +396,31 @@ class TimelineServiceTest extends TestCase {
 		$this->expectException(AccessDeniedException::class);
 
 		$this->service()->page(self::STRANGER, self::VEHICLE, null, null);
+	}
+
+	/**
+	 * The Gaps are read through the timeline's gate: a co-driver who may look at the vehicle may see
+	 * what its logbook lacks, as they may see its trips.
+	 */
+	public function testAGrantToLookIsAGrantToReadTheGaps(): void {
+		$this->entry(1750000000, 120000);
+		$trip = $this->trip(1750100000);
+		$trip->setStartOdo(120040);
+
+		$this->assertSame(
+			[[$trip->getUuid(), 40]],
+			array_map(
+				static fn (array $gap): array => [$gap['trip'], $gap['distance']],
+				$this->service()->gaps(self::DRIVER, self::VEHICLE),
+			),
+		);
+	}
+
+	/** Where a vehicle went unrecorded is as much a movement profile as where it went. */
+	public function testAStrangerReadsNoGaps(): void {
+		$this->expectException(AccessDeniedException::class);
+
+		$this->service()->gaps(self::STRANGER, self::VEHICLE);
 	}
 
 	/**

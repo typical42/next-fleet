@@ -9,8 +9,10 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Tests\Country;
 
 use OCA\NextFleet\Db\Trip;
+use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Jurisdiction\IJurisdiction;
 use OCA\NextFleet\Jurisdiction\ILogbookRules;
+use OCA\NextFleet\Jurisdiction\LogbookReport;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -159,5 +161,52 @@ abstract class JurisdictionTestCase extends TestCase {
 		// A category this release never writes is nobody's to rule on, and a trip carrying one
 		// must still be saveable.
 		$this->assertSame([], $rules?->mandatoryFields('a category nobody has written') ?? []);
+	}
+
+	/**
+	 * Whatever a country prints, it prints every value as text and loads nothing: the page is
+	 * the browser's to print (docs/adr/0005-no-pdf-library.md), and a renderer that reaches for a
+	 * stylesheet, a font or a script leaks the logbook to wherever it points
+	 * (docs/security.md#hostile-content). Every value came from a person.
+	 */
+	public function testItsLogbookPrintsWhatPeopleWroteAsTextAndLoadsNothing(): void {
+		$renderer = static::profile()->logbookRenderer();
+		if ($renderer === null) {
+			$this->assertNull($renderer, 'a country without a logbook export prints nothing');
+			return;
+		}
+
+		// Nothing in it that a reach check below looks for, so an escaped copy cannot trip one.
+		$hostile = '"><b onmouseover="alert(1)">x</b><script>alert(2)</script>';
+		$vehicle = Vehicle::fromRow(['id' => 7, 'plate' => $hostile, 'model' => $hostile, 'jurisdiction' => static::profile()->key()]);
+		$trip = Trip::fromRow([
+			'id' => 1,
+			'uuid' => '0195e2f1-0000-4000-8000-000000000011',
+			'vehicle_id' => 7,
+			'started_at' => 1767261600,
+			'ended_at' => 1767265200,
+			'end_odo' => 120450,
+			'from_label' => $hostile,
+			'to_label' => $hostile,
+			'purpose' => $hostile,
+			'partner' => $hostile,
+			'category' => Trip::BUSINESS,
+			'created_at' => 1767265300,
+			'created_by' => 'alice',
+		]);
+		$html = $renderer->render(new LogbookReport(
+			$vehicle,
+			2026,
+			[['trip' => $trip, 'missing' => [$hostile]]],
+			[['from' => 1767225600, 'to' => null]],
+			'https://example.org/"><script>alert(3)</script>',
+		));
+
+		$this->assertStringStartsWith('<!doctype html>', strtolower($html));
+		$this->assertStringNotContainsStringIgnoringCase('<script', $html);
+		$this->assertStringNotContainsStringIgnoringCase('<b onmouseover', $html);
+		foreach (['<link', '<iframe', '<object', '<embed', ' src=', 'url(', '@import'] as $reach) {
+			$this->assertStringNotContainsStringIgnoringCase($reach, $html, 'the page reaches out with ' . $reach);
+		}
 	}
 }

@@ -223,9 +223,13 @@ class VehicleIdorTest extends TestCase {
 			// Walked against a trip that is not there: the gate is the vehicle's, so a stranger
 			// is refused before any uuid of a trip is looked up, and a 404 here would be the
 			// answer telling them so.
+			'trip#update' => $this->trip(self::STRANGER, $params)->update($uuid, self::NO_SUCH_TRIP),
 			'trip#delete' => $this->trip(self::STRANGER, $params)->delete($uuid, self::NO_SUCH_TRIP),
 			'trip#restore' => $this->trip(self::STRANGER, $params)->restore($uuid, self::NO_SUCH_TRIP),
+			'trip#reconcile' => $this->trip(self::STRANGER, $params + ['distance' => 200, 'from_at' => 1749990000, 'to_at' => 1750000000])
+				->reconcile($uuid, self::NO_SUCH_TRIP),
 			'timeline#index' => $this->timeline(self::STRANGER, $params)->index($uuid),
+			'timeline#gaps' => $this->timeline(self::STRANGER, $params)->gaps($uuid),
 			'preferences#index' => $this->preferences(self::STRANGER, $params)->index(),
 			'preferences#update' => $this->preferences(self::STRANGER, $params)->update(),
 			default => $this->fail($route . ' is a route the IDOR sweep has never been through'),

@@ -15,9 +15,11 @@ use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Exception\StaleUpdateException;
+use OCA\NextFleet\Service\Gaps;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleService;
+use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\IDBConnection;
 use PHPUnit\Framework\TestCase;
 
@@ -369,6 +371,125 @@ class TripTest extends TestCase {
 			$this->assertSame(120450, $this->vehicles->find(self::AUTHOR, $uuid)->getOdoValue());
 			$this->assertCount(1, $this->audit->findForEntity(Audit::TRIP, (int)$trip->getId()));
 		}
+	}
+
+	/**
+	 * The task against the real database and the real clock: a trip from 2025 corrected now is long
+	 * past Germany's delay. The edit lands, the counter follows it, and the trail as the JSON column
+	 * gave it back says the edit was late.
+	 */
+	public function testALateEditIsWrittenAndItsTrailSaysItWasLate(): void {
+		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 132', 'jurisdiction' => 'de']);
+		$uuid = $vehicle->getUuid();
+		$this->underLogbookMode($vehicle);
+		$trip = $this->record($uuid, 1750000000, ['end_odo' => 120450]);
+
+		$this->service->update(self::AUTHOR, $uuid, $trip->getUuid(), $trip->getUpdatedAt(), [
+			'started_at' => 1750000000,
+			'started_at_off' => 0,
+			'ended_at' => 1750005400,
+			'ended_at_off' => 0,
+			'end_odo' => 120460,
+			'purpose' => 'Kundentermin',
+			'category' => Trip::BUSINESS,
+		]);
+
+		$this->assertSame('Kundentermin', $this->trips->findByUuid($trip->getUuid())->getPurpose());
+		$readings = $this->odometer->list(self::AUTHOR, $uuid);
+		$this->assertCount(1, $readings);
+		$this->assertSame(120460, $readings[0]->getValue());
+		$this->assertSame(120460, $this->vehicles->find(self::AUTHOR, $uuid)->getOdoValue());
+		$trail = $this->audit->findForEntity(Audit::TRIP, (int)$trip->getId());
+		$this->assertSame([
+			'change' => 'edited',
+			'fields' => ['end_odo' => [120450, 120460], 'purpose' => [null, 'Kundentermin']],
+			'late' => true,
+		], end($trail)->getDiffJson());
+	}
+
+	/** A journey that ended an hour ago by the server's clock is corrected in time. */
+	public function testAnEditInsideTheDelayIsNotLate(): void {
+		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 133', 'jurisdiction' => 'de']);
+		$uuid = $vehicle->getUuid();
+		$this->underLogbookMode($vehicle);
+		$startedAt = \OCP\Server::get(ITimeFactory::class)->getTime() - 9000;
+		$trip = $this->record($uuid, $startedAt, ['end_odo' => 120450]);
+
+		$this->service->update(self::AUTHOR, $uuid, $trip->getUuid(), $trip->getUpdatedAt(), [
+			'started_at' => $startedAt,
+			'started_at_off' => 0,
+			'ended_at' => $startedAt + 5400,
+			'ended_at_off' => 0,
+			'end_odo' => 120450,
+			'purpose' => 'Kundentermin',
+			'category' => Trip::BUSINESS,
+		]);
+
+		$trail = $this->audit->findForEntity(Audit::TRIP, (int)$trip->getId());
+		$this->assertFalse(end($trail)->getDiffJson()['late']);
+	}
+
+	/**
+	 * Only the real query says a restated distance passes over the trip's own Reading: the trip is
+	 * moved past where it used to end, so that Reading now stands before its new start.
+	 */
+	public function testARestatedDistanceCountsFromTheReadingBeforeTheJourney(): void {
+		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 134']);
+		$uuid = $vehicle->getUuid();
+		$this->record($uuid, 1750000000, ['end_odo' => 120000]);
+		$trip = $this->record($uuid, 1750100000, ['distance' => 400]);
+
+		$this->service->update(self::AUTHOR, $uuid, $trip->getUuid(), $trip->getUpdatedAt(), [
+			'started_at' => 1750106000,
+			'started_at_off' => 0,
+			'ended_at' => 1750111400,
+			'ended_at_off' => 0,
+			'distance' => 400,
+			'category' => Trip::BUSINESS,
+		]);
+
+		$readings = $this->odometer->list(self::AUTHOR, $uuid);
+		$this->assertCount(2, $readings);
+		$this->assertSame(1750111400, $readings[1]->getReadAt());
+		$this->assertSame(120400, $readings[1]->getValue());
+	}
+
+	/**
+	 * The task against the real database: a claim 200 km above the counter is closed by one private
+	 * trip the app marks reconciled. Its counted Reading lands on the claim, so the real queries find
+	 * no Gap left, and the trail as the JSON column gave it back says the kilometres were derived.
+	 */
+	public function testClosingAGapWritesOneReconciledTripAndLeavesNoGap(): void {
+		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 135']);
+		$uuid = $vehicle->getUuid();
+		$this->underLogbookMode($vehicle);
+		$this->record($uuid, 1750000000, ['end_odo' => 120000]);
+		$claiming = $this->record($uuid, 1750100000, ['start_odo' => 120200, 'end_odo' => 120300]);
+		$gaps = \OCP\Server::get(Gaps::class);
+		$held = $this->vehicles->find(self::AUTHOR, $uuid);
+		[$gap] = $gaps->of($held);
+
+		$closing = $this->service->reconcile(self::AUTHOR, $uuid, $claiming->getUuid(), $gap['distance'], $gap['from_at'], $gap['to_at']);
+
+		// The vehicle was held for the write and nothing on it moved: not its token, not its counter.
+		$after = $this->vehicles->find(self::AUTHOR, $uuid);
+		$this->assertSame([$held->getUpdatedAt(), 120300], [$after->getUpdatedAt(), $after->getOdoValue()]);
+
+		$read = $this->trips->findByUuid($closing->getUuid());
+		$this->assertTrue($read->getReconciled());
+		$this->assertSame(Trip::PRIVATE, $read->getCategory());
+		$this->assertSame([1750005400, 1750100000, 200], [$read->getStartedAt(), $read->getEndedAt(), $read->getDistance()]);
+		$this->assertSame([], $gaps->of($this->vehicles->find(self::AUTHOR, $uuid)));
+		$this->assertSame(
+			[120000, 120200, 120300],
+			array_map(static fn ($reading): int => $reading->getValue(), $this->odometer->list(self::AUTHOR, $uuid)),
+		);
+		$trail = $this->audit->findForEntity(Audit::TRIP, (int)$closing->getId());
+		$this->assertCount(1, $trail);
+		$this->assertTrue($trail[0]->getDiffJson()['derived']);
+
+		$this->expectException(StaleUpdateException::class);
+		$this->service->reconcile(self::AUTHOR, $uuid, $claiming->getUuid(), $gap['distance'], $gap['from_at'], $gap['to_at']);
 	}
 
 	/**

@@ -10,7 +10,7 @@ import { computed, ref } from 'vue'
 
 import { usePreferencesStore } from '../store/preferences.js'
 import { missingFrom } from '../utils/complete.js'
-import { fieldWord, nameOf } from '../utils/format.js'
+import { fieldWords, nameOf } from '../utils/format.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle[]>} */
@@ -41,14 +41,6 @@ const incomplete = computed(() => {
 })
 
 /**
- * @param {string[]} missing - the columns still unanswered
- * @return {string} them as the edit sheet asks for them, in the order it asks
- */
-function fields(missing) {
-	return missing.map(fieldWord).join(', ')
-}
-
-/**
  * @param {string} uuid - the vehicle whose question is answered
  */
 async function dismiss(uuid) {
@@ -76,7 +68,7 @@ async function dismiss(uuid) {
 						{{ nameOf(one.vehicle) }}
 					</NcButton>
 					<span class="hint__missing">
-						{{ t('nextfleet', 'Still missing: {fields}', { fields: fields(one.missing) }) }}
+						{{ t('nextfleet', 'Still missing: {fields}', { fields: fieldWords(one.missing) }) }}
 					</span>
 					<!-- Every row says "Dismiss", so the button says which vehicle it is dismissing
 					     to anybody who hears the buttons rather than seeing the row. -->

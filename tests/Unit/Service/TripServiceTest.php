@@ -19,14 +19,20 @@ use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Exception\AccessDeniedException;
 use OCA\NextFleet\Exception\StaleUpdateException;
+use OCA\NextFleet\Jurisdiction\IJurisdiction;
+use OCA\NextFleet\Jurisdiction\ILogbookRules;
+use OCA\NextFleet\Jurisdiction\Jurisdictions;
+use OCA\NextFleet\Service\Gaps;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Db\DoesNotExistException;
+use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\IDBConnection;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
+use Psr\Container\ContainerInterface;
 
 /**
  * What adding a trip does to the vehicle it hangs off: the journey is stored, and the counter it
@@ -50,6 +56,14 @@ class TripServiceTest extends TestCase {
 	private const ENTERED_AT = 1750500000;
 	/** The moment a void happens, which is both the stamp and the token it leaves behind. */
 	private const VOIDED_AT = 1750600000;
+	/** The moment an edit lands, and the token it leaves behind. */
+	private const EDITED_AT = 1750700000;
+	/** What the stub ruleset gives a journey before an edit about it is late. */
+	private const LOCK_DELAY_DAYS = 7;
+	/** When the Reading before a Gap was read: the end of the journey before it (gapped()). */
+	private const GAP_FROM_AT = 1750005400;
+	/** When the trip whose claim opened that Gap set off. */
+	private const GAP_TO_AT = 1750100000;
 
 	/** The trips the mapper stands for, in insertion order. @var list<Trip> */
 	private array $trips = [];
@@ -64,6 +78,10 @@ class TripServiceTest extends TestCase {
 	private ?int $cached = null;
 	/** Whether the vehicle the gate hands back is under Logbook Mode. */
 	private bool $logbookMode = false;
+	/** Whether the vehicle's jurisdiction has a logbook ruleset at all. */
+	private bool $ruleset = true;
+	/** What the server's clock says when a write arrives. */
+	private int $now = self::ENTERED_AT;
 	private ?OdometerService $odometer = null;
 
 	private TripMapper&MockObject $tripMapper;
@@ -82,6 +100,8 @@ class TripServiceTest extends TestCase {
 		$this->nextReadingId = 1;
 		$this->cached = null;
 		$this->logbookMode = false;
+		$this->ruleset = true;
+		$this->now = self::ENTERED_AT;
 		$this->odometer = null;
 
 		// Stores rather than expectations, for the reason OdometerServiceTest keeps them: what a
@@ -101,12 +121,32 @@ class TripServiceTest extends TestCase {
 			->willReturnCallback(fn (string $uuid): Trip => $this->tripNamed($uuid, false));
 		$this->tripMapper->method('findAnyByUuid')
 			->willReturnCallback(fn (string $uuid): Trip => $this->tripNamed($uuid, true));
+		$this->tripMapper->method('findAllForVehicle')->willReturnCallback(function (int $vehicleId): array {
+			$this->calls[] = 'trips read';
+			$rows = array_values(array_filter(
+				$this->trips,
+				static fn (Trip $trip): bool => $trip->getVehicleId() === $vehicleId && $trip->getDeletedAt() === null,
+			));
+			usort($rows, static fn (Trip $a, Trip $b): int
+				=> [$a->getStartedAt(), $a->getId()] <=> [$b->getStartedAt(), $b->getId()]);
+
+			return $rows;
+		});
 		$this->tripMapper->method('softDelete')->willReturnCallback(
 			function (Trip $trip, int $expectedUpdatedAt): Trip {
 				$this->checked($trip, $expectedUpdatedAt, null);
 				$trip->setDeletedAt(self::VOIDED_AT);
 				$trip->setUpdatedAt(self::VOIDED_AT);
 				$this->calls[] = 'void';
+
+				return $trip;
+			},
+		);
+		$this->tripMapper->method('updateChecked')->willReturnCallback(
+			function (Trip $trip, int $expectedUpdatedAt): Trip {
+				$this->checked($trip, $expectedUpdatedAt, null);
+				$trip->setUpdatedAt(self::EDITED_AT);
+				$this->calls[] = 'edit';
 
 				return $trip;
 			},
@@ -173,6 +213,15 @@ class TripServiceTest extends TestCase {
 				return $reading;
 			},
 		);
+		$this->readingMapper->method('updateChecked')->willReturnCallback(
+			function (OdoReading $reading, int $expectedUpdatedAt): OdoReading {
+				$this->checked($reading, $expectedUpdatedAt, null);
+				$reading->setUpdatedAt(self::EDITED_AT);
+				$this->calls[] = 'reading';
+
+				return $reading;
+			},
+		);
 		$this->readingMapper->method('restoreChecked')->willReturnCallback(
 			function (OdoReading $reading, int $expectedUpdatedAt): OdoReading {
 				$this->checked($reading, $expectedUpdatedAt, self::VOIDED_AT);
@@ -183,10 +232,11 @@ class TripServiceTest extends TestCase {
 			},
 		);
 		$this->readingMapper->method('findNewestAtOrBefore')->willReturnCallback(
-			function (int $vehicleId, int $readAt): ?OdoReading {
+			function (int $vehicleId, int $readAt, ?int $except = null): ?OdoReading {
 				$earlier = array_filter(
 					$this->ordered($vehicleId),
-					static fn (OdoReading $reading): bool => $reading->getReadAt() <= $readAt,
+					static fn (OdoReading $reading): bool
+						=> $reading->getReadAt() <= $readAt && $reading->getId() !== $except,
 				);
 
 				return $earlier === [] ? null : end($earlier);
@@ -198,6 +248,9 @@ class TripServiceTest extends TestCase {
 			->willReturnCallback(function (int $vehicleId, ?int $value): void {
 				$this->cached = $value;
 			});
+		$this->vehicles->method('hold')->willReturnCallback(function (): void {
+			$this->calls[] = 'hold';
+		});
 
 		// Who reaches which vehicle is VehicleAccessTest's; what this states is which operation a
 		// trip asks the gate for.
@@ -281,8 +334,31 @@ class TripServiceTest extends TestCase {
 			$this->auditMapper,
 			$this->odometer(),
 			$this->fleet,
+			$this->jurisdictions(),
+			$this->clock(),
+			new Gaps($this->tripMapper, $this->readingMapper),
+			$this->vehicles,
 			$this->db,
 		);
+	}
+
+	/** Every jurisdiction answers with one ruleset, or with none when a case says so. */
+	private function jurisdictions(): Jurisdictions {
+		$rules = $this->createMock(ILogbookRules::class);
+		$rules->method('lockDelayDays')->willReturn(self::LOCK_DELAY_DAYS);
+		$profile = $this->createMock(IJurisdiction::class);
+		$profile->method('logbookRules')->willReturnCallback(fn (): ?ILogbookRules => $this->ruleset ? $rules : null);
+		$container = $this->createMock(ContainerInterface::class);
+		$container->method('get')->willReturn($profile);
+
+		return new Jurisdictions($container);
+	}
+
+	private function clock(): ITimeFactory {
+		$clock = $this->createMock(ITimeFactory::class);
+		$clock->method('getTime')->willReturnCallback(fn (): int => $this->now);
+
+		return $clock;
 	}
 
 	/**
@@ -1003,5 +1079,584 @@ class TripServiceTest extends TestCase {
 		$this->db->expects($this->once())->method('commit');
 
 		$this->service()->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+	}
+
+	/**
+	 * An edit changes the trip it names and writes no second one: append-only is the audit row, not
+	 * a second trip row. The token moves, so the client holds the one the next write is checked
+	 * against.
+	 */
+	public function testAnEditRewritesTheTripInPlace(): void {
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+
+		$edited = $service->update(
+			self::OWNER,
+			self::VEHICLE,
+			$trip->getUuid(),
+			$trip->getUpdatedAt(),
+			$this->drove(1750000000, 120450) + ['purpose' => 'Kundentermin'],
+		);
+
+		$this->assertCount(1, $this->trips);
+		$this->assertSame($trip->getUuid(), $edited->getUuid());
+		$this->assertSame('Kundentermin', $edited->getPurpose());
+		$this->assertSame(self::EDITED_AT, $edited->getUpdatedAt());
+	}
+
+	/**
+	 * The request is the whole trip, as the sheet posts it: a field it leaves out is a field the
+	 * driver emptied. That is what lets a distance trip become a counter trip - the one answer a
+	 * business trip asked for both counters has (docs/features.md#logbook-mode).
+	 */
+	public function testAnEditCanTurnADistanceTripIntoACounterTrip(): void {
+		$service = $this->service();
+		$service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120000));
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->covered(1750100000, 400));
+
+		$edited = $service->update(
+			self::OWNER,
+			self::VEHICLE,
+			$trip->getUuid(),
+			$trip->getUpdatedAt(),
+			$this->drove(1750100000, 120390) + ['start_odo' => 120000],
+		);
+
+		$this->assertNull($edited->getDistance());
+		$this->assertSame(120390, $edited->getEndOdo());
+		$this->assertSame(120000, $edited->getStartOdo());
+	}
+
+	/**
+	 * The trip and its Reading are one fact (rule 5), so a journey restated is a Reading restated:
+	 * still the one row, now holding what the trip says, and the vehicle shows it.
+	 */
+	public function testAnEditMovesTheReadingTheTripLeftOnTheCounter(): void {
+		$service = $this->service();
+		$service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120000));
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->covered(1750100000, 400));
+
+		$service->update(
+			self::OWNER,
+			self::VEHICLE,
+			$trip->getUuid(),
+			$trip->getUpdatedAt(),
+			$this->drove(1750100000, 120390),
+		);
+
+		$this->assertCount(2, $this->readings);
+		$this->assertSame(120390, $this->readings[1]->getValue());
+		$this->assertSame(OdometerService::OBSERVED, $this->readings[1]->getOrigin());
+		$this->assertSame(120390, $this->cached);
+	}
+
+	/**
+	 * A distance counts from the Reading before the journey, never from the journey's own: a trip
+	 * moved past where it used to end would otherwise find its old Reading before its new start and
+	 * count the kilometres twice.
+	 */
+	public function testARestatedDistanceIsNotCountedFromTheTripsOwnReading(): void {
+		$service = $this->service();
+		$service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120000));
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->covered(1750100000, 400));
+
+		$service->update(
+			self::OWNER,
+			self::VEHICLE,
+			$trip->getUuid(),
+			$trip->getUpdatedAt(),
+			$this->covered(1750106000, 400),
+		);
+
+		$this->assertSame([120000 => false, 120400 => false], $this->chain());
+		$this->assertSame(1750111400, $this->readings[1]->getReadAt());
+	}
+
+	/**
+	 * An edit that leaves the journey where it was leaves its Reading alone. A counted number is
+	 * never recomputed on its own (rule 6): an Odometer Entry typed in since would otherwise move a
+	 * distance trip's Reading because somebody fixed its purpose.
+	 */
+	public function testAnEditThatLeavesTheJourneyAloneLeavesItsReadingAlone(): void {
+		$service = $this->service();
+		$service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120000));
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->covered(1750100000, 400));
+		$this->odometer()->record(self::OWNER, self::VEHICLE, [
+			'read_at' => 1750050000,
+			'read_at_off' => 120,
+			'value' => 120200,
+		]);
+
+		$service->update(
+			self::OWNER,
+			self::VEHICLE,
+			$trip->getUuid(),
+			$trip->getUpdatedAt(),
+			$this->covered(1750100000, 400) + ['purpose' => 'Kundentermin'],
+		);
+
+		$this->assertSame(120400, $this->readings[1]->getValue());
+		$this->assertSame(self::ENTERED_AT, $this->readings[1]->getUpdatedAt());
+	}
+
+	/**
+	 * When only the journey's end moves, the Reading moves with it and keeps its number: a distance
+	 * counts from where the journey began, which the end has no say in.
+	 */
+	public function testMovingOnlyTheEndMovesTheReadingAndKeepsItsNumber(): void {
+		$service = $this->service();
+		$service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120000));
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->covered(1750100000, 400));
+		$this->odometer()->record(self::OWNER, self::VEHICLE, [
+			'read_at' => 1750050000,
+			'read_at_off' => 120,
+			'value' => 120200,
+		]);
+
+		$service->update(
+			self::OWNER,
+			self::VEHICLE,
+			$trip->getUuid(),
+			$trip->getUpdatedAt(),
+			['ended_at_off' => 60] + $this->covered(1750100000, 400),
+		);
+
+		$this->assertSame(60, $this->readings[1]->getReadAtOff());
+		$this->assertSame(120400, $this->readings[1]->getValue());
+	}
+
+	/**
+	 * Under the mode an edit is recorded like every other change, and the diff is what changed -
+	 * each column as `[before, after]`, nothing that stayed as it was. Inside the delay it says so.
+	 */
+	public function testAnEditUnderLogbookModeRecordsWhatChanged(): void {
+		$this->logbookMode = true;
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450) + [
+			'purpose' => 'Kundentermin',
+		]);
+
+		$service->update(
+			self::OWNER,
+			self::VEHICLE,
+			$trip->getUuid(),
+			$trip->getUpdatedAt(),
+			$this->drove(1750000000, 120460) + ['partner' => 'Meyer GmbH'],
+		);
+
+		$this->assertCount(2, $this->audits);
+		$edit = $this->audits[1];
+		$this->assertSame(Audit::TRIP, $edit->getEntity());
+		$this->assertSame((int)$trip->getId(), $edit->getEntityId());
+		$this->assertSame(self::OWNER, $edit->getCreatedBy());
+		$this->assertSame([
+			'change' => 'edited',
+			'fields' => [
+				'end_odo' => [120450, 120460],
+				'purpose' => ['Kundentermin', null],
+				'partner' => [null, 'Meyer GmbH'],
+			],
+			'late' => false,
+		], $edit->getDiffJson());
+	}
+
+	/**
+	 * The task: an edit arriving after the ruleset's lock delay is allowed - the mode refuses no
+	 * write - and its audit row says it was late.
+	 */
+	public function testAnEditPastTheLockDelayIsAllowedAndMarkedLate(): void {
+		$this->logbookMode = true;
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+		$this->now = $trip->getEndedAt() + self::LOCK_DELAY_DAYS * 86400 + 1;
+
+		$edited = $service->update(
+			self::OWNER,
+			self::VEHICLE,
+			$trip->getUuid(),
+			$trip->getUpdatedAt(),
+			$this->drove(1750000000, 120450) + ['purpose' => 'Kundentermin'],
+		);
+
+		$this->assertSame('Kundentermin', $edited->getPurpose());
+		$this->assertTrue($this->audits[1]->getDiffJson()['late']);
+	}
+
+	/** The last second of the delay still counts as timely: late is after it, not at it. */
+	public function testAnEditOnTheLastSecondOfTheDelayIsTimely(): void {
+		$this->logbookMode = true;
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+		$this->now = $trip->getEndedAt() + self::LOCK_DELAY_DAYS * 86400;
+
+		$service->update(
+			self::OWNER,
+			self::VEHICLE,
+			$trip->getUuid(),
+			$trip->getUpdatedAt(),
+			$this->drove(1750000000, 120450) + ['purpose' => 'Kundentermin'],
+		);
+
+		$this->assertFalse($this->audits[1]->getDiffJson()['late']);
+	}
+
+	/**
+	 * The delay runs from the journey as it was recorded, and an edit cannot restart it by moving
+	 * the journey: a late correction that also re-dates the trip to yesterday is still late.
+	 */
+	public function testMovingTheJourneyLaterDoesNotHideALateEdit(): void {
+		$this->logbookMode = true;
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+		$this->now = $trip->getEndedAt() + self::LOCK_DELAY_DAYS * 86400 + 1;
+
+		$service->update(
+			self::OWNER,
+			self::VEHICLE,
+			$trip->getUuid(),
+			$trip->getUpdatedAt(),
+			$this->drove($this->now - 86400, 120450),
+		);
+
+		$this->assertTrue($this->audits[1]->getDiffJson()['late']);
+	}
+
+	/**
+	 * The other way round: a fresh trip re-dated to a month ago is a statement, made now, about a
+	 * journey the delay has long run out on.
+	 */
+	public function testMovingTheJourneyBackPastTheDelayIsLate(): void {
+		$this->logbookMode = true;
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+		$this->now = $trip->getEndedAt() + 86400;
+
+		$service->update(
+			self::OWNER,
+			self::VEHICLE,
+			$trip->getUuid(),
+			$trip->getUpdatedAt(),
+			$this->drove(1750000000 - 30 * 86400, 120450),
+		);
+
+		$this->assertTrue($this->audits[1]->getDiffJson()['late']);
+	}
+
+	/**
+	 * A jurisdiction that requires no logbook sets no delay, so no edit under it is late - and the
+	 * trail still records the edit, because append-only and audit are the core's.
+	 */
+	public function testWithoutARulesetNoEditIsLate(): void {
+		$this->logbookMode = true;
+		$this->ruleset = false;
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+		$this->now = $trip->getEndedAt() + 3650 * 86400;
+
+		$service->update(
+			self::OWNER,
+			self::VEHICLE,
+			$trip->getUuid(),
+			$trip->getUpdatedAt(),
+			$this->drove(1750000000, 120450) + ['purpose' => 'Kundentermin'],
+		);
+
+		$this->assertFalse($this->audits[1]->getDiffJson()['late']);
+	}
+
+	/**
+	 * A save that changes nothing records nothing, for the reason a mode flip is only a row when it
+	 * flips: a trail of non-changes buries the changes an auditor is looking for.
+	 */
+	public function testAnEditThatChangesNothingLeavesNoAuditRow(): void {
+		$this->logbookMode = true;
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+
+		$service->update(
+			self::OWNER,
+			self::VEHICLE,
+			$trip->getUuid(),
+			$trip->getUpdatedAt(),
+			$this->drove(1750000000, 120450),
+		);
+
+		$this->assertCount(1, $this->audits);
+	}
+
+	/** Off the mode an edit is an edit, late or not, and no trail claims otherwise. */
+	public function testAnEditOnAVehicleWithoutTheModeLeavesNoAuditRow(): void {
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+		$this->now = $trip->getEndedAt() + 30 * 86400;
+
+		$service->update(
+			self::OWNER,
+			self::VEHICLE,
+			$trip->getUuid(),
+			$trip->getUpdatedAt(),
+			$this->drove(1750000000, 120460),
+		);
+
+		$this->assertSame([], $this->audits);
+	}
+
+	/** The edit, its trail and its Reading are one transaction, for the reason a void's are. */
+	public function testTheEditItsTrailAndItsReadingAreOneTransaction(): void {
+		$this->logbookMode = true;
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+		$entering = count($this->calls);
+
+		$service->update(
+			self::OWNER,
+			self::VEHICLE,
+			$trip->getUuid(),
+			$trip->getUpdatedAt(),
+			$this->drove(1750000000, 120460),
+		);
+
+		$this->assertSame(
+			['begin', 'edit', 'audit', 'reading', 'commit'],
+			array_slice($this->calls, $entering),
+		);
+	}
+
+	/**
+	 * An edit that lost the race writes nothing: not the trail, not the counter
+	 * (docs/architecture.md#concurrency).
+	 */
+	public function testAnEditThatLostTheRaceChangesNothing(): void {
+		$this->logbookMode = true;
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+
+		try {
+			$service->update(
+				self::OWNER,
+				self::VEHICLE,
+				$trip->getUuid(),
+				$trip->getUpdatedAt() - 1,
+				$this->drove(1750000000, 120460),
+			);
+			$this->fail('an edit wrote under a token nobody held');
+		} catch (StaleUpdateException) {
+			$this->assertCount(1, $this->audits);
+			$this->assertSame(120450, $this->readings[0]->getValue());
+			$this->assertSame(120450, $this->cached);
+		}
+	}
+
+	/** An edit is held to the shape a new trip is: a counter and a distance at once is still two ends. */
+	public function testAnEditTheColumnsCannotHoldIsRefused(): void {
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+
+		$this->expectException(\InvalidArgumentException::class);
+
+		$service->update(
+			self::OWNER,
+			self::VEHICLE,
+			$trip->getUuid(),
+			$trip->getUpdatedAt(),
+			$this->drove(1750000000, 120450) + ['distance' => 140],
+		);
+	}
+
+	/**
+	 * Correcting a journey is the right entering one is: somebody who may log trips may fix one,
+	 * and somebody who may only look may not.
+	 */
+	public function testAGrantToAddATripIsAGrantToEditOneAndAGrantToLookIsNot(): void {
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+		$fields = $this->drove(1750000000, 120460);
+
+		$edited = $service->update(self::KEEPER, self::VEHICLE, $trip->getUuid(), $trip->getUpdatedAt(), $fields);
+		$this->assertSame(120460, $edited->getEndOdo());
+
+		$this->expectException(AccessDeniedException::class);
+		$service->update(self::DRIVER, self::VEHICLE, $trip->getUuid(), $edited->getUpdatedAt(), $fields);
+	}
+
+	/** The second gate, as for a void: a trip is reached through the vehicle it hangs off. */
+	public function testATripOfAnotherVehicleCannotBeEditedThroughThisOne(): void {
+		$elsewhere = $this->onAnotherVehicle();
+
+		$this->expectException(DoesNotExistException::class);
+
+		$this->service()->update(
+			self::OWNER,
+			self::VEHICLE,
+			$elsewhere->getUuid(),
+			self::ENTERED_AT,
+			$this->drove(1750000000, 120460),
+		);
+	}
+
+	/**
+	 * Two journeys with 200 km nobody recorded between them: the first ends on 120000, the second
+	 * says it set off at 120200.
+	 *
+	 * @return Trip the trip whose claim opened the Gap
+	 */
+	private function gapped(TripService $service): Trip {
+		$service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120000));
+
+		return $service->record(self::OWNER, self::VEHICLE, ['start_odo' => 120200] + $this->drove(self::GAP_TO_AT, 120300));
+	}
+
+	/**
+	 * The task: a confirmation closes one Gap as one private trip the app marks reconciled, over the
+	 * kilometres and between the two moments that bracket them. Its Reading lands on the claim, so
+	 * the Gap is gone on the next read.
+	 */
+	public function testClosingAGapWritesOnePrivateReconciledTripOverIt(): void {
+		$service = $this->service();
+		$claiming = $this->gapped($service);
+
+		$closing = $service->reconcile(self::OWNER, self::VEHICLE, $claiming->getUuid(), 200, self::GAP_FROM_AT, self::GAP_TO_AT);
+
+		$this->assertSame(Trip::PRIVATE, $closing->getCategory());
+		$this->assertTrue($closing->getReconciled());
+		$this->assertSame(200, $closing->getDistance());
+		$this->assertNull($closing->getStartOdo());
+		$this->assertNull($closing->getEndOdo());
+		$this->assertSame([self::GAP_FROM_AT, 120, self::GAP_TO_AT, 120], [
+			$closing->getStartedAt(), $closing->getStartedAtOff(), $closing->getEndedAt(), $closing->getEndedAtOff(),
+		]);
+		$this->assertSame(self::OWNER, $closing->getCreatedBy());
+		$this->assertCount(3, $this->trips);
+		$this->assertSame([], (new Gaps($this->tripMapper, $this->readingMapper))->of($this->vehicle()));
+		$this->assertSame([120000 => false, 120200 => false, 120300 => false], $this->chain());
+	}
+
+	/**
+	 * Under the mode the closing trip is recorded like every other, and its row says the kilometres
+	 * are the app's arithmetic and not a journey somebody observed - inside the same transaction.
+	 */
+	public function testAClosedGapIsRecordedInTheTrailAsDerived(): void {
+		$this->logbookMode = true;
+		$service = $this->service();
+		$claiming = $this->gapped($service);
+		$before = count($this->calls);
+
+		$closing = $service->reconcile(self::OWNER, self::VEHICLE, $claiming->getUuid(), 200, self::GAP_FROM_AT, self::GAP_TO_AT);
+
+		$this->assertCount(3, $this->audits);
+		$row = $this->audits[2];
+		$this->assertSame((int)$closing->getId(), $row->getEntityId());
+		$this->assertSame([
+			'change' => 'created',
+			'fields' => [
+				'started_at' => [null, self::GAP_FROM_AT],
+				'started_at_off' => [null, 120],
+				'ended_at' => [null, self::GAP_TO_AT],
+				'ended_at_off' => [null, 120],
+				'distance' => [null, 200],
+				'category' => [null, Trip::PRIVATE],
+				'reconciled' => [null, true],
+			],
+			'derived' => true,
+		], $row->getDiffJson());
+		$this->assertSame(['begin', 'hold', 'trips read', 'trip', 'audit', 'commit'], array_slice($this->calls, $before));
+	}
+
+	/**
+	 * What the driver confirmed, each part of it wrong in turn. The confirmation names the kilometres
+	 * and the two moments because those are what the driver agreed to; a Gap that differs in any of
+	 * them is a different Gap.
+	 *
+	 * @return array<string, array{int, int, int}>
+	 */
+	public static function unconfirmedGaps(): array {
+		return [
+			'other kilometres' => [150, self::GAP_FROM_AT, self::GAP_TO_AT],
+			'counted from elsewhere' => [200, self::GAP_FROM_AT - 1, self::GAP_TO_AT],
+			'ending elsewhere' => [200, self::GAP_FROM_AT, self::GAP_TO_AT + 1],
+		];
+	}
+
+	/** @dataProvider unconfirmedGaps */
+	public function testAGapOtherThanTheOneConfirmedIsNotClosed(int $distance, int $fromAt, int $toAt): void {
+		$service = $this->service();
+		$claiming = $this->gapped($service);
+
+		try {
+			$service->reconcile(self::OWNER, self::VEHICLE, $claiming->getUuid(), $distance, $fromAt, $toAt);
+			$this->fail('a Gap nobody confirmed was closed');
+		} catch (StaleUpdateException) {
+		}
+
+		$this->assertCount(2, $this->trips);
+	}
+
+	/**
+	 * One Gap, closed once. A second confirmation of the same one - a double tap, a second tab - finds
+	 * nothing left to close rather than counting the kilometres twice.
+	 */
+	public function testAClosedGapCannotBeClosedAgain(): void {
+		$service = $this->service();
+		$claiming = $this->gapped($service);
+		$service->reconcile(self::OWNER, self::VEHICLE, $claiming->getUuid(), 200, self::GAP_FROM_AT, self::GAP_TO_AT);
+
+		$this->expectException(StaleUpdateException::class);
+
+		$service->reconcile(self::OWNER, self::VEHICLE, $claiming->getUuid(), 200, self::GAP_FROM_AT, self::GAP_TO_AT);
+	}
+
+	/**
+	 * Afterwards it is a trip like any other: an edit is audited and, past the lock delay, late. What
+	 * it cannot do is say the trip was never reconciled - the mode documents writes, it refuses none,
+	 * so the flag is simply not a field a request reaches.
+	 */
+	public function testAClosingTripEditsLikeAnyOtherAndStaysReconciled(): void {
+		$this->logbookMode = true;
+		$service = $this->service();
+		$closing = $service->reconcile(self::OWNER, self::VEHICLE, $this->gapped($service)->getUuid(), 200, self::GAP_FROM_AT, self::GAP_TO_AT);
+		$this->now = self::GAP_TO_AT + self::LOCK_DELAY_DAYS * 86400 + 1;
+
+		$edited = $service->update(self::OWNER, self::VEHICLE, $closing->getUuid(), $closing->getUpdatedAt(), [
+			'started_at' => self::GAP_FROM_AT,
+			'started_at_off' => 120,
+			'ended_at' => self::GAP_TO_AT,
+			'ended_at_off' => 120,
+			'distance' => 200,
+			'category' => Trip::PRIVATE,
+			'purpose' => 'Urlaub',
+			'reconciled' => false,
+		]);
+
+		$this->assertTrue($edited->getReconciled());
+		$this->assertSame([
+			'change' => 'edited',
+			'fields' => ['purpose' => [null, 'Urlaub']],
+			'late' => true,
+		], $this->audits[3]->getDiffJson());
+	}
+
+	/**
+	 * Two confirmations of one Gap at once - two tabs, two drivers of a shared car - must not both
+	 * find it open. The vehicle's row is held before the Gap is looked for, so the second waits for
+	 * the first to commit and then finds nothing left to close.
+	 */
+	public function testTheVehicleIsHeldBeforeTheGapIsLookedFor(): void {
+		$service = $this->service();
+		$claiming = $this->gapped($service);
+		$before = count($this->calls);
+
+		$service->reconcile(self::OWNER, self::VEHICLE, $claiming->getUuid(), 200, self::GAP_FROM_AT, self::GAP_TO_AT);
+
+		$this->assertSame(['begin', 'hold', 'trips read', 'trip', 'commit'], array_slice($this->calls, $before));
+	}
+
+	/** Closing a Gap adds a trip, so it takes the right adding one does. */
+	public function testAGrantToLookIsNotAGrantToCloseAGap(): void {
+		$service = $this->service();
+		$claiming = $this->gapped($service);
+
+		$this->expectException(AccessDeniedException::class);
+
+		$service->reconcile(self::DRIVER, self::VEHICLE, $claiming->getUuid(), 200, self::GAP_FROM_AT, self::GAP_TO_AT);
 	}
 }

@@ -129,9 +129,10 @@ class OdoReadingMapper extends BaseMapper {
 	 * The reading a distance counts from: the newest one at or before that moment, in the same
 	 * order. Null when the vehicle has none yet, which is a distance with nothing to add to.
 	 *
+	 * @param ?int $except a Reading that is not a candidate: the one being restated
 	 * @throws \OCP\DB\Exception
 	 */
-	public function findNewestAtOrBefore(int $vehicleId, int $readAt): ?OdoReading {
+	public function findNewestAtOrBefore(int $vehicleId, int $readAt, ?int $except = null): ?OdoReading {
 		$qb = $this->db->getQueryBuilder();
 		$qb->select('*')
 			->from($this->tableName)
@@ -141,6 +142,9 @@ class OdoReadingMapper extends BaseMapper {
 			->orderBy('read_at', 'DESC')
 			->addOrderBy('id', 'DESC')
 			->setMaxResults(1);
+		if ($except !== null) {
+			$qb->andWhere($qb->expr()->neq('id', $qb->createNamedParameter($except, IQueryBuilder::PARAM_INT)));
+		}
 
 		try {
 			return $this->findEntity($qb);

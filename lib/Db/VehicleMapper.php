@@ -38,6 +38,24 @@ class VehicleMapper extends BaseMapper {
 	}
 
 	/**
+	 * Holds the vehicle's row until the caller's transaction ends, and changes nothing on it. A
+	 * write that first asks whether its change is still open - a Gap not yet closed - holds the
+	 * vehicle before asking, so a second writer on the same vehicle waits and then sees the first
+	 * one's answer. It works because Nextcloud runs its database at READ COMMITTED
+	 * (.docker/compose.yml), and an UPDATE is the lock `OCP` offers on every major this app
+	 * supports: `forUpdate()` is not in NC 31's query builder.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	public function hold(int $vehicleId): void {
+		$qb = $this->db->getQueryBuilder();
+		$qb->update($this->tableName)
+			->set('odo_value', 'odo_value')
+			->where($qb->expr()->eq('id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)));
+		$qb->executeStatement();
+	}
+
+	/**
 	 * The vehicles one user reaches: the ones they own, and the ones they were granted, which
 	 * VehicleAccess has already resolved to ids. Ordering is the overview's business - it sorts
 	 * by urgency, which is not a column (docs/ui.md) - so this only makes the order stable.
