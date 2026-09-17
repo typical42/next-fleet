@@ -255,7 +255,7 @@ good. Then an axe audit of the overview, the vehicle screen and an open sheet, s
 a distance, both moving the vehicle's counter, a refused one leaving the sheet open, an incomplete
 one saved and asked for the rest, and Logbook Mode switched on and off.
 
-Three things about those files worth knowing before adding to them:
+Four things about those files worth knowing before adding to them:
 
 - **A test tagged `@nc34` runs on that major alone**, because every other project would re-measure
   the same stylesheet. The audit at 320 × 640 in dark mode is the one that wears it; the tag is
@@ -263,6 +263,11 @@ Three things about those files worth knowing before adding to them:
 - **A dialog is visible from the first frame of its fade-in**, so an audit taken right after
   `toBeVisible()` measures the text against a background it is still blended with and reports a
   contrast violation that is over in 200 ms. `opened()` waits for the opacity instead.
+- **A sheet that closes is gone at once, with no fade-out.** Every sheet is mounted with `v-if` and
+  closes by unmounting, and Vue skips the leave of a `Transition` unmounted with its parent. The
+  sheet leaves the DOM before `press()` or `click()` returns, so `toBeVisible()` straight after a
+  keystroke is enough to prove the keystroke did not close it. Close a sheet through `:open` instead
+  and that check would pass during the fade.
 - **What every spec file shares lives in `app.js`** — signing in, the API, the overview row, opening
   a vehicle, making one, and the sweep each file starts with.
 

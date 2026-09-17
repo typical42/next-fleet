@@ -110,7 +110,7 @@ the two happened last.
 pairs all start at null; a field nobody stated is not in them, because a diff that lists what did not
 change buries what did. Anything the change itself carried — that an edit was late, that a trip was
 derived rather than observed — is a further key beside those two. The words so far: `created`,
-`edited` (always with `late`, true or false), `voided`, `restored` and `switched`. A Reconciliation
+`edited`, `voided` and `restored` (each always with `late`, true or false) and `switched`. A Reconciliation
 Trip is `created` with `derived: true`. An edit that changed nothing writes no row.
 
 There is deliberately **no `hu_due` column**. The next inspection is a reminder produced by an
@@ -200,7 +200,11 @@ This is where logbooks quietly break. Six rules, decided once:
    dated three days back, not appended to the end.
 2. `fleet_vehicles.odo_value` **caches** the newest reading in that order. Any read may recompute
    it; a nightly job does. Two drivers logging at once must not be able to corrupt a running total,
-   so nothing is ever incremented in place.
+   so nothing is ever incremented in place. Recomputing alone is not enough: a write that read the
+   chain before another's Reading committed would cache the older number, and could cache it last.
+   So every write that recomputes holds the vehicle's row first, in its own transaction, with an
+   `UPDATE` that changes nothing. A second writer waits for the first to commit and, at Nextcloud's
+   READ COMMITTED, reads its Reading.
 3. **A lower reading is a flag, not an error.** Cluster swaps, engine changes and imports really do
    reset the counter — and the app cannot tell one from a typo. So the row is saved as `reading`,
    `flagged`, and the timeline offers the follow-up question: cluster swap, or a mistake? Until it
@@ -210,8 +214,9 @@ This is where logbooks quietly break. Six rules, decided once:
    count hours. One nullable column now; every query rewritten later.
 5. **An Entry writes exactly one Reading**, at the moment it happened: a trip at `ended_at`, a
    fill-up at `filled_at`, maintenance at `done_at`. A trip's `start_odo` is a *claim*, not a
-   reading — comparing it with the previous reading is precisely what produces gap detection
-   ([backlog](features.md#feature-backlog)). The Reading goes where its Entry goes: voiding the
+   reading — comparing it with the Reading the last trip before it left is precisely what produces
+   gap detection ([logbook mode](features.md#logbook-mode)). A Reading no trip wrote is not what
+   the claim is compared with: it proves the counter moved and accounts for no kilometre. The Reading goes where its Entry goes: voiding the
    Entry voids the Reading and the undo brings both back, in one transaction. A Reading left
    standing on a voided trip would hold the vehicle's counter at a journey nobody claims any more,
    on a row the timeline no longer shows. An edit restates the same Reading in the same
@@ -268,12 +273,50 @@ bracket it. The screen sums them per month and reads them only under Logbook Mod
 two moments the driver confirmed. The server finds the Gap again and closes it only if all three
 still match; otherwise it answers 412 `conflict`, like a stale token. It holds the vehicle's row
 before it looks, so two confirmations of one Gap at once close it once and refuse the other. The
-Reconciliation Trip runs
-from the Reading before the Gap to the start of the trip that claimed it and carries the Gap's
-distance, so rule 6 counts its Reading onto the claim and the Gap is gone on the next read.
+Reconciliation Trip runs from the Reading the Gap was measured against to the start of the trip
+that claimed it and carries the Gap's distance, so rule 6 counts its Reading onto the claim and the
+Gap is gone on the next read. That holds over an Entry between the two, which is why an Entry at
+that Reading's own moment reading another number opens no Gap: rule 6 would count from the Entry.
 
 `odometer#index` stays where it is. The counter's own chain — flags, segments, what the vehicle
 stands at — is a different question from what happened to the vehicle.
+
+### The Fahrtenbuch export
+
+`GET /apps/nextfleet/vehicles/{uuid}/logbook/{year}` answers with the page itself, not with data for
+one ([ADR 0005](adr/0005-no-pdf-library.md)), so it sits outside `/api`. The Reports screen opens it
+by navigating to it, and learns which countries have a renderer from `logbook_export` on each
+jurisdiction `GET /api/preferences` lists. A navigation carries no request token, so the route
+takes none; it writes nothing, and Nextcloud still demands the same-site cookie. Like every export
+it is rate-limited and logged by ids ([security](security.md)). Its policy allows inline style and
+nothing else, so a renderer that broke its promise to load nothing still could not.
+
+**The core decides what is in it, the country how it reads.** `LogbookExport` hands a
+`LogbookReport` to the jurisdiction's `IReportRenderer`: the trips that set off in the year by their
+local date ([time](#time)), voided ones included, each with what its ruleset finds missing and its
+late changes, the periods the mode was on, and the ruleset's source URL. The periods are read off
+the vehicle's flips ([logbook mode](features.md#logbook-mode)): the first flip's `before` says
+whether the vehicle was created under the mode, and with no flip the column says it. A jurisdiction
+with no renderer answers 404, not an empty page that would pass for a logbook.
+
+**A late change is on its trip's line.** The law accepts later changes that are documented, and one
+the auditor cannot see is not. So each line carries its trip's audit rows with `late: true`
+(edits, voids and restores), read for the whole year in one batched query. The page says when, what
+each edited field said before, and for a restore since when the trip had been voided: a restore
+months later would otherwise erase the void without a trace. A late void is the line's own
+`Storniert` note, stated once. A change inside the lock delay is still the entry being made and is
+not listed. Each change also carries the trip's offsets as they stood before it, walked back from the
+trip through every later row, so a time it replaced reads in the offset it was entered in.
+
+**What the page says outside the mode.** Every trip in the year is listed, but only a trip that set
+off inside a period states what it lacks. That is the app's one rule
+([logbook mode](features.md#logbook-mode)) asked of the mode as it stood when the trip set off, not
+as it stands now: the timeline answers for today, the export for a year, and an auditor must not
+read "incomplete" on months no logbook was kept for. A period runs from its flip on up to, not including, its flip off. The
+server's own instants — when a trip was entered, voided, when the mode flipped — carry no offset and
+are printed as UTC and labelled so. The trips are sorted into the year by their local date, so a
+period is stated when it overlaps the year widened by the furthest offsets, fourteen hours east and
+twelve west: exactly the instants some trip of the year could set off at.
 
 ## Nextcloud integration
 

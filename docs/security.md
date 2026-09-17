@@ -19,7 +19,9 @@ The app holds a movement profile: where someone was, when, and why. Treat it acc
 ### Authorization
 
 - **Every controller method is annotated deliberately** — `#[NoAdminRequired]` on user endpoints,
-  `#[NoCSRFRequired]` only where an OCS route genuinely needs it, `#[BruteForceProtection]` on
+  `#[NoCSRFRequired]` only where an OCS route genuinely needs it or a read-only page is opened by
+  navigating to it (the [Fahrtenbuch export](architecture.md#the-fahrtenbuch-export): a navigation
+  carries no token, and the same-site cookie is still required), `#[BruteForceProtection]` on
   anything token-addressed, `#[UserRateLimit]` on writes. An unannotated method fails review.
 - **One service decides access.** `VehicleAccess::may($uid, $op, $vehicle)`, backed by
   `fleet_access` ([ADR 0001](adr/0001-own-access-table.md)). Controllers never reach a mapper

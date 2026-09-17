@@ -111,11 +111,15 @@ class TripService {
 		// with the counter it is measured against, and nothing later can tell which of the two is
 		// wrong.
 		//
-		// Retried rather than atomic() alone: the Reading restates the whole chain and the
-		// vehicle's cache with it, so two drivers logging a shared car at once can meet the
-		// database's own deadlock detection - and a 500 there loses the trip the driver typed.
-		// The replay is safe because BaseMapper::insert re-marks every column on the entity.
+		// Retried rather than atomic() alone: a deadlock the hold does not order - with a write
+		// from outside this service - would otherwise be a 500 that loses the trip the driver
+		// typed. The replay inserts the id the rolled-back attempt was given, which auto-increment
+		// never hands out again.
 		return $this->atomicRetry(function () use ($userId, $vehicle, $trip): Trip {
+			// Before anything is read or written: the Reading settles the vehicle's whole chain,
+			// and a second writer on the same vehicle has to wait and settle on this one's
+			// (VehicleMapper::hold()).
+			$this->vehicles->hold((int)$vehicle->getId());
 			$written = $this->trips->insert($trip);
 			$this->trail($vehicle, $written, $userId, self::CREATED, $this->stated($written));
 			$this->odometer->fromTrip($vehicle, $written);
@@ -126,7 +130,7 @@ class TripService {
 
 	/**
 	 * Closes one Gap as one Reconciliation Trip (CONTEXT.md): private, over the Gap's kilometres, from
-	 * the Reading before it to the start of the trip that claimed it. A distance and not a counter, so
+	 * the Reading it was measured against to the start of the trip that claimed it. A distance and not a counter, so
 	 * its Reading is counted from that Reading and lands on the claim (rule 6).
 	 *
 	 * The Gap is named by the trip that opened it and found again here, not taken from the request.
@@ -208,6 +212,7 @@ class TripService {
 
 		// Looked up inside the transaction for the reason delete() gives.
 		return $this->atomicRetry(function () use ($userId, $vehicle, $tripUuid, $expectedUpdatedAt, $fields): Trip {
+			$this->vehicles->hold((int)$vehicle->getId());
 			$trip = $this->on($vehicle, $this->trips->findByUuid($tripUuid));
 			$was = clone $trip;
 			$this->apply($trip, $fields);
@@ -228,8 +233,9 @@ class TripService {
 	}
 
 	/**
-	 * Whether the edit arrives after the ruleset's lock delay (`ILogbookRules::lockDelayDays()`).
-	 * It is allowed either way; the trail says which.
+	 * Whether the change arrives after the ruleset's lock delay (`ILogbookRules::lockDelayDays()`).
+	 * It is allowed either way; the trail says which. A void or a restore moves no journey, so it
+	 * passes the trip as both.
 	 *
 	 * The delay runs from the earlier of the two ends, the journey as recorded or as restated: an
 	 * edit that re-dates an old trip to yesterday would otherwise restart the clock it is measured
@@ -264,11 +270,12 @@ class TripService {
 		// has to start from the row as the database has it, and an entity a rolled-back statement
 		// already stamped would be written back a second time with nothing left to change.
 		return $this->atomicRetry(function () use ($userId, $vehicle, $tripUuid, $expectedUpdatedAt): Trip {
+			$this->vehicles->hold((int)$vehicle->getId());
 			$trip = $this->on($vehicle, $this->trips->findByUuid($tripUuid));
 			$voided = $this->trips->softDelete($trip, $expectedUpdatedAt);
 			$this->trail($vehicle, $voided, $userId, self::VOIDED, [
 				'deleted_at' => [null, $voided->getDeletedAt()],
-			]);
+			], ['late' => $this->late($vehicle, $voided, $voided)]);
 			$this->odometer->followTrip($vehicle, $voided);
 
 			return $voided;
@@ -290,10 +297,13 @@ class TripService {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::DELETE, $vehicleUuid);
 
 		return $this->atomicRetry(function () use ($userId, $vehicle, $tripUuid, $expectedUpdatedAt): Trip {
+			$this->vehicles->hold((int)$vehicle->getId());
 			$voided = $this->on($vehicle, $this->trips->findAnyByUuid($tripUuid));
 			$stamp = $voided->getDeletedAt();
 			$back = $this->trips->restoreChecked($voided, $expectedUpdatedAt);
-			$this->trail($vehicle, $back, $userId, self::RESTORED, ['deleted_at' => [$stamp, null]]);
+			$this->trail($vehicle, $back, $userId, self::RESTORED, ['deleted_at' => [$stamp, null]], [
+				'late' => $this->late($vehicle, $back, $back),
+			]);
 			$this->odometer->followTrip($vehicle, $back);
 
 			return $back;

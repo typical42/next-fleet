@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+import NcAppNavigationItem from '@nextcloud/vue/components/NcAppNavigationItem'
 import { flushPromises, shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -14,6 +15,7 @@ import { deleteVehicle, getPreferences, listVehicles } from './services/api.js'
 import { useVehiclesStore } from './store/index.js'
 import { usePreferencesStore } from './store/preferences.js'
 import OverviewView from './views/OverviewView.vue'
+import ReportsView from './views/ReportsView.vue'
 import VehicleView from './views/VehicleView.vue'
 
 // The network is the api client's own seam (api.spec.js); the store is left real, because which
@@ -48,7 +50,8 @@ async function shell() {
 		global: {
 			stubs: {
 				NcContent: { template: '<div><slot /></div>' },
-				NcAppNavigation: { template: '<div><slot /><slot name="list" /></div>' },
+				NcAppNavigation: { template: '<div><slot /><slot name="list" /><slot name="footer" /></div>' },
+				NcAppNavigationList: { template: '<ul><slot /></ul>' },
 				NcAppContent: { template: '<div><slot /></div>' },
 			},
 		},
@@ -57,6 +60,23 @@ async function shell() {
 	await wrapper.findComponent(VehicleList).vm.$emit('select', VEHICLE.uuid)
 
 	return wrapper
+}
+
+/**
+ * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted shell
+ * @return {any} the navigation entry that opens the reports
+ */
+function reports(wrapper) {
+	return entry(wrapper, 'Reports')
+}
+
+/**
+ * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted shell
+ * @param {string} name - the entry's label
+ * @return {any} the navigation entry by that label
+ */
+function entry(wrapper, name) {
+	return wrapper.findAllComponents(NcAppNavigationItem).find((one) => one.props('name') === name)
 }
 
 beforeEach(() => {
@@ -112,6 +132,74 @@ describe('the app shell', () => {
 
 		expect(wrapper.findComponent(VehicleView).exists()).toBe(false)
 		expect(wrapper.findComponent(OverviewView).exists()).toBe(true)
+	})
+
+	/**
+	 * Reports sit under the vehicles in the navigation (docs/ui.md). The screen is handed the whole
+	 * fleet, sold vehicles too: a logbook outlives the vehicle it was kept for.
+	 */
+	it('opens the reports on the whole fleet', async () => {
+		const SOLD = { ...VEHICLE, uuid: 'v-2', lifecycle: 'disposed' }
+		vi.mocked(listVehicles).mockResolvedValue([VEHICLE, SOLD])
+		const wrapper = await shell()
+
+		await reports(wrapper).vm.$emit('click')
+
+		expect(wrapper.findComponent(VehicleView).exists()).toBe(false)
+		/** @type {any} */
+		const screen = wrapper.findComponent(ReportsView)
+		expect(screen.props('vehicles').map((/** @type {{ uuid: string }} */ one) => one.uuid))
+			.toEqual([VEHICLE.uuid, SOLD.uuid])
+		expect(reports(wrapper).props('active')).toBe(true)
+	})
+
+	it('leaves the reports for the vehicle picked in the navigation', async () => {
+		const wrapper = await shell()
+		await reports(wrapper).vm.$emit('click')
+
+		await wrapper.findComponent(VehicleList).vm.$emit('select', VEHICLE.uuid)
+
+		expect(wrapper.findComponent(ReportsView).exists()).toBe(false)
+		expect(wrapper.findComponent(VehicleView).exists()).toBe(true)
+		expect(reports(wrapper).props('active')).toBe(false)
+	})
+
+	/**
+	 * The overview is where the app starts, and neither a vehicle nor the reports may be a screen
+	 * only a reload leaves (docs/ui.md).
+	 */
+	it('returns to the overview from a vehicle and from the reports', async () => {
+		const wrapper = await shell()
+		expect(entry(wrapper, 'Overview').props('active')).toBe(false)
+
+		await entry(wrapper, 'Overview').vm.$emit('click')
+
+		expect(wrapper.findComponent(VehicleView).exists()).toBe(false)
+		expect(wrapper.findComponent(OverviewView).exists()).toBe(true)
+		expect(entry(wrapper, 'Overview').props('active')).toBe(true)
+
+		await reports(wrapper).vm.$emit('click')
+		expect(entry(wrapper, 'Overview').props('active')).toBe(false)
+
+		await entry(wrapper, 'Overview').vm.$emit('click')
+
+		expect(wrapper.findComponent(ReportsView).exists()).toBe(false)
+		expect(wrapper.findComponent(OverviewView).exists()).toBe(true)
+		expect(reports(wrapper).props('active')).toBe(false)
+		expect(entry(wrapper, 'Overview').props('active')).toBe(true)
+	})
+
+	/**
+	 * A vehicle that left the fleet takes its screen with it, so the overview is what shows - and
+	 * the entry says so, although nobody asked for it by name.
+	 */
+	it('marks the overview when a vehicle leaving the fleet falls back to it', async () => {
+		const wrapper = await shell()
+
+		useVehiclesStore().upsert({ ...VEHICLE, lifecycle: 'disposed' })
+		await flushPromises()
+
+		expect(entry(wrapper, 'Overview').props('active')).toBe(true)
 	})
 
 	/**

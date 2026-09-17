@@ -22,14 +22,17 @@ use Psr\Log\LoggerInterface;
  * One vehicle's logbook for one year, read by the core and printed by its jurisdiction
  * (docs/features.md#logbook-mode). Which trips, what each one lacks and when the mode was on are
  * decided here; the country only lays them out (`IReportRenderer`).
+ *
+ * @psalm-import-type LateChange from LogbookReport
  */
 class LogbookExport {
 	/**
-	 * How far a local calendar year reaches past its UTC bounds. An offset is at most fourteen
-	 * hours (`TripService`), so a day is room to spare, and the trips are then sorted into years
-	 * by their own local date.
+	 * How far a local calendar year reaches past its UTC bounds: an offset runs from twelve hours
+	 * west to fourteen east (`TripService`). The trips are then sorted into years by their own local
+	 * date; a period is not, so these must be exact rather than roomy.
 	 */
-	private const MARGIN = 86400;
+	private const EAST = 14 * 3600;
+	private const WEST = 12 * 3600;
 
 	public function __construct(
 		private VehicleService $fleet,
@@ -65,39 +68,102 @@ class LogbookExport {
 			'year' => $year,
 		]);
 
-		$start = gmmktime(0, 0, 0, 1, 1, $year);
-		$end = gmmktime(0, 0, 0, 1, 1, $year + 1);
+		// Every UTC instant some trip of the local year can set off at.
+		$start = gmmktime(0, 0, 0, 1, 1, $year) - self::EAST;
+		$end = gmmktime(0, 0, 0, 1, 1, $year + 1) + self::WEST;
+		$periods = $this->periods($vehicle, $start, $end);
 
 		return $renderer->render(new LogbookReport(
 			$vehicle,
 			$year,
-			$this->lines($vehicle, $year, $start, $end),
-			$this->periods($vehicle, $start, $end),
+			$this->lines($vehicle, $year, $start, $end, $periods),
+			$periods,
 			$jurisdiction->logbookRules()?->sourceUrl(),
 		));
 	}
 
 	/**
 	 * The trips that set off in the year where they set off (docs/architecture.md#time), voided ones
-	 * included, each with the fields its ruleset requires and it leaves unstated.
+	 * included. A trip set off under the mode carries the fields its ruleset requires and it leaves
+	 * unstated; any other carries none, because what the logbook asks is said only under the mode
+	 * (docs/features.md#logbook-mode).
 	 *
-	 * @return list<array{trip: Trip, missing: list<string>}>
+	 * Each also carries its late changes - edits, voids and restores. One inside the lock delay is
+	 * still the entry being made; one after it changed a record, and a change the auditor cannot see
+	 * is not documented.
+	 *
+	 * @param list<array{from: int, to: ?int}> $periods
+	 * @return list<array{trip: Trip, missing: list<string>, late: list<LateChange>}>
 	 * @throws \OCP\DB\Exception
 	 */
-	private function lines(Vehicle $vehicle, int $year, int $start, int $end): array {
-		$lines = [];
-		foreach ($this->trips->findAnyStartedBetween((int)$vehicle->getId(), $start - self::MARGIN, $end + self::MARGIN) as $trip) {
-			if ((int)gmdate('Y', $trip->getStartedAt() + $trip->getStartedAtOff() * 60) === $year) {
-				$lines[] = ['trip' => $trip, 'missing' => $this->completeness->missing($vehicle, $trip)];
-			}
-		}
+	private function lines(Vehicle $vehicle, int $year, int $start, int $end, array $periods): array {
+		$trips = array_values(array_filter(
+			$this->trips->findAnyStartedBetween((int)$vehicle->getId(), $start, $end),
+			static fn (Trip $trip): bool => (int)gmdate('Y', $trip->getStartedAt() + $trip->getStartedAtOff() * 60) === $year,
+		));
+		$late = $this->lateChanges($trips);
 
-		return $lines;
+		return array_map(fn (Trip $trip): array => [
+			'trip' => $trip,
+			'missing' => self::underTheMode($trip, $periods) ? $this->completeness->missing($vehicle, $trip) : [],
+			'late' => $late[(int)$trip->getId()] ?? [],
+		], $trips);
 	}
 
 	/**
-	 * When the mode was on, read off the flips on the vehicle's trail - every period that reaches
-	 * into `[start, end)`.
+	 * The `late` rows on the trips' trails, by trip id, oldest first.
+	 *
+	 * Each carries the offsets in force before it, because a time it replaced reads right only with
+	 * those, and a later edit may have moved them. They are read back from the trip as it is now,
+	 * newest row first, through every row on the trail and not only the late ones.
+	 *
+	 * @param list<Trip> $trips
+	 * @return array<int, list<LateChange>>
+	 * @throws \OCP\DB\Exception
+	 */
+	private function lateChanges(array $trips): array {
+		if ($trips === []) {
+			return [];
+		}
+
+		$offsets = [];
+		foreach ($trips as $trip) {
+			$offsets[(int)$trip->getId()] = ['started_at_off' => $trip->getStartedAtOff(), 'ended_at_off' => $trip->getEndedAtOff()];
+		}
+
+		$late = [];
+		foreach (array_reverse($this->audit->findForEntities(Audit::TRIP, array_keys($offsets))) as $row) {
+			$id = $row->getEntityId();
+			$diff = $row->getDiffJson();
+			/** @var array<string, array{mixed, mixed}> $fields */
+			$fields = $diff['fields'] ?? [];
+			foreach (['started_at_off', 'ended_at_off'] as $column) {
+				if (isset($fields[$column])) {
+					$offsets[$id][$column] = (int)$fields[$column][0];
+				}
+			}
+			if (($diff['late'] ?? null) === true) {
+				$late[$id][] = ['change' => (string)($diff['change'] ?? ''), 'at' => $row->getCreatedAt(), 'fields' => $fields, 'offsets' => $offsets[$id]];
+			}
+		}
+
+		return array_map('array_reverse', $late);
+	}
+
+	/** @param list<array{from: int, to: ?int}> $periods */
+	private static function underTheMode(Trip $trip, array $periods): bool {
+		foreach ($periods as $period) {
+			if ($trip->getStartedAt() >= $period['from'] && ($period['to'] === null || $trip->getStartedAt() < $period['to'])) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * When the mode was on, read off the flips on the vehicle's trail - every period some trip of the
+	 * local year `[start, end)` could have set off in.
 	 *
 	 * Where the first period begins is not a row (docs/features.md#logbook-mode): the first flip's
 	 * `before` says whether the vehicle was created under the mode, and a vehicle never switched is
@@ -133,7 +199,8 @@ class LogbookExport {
 
 		return array_values(array_filter(
 			$periods,
-			static fn (array $period): bool => $period['from'] < $end && ($period['to'] === null || $period['to'] > $start),
+			static fn (array $period): bool => $period['from'] < $end
+				&& ($period['to'] === null || $period['to'] > $start),
 		));
 	}
 }

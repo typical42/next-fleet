@@ -104,13 +104,19 @@ never stored, so a ruleset that changes changes it for every trip. A distance tr
 so as a business trip it is asked for both, and the way to answer is to edit it into a trip with
 its counters.
 
-**A Gap is a claim above the counter.** A trip's `start_odo` is what the driver says the counter
-read, and the Reading before the trip — the newest at or before its start, never the trip's own —
-is what it is measured against ([rule 5](architecture.md#odometer-rules)). A claim above it leaves
-the difference unaccounted; a claim at or below it opens no Gap. A distance trip claims nothing and
-is never measured. A Reading that is flagged is already a question, and a cluster swap looks like a
-typo from here, so a claim measured against one opens no Gap until that question is answered. A Gap
-belongs to the month the trip set off in, and that month's header states the total.
+**A Gap is a claim above where the last trip left the counter.** A trip's `start_odo` is what the
+driver says the counter read. It is measured against the newest Reading a trip wrote at or before
+its start, never the trip's own; with none, against the newest Reading
+([rule 5](architecture.md#odometer-rules)). A claim above it leaves the difference unaccounted; a
+claim at or below it opens no Gap. A distance trip claims nothing and is never measured.
+
+A Reading with no journey around it — an Odometer Entry, and from M3 every fill-up — proves the
+counter moved, not who drove it. So it accounts for no kilometre, and a refuel cannot swallow the
+Gap before it. It can still ask a question: one that is flagged (a cluster swap looks like a typo
+from here), one the counter stood above the claim at, or one at the last trip's own moment that
+reads another number. Any of these between the two opens no Gap until it is answered, because a Gap
+counted past a question could be kilometres nobody drove. A Gap belongs to the month the trip set
+off in, and that month's header states the total.
 
 **A Gap is closed by a confirmation, one Gap at a time.** It names the kilometres and the two moments
 that bracket them, and creates one private trip marked `reconciled`. Its audit row says the
@@ -137,10 +143,10 @@ allowed — a mode that could only ever go on would be a trap, not a setting —
 **The lock delay belongs to the ruleset**, not to the core: `ILogbookRules` supplies it, and the
 German value carries its source URL ([contributing](contributing.md)). Days, not weeks — timeliness
 is the entire point. Germany's is seven, and the same ruleset states the ten years a record is kept
-for, a floor under the vehicle's own retention period ([legal](legal.md)). An edit after the delay
-is allowed, and its audit row says `late`. The delay runs from the end of the journey, and from the
-earlier end when the edit re-dates it, so moving an old trip to yesterday does not restart the
-clock. A jurisdiction with no ruleset has no delay, so nothing under it is late.
+for, a floor under the vehicle's own retention period ([legal](legal.md)). An edit, a void or a
+restore after the delay is allowed, its audit row says `late`, and the export shows the change on
+the trip's line. The delay runs from the end of the journey, and from the earlier end when the edit re-dates it, so moving an
+old trip to yesterday does not restart the clock. A jurisdiction with no ruleset has no delay, so nothing under it is late.
 
 **Closing a gap creates one trip, with a confirmation, and only a private one.** Never a batch. A
 private trip legally needs only the kilometres; a business trip needs a purpose and a partner that

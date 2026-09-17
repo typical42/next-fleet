@@ -311,6 +311,65 @@ test('a Gap is closed by one confirmed private trip', async ({ page }) => {
 })
 
 /**
+ * The Fahrtenbuch is a page the browser prints, opened from Reports in a tab of its own
+ * (docs/architecture.md#the-fahrtenbuch-export). A navigation, not a request the app makes: this is
+ * the case that proves the route answers a signed-in browser with no request token.
+ */
+test('the logbook opens from Reports for a vehicle and a year', async ({ page }) => {
+	const plate = `${plates}report-${Date.now()}`
+	// Under `de` by name: the personal settings case may have moved this user's default.
+	const vehicle = await api(page, { method: 'POST', path: '/api/vehicles', body: { plate, jurisdiction: 'de', logbook_mode: true } })
+	const at = Math.floor(Date.UTC(2025, 6, 15, 8, 0) / 1000)
+	await api(page, {
+		method: 'POST',
+		path: `/api/vehicles/${vehicle.uuid}/trips`,
+		body: { started_at: at, started_at_off: 120, ended_at: at + 3600, ended_at_off: 120, category: 'private', end_odo: 148402 },
+	})
+
+	await page.goto(appPage)
+	await page.locator('.app-navigation').getByRole('link', { name: 'Reports' }).click()
+	const screen = page.locator('#nextfleet').getByRole('main')
+	await expect(screen.getByRole('heading', { name: 'Reports' })).toBeVisible()
+
+	await screen.getByRole('combobox', { name: 'Vehicle' }).click()
+	// By its text: the dropdown splits a long label into spans, and the accessible name with it.
+	await page.getByRole('option').filter({ hasText: plate }).click()
+	await screen.getByRole('textbox', { name: 'Year' }).fill('2025')
+	const link = screen.getByRole('link', { name: 'Open logbook' })
+	// With or without `index.php`, which is the server's rewrite configuration and not the app's.
+	await expect(link).toHaveAttribute('href', new RegExp(`/apps/nextfleet/vehicles/${vehicle.uuid}/logbook/2025$`))
+	await audit(page, 'the reports screen')
+
+	const [tab] = await Promise.all([page.waitForEvent('popup'), link.click()])
+	await expect(tab.getByRole('heading', { name: 'Fahrtenbuch 2025' })).toBeVisible()
+	await expect(tab.locator('body')).toContainText(plate)
+
+	const served = await page.request.get(/** @type {string} */ (await link.getAttribute('href')))
+	expect(served.headers()['content-type']).toContain('text/html')
+})
+
+/** The overview is one click away from every screen, with no reload (docs/ui.md). */
+test('the navigation leads back to the overview', async ({ page }) => {
+	const plate = `${plates}back-${Date.now()}`
+	await add(page, plate, starting)
+	await page.goto(appPage)
+	const navigation = page.locator('.app-navigation')
+	const overview = navigation.getByRole('link', { name: 'Overview' })
+	const screen = page.locator('#nextfleet').getByRole('main')
+
+	await open(page, plate)
+	await overview.click()
+	await expect(screen.getByRole('heading', { name: 'Vehicles' })).toBeVisible()
+	await expect(page.getByRole('heading', { name: plate })).toBeHidden()
+
+	await navigation.getByRole('link', { name: 'Reports' }).click()
+	await expect(screen.getByRole('heading', { name: 'Reports' })).toBeVisible()
+	await overview.click()
+	await expect(screen.getByRole('heading', { name: 'Vehicles' })).toBeVisible()
+	await expect(screen.getByRole('heading', { name: 'Reports' })).toBeHidden()
+})
+
+/**
  * Dark mode and 320 px are acceptance criteria for the timeline, not afterthoughts - the list is
  * rows rather than cards so that it survives both (docs/ui.md). One major, for the reason the M1
  * audit gives: the answer is CSS and there is one copy of it.
@@ -362,5 +421,17 @@ test.describe('at 320 x 640, in the dark', { tag: '@nc34' }, () => {
 		// Gap offered for closing on the trip that opened it.
 		await expect(page.locator('.row__flag')).toHaveCount(4)
 		await audit(page, 'the vehicle screen, timeline and all')
+	})
+
+	test('the reports screen passes an axe audit', async ({ page }) => {
+		// Something to print, so the audit covers the form rather than the empty state.
+		await api(page, { method: 'POST', path: '/api/vehicles', body: { plate: `${plates}printed`, jurisdiction: 'de' } })
+		await page.goto(appPage)
+		// At this width the navigation is behind its toggle, and Reports is in it.
+		await page.getByRole('button', { name: 'Open navigation' }).click()
+		await page.locator('.app-navigation').getByRole('link', { name: 'Reports' }).click()
+		await page.getByRole('button', { name: 'Close navigation' }).click()
+		await expect(page.getByRole('link', { name: 'Open logbook' })).toBeVisible()
+		await audit(page, 'the reports screen')
 	})
 })

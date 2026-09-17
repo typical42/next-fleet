@@ -136,7 +136,8 @@ test('Esc in a date field is the picker\'s, and everywhere else the sheet\'s', a
 	// The browser draws the date picker over the input and closes it on Escape, but the keydown
 	// reaches the input all the same - and the sheet's own handler is one bubble above it. Vitest
 	// cannot open a native picker, and it cannot see this listener travel through two layers of
-	// `$attrs` onto the input either; this is where that is proved.
+	// `$attrs` onto the input either; this is where that is proved. No wait is needed: a closing
+	// sheet is gone before `press()` returns (docs/development.md#local-dev-environment).
 	await sheet.getByLabel('First registration').press('Escape')
 	await expect(sheet).toBeVisible()
 	await expect(sheet.getByRole('textbox', { name: 'VIN' })).toHaveValue('W0L000051T2123456')

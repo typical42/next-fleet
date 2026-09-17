@@ -9,6 +9,9 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Tests\Unit\Service;
 
 use OCA\NextFleet\AppInfo\Application;
+use OCA\NextFleet\Jurisdiction\Generic;
+use OCA\NextFleet\Jurisdiction\IJurisdiction;
+use OCA\NextFleet\Jurisdiction\IReportRenderer;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCA\NextFleet\Service\PreferencesService;
 use OCP\IConfig;
@@ -79,6 +82,27 @@ class PreferencesServiceTest extends TestCase {
 		foreach ($jurisdictions as $jurisdiction) {
 			$this->assertNotSame('', $jurisdiction['name'], $jurisdiction['key'] . ' is offered unnamed');
 		}
+	}
+
+	/**
+	 * The Reports screen offers the Fahrtenbuch only for a vehicle whose country prints one, and the
+	 * profile is what knows that. The doubles invert what the two real profiles answer, so the flag
+	 * cannot come from the key.
+	 */
+	public function testItSaysWhichJurisdictionsPrintALogbook(): void {
+		$container = $this->createMock(ContainerInterface::class);
+		$container->method('get')->willReturnCallback(function (string $id): IJurisdiction {
+			$profile = $this->createMock(IJurisdiction::class);
+			$profile->method('key')->willReturn($id === Generic\Profile::class ? 'generic' : 'de');
+			$profile->method('displayName')->willReturn($id);
+			$profile->method('logbookRenderer')->willReturn($id === Generic\Profile::class ? $this->createMock(IReportRenderer::class) : null);
+
+			return $profile;
+		});
+
+		$jurisdictions = (new PreferencesService($this->config, new Jurisdictions($container)))->forUser(self::USER)['jurisdictions'];
+
+		$this->assertSame(['de' => false, 'generic' => true], array_column($jurisdictions, 'logbook_export', 'key'));
 	}
 
 	/** A user who has never opened the screen already has the answer a vehicle would take. */

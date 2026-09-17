@@ -96,6 +96,11 @@ touch. That keeps the middle free for the things you touch weekly.
 | **Vehicle sidebar** | Master data, jurisdiction, documents, reminders (sharing from M6) | Edit inline |
 | **Personal settings** | The defaults a person keeps, jurisdiction first. Not a screen in the app: it is the app's block on Nextcloud's own settings page, its own bundle, and it talks to the same API as everything else | Pick and it saves |
 
+**Reports** has one report so far, the Fahrtenbuch: one vehicle and one year, opened as a page in
+a tab of its own ([export](architecture.md#the-fahrtenbuch-export)). It offers only vehicles whose
+country prints a logbook, because any other opens a 404. Sold vehicles are offered too: their
+logbook is still kept after they leave the fleet.
+
 The **Settings** entry in the sketch above is a link into that page, not a seventh screen. A
 preference belongs to the person, so it lives where a person looks for their preferences.
 
@@ -228,6 +233,10 @@ but shipping only `de` would give company users "du". Ship both, worded differen
   ([licensing](legal.md)).
 - **Formats follow the locale, not the language:** `1.234,5 km`, `12,34 €`, `03.09.2026` in German.
   Use `IL10N::l()` and `Intl.NumberFormat` — no hand-rolled formatting anywhere.
+- **A document for an authority is in that authority's language, whoever prints it.** The Fahrtenbuch
+  is German, dates, numbers and words alike, because the language of proceedings at a German tax
+  office is German (§ 87 AO). Its words and formats are the country's layout
+  (`lib/Jurisdiction/De/`), not strings for the catalogues.
 - **Units stay metric in both languages.** l/100 km and kWh/100 km; English does not silently become
   mpg. Units follow the vehicle's jurisdiction ([contributing](contributing.md)), never a global
   switch.

@@ -20,13 +20,17 @@ use OCA\NextFleet\Jurisdiction\LogbookReport;
  * document for a German tax office, and the language of the proceedings there is German (section
  * 87 AO, https://www.gesetze-im-internet.de/ao_1977/__87.html). The words are part of the layout,
  * which is the country's (docs/features.md#logbook-mode).
+ *
+ * @psalm-import-type LateChange from LogbookReport
  */
 class FahrtenbuchRenderer implements IReportRenderer {
 	/** What each column is called, and so what a missing field is called on its line. */
 	private const WORDS = [
 		'plate' => 'Kennzeichen',
 		'started_at' => 'Datum',
+		'started_at_off' => 'Zeitzone Abfahrt',
 		'ended_at' => 'Ankunft',
+		'ended_at_off' => 'Zeitzone Ankunft',
 		'start_odo' => 'Km-Stand Beginn',
 		'end_odo' => 'Km-Stand Ende',
 		'distance' => 'Kilometer',
@@ -109,7 +113,7 @@ class FahrtenbuchRenderer implements IReportRenderer {
 	private function table(LogbookReport $report): string {
 		$columns = ['Datum', 'Zeit', self::WORDS['start_odo'], self::WORDS['end_odo'], self::WORDS['distance'],
 			self::WORDS['from_label'], self::WORDS['to_label'], self::WORDS['purpose'], self::WORDS['partner'],
-			self::WORDS['category'], 'Erfasst', 'Vermerk'];
+			self::WORDS['category'], 'Erfasst (UTC)', 'Vermerk'];
 		$html = '<table><thead><tr>';
 		foreach ($columns as $column) {
 			$html .= '<th scope="col">' . $column . '</th>';
@@ -121,14 +125,17 @@ class FahrtenbuchRenderer implements IReportRenderer {
 		}
 
 		foreach ($report->trips as $line) {
-			$html .= $this->line($line['trip'], $line['missing']);
+			$html .= $this->line($line['trip'], $line['missing'], $line['late']);
 		}
 
 		return $html . '</tbody></table>';
 	}
 
-	/** @param list<string> $missing */
-	private function line(Trip $trip, array $missing): string {
+	/**
+	 * @param list<string> $missing
+	 * @param list<LateChange> $late
+	 */
+	private function line(Trip $trip, array $missing, array $late): string {
 		$started = $trip->getStartedAt() + $trip->getStartedAtOff() * 60;
 		$ended = $trip->getEndedAt() + $trip->getEndedAtOff() * 60;
 		$sameDay = gmdate('Y-m-d', $started) === gmdate('Y-m-d', $ended);
@@ -145,9 +152,10 @@ class FahrtenbuchRenderer implements IReportRenderer {
 			['', $this->text($trip->getPartner())],
 			['', $this->text(self::CATEGORIES[$trip->getCategory()] ?? $trip->getCategory())],
 			// The server's instant, not the driver's: timeliness is the gap between the two
-			// (docs/architecture.md#time).
+			// (docs/architecture.md#time). It has no offset, so the header says UTC - a local
+			// `Datum` beside an unlabelled UTC date can read as entered before driven.
 			['', gmdate('d.m.Y', $trip->getCreatedAt())],
-			['note', $this->notes($trip, $missing)],
+			['note', $this->notes($trip, $missing, $late)],
 		];
 
 		$html = '<tr' . ($trip->getDeletedAt() === null ? '' : ' class="voided"') . '>';
@@ -174,11 +182,17 @@ class FahrtenbuchRenderer implements IReportRenderer {
 		return null;
 	}
 
-	/** @param list<string> $missing */
-	private function notes(Trip $trip, array $missing): string {
+	/**
+	 * @param list<string> $missing
+	 * @param list<LateChange> $late
+	 */
+	private function notes(Trip $trip, array $missing, array $late): string {
 		$notes = [];
-		if ($trip->getDeletedAt() !== null) {
-			$notes[] = 'Storniert am ' . gmdate('d.m.Y', $trip->getDeletedAt());
+		// A void made late is noted with the late changes, and it is the one the line shows.
+		$voidedLate = array_filter($late, static fn (array $change): bool => $change['change'] === 'voided'
+			&& ($change['fields']['deleted_at'][1] ?? null) === $trip->getDeletedAt()) !== [];
+		if ($trip->getDeletedAt() !== null && !$voidedLate) {
+			$notes[] = 'Storniert am ' . $this->utc($trip->getDeletedAt());
 		}
 		if ($missing !== []) {
 			$notes[] = 'Unvollständig, es fehlt: ' . $this->text(implode(', ', array_map(
@@ -189,8 +203,69 @@ class FahrtenbuchRenderer implements IReportRenderer {
 		if ($trip->getReconciled()) {
 			$notes[] = 'Abgleich: Kilometer aus dem Zählerstand abgeleitet, nicht abgelesen';
 		}
+		foreach ($late as $change) {
+			$notes[] = $this->lateChange($change);
+		}
 
 		return implode('<br>', $notes);
+	}
+
+	/**
+	 * One change made after the lock delay: when, and what each field said before it. The line
+	 * already shows what it says now. A restore says since when the trip had been voided, because the
+	 * line no longer does.
+	 *
+	 * @param LateChange $change
+	 */
+	private function lateChange(array $change): string {
+		$voidedAt = $change['fields']['deleted_at'][0] ?? null;
+		if ($change['change'] === 'voided') {
+			return 'Nachträglich storniert am ' . $this->utc($change['at']);
+		}
+		if ($change['change'] === 'restored') {
+			return 'Nachträglich wiederhergestellt am ' . $this->utc($change['at'])
+				. (is_int($voidedAt) ? '. Vorher: storniert am ' . $this->utc($voidedAt) : '');
+		}
+
+		$before = [];
+		foreach ($change['fields'] as $field => [$value]) {
+			$before[] = (self::WORDS[$field] ?? $this->text($field)) . ' ' . $this->before($field, $value, $change['offsets']);
+		}
+
+		return 'Nachträglich geändert am ' . $this->utc($change['at']) . '. Vorher: ' . implode('; ', $before);
+	}
+
+	/**
+	 * A value as it stood before a change, written the way its column writes it. A local time is
+	 * read with the offset in force before the change, which need not be the line's own.
+	 *
+	 * @param array{started_at_off: int, ended_at_off: int} $offsets
+	 */
+	private function before(string $field, mixed $value, array $offsets): string {
+		if ($value === null || $value === '') {
+			return 'leer';
+		}
+
+		return match ($field) {
+			'started_at' => $this->local((int)$value, $offsets['started_at_off']),
+			'ended_at' => $this->local((int)$value, $offsets['ended_at_off']),
+			'started_at_off', 'ended_at_off' => $this->offset((int)$value),
+			'start_odo', 'end_odo', 'distance' => $this->count((int)$value),
+			'category' => $this->text(self::CATEGORIES[$value] ?? (string)$value),
+			default => match (true) {
+				is_bool($value) => $value ? 'ja' : 'nein',
+				is_int($value) => $this->count($value),
+				default => '„' . $this->text(is_scalar($value) ? (string)$value : (string)json_encode($value)) . '“',
+			},
+		};
+	}
+
+	private function local(int $instant, int $offset): string {
+		return gmdate('d.m.Y, H:i', $instant + $offset * 60);
+	}
+
+	private function offset(int $minutes): string {
+		return sprintf('UTC%s%02d:%02d', $minutes < 0 ? '−' : '+', intdiv(abs($minutes), 60), abs($minutes) % 60);
 	}
 
 	private function footer(LogbookReport $report): string {

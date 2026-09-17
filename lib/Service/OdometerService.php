@@ -13,12 +13,16 @@ use OCA\NextFleet\Db\OdoReadingMapper;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
+use OCP\AppFramework\Db\TTransactional;
+use OCP\IDBConnection;
 
 /**
  * The odometer rules of docs/architecture.md#odometer-rules, in the one place that writes a
  * Reading.
  */
 class OdometerService {
+	use TTransactional;
+
 	public const OBSERVED = 'observed';
 	public const DERIVED = 'derived';
 
@@ -33,6 +37,7 @@ class OdometerService {
 		private OdoReadingMapper $readings,
 		private VehicleMapper $vehicles,
 		private VehicleService $fleet,
+		private IDBConnection $db,
 	) {
 	}
 
@@ -49,18 +54,25 @@ class OdometerService {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
 
 		$readAt = $this->count('read_at', $fields['read_at'] ?? null);
-		[$value, $origin] = $this->valueOf((int)$vehicle->getId(), $readAt, $fields);
+		$readAtOff = $this->offset('read_at_off', $fields['read_at_off'] ?? null);
 
-		return $this->write(
-			$vehicle,
-			$userId,
-			$readAt,
-			$this->offset('read_at_off', $fields['read_at_off'] ?? null),
-			$value,
-			$origin,
-			OdoReading::MANUAL,
-			null,
-		);
+		// Retried for the reason TripService::record() gives. The replay builds a fresh row.
+		return $this->atomicRetry(function () use ($vehicle, $userId, $readAt, $readAtOff, $fields): OdoReading {
+			// Held before the distance is counted from the chain, as settle() asks.
+			$this->vehicles->hold((int)$vehicle->getId());
+			[$value, $origin] = $this->valueOf((int)$vehicle->getId(), $readAt, $fields);
+
+			return $this->write(
+				$vehicle,
+				$userId,
+				$readAt,
+				$readAtOff,
+				$value,
+				$origin,
+				OdoReading::MANUAL,
+				null,
+			);
+		}, $this->db);
 	}
 
 	/**
@@ -252,6 +264,11 @@ class OdometerService {
 	 * Reads the vehicle's whole odometer back, decides every flag from scratch and caches the
 	 * newest value on the vehicle. Nothing is ever incremented in place, so two drivers logging
 	 * at once cannot corrupt a running total (rule 2).
+	 *
+	 * Recomputing is not enough on its own: a writer that read the chain before another's Reading
+	 * committed would cache the older number, and could cache it last. So every write that ends
+	 * here runs in one transaction that took VehicleMapper::hold() before it read or wrote
+	 * anything, and a second writer on the vehicle settles on the first one's chain.
 	 *
 	 * The whole chain, not a window around the row that changed: a bounded pass has to know how
 	 * far a contradiction can reach backwards, and getting that wrong is silent. That is also why

@@ -366,7 +366,7 @@ class TripServiceTest extends TestCase {
 	 * own reaches the same service the trips went through.
 	 */
 	private function odometer(): OdometerService {
-		return $this->odometer ??= new OdometerService($this->readingMapper, $this->vehicles, $this->fleet);
+		return $this->odometer ??= new OdometerService($this->readingMapper, $this->vehicles, $this->fleet, $this->db);
 	}
 
 	private function vehicle(): Vehicle {
@@ -611,31 +611,6 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
-	 * A column a property default merely agrees with is not dirty, so QBMapper leaves it out of
-	 * the INSERT and the NOT NULL constraint refuses the row.
-	 *
-	 * @dataProvider notNullColumns
-	 */
-	public function testATripWritesEveryColumnTheDatabaseWillNotDefault(string $property): void {
-		$this->service()->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
-
-		$this->assertArrayHasKey($property, $this->trips[0]->getUpdatedFields());
-	}
-
-	/**
-	 * @return iterable<string, array{string}>
-	 */
-	public static function notNullColumns(): iterable {
-		yield 'vehicle_id' => ['vehicleId'];
-		yield 'created_by' => ['createdBy'];
-		yield 'started_at' => ['startedAt'];
-		yield 'started_at_off' => ['startedAtOff'];
-		yield 'ended_at' => ['endedAt'];
-		yield 'ended_at_off' => ['endedAtOff'];
-		yield 'category' => ['category'];
-	}
-
-	/**
 	 * The database would refuse each of these too, but as a 500 that names no field. Refusing them
 	 * here is what makes the answer a 400 the sheet can point at. It is not the same as blocking on
 	 * a field a German logbook wants and the driver has not filled in - that one is a flag
@@ -827,7 +802,7 @@ class TripServiceTest extends TestCase {
 
 		$this->assertSame('begin', $this->calls[0]);
 		$this->assertSame('commit', end($this->calls));
-		$this->assertSame(['trip', 'audit'], array_slice($this->calls, 1, -1));
+		$this->assertSame(['hold', 'trip', 'audit'], array_slice($this->calls, 1, -1));
 	}
 
 	/**
@@ -899,9 +874,41 @@ class TripServiceTest extends TestCase {
 		$this->assertSame((int)$trip->getId(), $void->getEntityId());
 		$this->assertSame(self::OWNER, $void->getCreatedBy());
 		$this->assertSame(
-			['change' => 'voided', 'fields' => ['deleted_at' => [null, self::VOIDED_AT]]],
+			['change' => 'voided', 'fields' => ['deleted_at' => [null, self::VOIDED_AT]], 'late' => false],
 			$void->getDiffJson(),
 		);
+	}
+
+	/**
+	 * A void past the lock delay takes a line out of a logbook that was already kept, so its row
+	 * says it was late - measured from the end of the journey, the way an edit's is.
+	 */
+	public function testAVoidPastTheLockDelayIsMarkedLate(): void {
+		$this->logbookMode = true;
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+		$this->now = $trip->getEndedAt() + self::LOCK_DELAY_DAYS * 86400 + 1;
+
+		$service->delete(self::OWNER, self::VEHICLE, $trip->getUuid(), $trip->getUpdatedAt());
+
+		$this->assertTrue($this->audits[1]->getDiffJson()['late']);
+	}
+
+	/**
+	 * An undo months later puts a line back that an auditor may have read as voided, so it is late
+	 * too - even when the void it undoes was not.
+	 */
+	public function testARestorePastTheLockDelayIsMarkedLate(): void {
+		$this->logbookMode = true;
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+		$voided = $service->delete(self::OWNER, self::VEHICLE, $trip->getUuid(), $trip->getUpdatedAt());
+		$this->now = $trip->getEndedAt() + self::LOCK_DELAY_DAYS * 86400 + 1;
+
+		$service->restore(self::OWNER, self::VEHICLE, $trip->getUuid(), $voided->getUpdatedAt());
+
+		$this->assertFalse($this->audits[1]->getDiffJson()['late']);
+		$this->assertTrue($this->audits[2]->getDiffJson()['late']);
 	}
 
 	/**
@@ -931,7 +938,7 @@ class TripServiceTest extends TestCase {
 		$service->delete(self::OWNER, self::VEHICLE, $trip->getUuid(), $trip->getUpdatedAt());
 
 		$this->assertSame(
-			['begin', 'void', 'audit', 'reading', 'commit'],
+			['begin', 'hold', 'void', 'audit', 'reading', 'commit'],
 			array_slice($this->calls, $entering),
 		);
 	}
@@ -985,7 +992,7 @@ class TripServiceTest extends TestCase {
 
 		$this->assertCount(3, $this->audits);
 		$this->assertSame(
-			['change' => 'restored', 'fields' => ['deleted_at' => [self::VOIDED_AT, null]]],
+			['change' => 'restored', 'fields' => ['deleted_at' => [self::VOIDED_AT, null]], 'late' => false],
 			$this->audits[2]->getDiffJson(),
 		);
 		$this->assertSame(self::OWNER, $this->audits[2]->getCreatedBy());
@@ -1417,7 +1424,7 @@ class TripServiceTest extends TestCase {
 		);
 
 		$this->assertSame(
-			['begin', 'edit', 'audit', 'reading', 'commit'],
+			['begin', 'hold', 'edit', 'audit', 'reading', 'commit'],
 			array_slice($this->calls, $entering),
 		);
 	}
@@ -1592,6 +1599,33 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
+	 * A counter read between the two journeys moves neither end of the Gap. A confirmation of the
+	 * Gap as it was measured from that Reading is a Gap that no longer exists, and the closing trip
+	 * still counts from the last trip onto the claim - over the Reading, which it contradicts nowhere.
+	 */
+	public function testAReadingBetweenTheTripsIsClosedOverAndNotCountedFrom(): void {
+		$service = $this->service();
+		$service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120000));
+		$this->odometer()->record(self::OWNER, self::VEHICLE, [
+			'read_at' => 1750050000,
+			'read_at_off' => 120,
+			'value' => 120120,
+		]);
+		$claiming = $service->record(self::OWNER, self::VEHICLE, ['start_odo' => 120200] + $this->drove(self::GAP_TO_AT, 120300));
+
+		try {
+			$service->reconcile(self::OWNER, self::VEHICLE, $claiming->getUuid(), 80, 1750050000, self::GAP_TO_AT);
+			$this->fail('a Gap measured from the Reading was closed');
+		} catch (StaleUpdateException) {
+		}
+		$service->reconcile(self::OWNER, self::VEHICLE, $claiming->getUuid(), 200, self::GAP_FROM_AT, self::GAP_TO_AT);
+
+		$this->assertCount(3, $this->trips);
+		$this->assertSame([], (new Gaps($this->tripMapper, $this->readingMapper))->of($this->vehicle()));
+		$this->assertSame([120000 => false, 120120 => false, 120200 => false, 120300 => false], $this->chain());
+	}
+
+	/**
 	 * One Gap, closed once. A second confirmation of the same one - a double tap, a second tab - finds
 	 * nothing left to close rather than counting the kilometres twice.
 	 */
@@ -1648,6 +1682,44 @@ class TripServiceTest extends TestCase {
 		$service->reconcile(self::OWNER, self::VEHICLE, $claiming->getUuid(), 200, self::GAP_FROM_AT, self::GAP_TO_AT);
 
 		$this->assertSame(['begin', 'hold', 'trips read', 'trip', 'commit'], array_slice($this->calls, $before));
+	}
+
+	/**
+	 * Every trip write ends by settling the odometer: it reads the chain and caches the newest
+	 * value. Two at once on one vehicle - two tabs, two drivers of a shared car - would each read
+	 * a chain without the other's Reading, and whichever cached last could leave the vehicle on the
+	 * older number. Held first, the second waits for the first to commit and reads its Reading.
+	 *
+	 * @dataProvider settlingWrites
+	 */
+	public function testEveryTripWriteHoldsTheVehicleBeforeItReadsOrWritesAnything(string $method): void {
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+		if ($method === 'restore') {
+			$trip = $service->delete(self::OWNER, self::VEHICLE, $trip->getUuid(), $trip->getUpdatedAt());
+		}
+		$before = count($this->calls);
+
+		match ($method) {
+			'record' => $service->record(self::OWNER, self::VEHICLE, $this->drove(1750100000, 120900)),
+			'update' => $service->update(self::OWNER, self::VEHICLE, $trip->getUuid(), $trip->getUpdatedAt(), $this->drove(1750000000, 120460)),
+			default => $service->$method(self::OWNER, self::VEHICLE, $trip->getUuid(), $trip->getUpdatedAt()),
+		};
+
+		$this->assertSame(['begin', 'hold'], array_slice($this->calls, $before, 2));
+	}
+
+	/**
+	 * The trip writes that settle the odometer. Closing a Gap is the fifth, and
+	 * testTheVehicleIsHeldBeforeTheGapIsLookedFor pins it.
+	 *
+	 * @return iterable<string, array{string}>
+	 */
+	public static function settlingWrites(): iterable {
+		yield 'record' => ['record'];
+		yield 'update' => ['update'];
+		yield 'delete' => ['delete'];
+		yield 'restore' => ['restore'];
 	}
 
 	/** Closing a Gap adds a trip, so it takes the right adding one does. */

@@ -39,11 +39,11 @@ class VehicleMapper extends BaseMapper {
 
 	/**
 	 * Holds the vehicle's row until the caller's transaction ends, and changes nothing on it. A
-	 * write that first asks whether its change is still open - a Gap not yet closed - holds the
-	 * vehicle before asking, so a second writer on the same vehicle waits and then sees the first
-	 * one's answer. It works because Nextcloud runs its database at READ COMMITTED
-	 * (.docker/compose.yml), and an UPDATE is the lock `OCP` offers on every major this app
-	 * supports: `forUpdate()` is not in NC 31's query builder.
+	 * write that reads the vehicle's state before it writes - a Gap not yet closed, the chain a
+	 * Reading settles - holds the vehicle before reading, so a second writer on the same vehicle
+	 * waits and then sees the first one's answer. It works because Nextcloud runs its database at
+	 * READ COMMITTED (.docker/compose.yml), and an UPDATE is the lock `OCP` offers on every major
+	 * this app supports: `forUpdate()` is not in NC 31's query builder.
 	 *
 	 * @throws \OCP\DB\Exception
 	 */

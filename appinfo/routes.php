@@ -46,6 +46,10 @@ return [
 		// the trips' controller that answers (docs/features.md#logbook-mode).
 		['name' => 'trip#reconcile', 'url' => '/api/vehicles/{uuid}/gaps/{trip}/close', 'verb' => 'POST'],
 
+		// A page the browser prints, not an answer the app reads, so it sits outside `/api`
+		// (docs/adr/0005-no-pdf-library.md).
+		['name' => 'report#logbook', 'url' => '/vehicles/{uuid}/logbook/{year}', 'verb' => 'GET'],
+
 		// The session user's own settings - no identity in the URL, because there is only ever
 		// one set of them to reach (lib/Service/PreferencesService.php).
 		['name' => 'preferences#index', 'url' => '/api/preferences', 'verb' => 'GET'],

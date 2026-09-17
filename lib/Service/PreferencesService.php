@@ -44,7 +44,7 @@ class PreferencesService {
 	 * from. One answer rather than two routes, because a value without its options is a dropdown
 	 * with nothing in it (docs/adr/0006-one-api-surface-in-v1.md).
 	 *
-	 * @return array{preferences: array{jurisdiction: string, dismissed_hints: list<string>}, jurisdictions: list<array{key: string, name: string}>}
+	 * @return array{preferences: array{jurisdiction: string, dismissed_hints: list<string>}, jurisdictions: list<array{key: string, name: string, logbook_export: bool}>}
 	 */
 	public function forUser(string $userId): array {
 		return [
@@ -63,9 +63,12 @@ class PreferencesService {
 			'jurisdictions' => array_map(
 				// The name is English and reaches no catalogue here; the screen translates it
 				// (docs/ui.md#languages) and falls back to this for a country it has no word for.
+				// Whether a country prints a logbook travels with it, so the Reports screen offers
+				// the export only where the route would not answer 404.
 				static fn (IJurisdiction $profile): array => [
 					'key' => $profile->key(),
 					'name' => $profile->displayName(),
+					'logbook_export' => $profile->logbookRenderer() !== null,
 				],
 				$this->jurisdictions->all(),
 			),
@@ -78,7 +81,7 @@ class PreferencesService {
 	 * over rather than refused: Nextcloud merges its own routing parameters into every request.
 	 *
 	 * @param array<string, mixed> $fields
-	 * @return array{preferences: array{jurisdiction: string, dismissed_hints: list<string>}, jurisdictions: list<array{key: string, name: string}>}
+	 * @return array{preferences: array{jurisdiction: string, dismissed_hints: list<string>}, jurisdictions: list<array{key: string, name: string, logbook_export: bool}>}
 	 * @throws \InvalidArgumentException if a preference is not one of the answers it may take
 	 */
 	public function write(string $userId, array $fields): array {

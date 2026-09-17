@@ -4,7 +4,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { closeGap, ConflictError, createVehicle, deleteVehicle, getPreferences, listVehicles, readGaps, readTimeline, recordReading, recordTrip, restoreVehicle, savePreferences, updateVehicle } from './api.js'
+import { closeGap, ConflictError, createVehicle, deleteVehicle, getPreferences, listVehicles, logbookUrl, readGaps, readTimeline, recordReading, recordTrip, restoreVehicle, savePreferences, updateVehicle } from './api.js'
 
 vi.mock('@nextcloud/router', () => ({
 	generateUrl: (/** @type {string} */ path) => `/index.php${path}`,
@@ -319,5 +319,15 @@ describe('savePreferences', () => {
 		expect(options.method).toBe('PUT')
 		expect(JSON.parse(options.body)).toEqual({ jurisdiction: 'generic' })
 		expect(saved.preferences.jurisdiction).toBe('generic')
+	})
+})
+
+describe('logbookUrl', () => {
+	/**
+	 * The export is a page the browser opens, not an answer this client reads, so it is an address
+	 * outside `/api` and nothing is fetched (docs/architecture.md#the-fahrtenbuch-export).
+	 */
+	it('names one vehicle and one year outside the api', () => {
+		expect(logbookUrl(vehicle.uuid, '2025')).toBe(`/index.php/apps/nextfleet/vehicles/${vehicle.uuid}/logbook/2025`)
 	})
 })
