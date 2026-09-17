@@ -493,6 +493,43 @@ class TripTest extends TestCase {
 	}
 
 	/**
+	 * An Odometer Entry between the two journeys, against the real queries: the Gap is still measured
+	 * from where the first trip ended, a confirmation of it measured from the Entry is refused, and
+	 * the closing trip lands on the claim over the Entry.
+	 */
+	public function testAGapIsMeasuredFromTheLastTripAndClosedOverAnEntryBetween(): void {
+		$uuid = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 136'])->getUuid();
+		$this->record($uuid, 1750000000, ['end_odo' => 120000]);
+		$this->odometer->record(self::AUTHOR, $uuid, ['read_at' => 1750050000, 'read_at_off' => 0, 'value' => 120120]);
+		$claiming = $this->record($uuid, 1750100000, ['start_odo' => 120200, 'end_odo' => 120300]);
+		$gaps = \OCP\Server::get(Gaps::class);
+
+		$this->assertSame(
+			[[200, 1750005400, 1750100000]],
+			array_map(
+				static fn (array $gap): array => [$gap['distance'], $gap['from_at'], $gap['to_at']],
+				$gaps->of($this->vehicles->find(self::AUTHOR, $uuid)),
+			),
+		);
+		try {
+			$this->service->reconcile(self::AUTHOR, $uuid, $claiming->getUuid(), 80, 1750050000, 1750100000);
+			$this->fail('a Gap measured from the Entry was closed');
+		} catch (StaleUpdateException) {
+		}
+
+		$this->service->reconcile(self::AUTHOR, $uuid, $claiming->getUuid(), 200, 1750005400, 1750100000);
+
+		$this->assertSame([], $gaps->of($this->vehicles->find(self::AUTHOR, $uuid)));
+		$this->assertSame(
+			[[120000, false], [120120, false], [120200, false], [120300, false]],
+			array_map(
+				static fn ($reading): array => [$reading->getValue(), $reading->getFlagged()],
+				$this->odometer->list(self::AUTHOR, $uuid),
+			),
+		);
+	}
+
+	/**
 	 * Nothing registers these classes (lib/AppInfo/Application.php), so the container has to build
 	 * the whole chain from constructor types alone - the database connection the transaction needs
 	 * included.

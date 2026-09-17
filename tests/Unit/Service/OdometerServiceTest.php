@@ -16,6 +16,7 @@ use OCA\NextFleet\Exception\AccessDeniedException;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
+use OCP\IDBConnection;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
@@ -33,15 +34,19 @@ class OdometerServiceTest extends TestCase {
 	private array $rows = [];
 	private int $nextId = 1;
 	private ?int $cached = null;
+	/** Every read, write and transaction boundary, in the order they happened. @var list<string> */
+	private array $calls = [];
 
 	private OdoReadingMapper&MockObject $readings;
 	private VehicleMapper&MockObject $vehicles;
 	private VehicleService&MockObject $fleet;
+	private IDBConnection&MockObject $db;
 
 	protected function setUp(): void {
 		$this->rows = [];
 		$this->nextId = 1;
 		$this->cached = null;
+		$this->calls = [];
 
 		// A store rather than an expectation: every rule here is about a reading read back
 		// against its neighbours, which a per-call mock cannot say anything about.
@@ -52,6 +57,7 @@ class OdometerServiceTest extends TestCase {
 			$reading->setId($this->nextId);
 			$reading->setUuid('0195e2f1-0000-4000-8000-00000000000' . $this->nextId++);
 			$this->rows[] = $reading;
+			$this->calls[] = 'reading';
 
 			return $reading;
 		});
@@ -60,10 +66,14 @@ class OdometerServiceTest extends TestCase {
 				$reading->setFlagged($flagged);
 			},
 		);
-		$this->readings->method('findAllForVehicle')
-			->willReturnCallback(fn (int $vehicleId): array => $this->ordered($vehicleId));
+		$this->readings->method('findAllForVehicle')->willReturnCallback(function (int $vehicleId): array {
+			$this->calls[] = 'chain read';
+
+			return $this->ordered($vehicleId);
+		});
 		$this->readings->method('findNewestAtOrBefore')->willReturnCallback(
 			function (int $vehicleId, int $readAt): ?OdoReading {
+				$this->calls[] = 'base read';
 				$earlier = array_filter(
 					$this->ordered($vehicleId),
 					static fn (OdoReading $reading): bool => $reading->getReadAt() <= $readAt,
@@ -77,7 +87,19 @@ class OdometerServiceTest extends TestCase {
 		$this->vehicles->method('cacheOdoValue')
 			->willReturnCallback(function (int $vehicleId, ?int $value): void {
 				$this->cached = $value;
+				$this->calls[] = 'cache';
 			});
+		$this->vehicles->method('hold')->willReturnCallback(function (): void {
+			$this->calls[] = 'hold';
+		});
+
+		$this->db = $this->createMock(IDBConnection::class);
+		$this->db->method('beginTransaction')->willReturnCallback(function (): void {
+			$this->calls[] = 'begin';
+		});
+		$this->db->method('commit')->willReturnCallback(function (): void {
+			$this->calls[] = 'commit';
+		});
 
 		// Who reaches which vehicle is VehicleAccessTest's; here the gate stands for the answer,
 		// so what these tests state is which operation the odometer asks it for.
@@ -99,7 +121,7 @@ class OdometerServiceTest extends TestCase {
 	}
 
 	private function service(): OdometerService {
-		return new OdometerService($this->readings, $this->vehicles, $this->fleet);
+		return new OdometerService($this->readings, $this->vehicles, $this->fleet, $this->db);
 	}
 
 	private function vehicle(): Vehicle {
@@ -240,29 +262,22 @@ class OdometerServiceTest extends TestCase {
 	}
 
 	/**
-	 * A column a property default merely agrees with is not dirty, so QBMapper leaves it out of
-	 * the INSERT and the NOT NULL constraint refuses the row. Every one of them is written.
-	 *
-	 * @dataProvider notNullColumns
+	 * Rule 2 against two writers at once: each settles the chain and caches its newest value, so
+	 * one that read the chain before the other's Reading committed could cache last and leave the
+	 * vehicle on the older number. The vehicle is held before the Entry counts from anything, so the
+	 * second waits for the first to commit and reads its Reading.
 	 */
-	public function testARecordWritesEveryColumnTheDatabaseWillNotDefault(string $property): void {
-		$this->service()->record(self::OWNER, self::VEHICLE, $this->at(1750000000, 120450));
+	public function testAnEntryHoldsTheVehicleBeforeItReadsTheChain(): void {
+		$service = $this->service();
+		$service->record(self::OWNER, self::VEHICLE, $this->at(1750000000, 120450));
+		$before = count($this->calls);
 
-		$this->assertArrayHasKey($property, $this->rows[0]->getUpdatedFields());
-	}
+		$service->record(self::OWNER, self::VEHICLE, $this->drove(1750086400, 137));
 
-	/**
-	 * @return iterable<string, array{string}>
-	 */
-	public static function notNullColumns(): iterable {
-		yield 'vehicle_id' => ['vehicleId'];
-		yield 'created_by' => ['createdBy'];
-		yield 'read_at' => ['readAt'];
-		yield 'read_at_off' => ['readAtOff'];
-		yield 'value' => ['value'];
-		yield 'kind' => ['kind'];
-		yield 'origin' => ['origin'];
-		yield 'source_type' => ['sourceType'];
+		$this->assertSame(
+			['begin', 'hold', 'base read', 'reading', 'chain read', 'cache', 'commit'],
+			array_slice($this->calls, $before),
+		);
 	}
 
 	/**

@@ -156,7 +156,7 @@ beforeEach(() => {
 	vi.resetAllMocks()
 	vi.mocked(getPreferences).mockResolvedValue({
 		preferences: { jurisdiction: 'de', dismissed_hints: [] },
-		jurisdictions: [{ key: 'de', name: 'Germany' }, { key: 'generic', name: 'Generic' }],
+		jurisdictions: [{ key: 'de', name: 'Germany', logbook_export: true }, { key: 'generic', name: 'Generic', logbook_export: false }],
 	})
 	vi.mocked(createVehicle).mockImplementation(async (fields) => ({ ...fields, uuid: 'v-new', updated_at: 1 }))
 	vi.mocked(updateVehicle).mockImplementation(async (vehicle) => ({ ...vehicle, updated_at: 1700000900 }))

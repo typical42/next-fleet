@@ -11,12 +11,14 @@ namespace OCA\NextFleet\Tests\Integration;
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Controller\OdometerController;
 use OCA\NextFleet\Controller\PreferencesController;
+use OCA\NextFleet\Controller\ReportController;
 use OCA\NextFleet\Controller\TimelineController;
 use OCA\NextFleet\Controller\TripController;
 use OCA\NextFleet\Controller\VehicleController;
 use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\Vehicle;
+use OCA\NextFleet\Service\LogbookExport;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\PreferencesService;
 use OCA\NextFleet\Service\TimelineService;
@@ -24,6 +26,7 @@ use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\DataResponse;
+use OCP\AppFramework\Http\Response;
 use OCP\IDBConnection;
 use OCP\IRequest;
 use OCP\IUser;
@@ -57,6 +60,7 @@ class VehicleIdorTest extends TestCase {
 	private OdometerService $odometry;
 	private TripService $journeys;
 	private TimelineService $history;
+	private LogbookExport $logbook;
 	private PreferencesService $settings;
 	private AccessMapper $grants;
 	private Vehicle $vehicle;
@@ -67,6 +71,7 @@ class VehicleIdorTest extends TestCase {
 		$this->odometry = $container->get(OdometerService::class);
 		$this->journeys = $container->get(TripService::class);
 		$this->history = $container->get(TimelineService::class);
+		$this->logbook = $container->get(LogbookExport::class);
 		$this->settings = $container->get(PreferencesService::class);
 		$this->grants = $container->get(AccessMapper::class);
 
@@ -139,6 +144,15 @@ class VehicleIdorTest extends TestCase {
 	}
 
 	/**
+	 * And for the printable pages, which show what the timeline shows.
+	 *
+	 * @param array<string, mixed> $params
+	 */
+	private function report(string $userId, array $params): ReportController {
+		return new ReportController(Application::APP_ID, $this->request($params), $this->logbook, $this->session($userId));
+	}
+
+	/**
 	 * The same, for the routes that name no vehicle at all. They are in the sweep because every
 	 * route is: what they must not do is answer for somebody else.
 	 *
@@ -172,8 +186,8 @@ class VehicleIdorTest extends TestCase {
 	 *
 	 * @return list<string>
 	 */
-	private function uuidsIn(DataResponse $response): array {
-		$data = $response->getData();
+	private function uuidsIn(Response $response): array {
+		$data = $response instanceof DataResponse ? $response->getData() : null;
 		$uuids = [];
 		foreach (is_array($data) ? $data : [$data] as $item) {
 			if ($item instanceof Vehicle) {
@@ -230,6 +244,7 @@ class VehicleIdorTest extends TestCase {
 				->reconcile($uuid, self::NO_SUCH_TRIP),
 			'timeline#index' => $this->timeline(self::STRANGER, $params)->index($uuid),
 			'timeline#gaps' => $this->timeline(self::STRANGER, $params)->gaps($uuid),
+			'report#logbook' => $this->report(self::STRANGER, $params)->logbook($uuid, '2026'),
 			'preferences#index' => $this->preferences(self::STRANGER, $params)->index(),
 			'preferences#update' => $this->preferences(self::STRANGER, $params)->update(),
 			default => $this->fail($route . ' is a route the IDOR sweep has never been through'),

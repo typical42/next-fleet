@@ -89,6 +89,12 @@ class LogbookExportTest extends TestCase {
 				static fn (Audit $row): bool => $row->getEntity() === $entity && $row->getEntityId() === $id,
 			)),
 		);
+		$audit->method('findForEntities')->willReturnCallback(
+			fn (string $entity, array $ids): array => array_values(array_filter(
+				$this->auditRows,
+				static fn (Audit $row): bool => $row->getEntity() === $entity && in_array($row->getEntityId(), $ids, true),
+			)),
+		);
 
 		// Who reaches which vehicle is VehicleAccessTest's; what this states is which operation an
 		// export asks the gate for.
@@ -171,6 +177,22 @@ class LogbookExportTest extends TestCase {
 		]);
 	}
 
+	/**
+	 * One change to a trip, as TripService writes it.
+	 *
+	 * @param array<string, mixed> $diff
+	 */
+	private function changed(Trip $trip, int $at, array $diff): void {
+		$this->auditRows[] = Audit::fromRow([
+			'id' => $this->nextId++,
+			'entity' => Audit::TRIP,
+			'entity_id' => $trip->getId(),
+			'diff_json' => json_encode($diff),
+			'created_at' => $at,
+			'created_by' => self::OWNER,
+		]);
+	}
+
 	private function export(int $year = 2026, string $userId = self::OWNER): ?string {
 		return $this->service()->year($userId, self::VEHICLE, $year);
 	}
@@ -221,12 +243,83 @@ class LogbookExportTest extends TestCase {
 
 	/** Each line carries what its ruleset requires and it leaves unstated - the timeline's measure. */
 	public function testEachTripCarriesWhatItLacks(): void {
+		$this->logbookMode = true;
 		$this->trip(self::NEW_YEAR + 86400, 60, ['partner' => null]);
 		$this->trip(self::NEW_YEAR + 2 * 86400, 60, ['partner' => null, 'category' => Trip::PRIVATE]);
 
 		$this->export();
 
 		$this->assertSame([['partner'], []], array_column($this->printed?->trips ?? [], 'missing'));
+	}
+
+	/**
+	 * What the logbook asks is said only under the mode (docs/features.md#logbook-mode), so a trip is
+	 * marked only when it set off inside a period: from the flip on, up to but not at the flip off.
+	 */
+	public function testOnlyATripSetOffUnderTheModeLacksAnything(): void {
+		$this->logbookMode = false;
+		$this->switched(true, self::NEW_YEAR + 10 * 86400);
+		$this->switched(false, self::NEW_YEAR + 20 * 86400);
+		foreach ([9, 10, 15, 20, 21] as $day) {
+			$this->trip(self::NEW_YEAR + $day * 86400, 60, ['partner' => null]);
+		}
+
+		$this->export();
+
+		$this->assertSame([[], ['partner'], ['partner'], [], []], array_column($this->printed?->trips ?? [], 'missing'));
+	}
+
+	/**
+	 * A change the auditor cannot see is not documented, so each line carries its trip's late
+	 * changes, oldest first: what kind, when, and what each field was before. A void and a restore
+	 * are carried too: a restore months later would otherwise erase a void without a trace. A change
+	 * inside the lock delay is still the entry being made and is not carried.
+	 */
+	public function testEachTripCarriesItsLateChangesAndNoOtherChange(): void {
+		$this->logbookMode = true;
+		$edited = $this->trip(self::NEW_YEAR + 86400);
+		$untouched = $this->trip(self::NEW_YEAR + 2 * 86400);
+		$later = self::NEW_YEAR + 30 * 86400;
+		$this->changed($edited, self::NEW_YEAR + 86400, ['change' => 'created', 'fields' => ['purpose' => [null, 'Abnahme']]]);
+		$this->changed($edited, self::NEW_YEAR + 2 * 86400, ['change' => 'edited', 'fields' => ['partner' => [null, 'Muster GmbH']], 'late' => false]);
+		$this->changed($edited, self::NEW_YEAR + 2 * 86400 + 60, ['change' => 'voided', 'fields' => ['deleted_at' => [null, self::NEW_YEAR + 2 * 86400 + 60]], 'late' => false]);
+		$this->changed($edited, $later, ['change' => 'restored', 'fields' => ['deleted_at' => [self::NEW_YEAR + 2 * 86400 + 60, null]], 'late' => true]);
+		$this->changed($edited, $later + 60, ['change' => 'edited', 'fields' => ['purpose' => ['Besuch', 'Abnahme'], 'end_odo' => [120100, 120001]], 'late' => true]);
+		$this->changed($edited, $later + 120, ['change' => 'voided', 'fields' => ['deleted_at' => [null, $later + 120]], 'late' => true]);
+
+		$this->export();
+
+		$offsets = ['started_at_off' => 60, 'ended_at_off' => 60];
+		$this->assertSame([
+			[
+				['change' => 'restored', 'at' => $later, 'fields' => ['deleted_at' => [self::NEW_YEAR + 2 * 86400 + 60, null]], 'offsets' => $offsets],
+				['change' => 'edited', 'at' => $later + 60, 'fields' => ['purpose' => ['Besuch', 'Abnahme'], 'end_odo' => [120100, 120001]], 'offsets' => $offsets],
+				['change' => 'voided', 'at' => $later + 120, 'fields' => ['deleted_at' => [null, $later + 120]], 'offsets' => $offsets],
+			],
+			[],
+		], array_column($this->printed?->trips ?? [], 'late'));
+		$this->assertSame($untouched->getUuid(), $this->printedTrips()[1]);
+	}
+
+	/**
+	 * A time before a change is only readable with the offset in force then, and a later edit may
+	 * have moved it since - a timely one too. So each late change carries the offsets as they stood
+	 * before it, read back from the trip as it is now through every row after.
+	 */
+	public function testALateChangeCarriesTheOffsetsInForceBeforeIt(): void {
+		$this->logbookMode = true;
+		$trip = $this->trip(self::NEW_YEAR + 86400, 120);
+		$later = self::NEW_YEAR + 30 * 86400;
+		$this->changed($trip, $later, ['change' => 'edited', 'fields' => ['started_at' => [self::NEW_YEAR + 82800, self::NEW_YEAR + 86400]], 'late' => true]);
+		$this->changed($trip, $later + 60, ['change' => 'edited', 'fields' => ['started_at_off' => [60, 120]], 'late' => false]);
+		$this->changed($trip, $later + 120, ['change' => 'edited', 'fields' => ['ended_at_off' => [0, 120], 'purpose' => ['Besuch', 'Abnahme']], 'late' => true]);
+
+		$this->export();
+
+		$this->assertSame(
+			[['started_at_off' => 60, 'ended_at_off' => 0], ['started_at_off' => 120, 'ended_at_off' => 0]],
+			array_column($this->printed?->trips[0]['late'] ?? [], 'offsets'),
+		);
 	}
 
 	/** A vehicle whose jurisdiction states no requirement cites none. */
@@ -281,6 +374,35 @@ class LogbookExportTest extends TestCase {
 			['from' => self::CREATED_AT, 'to' => self::NEW_YEAR + 10 * 86400],
 			['from' => self::NEW_YEAR + 20 * 86400, 'to' => self::NEW_YEAR + 30 * 86400],
 		], $this->printed?->periods);
+	}
+
+	/**
+	 * The trips are the local year's, so the periods reach as far: a mode switched off at half past
+	 * midnight in Berlin on New Year's Day covered trips this export lists, although its UTC
+	 * instant is still in the old year.
+	 */
+	public function testAPeriodEndingInTheYearsFirstLocalHourIsStated(): void {
+		$this->logbookMode = false;
+		$this->switched(false, self::NEW_YEAR - 1800);
+
+		$this->export();
+
+		$this->assertSame([['from' => self::CREATED_AT, 'to' => self::NEW_YEAR - 1800]], $this->printed?->periods);
+	}
+
+	/**
+	 * No offset reaches further than fourteen hours east or twelve west (TripService), so a period
+	 * that ended fifteen hours before the UTC year, or begins thirteen after it, holds none of its
+	 * trips - and the year was not under the mode.
+	 */
+	public function testAPeriodNoLocalHourOfTheYearFallsInIsNotStated(): void {
+		$this->logbookMode = false;
+		$this->switched(false, self::NEW_YEAR - 15 * 3600);
+		$this->switched(true, self::NEXT_NEW_YEAR + 13 * 3600);
+
+		$this->export();
+
+		$this->assertSame([], $this->printed?->periods);
 	}
 
 	/** A period that ended before the year or began after it is not the year's to state. */

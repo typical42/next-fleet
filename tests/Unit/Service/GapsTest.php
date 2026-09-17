@@ -18,7 +18,7 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * The kilometres before a trip that no record accounts for: its `start_odo` claim, measured against
- * the Reading before it (docs/architecture.md#odometer-rules, rule 5).
+ * the last trip's Reading before it (docs/architecture.md#odometer-rules, rule 5).
  *
  * The mappers are stores that hand back what the real reads do - one vehicle's rows, voided ones
  * left out, in their order. That the queries do so is tests/Integration/TimelineTest.php's.
@@ -156,23 +156,85 @@ class GapsTest extends TestCase {
 	}
 
 	/**
-	 * The newest Reading at or before the start, the one a distance would count from (rule 6) - not
-	 * the first one, and not one read while the journey was under way.
+	 * The newest trip's Reading at or before the start - not the first trip's, and not one a trip
+	 * left while this journey was under way.
 	 */
-	public function testEachTripIsMeasuredAgainstTheNewestReadingAtOrBeforeItsStart(): void {
-		$this->counter(self::T0, 119000);
+	public function testEachTripIsMeasuredAgainstTheNewestTripReadingAtOrBeforeItsStart(): void {
+		$this->trip(self::T0, null, self::T0 + 3600, 119000);
 		$this->trip(self::T0 + self::DAY, 119000, self::T0 + self::DAY + 3600, 120000);
-		$this->counter(self::T0 + 2 * self::DAY, 120040);
-		$second = $this->trip(self::T0 + 2 * self::DAY, 120100, self::T0 + 3 * self::DAY, 120900);
-		$this->counter(self::T0 + 2 * self::DAY + 60, 120500);
+		$third = $this->trip(self::T0 + 2 * self::DAY, 120100, self::T0 + 3 * self::DAY, 120900);
+		$this->trip(self::T0 + 2 * self::DAY + 30, null, self::T0 + 2 * self::DAY + 60, 120500);
 
 		$this->assertSame(
-			[[$second->getUuid(), 60, self::T0 + 2 * self::DAY]],
+			[[$third->getUuid(), 100, self::T0 + self::DAY + 3600]],
 			array_map(
 				static fn (array $gap): array => [$gap['trip'], $gap['distance'], $gap['from_at']],
 				$this->gaps()->of($this->vehicle()),
 			),
 		);
+	}
+
+	/**
+	 * The task: a counter somebody read between two journeys proves the vehicle moved, not who drove
+	 * it. The claim is measured against where the last trip left the counter.
+	 */
+	public function testAReadingBetweenTwoTripsAccountsForNoKilometre(): void {
+		$this->trip(self::T0, 119900, self::T0 + 3600, 120000);
+		$this->counter(self::T0 + self::DAY, 120150);
+		$second = $this->trip(self::T0 + 2 * self::DAY, 120200, self::T0 + 2 * self::DAY + 3600, 120280);
+
+		$this->assertSame([[
+			'trip' => $second->getUuid(),
+			'distance' => 200,
+			'from_at' => self::T0 + 3600,
+			'from_at_off' => 120,
+			'to_at' => self::T0 + 2 * self::DAY,
+			'to_at_off' => 60,
+		]], $this->gaps()->of($this->vehicle()));
+	}
+
+	/**
+	 * A Reading the last trip did not write may still say something the claim cannot pass over: one
+	 * in question, or one the counter already stood above the claim at. Either is a question, and a
+	 * Gap counted past it could be kilometres nobody drove.
+	 *
+	 * @return array<string, array{int, bool}>
+	 */
+	public static function questionsBetween(): array {
+		return [
+			'a Reading in question' => [12000, true],
+			'a Reading above the claim' => [120250, false],
+		];
+	}
+
+	/** @dataProvider questionsBetween */
+	public function testAQuestionBetweenTheLastTripAndTheClaimOpensNoGap(int $value, bool $flagged): void {
+		$this->trip(self::T0, 119900, self::T0 + 3600, 120000);
+		$this->counter(self::T0 + self::DAY, $value, $flagged);
+		$this->trip(self::T0 + 2 * self::DAY, 120200, self::T0 + 2 * self::DAY + 3600, 120280);
+
+		$this->assertSame([], $this->gaps()->of($this->vehicle()));
+	}
+
+	/**
+	 * A counter read at the very moment the last trip ended, higher than that trip left it, is a
+	 * counter that moved in no time. It is also the Reading a closing trip would count from (rule 6),
+	 * which would carry it past the claim. So it is a question too.
+	 */
+	public function testAReadingThatDisagreesWithTheLastTripAtItsOwnMomentOpensNoGap(): void {
+		$this->trip(self::T0, 119900, self::T0 + 3600, 120000);
+		$this->counter(self::T0 + 3600, 120100);
+		$this->trip(self::T0 + self::DAY, 120200, self::T0 + self::DAY + 3600, 120280);
+
+		$this->assertSame([], $this->gaps()->of($this->vehicle()));
+	}
+
+	/** The same holds for the claiming trip's own Reading, when it ended the moment the last one did. */
+	public function testATripEndingAtTheLastTripsOwnMomentOpensNoGap(): void {
+		$this->trip(self::T0, 119900, self::T0 + 3600, 120000);
+		$this->trip(self::T0 + 3600, 120200, self::T0 + 3600, 120280);
+
+		$this->assertSame([], $this->gaps()->of($this->vehicle()));
 	}
 
 	/** A journey that ends the moment it starts has its own Reading at its start. It is not the one before. */

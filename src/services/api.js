@@ -20,6 +20,7 @@ import { generateUrl } from '@nextcloud/router'
  * @property {number|null} [odo_value] - the newest Reading, cached; null until one exists
  * @property {string} [odo_unit] - `km` or `h`, the vehicle's own
  * @property {string} [lifecycle] - `active`, `laid_up` or `disposed` (CONTEXT.md)
+ * @property {string} [jurisdiction] - the country whose rules it is kept under (CONTEXT.md)
  * @property {boolean|null} [logbook_mode] - under its jurisdiction's logbook rules; null is off
  * @property {string|null} [vin] - the vehicle's identity as its maker stamped it
  * @property {string|null} [first_reg] - the day it was first registered, `YYYY-MM-DD`
@@ -87,13 +88,13 @@ import { generateUrl } from '@nextcloud/router'
  */
 
 /**
- * Kilometres before a trip that no record accounts for (CONTEXT.md), bracketed by the Reading before
- * the trip and the trip's start.
+ * Kilometres before a trip that no trip accounts for (CONTEXT.md), bracketed by the Reading the last
+ * trip left and the trip's start.
  *
  * @typedef {object} Gap
  * @property {string} trip - the uuid of the trip whose `start_odo` opened it
  * @property {number} distance - how far, in the vehicle's `odo_unit`
- * @property {number} from_at - when the Reading before it was read, seconds
+ * @property {number} from_at - when the Reading it is measured against was read, seconds
  * @property {number} from_at_off - the UTC offset that Reading was read at, minutes
  * @property {number} to_at - when the trip set off, seconds
  * @property {number} to_at_off - the UTC offset it set off at, minutes
@@ -108,7 +109,8 @@ import { generateUrl } from '@nextcloud/router'
  * @property {{ jurisdiction: string, dismissed_hints: string[] }} preferences - this user's own
  *   choices: the country new vehicles are kept under, and the vehicles whose "complete this
  *   vehicle" hint they have answered
- * @property {{ key: string, name: string }[]} jurisdictions - the registered countries, English
+ * @property {{ key: string, name: string, logbook_export: boolean }[]} jurisdictions - the registered
+ *   countries, English, and whether each prints a logbook
  */
 
 /**
@@ -266,6 +268,19 @@ export async function closeGap(uuid, gap) {
 		from_at: gap.from_at,
 		to_at: gap.to_at,
 	})
+}
+
+/**
+ * Where one vehicle's Fahrtenbuch for one year is printed. An address rather than a request: the
+ * page is opened by navigating to it, which is why the route asks no request token
+ * (docs/architecture.md#the-fahrtenbuch-export).
+ *
+ * @param {string} uuid - the vehicle whose logbook to print
+ * @param {string} year - the year as four digits, which is what the route takes
+ * @return {string} the page's address
+ */
+export function logbookUrl(uuid, year) {
+	return generateUrl(`/apps/nextfleet/vehicles/${uuid}/logbook/${year}`)
 }
 
 /**

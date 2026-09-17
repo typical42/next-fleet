@@ -70,4 +70,27 @@ class AuditMapper extends BaseMapper {
 
 		return $this->findEntities($qb);
 	}
+
+	/**
+	 * The trails of many rows of one table, each oldest first, so a year's export asks once per
+	 * thousand trips rather than once per trip. A thousand because Oracle refuses a longer `IN`.
+	 *
+	 * @param list<int> $entityIds
+	 * @return list<Audit>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findForEntities(string $entity, array $entityIds): array {
+		$rows = [];
+		foreach (array_chunk($entityIds, 1000) as $chunk) {
+			$qb = $this->db->getQueryBuilder();
+			$qb->select('*')
+				->from($this->tableName)
+				->where($qb->expr()->eq('entity', $qb->createNamedParameter($entity)))
+				->andWhere($qb->expr()->in('entity_id', $qb->createNamedParameter($chunk, IQueryBuilder::PARAM_INT_ARRAY)))
+				->orderBy('id', 'ASC');
+			array_push($rows, ...$this->findEntities($qb));
+		}
+
+		return $rows;
+	}
 }

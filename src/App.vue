@@ -6,6 +6,8 @@
 import { t } from '@nextcloud/l10n'
 import NcAppContent from '@nextcloud/vue/components/NcAppContent'
 import NcAppNavigation from '@nextcloud/vue/components/NcAppNavigation'
+import NcAppNavigationItem from '@nextcloud/vue/components/NcAppNavigationItem'
+import NcAppNavigationList from '@nextcloud/vue/components/NcAppNavigationList'
 import NcAppNavigationNew from '@nextcloud/vue/components/NcAppNavigationNew'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcContent from '@nextcloud/vue/components/NcContent'
@@ -18,6 +20,7 @@ import VehicleSheet from './components/VehicleSheet.vue'
 import { useVehiclesStore } from './store/index.js'
 import { usePreferencesStore } from './store/preferences.js'
 import OverviewView from './views/OverviewView.vue'
+import ReportsView from './views/ReportsView.vue'
 import VehicleView from './views/VehicleView.vue'
 
 const store = useVehiclesStore()
@@ -25,6 +28,8 @@ const preferences = usePreferencesStore()
 
 /** The vehicle the content area shows; empty means the overview (docs/ui.md). */
 const selected = ref('')
+/** Whether the content area shows the reports instead, which belong to no one vehicle. */
+const reporting = ref(false)
 const creating = ref(false)
 const failure = ref('')
 
@@ -32,6 +37,9 @@ const failure = ref('')
 // of in the edit sheet leaves that list (docs/ui.md), and its screen would otherwise stay open
 // with no entry to leave it by.
 const vehicle = computed(() => store.visible.find((one) => one.uuid === selected.value))
+// Read off what the content area shows, not off `selected`: a vehicle that left the fleet falls
+// back to the overview with its uuid still selected.
+const overview = computed(() => !reporting.value && !vehicle.value)
 
 onMounted(load)
 
@@ -60,7 +68,21 @@ async function load() {
  */
 function open(created) {
 	creating.value = false
-	selected.value = created.uuid
+	show(created.uuid)
+}
+
+/**
+ * @param {string} uuid - the vehicle whose screen to show
+ */
+function show(uuid) {
+	reporting.value = false
+	selected.value = uuid
+}
+
+/** No vehicle stays selected: a report picks its own, sold ones included. */
+function report() {
+	selected.value = ''
+	reporting.value = true
 }
 </script>
 
@@ -71,9 +93,19 @@ function open(created) {
 				<NcAppNavigationNew :text="t('nextfleet', 'New vehicle')" @click="creating = true" />
 			</template>
 			<template #list>
+				<NcAppNavigationItem :name="t('nextfleet', 'Overview')"
+					:active="overview"
+					@click="show('')" />
 				<VehicleList :vehicles="store.visible"
 					:selected="selected"
-					@select="selected = $event" />
+					@select="show" />
+			</template>
+			<template #footer>
+				<NcAppNavigationList>
+					<NcAppNavigationItem :name="t('nextfleet', 'Reports')"
+						:active="reporting"
+						@click="report" />
+				</NcAppNavigationList>
 			</template>
 		</NcAppNavigation>
 		<NcAppContent>
@@ -88,11 +120,14 @@ function open(created) {
 					</NcButton>
 				</template>
 			</NcEmptyContent>
+			<!-- The whole fleet rather than the visible one: a sold vehicle's logbook is still kept
+			     (docs/features.md#logbook-mode). -->
+			<ReportsView v-else-if="reporting" :vehicles="store.list" />
 			<VehicleView v-else-if="vehicle" :vehicle="vehicle" />
 			<OverviewView v-else
 				:vehicles="store.visible"
 				@new="creating = true"
-				@select="selected = $event" />
+				@select="show" />
 		</NcAppContent>
 		<VehicleSheet v-if="creating" @close="creating = false" @created="open" />
 		<!-- Outside the screens on purpose: a delete takes the screen that asked for it with the

@@ -197,7 +197,10 @@ abstract class JurisdictionTestCase extends TestCase {
 		$html = $renderer->render(new LogbookReport(
 			$vehicle,
 			2026,
-			[['trip' => $trip, 'missing' => [$hostile]]],
+			[['trip' => $trip, 'missing' => [$hostile], 'late' => [['change' => 'edited', 'at' => 1767265400, 'fields' => [
+				'purpose' => [$hostile, $hostile],
+				$hostile => [$hostile, null],
+			], 'offsets' => ['started_at_off' => 0, 'ended_at_off' => 0]]]]],
 			[['from' => 1767225600, 'to' => null]],
 			'https://example.org/"><script>alert(3)</script>',
 		));

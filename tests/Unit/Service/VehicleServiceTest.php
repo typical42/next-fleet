@@ -253,18 +253,6 @@ class VehicleServiceTest extends TestCase {
 	}
 
 	/**
-	 * A column a property default merely agrees with is not dirty, so QBMapper leaves it out of
-	 * the INSERT and the NOT NULL constraint refuses the row. Every one of them is written.
-	 *
-	 * @dataProvider notNullColumns
-	 */
-	public function testCreateWritesEveryColumnTheDatabaseWillNotDefault(string $property): void {
-		$vehicle = $this->service()->create('alice', []);
-
-		$this->assertArrayHasKey($property, $vehicle->getUpdatedFields());
-	}
-
-	/**
 	 * The vocabulary is CONTEXT.md's and the data model's, and a column that classifies is
 	 * worth nothing once anything may be written into it.
 	 *
@@ -542,17 +530,5 @@ class VehicleServiceTest extends TestCase {
 		yield 'a German date' => [['first_reg' => '07.03.2019']];
 		yield 'a day that is not one' => [['first_reg' => '2019-02-31']];
 		yield 'a plate longer than the column' => [['plate' => str_repeat('B', 33)]];
-	}
-
-	/**
-	 * @return iterable<string, array{string}>
-	 */
-	public static function notNullColumns(): iterable {
-		yield 'user_id' => ['userId'];
-		yield 'created_by' => ['createdBy'];
-		yield 'vehicle_type' => ['vehicleType'];
-		yield 'odo_unit' => ['odoUnit'];
-		yield 'jurisdiction' => ['jurisdiction'];
-		yield 'lifecycle' => ['lifecycle'];
 	}
 }

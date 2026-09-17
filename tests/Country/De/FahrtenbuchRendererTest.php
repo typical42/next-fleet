@@ -18,6 +18,8 @@ use PHPUnit\Framework\TestCase;
  * How Germany prints a Fahrtenbuch. What goes into it is the core's (`LogbookReport`); that the page
  * loads nothing and escapes everything is the shared kit's. This is the layout: what an auditor
  * reads on each line, and in which words.
+ *
+ * @psalm-import-type LateChange from LogbookReport
  */
 class FahrtenbuchRendererTest extends TestCase {
 	/** 2026-03-02 07:00 UTC, which is 08:00 in Berlin in winter. */
@@ -51,7 +53,7 @@ class FahrtenbuchRendererTest extends TestCase {
 	}
 
 	/**
-	 * @param list<array{trip: Trip, missing: list<string>}> $trips
+	 * @param list<array{trip: Trip, missing: list<string>, late: list<LateChange>}> $trips
 	 * @param list<array{from: int, to: ?int}> $periods
 	 */
 	private function render(array $trips, array $periods = [], ?string $source = self::SOURCE): \DOMXPath {
@@ -101,7 +103,7 @@ class FahrtenbuchRendererTest extends TestCase {
 	 * written the way a German reads a number, and the category in words.
 	 */
 	public function testABusinessTripReadsAsOneLineOfTheLogbook(): void {
-		$rows = $this->rows($this->render([['trip' => $this->trip(), 'missing' => []]]));
+		$rows = $this->rows($this->render([['trip' => $this->trip(), 'missing' => [], 'late' => []]]));
 
 		$this->assertSame([[
 			'Datum' => '02.03.2026',
@@ -114,7 +116,7 @@ class FahrtenbuchRendererTest extends TestCase {
 			'Zweck' => 'Abnahme',
 			'Geschäftspartner' => 'Muster GmbH',
 			'Art' => 'Dienstlich',
-			'Erfasst' => '02.03.2026',
+			'Erfasst (UTC)' => '02.03.2026',
 			'Vermerk' => '',
 		]], $rows);
 	}
@@ -130,14 +132,14 @@ class FahrtenbuchRendererTest extends TestCase {
 			'started_at_off' => 120,
 			'ended_at' => 1775001600, // 2026-04-01 00:00 UTC
 			'ended_at_off' => 120,
-		]), 'missing' => []]]));
+		]), 'missing' => [], 'late' => []]]));
 
 		$this->assertSame('01.04.2026', $rows[0]['Datum']);
 		$this->assertSame('00:30–02:00', $rows[0]['Zeit']);
 
 		$rows = $this->rows($this->render([['trip' => $this->trip([
 			'ended_at' => self::MONDAY + 86400,
-		]), 'missing' => []]]));
+		]), 'missing' => [], 'late' => []]]));
 
 		$this->assertSame('08:00–03.03.2026 08:00', $rows[0]['Zeit']);
 	}
@@ -149,7 +151,7 @@ class FahrtenbuchRendererTest extends TestCase {
 			'end_odo' => null,
 			'distance' => 1234,
 			'category' => Trip::PRIVATE,
-		]), 'missing' => []]]));
+		]), 'missing' => [], 'late' => []]]));
 
 		$this->assertSame('', $rows[0]['Km-Stand Beginn']);
 		$this->assertSame('', $rows[0]['Km-Stand Ende']);
@@ -163,19 +165,19 @@ class FahrtenbuchRendererTest extends TestCase {
 	 */
 	public function testAVoidedTripIsListedAsVoided(): void {
 		$rows = $this->rows($this->render([
-			['trip' => $this->trip(['deleted_at' => 1772740800]), 'missing' => []], // 2026-03-05 20:00 UTC
-			['trip' => $this->trip(), 'missing' => []],
+			['trip' => $this->trip(['deleted_at' => 1772740800]), 'missing' => [], 'late' => []], // 2026-03-05 20:00 UTC
+			['trip' => $this->trip(), 'missing' => [], 'late' => []],
 		]));
 
 		$this->assertCount(2, $rows);
-		$this->assertSame('Storniert am 05.03.2026', $rows[0]['Vermerk']);
+		$this->assertSame('Storniert am 05.03.2026, 20:00 UTC', $rows[0]['Vermerk']);
 		$this->assertSame('Abnahme', $rows[0]['Zweck'], 'a voided line is still readable');
 		$this->assertSame('', $rows[1]['Vermerk']);
 	}
 
 	/** Incomplete is a flag, and the line names what it lacks in the words of its column headers. */
 	public function testAnIncompleteTripSaysWhatItLacks(): void {
-		$rows = $this->rows($this->render([['trip' => $this->trip(['purpose' => null, 'partner' => null]), 'missing' => ['purpose', 'partner']]]));
+		$rows = $this->rows($this->render([['trip' => $this->trip(['purpose' => null, 'partner' => null]), 'missing' => ['purpose', 'partner'], 'late' => []]]));
 
 		$this->assertSame('Unvollständig, es fehlt: Zweck, Geschäftspartner', $rows[0]['Vermerk']);
 	}
@@ -195,9 +197,93 @@ class FahrtenbuchRendererTest extends TestCase {
 			'partner' => null,
 			'category' => Trip::PRIVATE,
 			'reconciled' => true,
-		]), 'missing' => []]]));
+		]), 'missing' => [], 'late' => []]]));
 
 		$this->assertSame('Abgleich: Kilometer aus dem Zählerstand abgeleitet, nicht abgelesen', $rows[0]['Vermerk']);
+	}
+
+	/**
+	 * A late change is documented on the line it changed (docs/features.md#logbook-mode): when, and
+	 * what each field said before, in the words of the column headers and the way the line itself
+	 * writes the value. Free text is quoted, so an empty field cannot pass for one reading "leer".
+	 */
+	public function testALateChangeSaysWhenAndWhatEachFieldSaidBefore(): void {
+		$page = $this->render([[
+			'trip' => $this->trip(),
+			'missing' => [],
+			'late' => [
+				['change' => 'edited', 'at' => 1775469600, 'fields' => [ // 2026-04-06 10:00 UTC
+					'started_at' => [self::MONDAY - 86400, self::MONDAY],
+					'end_odo' => [120100, 120450],
+					'purpose' => ['Besuch', 'Abnahme'],
+					'partner' => [null, 'Muster GmbH'],
+					'category' => [Trip::PRIVATE, Trip::BUSINESS],
+				], 'offsets' => ['started_at_off' => 120, 'ended_at_off' => 60]],
+				['change' => 'edited', 'at' => 1775556000, 'fields' => [ // 2026-04-07 10:00 UTC
+					'ended_at' => [self::MONDAY + 1800, self::MONDAY + 5400],
+					'started_at_off' => [120, 60],
+				], 'offsets' => ['started_at_off' => 120, 'ended_at_off' => -90]],
+			],
+		]]);
+
+		$this->assertSame([
+			// A time before is read with the offset in force before, not the line's own.
+			'Nachträglich geändert am 06.04.2026, 10:00 UTC. Vorher: Datum 01.03.2026, 09:00; '
+				. 'Km-Stand Ende 120.100; Zweck „Besuch“; Geschäftspartner leer; Art Privat',
+			'Nachträglich geändert am 07.04.2026, 10:00 UTC. Vorher: Ankunft 02.03.2026, 06:00; Zeitzone Abfahrt UTC+02:00',
+		], $this->notes($page));
+	}
+
+	/**
+	 * A late void and a late restore are noted with the late edits. The restore says when the trip
+	 * had been voided: its line reads as driven again, and the void it undid may not have been late
+	 * enough to be noted itself.
+	 */
+	public function testALateVoidAndALateRestoreSayWhen(): void {
+		$page = $this->render([[
+			'trip' => $this->trip(),
+			'missing' => [],
+			'late' => [
+				['change' => 'voided', 'at' => 1775469600, 'fields' => [ // 2026-04-06 10:00 UTC
+					'deleted_at' => [null, 1775469600],
+				], 'offsets' => ['started_at_off' => 60, 'ended_at_off' => 60]],
+				['change' => 'restored', 'at' => 1775556000, 'fields' => [ // 2026-04-07 10:00 UTC
+					'deleted_at' => [1772740800, null], // 2026-03-05 20:00 UTC
+				], 'offsets' => ['started_at_off' => 60, 'ended_at_off' => 60]],
+			],
+		]]);
+
+		$this->assertSame([
+			'Nachträglich storniert am 06.04.2026, 10:00 UTC',
+			'Nachträglich wiederhergestellt am 07.04.2026, 10:00 UTC. Vorher: storniert am 05.03.2026, 20:00 UTC',
+		], $this->notes($page));
+	}
+
+	/** A line voided late says so once: the late void is the void the line already states. */
+	public function testALateVoidIsNotStatedTwice(): void {
+		$page = $this->render([[
+			'trip' => $this->trip(['deleted_at' => 1775469600]), // 2026-04-06 10:00 UTC
+			'missing' => [],
+			'late' => [
+				['change' => 'voided', 'at' => 1775469601, 'fields' => [
+					'deleted_at' => [null, 1775469600],
+				], 'offsets' => ['started_at_off' => 60, 'ended_at_off' => 60]],
+			],
+		]]);
+
+		$this->assertSame(['Nachträglich storniert am 06.04.2026, 10:00 UTC'], $this->notes($page));
+	}
+
+	/**
+	 * Each note in the first line's `Vermerk`, as a line break separates them.
+	 *
+	 * @return list<string>
+	 */
+	private function notes(\DOMXPath $page): array {
+		return array_map(
+			static fn (\DOMNode $text): string => trim($text->textContent),
+			iterator_to_array($page->query('//table/tbody/tr[1]/td[last()]/text()') ?: []),
+		);
 	}
 
 	/**
@@ -225,10 +311,10 @@ class FahrtenbuchRendererTest extends TestCase {
 
 	/** A year the mode never reached is said to be one, rather than left to an empty list. */
 	public function testAYearWithoutTheModeSaysSo(): void {
-		$page = $this->render([['trip' => $this->trip(), 'missing' => []]]);
+		$page = $this->render([['trip' => $this->trip(), 'missing' => [], 'late' => []]]);
 
 		$this->assertStringContainsString('2026 nicht eingeschaltet', $this->text($page, '//section[@id="modus"]'));
-		$this->assertSame(0, $page->query('//section[@id="modus"]//li')?->length);
+		$this->assertSame(0.0, $page->evaluate('count(//section[@id="modus"]//li)'));
 	}
 
 	/** A year without a trip prints as one, not as a table with nothing under its headers. */
@@ -246,7 +332,7 @@ class FahrtenbuchRendererTest extends TestCase {
 		$page = $this->render([]);
 
 		$this->assertStringContainsString(self::SOURCE, $this->text($page, '//footer'));
-		$this->assertSame(self::SOURCE, $page->query('//footer//a')?->item(0)?->attributes?->getNamedItem('href')?->nodeValue);
+		$this->assertSame(self::SOURCE, $this->text($page, '//footer//a/@href'));
 	}
 
 	/** The page's heading names the vehicle and the year. */

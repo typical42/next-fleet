@@ -2,14 +2,34 @@
 
 ## Unreleased
 
+- Overview, at the top of the navigation. It leads back from a vehicle or from Reports without a
+  reload, and is marked whenever the overview is what shows.
+- Two writes on one vehicle at once no longer leave its kilometres on the older Reading. Every
+  Odometer Entry and trip write now holds the vehicle first, so the second waits for the first.
+  An Odometer Entry and its restating are now one transaction.
+- Reports, below the vehicles in the navigation. It opens the Fahrtenbuch for a vehicle and a year
+  in a tab of its own, prefilled with the first vehicle and this year. It offers only vehicles whose
+  country prints a logbook, sold ones included. `GET /api/preferences` now says which countries do
+  (`logbook_export`).
+- The Fahrtenbuch export: `GET /apps/nextfleet/vehicles/{uuid}/logbook/{year}` opens one vehicle's
+  logbook for one year as a page the browser prints, in German. Every trip that set off in the year
+  is a line, voided trips listed as voided. A trip that set off while Logbook Mode was on and lacks
+  a field is marked incomplete and names it; outside those periods nothing is marked. A trip edited,
+  voided or restored after the lock delay says when on its line: an edit with what each changed
+  field said before, a restore with since when the trip had been voided. The page
+  states the periods the mode was on, or that it was not, and cites the requirement in its footer.
+  A country without an export answers 404. The page loads nothing, and the export is rate-limited
+  and logged.
 - A Gap is closed one at a time. Under Logbook Mode the trip that opened it offers to close it, and
   a confirmation naming the kilometres and the two moments writes one private distance trip marked
   `reconciled`, whose Reading lands on the claim. `POST /api/vehicles/{uuid}/gaps/{trip}/close`
   takes the Gap as the driver confirmed it and answers 412 `conflict` when it has moved since. Under
   the mode its audit row is `created` with `derived: true`. It edits like any other trip, and
   `reconciled` is never set or cleared by a request.
-- Gap detection: a trip that sets off above the Reading before it leaves the kilometres in between
-  unaccounted. `GET /api/vehicles/{uuid}/gaps` lists them for every vehicle, each with the two
+- Gap detection: a trip that sets off above where the last trip left the counter leaves the
+  kilometres in between unaccounted. An Odometer Entry between the two accounts for none of them,
+  and one that is flagged or above the claim opens no Gap until it is answered. With no trip before,
+  the claim is measured against the newest Reading. `GET /api/vehicles/{uuid}/gaps` lists them for every vehicle, each with the two
   moments that bracket it. Under Logbook Mode the timeline's month header states the month's total.
 - A trip can be edited: `PUT /api/vehicles/{uuid}/trips/{trip}` takes the whole trip and the token
   it was read with, and rewrites the row in place. A field the request leaves out is emptied, so a

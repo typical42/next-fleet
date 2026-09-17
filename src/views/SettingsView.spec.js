@@ -26,7 +26,7 @@ const settings = {
 	// The whole envelope, dismissed hints included: this screen reads only the jurisdiction, but
 	// what the route answers with is one shape (lib/Service/PreferencesService.php).
 	preferences: { jurisdiction: 'de', dismissed_hints: [] },
-	jurisdictions: [{ key: 'de', name: 'Germany' }, { key: 'generic', name: 'Generic' }],
+	jurisdictions: [{ key: 'de', name: 'Germany', logbook_export: true }, { key: 'generic', name: 'Generic', logbook_export: false }],
 }
 
 /**
