@@ -13,6 +13,7 @@ use OCA\NextFleet\Db\OdoReadingMapper;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
+use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Db\TTransactional;
 use OCP\IDBConnection;
 
@@ -78,6 +79,105 @@ class OdometerService {
 	}
 
 	/**
+	 * Corrects one Odometer Entry in place: the number somebody read, the moment and the counter.
+	 * A number, not a distance - what is corrected is what the dashboard said, so the row becomes
+	 * Observed. Every chain the Reading was on or is now on is settled again.
+	 *
+	 * @param array<string, mixed> $fields
+	 * @param int $expectedUpdatedAt the `updated_at` the client read
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not write this vehicle
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException if it is no Odometer Entry on this vehicle
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if it has changed since
+	 * @throws \InvalidArgumentException if a field is not what its column holds
+	 * @throws \OCP\DB\Exception
+	 */
+	public function update(string $userId, string $vehicleUuid, string $readingUuid, int $expectedUpdatedAt, array $fields): OdoReading {
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
+
+		$readAt = Field::count('read_at', $fields['read_at'] ?? null);
+		$readAtOff = Field::offset('read_at_off', $fields['read_at_off'] ?? null);
+		$value = Field::count('value', $fields['value'] ?? null);
+		$counter = self::counterOf($vehicle, $fields['counter'] ?? null);
+
+		// Looked up inside the transaction for the reason TripService::delete() gives.
+		return $this->atomicRetry(function () use ($vehicle, $readingUuid, $expectedUpdatedAt, $readAt, $readAtOff, $value, $counter): OdoReading {
+			$this->vehicles->hold((int)$vehicle->getId());
+			$reading = self::entry($this->readings->findOnVehicle((int)$vehicle->getId(), $readingUuid));
+			$was = $reading->getCounter();
+
+			$reading->setReadAt($readAt);
+			$reading->setReadAtOff($readAtOff);
+			$reading->setValue($value);
+			$reading->setOrigin(self::OBSERVED);
+			$reading->setCounter($counter);
+			$this->readings->updateChecked($reading, $expectedUpdatedAt);
+
+			if ($was !== $counter) {
+				$this->settle($vehicle, $was);
+			}
+
+			return $this->restate($vehicle, $counter, $reading->getUuid());
+		}, $this->db);
+	}
+
+	/**
+	 * Soft-deletes one Odometer Entry, and answers with the token the undo is checked against. No
+	 * audit row: Logbook Mode covers trips only (docs/features.md#logbook-mode).
+	 *
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete on this vehicle
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException if it is no Odometer Entry on this vehicle
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if it has changed since
+	 * @throws \OCP\DB\Exception
+	 */
+	public function delete(string $userId, string $vehicleUuid, string $readingUuid, int $expectedUpdatedAt): OdoReading {
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::DELETE, $vehicleUuid);
+
+		return $this->atomicRetry(function () use ($vehicle, $readingUuid, $expectedUpdatedAt): OdoReading {
+			$this->vehicles->hold((int)$vehicle->getId());
+			$reading = self::entry($this->readings->findOnVehicle((int)$vehicle->getId(), $readingUuid));
+			$deleted = $this->readings->softDelete($reading, $expectedUpdatedAt);
+			$this->settle($vehicle, $deleted->getCounter());
+
+			return $deleted;
+		}, $this->db);
+	}
+
+	/**
+	 * Undo, on the token the delete answered with (TripService::restore()).
+	 *
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete on this vehicle
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException if it is no Odometer Entry on this vehicle
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if it has changed since, or was never deleted
+	 * @throws \OCP\DB\Exception
+	 */
+	public function restore(string $userId, string $vehicleUuid, string $readingUuid, int $expectedUpdatedAt): OdoReading {
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::DELETE, $vehicleUuid);
+
+		return $this->atomicRetry(function () use ($vehicle, $readingUuid, $expectedUpdatedAt): OdoReading {
+			$this->vehicles->hold((int)$vehicle->getId());
+			$reading = self::entry($this->readings->findAnyOnVehicle((int)$vehicle->getId(), $readingUuid));
+			$back = $this->readings->restoreChecked($reading, $expectedUpdatedAt);
+
+			return $this->restate($vehicle, $back->getCounter(), $back->getUuid());
+		}, $this->db);
+	}
+
+	/**
+	 * The Reading, where it is an Odometer Entry. One a trip, a fill-up or a maintenance record
+	 * wrote belongs to that Entry and moves with it (rule 5); editing it here would leave the two
+	 * saying different things. Not found rather than refused, as a Reading on another vehicle is.
+	 *
+	 * @throws DoesNotExistException
+	 */
+	private static function entry(OdoReading $reading): OdoReading {
+		if ($reading->getSourceType() !== OdoReading::MANUAL) {
+			throw new DoesNotExistException('reading ' . $reading->getUuid() . ' is not an Odometer Entry');
+		}
+
+		return $reading;
+	}
+
+	/**
 	 * Which chain an Odometer Entry reads (rule 4): `main` unless the request names the engine
 	 * hours of a vehicle that counts them. A trip never asks - it is on `main` by definition.
 	 *
@@ -124,18 +224,93 @@ class OdometerService {
 	}
 
 	/**
-	 * The Readings a fill-up or a maintenance record writes: one per counter it was given, each
-	 * Observed, and none without (rule 5). No trip wrote them, so they account for no kilometre.
+	 * The Readings of a fill-up or a maintenance record, brought in line with it as it now stands:
+	 * one Observed Reading per counter it states, none without, and none while it is deleted
+	 * (rule 5). No trip wrote them, so they account for no kilometre. Called after every write to
+	 * the Entry - its creation, an edit, a delete and its undo.
+	 *
+	 * A Reading keeps its row through all of it, as a trip's does: an edit moves it, a counter
+	 * emptied soft-deletes it, and a counter stated again brings the same row back. Only an Entry
+	 * that never had one on that counter gets a new row. So an undo restores exactly what the
+	 * Entry stated when it was deleted - a counter an earlier edit emptied stays gone, because the
+	 * Entry no longer states it.
 	 *
 	 * The caller has reached and held the vehicle, as for fromTrip().
 	 *
-	 * @param array<OdoReading::MAIN|OdoReading::SECOND, int> $counters each counter's number
+	 * @param OdoReading::ENERGY|OdoReading::MAINTENANCE $sourceType
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if a Reading is not as it was read
 	 * @throws \OCP\DB\Exception
 	 */
-	public function fromEntry(Vehicle $vehicle, string $userId, int $readAt, int $readAtOff, array $counters, string $sourceType, int $sourceId): void {
-		foreach ($counters as $counter => $value) {
-			$this->write($vehicle, $userId, $readAt, $readAtOff, $value, self::OBSERVED, $counter, $sourceType, $sourceId);
+	public function followEntry(
+		Vehicle $vehicle,
+		string $userId,
+		string $sourceType,
+		int $sourceId,
+		int $readAt,
+		int $readAtOff,
+		?int $odo,
+		?int $secondOdo,
+		bool $deleted,
+	): void {
+		$written = $this->readings->findAnyForSource((int)$vehicle->getId(), $sourceType, $sourceId);
+
+		foreach ([OdoReading::MAIN => $odo, OdoReading::SECOND => $secondOdo] as $counter => $value) {
+			$own = array_values(array_filter(
+				$written,
+				static fn (OdoReading $reading): bool => $reading->getCounter() === $counter,
+			));
+			$newest = $own === [] ? null : end($own);
+			$wanted = $deleted ? null : $value;
+
+			if ($newest === null) {
+				if ($wanted !== null) {
+					$this->write($vehicle, $userId, $readAt, $readAtOff, $wanted, self::OBSERVED, $counter, $sourceType, $sourceId);
+				}
+				continue;
+			}
+
+			$live = $newest->getDeletedAt() === null;
+			if ($wanted === null) {
+				if ($live) {
+					$this->readings->softDelete($newest, $newest->getUpdatedAt());
+					$this->settle($vehicle, $counter);
+				}
+				continue;
+			}
+
+			if (!$live) {
+				$this->readings->restoreChecked($newest, $newest->getUpdatedAt());
+			}
+			if ([$newest->getValue(), $newest->getReadAt(), $newest->getReadAtOff()] !== [$wanted, $readAt, $readAtOff]) {
+				$newest->setValue($wanted);
+				$newest->setReadAt($readAt);
+				$newest->setReadAtOff($readAtOff);
+				$this->readings->updateChecked($newest, $newest->getUpdatedAt());
+			} elseif ($live) {
+				continue;
+			}
+			$this->settle($vehicle, $counter);
 		}
+	}
+
+	/**
+	 * The counters a fill-up or a maintenance record was posted with, `odo` and `second_odo`, each
+	 * null when not given - what followEntry() takes.
+	 *
+	 * @param array<string, mixed> $fields
+	 * @return array{?int, ?int}
+	 * @throws \InvalidArgumentException if a counter is not one, or names a chain the vehicle lacks
+	 */
+	public static function entryCounters(Vehicle $vehicle, array $fields): array {
+		$odo = Field::read('odo', 'count', null, $fields['odo'] ?? null);
+		$secondOdo = Field::read('second_odo', 'count', null, $fields['second_odo'] ?? null);
+		// Refused as an Odometer Entry naming the hour counter is (counterOf()): the number would
+		// be a Reading on a chain the vehicle does not have.
+		if ($secondOdo !== null && $vehicle->getSecondUnit() === null) {
+			throw new \InvalidArgumentException('second_odo is for a vehicle that counts engine hours');
+		}
+
+		return [is_int($odo) ? $odo : null, is_int($secondOdo) ? $secondOdo : null];
 	}
 
 	/**

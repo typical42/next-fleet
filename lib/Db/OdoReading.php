@@ -41,6 +41,7 @@ class OdoReading extends BaseEntity implements \JsonSerializable {
 	public const MANUAL = 'manual';
 	public const TRIP = 'trip';
 	public const ENERGY = 'energy';
+	public const MAINTENANCE = 'maintenance';
 
 	/**
 	 * Which of a vehicle's counters the Reading is on: the one `odo_unit` names, or the engine

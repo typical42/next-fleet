@@ -12,16 +12,24 @@ import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import NcRadioGroup from '@nextcloud/vue/components/NcRadioGroup'
 import NcRadioGroupButton from '@nextcloud/vue/components/NcRadioGroupButton'
 import NcSelect from '@nextcloud/vue/components/NcSelect'
+import NcTextArea from '@nextcloud/vue/components/NcTextArea'
 import NcTextField from '@nextcloud/vue/components/NcTextField'
 import { computed, ref, useId, watch } from 'vue'
 
-import { energyPrefill } from '../services/api.js'
+import { ConflictError, energyPrefill, expensePrefill, maintenancePrefill, readEntry } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
-import { CATEGORIES, categoryWord, energyWord, formatDecimal, parseDecimal, parseWhole } from '../utils/format.js'
+import { CATEGORIES, EXPENSE_CATEGORIES, MAINTENANCE_TYPES, categoryWord, energyWord, expenseWord, formatDecimal, maintenanceWord, parseDecimal, parseWhole } from '../utils/format.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
 	vehicle: { type: Object, required: true },
+	/**
+	 * The timeline row the sheet was opened on, or null for a new entry. The sheet edits that one
+	 * Entry, so it is read once, when the sheet opens.
+	 *
+	 * @type {import('vue').PropType<import('../services/api.js').Entry|null>}
+	 */
+	entry: { type: Object, default: null },
 })
 
 // Two things, because the screen behind needs them apart: `saved` is what happened to the vehicle,
@@ -31,8 +39,21 @@ const emit = defineEmits(['close', 'saved'])
 const store = useVehiclesStore()
 
 // A journey is what a logbook is for and what a driver enters daily; the counter on its own is the
-// escape hatch for everything not otherwise recorded (docs/ui.md).
-const kind = ref('trip')
+// escape hatch for everything not otherwise recorded (docs/ui.md). An Entry opened from its row is
+// of its own kind and stays it.
+const kind = ref(props.entry?.type ?? 'trip')
+
+/**
+ * The Entry as it was last read, and the token its next write is checked against - null for a new
+ * one. Read back after a refused write, so that write goes out under the token that is current.
+ *
+ * @type {import('vue').Ref<any>}
+ */
+const held = ref(props.entry === null ? null : props.entry[props.entry.type])
+const editing = props.entry !== null
+
+/** Which write the server last refused because the Entry moved on, if one was. */
+const refused = ref(/** @type {'save'|'delete'|null} */ (null))
 
 // `energy_types` decides which energies a fill-up may be of (docs/architecture.md#data-model), so a
 // vehicle that names none is offered no fill-up and a diesel is never asked about electricity.
@@ -69,22 +90,26 @@ const toLabel = ref('')
 const purpose = ref('')
 const partner = ref('')
 
+// What the costs share, kept across a switch between them: the moment, now because each is logged
+// where it happens; the VAT rate the jurisdiction states for it; and, for a fill-up and a
+// Maintenance Record, the counters. Those are never prefilled, like a trip's: the counter at the pump or the workshop is
+// the one fact consumption is measured against, and the vehicle's cached one is not that fact
+// (docs/architecture.md#odometer-rules).
+const costAt = ref(new Date())
+const vatRate = ref('')
+const entryOdo = ref('')
+const entrySecond = ref('')
+
 // A fill-up. The first of the vehicle's energies, because a single-energy vehicle then has nothing
-// to choose; the moment is now, because a fill-up is logged at the pump.
+// to choose.
 const energy = ref(energies.value[0] ?? null)
-const filledAt = ref(new Date())
 const amount = ref('')
 const total = ref('')
 const unitPrice = ref('')
-const vatRate = ref('')
 // On, because it usually is and consumption is measured full to full
 // (docs/architecture.md#numbers-consumption-cost-emissions).
 const fullTank = ref(true)
 const missedPrevious = ref(false)
-// Never prefilled, like a trip's counters: the counter at the pump is the one fact consumption is
-// measured against, and the vehicle's cached one is not that fact (docs/architecture.md#odometer-rules).
-const fillOdo = ref('')
-const fillSecond = ref('')
 const station = ref('')
 // Asked of electricity only, and not answered for the driver: a wall box and a public charger cost
 // differently, and a guess would put one's price on the other.
@@ -105,6 +130,25 @@ const electric = computed(() => energy.value?.id === 'electric')
 const stationList = useId()
 const stations = computed(() => [...new Set(prefilled.value.stations.map((one) => one.station))])
 
+// A Maintenance Record. No type until one is picked: the column is nullable, and "service" is one
+// kind of work, not the default of all of it (CONTEXT.md).
+const title = ref('')
+const cost = ref('')
+const workType = ref(null)
+const workTypes = computed(() => MAINTENANCE_TYPES.map((id) => ({ id, label: maintenanceWord(id) })))
+const vendor = ref('')
+/** @type {import('vue').Ref<string[]>} */
+const vendors = ref([])
+const vendorList = useId()
+
+// An Expense. No category until one is picked, for the reason a Maintenance Record has no type.
+const spent = ref('')
+const spentOn = ref(null)
+const spentOns = computed(() => EXPENSE_CATEGORIES.map((id) => ({ id, label: expenseWord(id) })))
+
+// A Maintenance Record's and an Expense's, kept across a switch between the two like the moment.
+const notes = ref('')
+
 const saving = ref(false)
 const failure = ref('')
 
@@ -117,26 +161,107 @@ const categories = computed(() => CATEGORIES.map((id) => ({ id, label: categoryW
 // (docs/features.md#logbook-mode), so it is the one the sheet offers to answer them for.
 const category = ref(categories.value[0])
 
+// Under Logbook Mode a trip is voided rather than deleted (docs/features.md#logbook-mode), and the
+// button says what the click does.
+const removal = computed(() => (kind.value === 'trip' && props.vehicle.logbook_mode === true
+	? t('nextfleet', 'Void trip')
+	: t('nextfleet', 'Delete')))
+
+// A button says what the click does, not what went wrong: while the token is stale this click
+// overwrites somebody's change (src/components/VehicleSheet.vue).
+const action = computed(() => {
+	if (refused.value !== null) {
+		return t('nextfleet', 'Save anyway')
+	}
+
+	return failure.value ? t('nextfleet', 'Try again') : t('nextfleet', 'Save')
+})
+
+// The server's words are English and name a column; this says what the click about to be
+// repeated now does, which is not the same sentence for a save as for a delete.
+const note = computed(() => {
+	if (failure.value) {
+		return { type: 'error', text: failure.value }
+	}
+	if (refused.value === 'save') {
+		return { type: 'warning', text: t('nextfleet', 'This entry was changed somewhere else while you had it open. Saving again writes your values over that change.') }
+	}
+	if (refused.value === 'delete') {
+		return { type: 'warning', text: t('nextfleet', 'This entry was changed somewhere else while you had it open. Deleting again removes it as it now stands.') }
+	}
+
+	return null
+})
+
+/** What each kind's create is in the store; an edit is one write for every kind. */
+const CREATES = { trip: store.log, energy: store.fill, maintenance: store.maintain, odometer: store.record, expense: store.spend }
+
 /**
- * Records what the sheet is on. A refusal leaves it open with every value intact and offers the
- * retry - nothing is written anywhere else, because the open sheet is the queue (docs/ui.md).
+ * Records what the sheet is on, or rewrites the Entry it was opened on.
  */
-async function save() {
+function save() {
+	return attempt(async () => {
+		const fields = ({ trip, energy: fillUp, maintenance: work, odometer: reading, expense: spending })[kind.value]()
+		if (editing) {
+			await store.revise(props.vehicle.uuid, kind.value, await current(), fields)
+		} else {
+			await CREATES[kind.value](props.vehicle.uuid, fields)
+		}
+	}, 'save')
+}
+
+/** Nothing asks "are you sure?": the way back is the undo toast (docs/ui.md). */
+function remove() {
+	return attempt(async () => store.strike(props.vehicle.uuid, kind.value, await current()), 'delete')
+}
+
+/**
+ * One attempt at a write. A refusal leaves the sheet open with every value intact and offers the
+ * retry - nothing is written anywhere else, because the open sheet is the queue (docs/ui.md).
+ *
+ * @param {() => Promise<void>} work - the write to try
+ * @param {'save'|'delete'} which - which write it is, for the message a refusal gets
+ */
+async function attempt(work, which) {
 	saving.value = true
 	failure.value = ''
 	try {
-		await ({ trip, energy: fillUp, odometer: reading })[kind.value]()
+		await work()
 		emit('saved')
 		emit('close')
 	} catch (error) {
-		failure.value = error.message
+		if (error instanceof ConflictError) {
+			refused.value = which
+		} else {
+			failure.value = error.message
+		}
 	} finally {
 		saving.value = false
 	}
 }
 
-/** The escape hatch: one number, at the moment it was read. */
-async function reading() {
+/**
+ * The Entry the next write is checked against. After a refused one it is read back first, and
+ * what is on screen is written under the token that came with it (docs/ui.md).
+ *
+ * @return {Promise<{uuid: string, updated_at: number}>} the Entry as the server now holds it
+ */
+async function current() {
+	if (refused.value !== null) {
+		held.value = (await readEntry(props.vehicle.uuid, kind.value, held.value.uuid))[kind.value]
+		refused.value = null
+	}
+
+	return held.value
+}
+
+/**
+ * The escape hatch: one number, at the moment it was read. A correction keeps that moment - the
+ * sheet asks for the number and nothing else.
+ *
+ * @return {Record<string, unknown>} the fields
+ */
+function reading() {
 	const complaint = t('nextfleet', 'That is not a counter reading.')
 	// An Odometer Entry is the number and nothing else (CONTEXT.md), so an empty field is not a
 	// question left open for the timeline to ask - it is nothing to record.
@@ -145,31 +270,33 @@ async function reading() {
 		throw new Error(complaint)
 	}
 
-	await store.record(props.vehicle.uuid, {
+	return {
 		value,
 		...(twoCounters.value ? { counter: reads.value } : {}),
 		// The clock is the reader's: when they read it, and the offset they read it at
 		// (docs/architecture.md#time). The server's own clock is when it heard about it.
-		read_at: Math.floor(Date.now() / 1000),
-		read_at_off: -new Date().getTimezoneOffset(),
-	})
+		read_at: editing ? held.value.read_at : Math.floor(Date.now() / 1000),
+		read_at_off: editing ? held.value.read_at_off : -new Date().getTimezoneOffset(),
+	}
 }
 
 /**
  * One fill-up. The amount is the one field it requires (docs/ui.md); everything else left empty is
  * left out, and what that costs the numbers is the server's to flag.
+ *
+ * @return {Record<string, unknown>} the fields
  */
-async function fillUp() {
+function fillUp() {
 	const complaint = t('nextfleet', 'That is not an amount.')
 	const litres = decimal(amount, 3, complaint)
 	if (litres === null) {
 		throw new Error(complaint)
 	}
-	const moment = stated(filledAt.value, t('nextfleet', 'A fill-up carries the moment it happened.'))
+	const moment = stated(costAt.value, t('nextfleet', 'A fill-up carries the moment it happened.'))
 	const price = t('nextfleet', 'That is not a price.')
 	const paid = decimal(total, 2, price)
 
-	await store.fill(props.vehicle.uuid, {
+	return {
 		filled_at: seconds(moment),
 		filled_at_off: offset(moment),
 		energy: energy.value?.id ?? '',
@@ -183,49 +310,125 @@ async function fillUp() {
 			unit_price: paid === null || unitPrice.value !== prefilledPrice.value
 				? decimal(unitPrice, 3, price)
 				: null,
-			vat_rate: decimal(vatRate, 2, t('nextfleet', 'That is not a VAT rate.')),
-			odo: whole(fillOdo, t('nextfleet', 'That is not a counter reading.')),
-			second_odo: twoCounters.value ? whole(fillSecond, t('nextfleet', 'That is not a counter reading.')) : null,
+			...stateCosts(),
 		}),
 		...(station.value.trim() === '' ? {} : { station: station.value.trim() }),
 		...(electric.value && where.value !== '' ? { location_kind: where.value } : {}),
 		...(electric.value && where.value === 'public' ? { is_dc: isDc.value } : {}),
-	})
+	}
 }
 
 /**
- * What the server prefills a fill-up with, for the moment the sheet is on: the VAT rate changes on
- * a day (lib/Jurisdiction/De/RateProvider.php), so a fill-up dated back is asked about again. A rate
- * the driver typed or cleared is theirs and stays. A prefill that fails leaves the fields empty,
- * which is what they were before it was asked for.
+ * One Maintenance Record. The title is the one field it requires (docs/ui.md); everything else left
+ * empty is left out, as on a fill-up.
+ *
+ * @return {Record<string, unknown>} the fields
+ */
+function work() {
+	const complaint = t('nextfleet', 'A maintenance record needs a title.')
+	if (title.value.trim() === '') {
+		throw new Error(complaint)
+	}
+	const moment = stated(costAt.value, t('nextfleet', 'A maintenance record carries the moment the work was done.'))
+
+	return {
+		done_at: seconds(moment),
+		done_at_off: offset(moment),
+		title: title.value.trim(),
+		...omitted({
+			type: workType.value?.id ?? null,
+			vendor: vendor.value.trim() || null,
+			notes: notes.value.trim() || null,
+		}),
+		...omitted({
+			cost: decimal(cost, 2, t('nextfleet', 'That is not a price.')),
+			...stateCosts(),
+		}),
+	}
+}
+
+/**
+ * One Expense. The amount is the one field it requires (docs/ui.md); it knows no counter.
+ *
+ * @return {Record<string, unknown>} the fields
+ */
+function spending() {
+	const complaint = t('nextfleet', 'That is not an amount.')
+	const cents = decimal(spent, 2, complaint)
+	if (cents === null) {
+		throw new Error(complaint)
+	}
+	const moment = stated(costAt.value, t('nextfleet', 'An expense carries the moment it was spent.'))
+
+	return {
+		spent_at: seconds(moment),
+		spent_at_off: offset(moment),
+		amount: cents,
+		...omitted({
+			category: spentOn.value?.id ?? null,
+			vat_rate: decimal(vatRate, 2, t('nextfleet', 'That is not a VAT rate.')),
+			notes: notes.value.trim() || null,
+		}),
+	}
+}
+
+/**
+ * What a fill-up and a Maintenance Record send alike: the VAT rate and the counters, each null
+ * where the field was left empty.
+ *
+ * @return {Record<string, number|null>} the fields, for omitted()
+ */
+function stateCosts() {
+	const complaint = t('nextfleet', 'That is not a counter reading.')
+
+	return {
+		vat_rate: decimal(vatRate, 2, t('nextfleet', 'That is not a VAT rate.')),
+		odo: whole(entryOdo, complaint),
+		second_odo: twoCounters.value ? whole(entrySecond, complaint) : null,
+	}
+}
+
+/**
+ * What the server prefills a cost with, for the moment the sheet is on:
+ * the VAT rate changes on a day (lib/Jurisdiction/De/RateProvider.php), so an entry dated back is
+ * asked about again. A rate the person typed or cleared is theirs and stays. A prefill that fails
+ * leaves the fields empty, which is what they were before it was asked for.
  */
 async function prefill() {
-	const moment = filledAt.value
-	if (kind.value !== 'energy' || !(moment instanceof Date) || Number.isNaN(moment.getTime())) {
+	const moment = costAt.value
+	const ask = { energy: energyPrefill, maintenance: maintenancePrefill, expense: expensePrefill }[kind.value]
+	if (ask === undefined || !(moment instanceof Date) || Number.isNaN(moment.getTime())) {
 		return
 	}
 
 	// A date typed digit by digit asks once per digit, and only the last question counts.
 	const question = ++asked
+	let answer
 	try {
-		const answer = await energyPrefill(props.vehicle.uuid, seconds(moment), offset(moment))
+		answer = await ask(props.vehicle.uuid, seconds(moment), offset(moment))
 		if (question !== asked) {
 			return
 		}
-		prefilled.value = answer
 	} catch {
 		return
 	}
+	if ('stations' in answer) {
+		prefilled.value = answer
+	} else if ('vendors' in answer) {
+		vendors.value = answer.vendors
+	}
 
-	const rate = prefilled.value.vat_rate === null ? '' : formatDecimal(prefilled.value.vat_rate, 2)
-	if (vatRate.value === prefilledVat.value) {
+	// The rate an Entry was saved with is the person's word, stated or not - an edit is asked for
+	// the completions only.
+	const rate = answer.vat_rate === null ? '' : formatDecimal(answer.vat_rate, 2)
+	if (!editing && vatRate.value === prefilledVat.value) {
 		vatRate.value = rate
 	}
 	prefilledVat.value = rate
 }
 
 let asked = 0
-watch([kind, filledAt], prefill)
+watch([kind, costAt], prefill)
 
 /**
  * A station the vehicle has filled up at before prefills the price it last charged for this
@@ -234,7 +437,8 @@ watch([kind, filledAt], prefill)
  * driver typed is theirs and stays.
  */
 function reprice() {
-	if (unitPrice.value !== prefilledPrice.value) {
+	// An edit opens on the price the fill-up was saved with, which is no station's guess.
+	if (editing || unitPrice.value !== prefilledPrice.value) {
 		return
 	}
 
@@ -272,13 +476,15 @@ function decimal(input, places, complaint) {
  * One journey. What it did to the counter is the server's to work out - a counter it ended on, or
  * a distance counted onto the chain - so the sheet sends the one the driver typed and nothing it
  * computed from it (docs/architecture.md#odometer-rules).
+ *
+ * @return {Record<string, unknown>} the fields
  */
-async function trip() {
+function trip() {
 	const lost = t('nextfleet', 'A trip carries the moment it set off and the moment it arrived.')
 	const setOff = stated(departure.value, lost)
 	const arrived = stated(arrival.value, lost)
 
-	await store.log(props.vehicle.uuid, {
+	return {
 		started_at: seconds(setOff),
 		started_at_off: offset(setOff),
 		ended_at: seconds(arrived),
@@ -289,7 +495,7 @@ async function trip() {
 		purpose: purpose.value,
 		partner: partner.value,
 		...counted(),
-	})
+	}
 }
 
 /**
@@ -334,8 +540,9 @@ function whole(input, complaint) {
 }
 
 /**
- * @param {Record<string, number|null>} fields - the numbers, as far as they were typed
- * @return {Record<string, number>} the ones that were - an absent field and an empty one are the
+ * @template T
+ * @param {Record<string, T|null>} fields - the values, as far as they were typed
+ * @return {Record<string, T>} the ones that were - an absent field and an empty one are the
  *   same fact to the server, and leaving it out says so without the client asserting a null
  */
 function omitted(fields) {
@@ -389,13 +596,99 @@ function standing(chain) {
 
 /**
  * The other chain, prefilled as it stands. What was typed for the first one is a number on the
- * wrong counter, so it is not kept.
+ * wrong counter, so it is not kept - unless the Entry is being corrected, where moving its number
+ * to the right counter is the correction.
  *
  * @param {'main'|'second'} chain - the counter the person now says they read
  */
 function readOther(chain) {
 	reads.value = chain
-	counter.value = standing(chain)
+	if (!editing) {
+		counter.value = standing(chain)
+	}
+}
+
+/**
+ * The fields, as the Entry the sheet was opened on states them - each as a field holds it, so a
+ * save that changed nothing writes back what was read.
+ *
+ * @param {import('../services/api.js').Entry} entry - the timeline row
+ */
+function seed(entry) {
+	const row = /** @type {any} */ (entry)[entry.type]
+	const at = new Date(entry.occurred_at * 1000)
+
+	if (entry.type === 'trip') {
+		departure.value = at
+		arrival.value = new Date(row.ended_at * 1000)
+		knows.value = row.distance === null ? 'counter' : 'distance'
+		startOdo.value = text(row.start_odo)
+		endOdo.value = text(row.end_odo)
+		distance.value = text(row.distance)
+		fromLabel.value = text(row.from_label)
+		toLabel.value = text(row.to_label)
+		purpose.value = text(row.purpose)
+		partner.value = text(row.partner)
+		category.value = categories.value.find((one) => one.id === row.category) ?? category.value
+		return
+	}
+	if (entry.type === 'odometer') {
+		reads.value = row.counter
+		counter.value = String(row.value)
+		return
+	}
+
+	costAt.value = at
+	vatRate.value = decimalText(row.vat_rate, 2)
+	entryOdo.value = text(row.odo)
+	entrySecond.value = text(row.second_odo)
+	notes.value = text(row.notes)
+	if (entry.type === 'energy') {
+		// An energy the vehicle no longer names is still what was filled (the row is flagged for
+		// it), so it is kept rather than swapped for one the dropdown offers.
+		energy.value = energies.value.find((one) => one.id === row.energy) ?? { id: row.energy, label: energyWord(row.energy) }
+		amount.value = decimalText(row.amount, 3)
+		total.value = decimalText(row.total, 2)
+		// Held as if prefilled, so it is sent only when changed: a price the server derived from
+		// the total is derived again from a corrected one rather than contradicting it.
+		unitPrice.value = prefilledPrice.value = decimalText(row.unit_price, 3)
+		fullTank.value = row.full_tank
+		missedPrevious.value = row.missed_previous
+		station.value = text(row.station)
+		where.value = text(row.location_kind)
+		isDc.value = row.is_dc
+	} else if (entry.type === 'maintenance') {
+		title.value = row.title
+		cost.value = decimalText(row.cost, 2)
+		workType.value = workTypes.value.find((one) => one.id === row.type) ?? null
+		vendor.value = text(row.vendor)
+	} else {
+		spent.value = decimalText(row.amount, 2)
+		spentOn.value = spentOns.value.find((one) => one.id === row.category) ?? null
+	}
+}
+
+// Seeding a cost's moment is a change the prefill watch sees, so an edit is asked for its
+// completions - stations, vendors - like a new entry is.
+if (props.entry !== null) {
+	seed(props.entry)
+}
+
+/**
+ * @param {unknown} value - a column as the API stated it
+ * @return {string} it as a field holds it; an absent column is an empty field
+ */
+function text(value) {
+	return value === null || value === undefined ? '' : String(value)
+}
+
+/**
+ * @param {number|null|undefined} value - an integer column
+ * @param {number} places - how many decimals the column keeps
+ * @return {string} it as a decimal field holds it, or nothing
+ */
+function decimalText(value, places) {
+	return value === null || value === undefined ? '' : formatDecimal(value, places)
 }
 
 /**
@@ -415,7 +708,7 @@ function requestClose() {
 </script>
 
 <template>
-	<NcDialog :name="t('nextfleet', 'New entry')"
+	<NcDialog :name="entry === null ? t('nextfleet', 'New entry') : t('nextfleet', 'Edit entry')"
 		:open="true"
 		:size="kind === 'odometer' ? 'small' : 'normal'"
 		@update:open="requestClose">
@@ -427,12 +720,14 @@ function requestClose() {
 		<div class="sheet"
 			:class="{ 'sheet--roomy': kind !== 'odometer' }"
 			@keydown.esc.stop="requestClose">
-			<NcNoteCard v-if="failure"
+			<NcNoteCard v-if="note"
 				class="sheet__wide"
-				type="error"
-				:text="failure" />
+				:type="note.type"
+				:text="note.text" />
 
-			<NcRadioGroup v-model="kind"
+			<!-- An Entry opened from its row keeps its kind: a fill-up does not become an expense. -->
+			<NcRadioGroup v-if="entry === null"
+				v-model="kind"
 				class="sheet__wide"
 				:label="t('nextfleet', 'Entry type')">
 				<NcRadioGroupButton value="trip"
@@ -442,8 +737,14 @@ function requestClose() {
 					value="energy"
 					:label="t('nextfleet', 'Energy')"
 					:disabled="saving" />
+				<NcRadioGroupButton value="maintenance"
+					:label="t('nextfleet', 'Maintenance')"
+					:disabled="saving" />
 				<NcRadioGroupButton value="odometer"
 					:label="t('nextfleet', 'Odometer')"
+					:disabled="saving" />
+				<NcRadioGroupButton value="expense"
+					:label="t('nextfleet', 'Expense')"
 					:disabled="saving" />
 			</NcRadioGroup>
 
@@ -519,7 +820,7 @@ function requestClose() {
 					:disabled="saving"
 					:clearable="false"
 					label="label" />
-				<NcDateTimePickerNative v-model="filledAt"
+				<NcDateTimePickerNative v-model="costAt"
 					type="datetime-local"
 					:label="t('nextfleet', 'Date')"
 					:disabled="saving"
@@ -553,13 +854,13 @@ function requestClose() {
 					:disabled="saving"
 					inputmode="decimal" />
 
-				<NcTextField v-model="fillOdo"
+				<NcTextField v-model="entryOdo"
 					:label="t('nextfleet', 'Counter reading')"
-					:helper-text="fillOdo.trim() === '' ? t('nextfleet', 'Consumption needs the counter reading.') : ''"
+					:helper-text="entryOdo.trim() === '' ? t('nextfleet', 'Consumption needs the counter reading.') : ''"
 					:disabled="saving"
 					inputmode="decimal" />
 				<NcTextField v-if="twoCounters"
-					v-model="fillSecond"
+					v-model="entrySecond"
 					:label="t('nextfleet', 'Engine hours')"
 					:disabled="saving"
 					inputmode="decimal" />
@@ -594,6 +895,79 @@ function requestClose() {
 					:disabled="saving" />
 			</template>
 
+			<template v-else-if="kind === 'maintenance'">
+				<NcTextField v-model="title"
+					:label="t('nextfleet', 'Title')"
+					:disabled="saving"
+					autofocus />
+				<NcTextField v-model="cost"
+					:label="t('nextfleet', 'Cost')"
+					:disabled="saving"
+					inputmode="decimal" />
+				<NcSelect v-model="workType"
+					:options="workTypes"
+					:input-label="t('nextfleet', 'Type')"
+					:disabled="saving"
+					label="label" />
+				<NcDateTimePickerNative v-model="costAt"
+					type="datetime-local"
+					:label="t('nextfleet', 'Date')"
+					:disabled="saving"
+					@keydown.esc.stop="keepPicker" />
+				<NcTextField v-model="vendor"
+					:label="t('nextfleet', 'Vendor')"
+					:disabled="saving"
+					:list="vendorList" />
+				<datalist :id="vendorList">
+					<option v-for="name in vendors" :key="name" :value="name" />
+				</datalist>
+				<!-- Clearable to "not stated", as on a fill-up. -->
+				<NcTextField v-model="vatRate"
+					:label="t('nextfleet', 'VAT rate (%)')"
+					:disabled="saving"
+					inputmode="decimal" />
+				<NcTextField v-model="entryOdo"
+					:label="t('nextfleet', 'Counter reading')"
+					:disabled="saving"
+					inputmode="decimal" />
+				<NcTextField v-if="twoCounters"
+					v-model="entrySecond"
+					:label="t('nextfleet', 'Engine hours')"
+					:disabled="saving"
+					inputmode="decimal" />
+				<NcTextArea v-model="notes"
+					class="sheet__wide"
+					:label="t('nextfleet', 'Notes')"
+					:disabled="saving" />
+			</template>
+
+			<template v-else-if="kind === 'expense'">
+				<NcTextField v-model="spent"
+					:label="t('nextfleet', 'Amount')"
+					:disabled="saving"
+					inputmode="decimal"
+					autofocus />
+				<NcSelect v-model="spentOn"
+					:options="spentOns"
+					:input-label="t('nextfleet', 'Category')"
+					:disabled="saving"
+					label="label" />
+				<NcDateTimePickerNative v-model="costAt"
+					type="datetime-local"
+					:label="t('nextfleet', 'Date')"
+					:disabled="saving"
+					@keydown.esc.stop="keepPicker" />
+				<!-- Clearable to "not stated", as on a fill-up. -->
+				<NcTextField v-model="vatRate"
+					:label="t('nextfleet', 'VAT rate (%)')"
+					:disabled="saving"
+					inputmode="decimal" />
+				<NcTextArea v-model="notes"
+					class="sheet__wide"
+					:label="t('nextfleet', 'Notes')"
+					:disabled="saving" />
+			</template>
+
 			<template v-else>
 				<NcRadioGroup v-if="twoCounters"
 					:model-value="reads"
@@ -615,11 +989,17 @@ function requestClose() {
 		</div>
 
 		<template #actions>
+			<NcButton v-if="entry !== null"
+				variant="error"
+				:disabled="saving"
+				@click="remove">
+				{{ removal }}
+			</NcButton>
 			<NcButton :disabled="saving" @click="requestClose">
 				{{ t('nextfleet', 'Cancel') }}
 			</NcButton>
 			<NcButton variant="primary" :disabled="saving" @click="save">
-				{{ failure ? t('nextfleet', 'Try again') : t('nextfleet', 'Save') }}
+				{{ action }}
 			</NcButton>
 		</template>
 	</NcDialog>

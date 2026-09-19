@@ -13,6 +13,31 @@ namespace OCA\NextFleet\Service;
  * is what the sheet shows the person.
  */
 final class Field {
+	/**
+	 * One field, as its column holds it, by the name of the check it takes. An absent value and an
+	 * empty one are the same fact, so both come back as null.
+	 *
+	 * @param int|list<string>|null $limit a text's length or a word's vocabulary
+	 * @throws \InvalidArgumentException
+	 */
+	public static function read(string $column, string $kind, int|array|null $limit, mixed $value): string|int|bool|null {
+		if (is_string($value)) {
+			$value = trim($value);
+		}
+		if ($value === null || $value === '') {
+			return null;
+		}
+
+		return match ($kind) {
+			'text' => self::text($column, $value, is_int($limit) ? $limit : null),
+			'word' => self::word($column, $value, is_array($limit) ? $limit : []),
+			'count' => self::count($column, $value),
+			'offset' => self::offset($column, $value),
+			'flag' => self::flag($column, $value),
+			default => throw new \InvalidArgumentException($column . ' has no readable kind'),
+		};
+	}
+
 	/** @throws \InvalidArgumentException */
 	public static function text(string $column, mixed $value, ?int $length): string {
 		if (!is_string($value)) {

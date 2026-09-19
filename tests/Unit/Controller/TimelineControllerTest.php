@@ -113,6 +113,27 @@ class TimelineControllerTest extends TestCase {
 		$this->assertSame($gaps, $response->getData());
 	}
 
+	/** One Entry, named by its kind and its uuid, is the service's row for it. */
+	public function testOneEntryIsTheServiceRowForIt(): void {
+		$row = ['type' => 'trip', 'occurred_at' => 1, 'occurred_at_off' => 0];
+		$this->service->expects($this->once())
+			->method('one')
+			->with('alice', self::UUID, 'trip', 'a trip')
+			->willReturn($row);
+
+		$response = $this->controller()->show(self::UUID, 'trip', 'a trip');
+
+		$this->assertSame(Http::STATUS_OK, $response->getStatus());
+		$this->assertSame($row, $response->getData());
+	}
+
+	/** @dataProvider refusals */
+	public function testARefusedEntryReadAnswersWithItsOwnStatus(\Throwable $thrown, int $status): void {
+		$this->service->method('one')->willThrowException($thrown);
+
+		$this->assertSame($status, $this->controller()->show(self::UUID, 'trip', 'a trip')->getStatus());
+	}
+
 	/** @dataProvider refusals */
 	public function testARefusedGapsReadAnswersWithItsOwnStatus(\Throwable $thrown, int $status): void {
 		$this->service->method('gaps')->willThrowException($thrown);

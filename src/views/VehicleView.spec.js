@@ -5,6 +5,7 @@
 
 import NcButton from '@nextcloud/vue/components/NcButton'
 import { flushPromises, shallowMount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import EntrySheet from '../components/EntrySheet.vue'
@@ -37,6 +38,7 @@ function screen() {
 }
 
 beforeEach(() => {
+	setActivePinia(createPinia())
 	vi.resetAllMocks()
 	vi.mocked(readTimeline).mockResolvedValue(/** @type {any} */ ({ rows: [], next: null }))
 })
@@ -158,6 +160,22 @@ describe('the vehicle screen', () => {
 		await flushPromises()
 
 		expect(readTimeline).toHaveBeenCalledTimes(2)
+	})
+
+	/** A tapped row opens the entry sheet on that Entry, and its save reads the list back too. */
+	it('opens the entry sheet on a row the timeline hands up', async () => {
+		const row = { type: 'odometer', occurred_at: 1788217200, occurred_at_off: 120, odometer: { uuid: 'r-1', value: 148320 } }
+		const wrapper = screen()
+		await flushPromises()
+
+		await wrapper.findComponent(Timeline).vm.$emit('open', row)
+
+		expect(/** @type {any} */ (wrapper.findComponent(EntrySheet)).props('entry')).toEqual(row)
+		await wrapper.findComponent(EntrySheet).vm.$emit('saved')
+		await wrapper.findComponent(EntrySheet).vm.$emit('close')
+		await flushPromises()
+		expect(readTimeline).toHaveBeenCalledTimes(2)
+		expect(wrapper.findComponent(EntrySheet).exists()).toBe(false)
 	})
 
 	/** A save is done with, so the sheet goes; the screen already reads the store for the rest. */

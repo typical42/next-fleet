@@ -117,15 +117,17 @@ class OdoReadingMapper extends BaseMapper {
 	}
 
 	/**
-	 * The Readings a set of trips left on the counter, so a timeline page asks once for all of
-	 * them rather than once per row.
+	 * The Readings a set of Entries of one kind left on the counter, so a timeline page asks once
+	 * per kind rather than once per row. A source id is only unique within its kind's table, so the
+	 * kind is part of the question.
 	 *
-	 * @param list<int> $tripIds
+	 * @param OdoReading::TRIP|OdoReading::ENERGY|OdoReading::MAINTENANCE $sourceType
+	 * @param list<int> $sourceIds
 	 * @return list<OdoReading>
 	 * @throws \OCP\DB\Exception
 	 */
-	public function findForTrips(int $vehicleId, array $tripIds): array {
-		if ($tripIds === []) {
+	public function findForSources(int $vehicleId, string $sourceType, array $sourceIds): array {
+		if ($sourceIds === []) {
 			return [];
 		}
 
@@ -133,9 +135,32 @@ class OdoReadingMapper extends BaseMapper {
 		$qb->select('*')
 			->from($this->tableName)
 			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
-			->andWhere($qb->expr()->eq('source_type', $qb->createNamedParameter(OdoReading::TRIP)))
-			->andWhere($qb->expr()->in('source_id', $qb->createNamedParameter($tripIds, IQueryBuilder::PARAM_INT_ARRAY)))
-			->andWhere($qb->expr()->isNull('deleted_at'));
+			->andWhere($qb->expr()->eq('source_type', $qb->createNamedParameter($sourceType)))
+			->andWhere($qb->expr()->in('source_id', $qb->createNamedParameter($sourceIds, IQueryBuilder::PARAM_INT_ARRAY)))
+			->andWhere($qb->expr()->isNull('deleted_at'))
+			// Main before second, so a row's Readings come in the order its fields do.
+			->orderBy('id', 'ASC');
+
+		return $this->findEntities($qb);
+	}
+
+	/**
+	 * Every Reading one fill-up or Maintenance Record ever wrote, in any state, oldest first. At
+	 * most one per counter is live, and it is the newest of its counter: an Entry writes a new one
+	 * only while it has none standing (OdometerService::followEntry()).
+	 *
+	 * @param OdoReading::ENERGY|OdoReading::MAINTENANCE $sourceType
+	 * @return list<OdoReading>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findAnyForSource(int $vehicleId, string $sourceType, int $sourceId): array {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->tableName)
+			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->eq('source_type', $qb->createNamedParameter($sourceType)))
+			->andWhere($qb->expr()->eq('source_id', $qb->createNamedParameter($sourceId, IQueryBuilder::PARAM_INT)))
+			->orderBy('id', 'ASC');
 
 		return $this->findEntities($qb);
 	}

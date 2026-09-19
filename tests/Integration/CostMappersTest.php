@@ -120,6 +120,63 @@ class CostMappersTest extends TestCase {
 	}
 
 	/**
+	 * A period is half-open and leaves out deleted rows and other vehicles' - what CostService sums.
+	 * The vehicle id is one no seeded vehicle has, so the demo fleet cannot leak in.
+	 */
+	public function testEachCostTableFindsTheLiveRowsOfOnePeriod(): void {
+		$vehicleId = 987654;
+		foreach ([
+			[EnergyMapper::class, static function (int $vehicle, int $at): Energy {
+				$row = new Energy();
+				$row->setVehicleId($vehicle);
+				$row->setFilledAt($at);
+				$row->setFilledAtOff(0);
+				$row->setEnergy('diesel');
+				$row->setAmount(1000);
+				return $row;
+			}],
+			[MaintenanceMapper::class, static function (int $vehicle, int $at): Maintenance {
+				$row = new Maintenance();
+				$row->setVehicleId($vehicle);
+				$row->setDoneAt($at);
+				$row->setDoneAtOff(0);
+				$row->setTitle('Oil change');
+				return $row;
+			}],
+			[ExpenseMapper::class, static function (int $vehicle, int $at): Expense {
+				$row = new Expense();
+				$row->setVehicleId($vehicle);
+				$row->setSpentAt($at);
+				$row->setSpentAtOff(0);
+				$row->setAmount(850);
+				return $row;
+			}],
+		] as [$class, $make]) {
+			$mapper = $this->get($class);
+			$insert = function (int $vehicle, int $at, bool $deleted = false) use ($mapper, $make) {
+				$row = $make($vehicle, $at);
+				$row->setCreatedBy(self::OWNER);
+				if ($deleted) {
+					$row->setDeletedAt(1);
+				}
+				return $mapper->insert($row);
+			};
+			$insert($vehicleId, 999);
+			$later = $insert($vehicleId, 1500);
+			$first = $insert($vehicleId, 1000);
+			$insert($vehicleId, 1200, deleted: true);
+			$insert($vehicleId + 1, 1200);
+			$insert($vehicleId, 2000);
+
+			$this->assertSame(
+				[$first->getUuid(), $later->getUuid()],
+				array_map(static fn ($row) => $row->getUuid(), $mapper->findBetween($vehicleId, 1000, 2000)),
+				$class,
+			);
+		}
+	}
+
+	/**
 	 * A Reading written the way M2 writes one - no counter named - is on the main counter.
 	 */
 	public function testAReadingThatNamesNoCounterIsOnTheMainOne(): void {

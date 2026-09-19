@@ -20,6 +20,12 @@ defineProps({
 
 const entering = ref(false)
 const editing = ref(false)
+/**
+ * The timeline row the sheet is open on, or null.
+ *
+ * @type {import('vue').Ref<import('../services/api.js').Entry|null>}
+ */
+const opened = ref(null)
 
 // The timeline holds its own pages and its own chip, and neither is this screen's business - what
 // is, is that a write happened and the list is now a row behind.
@@ -61,11 +67,16 @@ useHotKey('n', () => {
 
 		<!-- One timeline of everything that happened to this vehicle, which is the question people
 		     actually ask (docs/ui.md). -->
-		<Timeline ref="timeline" :vehicle="vehicle" />
+		<Timeline ref="timeline" :vehicle="vehicle" @open="opened = $event" />
 
 		<EntrySheet v-if="entering"
 			:vehicle="vehicle"
 			@close="entering = false"
+			@saved="timeline?.reload()" />
+		<EntrySheet v-if="opened"
+			:vehicle="vehicle"
+			:entry="opened"
+			@close="opened = null"
 			@saved="timeline?.reload()" />
 		<!-- A save is done with, so the sheet goes: what it wrote is in the store this screen
 		     reads, and a sheet still open would be a second copy of the same vehicle. -->

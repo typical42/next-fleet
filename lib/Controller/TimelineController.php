@@ -55,7 +55,18 @@ class TimelineController extends Controller {
 	}
 
 	/**
-	 * The refusals both reads share, each as the status the screen acts on.
+	 * One Entry as its timeline row.
+	 *
+	 * @param string $type the kind of Entry, as a row names it
+	 * @param string $entry the Entry's uuid
+	 */
+	#[NoAdminRequired]
+	public function show(string $uuid, string $type, string $entry): DataResponse {
+		return $this->answer(fn (): array => $this->service->one($this->userId(), $uuid, $type, $entry));
+	}
+
+	/**
+	 * The refusals every read shares, each as the status the screen acts on.
 	 *
 	 * @param callable(): array<array-key, mixed> $read
 	 */

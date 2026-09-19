@@ -85,6 +85,52 @@ export function categoryWord(category) {
 	return words[category] ?? category
 }
 
+/** What an Expense can be (CONTEXT.md), in the order the sheet offers them. */
+export const EXPENSE_CATEGORIES = ['insurance', 'tax', 'toll', 'parking', 'fine', 'lease', 'other']
+
+/**
+ * An expense category is a code in the database and a word on screen (docs/ui.md#languages).
+ *
+ * @param {string} category - one of EXPENSE_CATEGORIES
+ * @return {string} the word for it, or the code where there is none
+ */
+export function expenseWord(category) {
+	/** @type {Record<string, string>} */
+	const words = {
+		insurance: t('nextfleet', 'Insurance'),
+		tax: t('nextfleet', 'Vehicle tax'),
+		toll: t('nextfleet', 'Toll'),
+		parking: t('nextfleet', 'Parking'),
+		fine: t('nextfleet', 'Fine'),
+		lease: t('nextfleet', 'Lease'),
+		other: t('nextfleet', 'Other'),
+	}
+
+	return words[category] ?? category
+}
+
+/** The kinds of work a Maintenance Record can be (CONTEXT.md), in the order the sheet offers them. */
+export const MAINTENANCE_TYPES = ['service', 'repair', 'inspection', 'tyres', 'upgrade']
+
+/**
+ * A maintenance type is a code in the database and a word on screen (docs/ui.md#languages).
+ *
+ * @param {string} type - one of MAINTENANCE_TYPES
+ * @return {string} the word for it, or the code where there is none
+ */
+export function maintenanceWord(type) {
+	/** @type {Record<string, string>} */
+	const words = {
+		service: t('nextfleet', 'Service'),
+		repair: t('nextfleet', 'Repair'),
+		inspection: t('nextfleet', 'Inspection'),
+		tyres: t('nextfleet', 'Tyres'),
+		upgrade: t('nextfleet', 'Upgrade'),
+	}
+
+	return words[type] ?? type
+}
+
 /**
  * An engine or an energy is a code in the database and a word on screen (docs/ui.md#languages).
  * One list for both, because an energy is an engine's code minus `hybrid` (CONTEXT.md) and the
@@ -182,6 +228,76 @@ function madeOf(vehicle) {
  */
 export function formatCount(value, locale = getCanonicalLocale()) {
 	return new Intl.NumberFormat(locale).format(value)
+}
+
+/**
+ * A fill-up's amount as the timeline states it. `amount` counts millilitres or watt-hours by
+ * `energy` (docs/architecture.md#data-model), so a thousand of it is a litre or a kilowatt-hour.
+ *
+ * @param {number} amount - millilitres or watt-hours
+ * @param {string} energy - the energy it is an amount of
+ * @param {string} [locale] - defaults to the one Nextcloud resolved for this session
+ * @return {string} the amount with its unit
+ */
+export function formatEnergyAmount(amount, energy, locale = getCanonicalLocale()) {
+	const unit = energy === 'electric' ? 'kWh' : 'l'
+
+	return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(amount / 1000)} ${unit}`
+}
+
+/**
+ * A segment's consumption (ConsumptionService). The units stay metric in every language
+ * (docs/ui.md), and one decimal is as precise as a pump and an odometer are.
+ *
+ * @param {{value: number, per: string}} consumption - litres or kWh per 100 km, or per hour
+ * @param {string} energy - which of the two the amount was in
+ * @param {string} [locale] - defaults to the one Nextcloud resolved for this session
+ * @return {string} e.g. `6,1 l/100 km` or `4,5 l/h`
+ */
+export function formatConsumption(consumption, energy, locale = getCanonicalLocale()) {
+	const number = new Intl.NumberFormat(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(consumption.value)
+	const unit = energy === 'electric' ? 'kWh' : 'l'
+
+	return `${number} ${unit}/${consumption.per === 'h' ? 'h' : '100 km'}`
+}
+
+/**
+ * The rolling wall-side figure (ConsumptionService::wallSide()) beside the segment one. It counts
+ * what the charger delivered, not what the battery kept, so it says so rather than pass for the
+ * segment figure (docs/architecture.md#numbers-consumption-cost-emissions).
+ *
+ * @param {{value: number, per: string}} rolling - kWh per 100 km, or per hour
+ * @param {string} [locale] - defaults to the one Nextcloud resolved for this session
+ * @return {{figure: string, note: string}} e.g. `≈ 19,0 kWh/100 km` and the line under it
+ */
+export function formatWallSide(rolling, locale = getCanonicalLocale()) {
+	return {
+		figure: `≈ ${formatConsumption(rolling, 'electric', locale)}`,
+		note: t('nextfleet', 'Approximate: counted at the charger, so charging losses are included'),
+	}
+}
+
+/**
+ * Gross cents as the reader's locale writes money. A vehicle without a currency still saves its
+ * costs, so a row still states one: as a bare amount.
+ *
+ * @param {number} cents - the column's integer
+ * @param {string|null|undefined} currency - the vehicle's code, as typed
+ * @param {string} [locale] - defaults to the one Nextcloud resolved for this session
+ * @return {string} the amount, with its currency where there is one
+ */
+export function formatMoney(cents, currency, locale = getCanonicalLocale()) {
+	const plain = { minimumFractionDigits: 2, maximumFractionDigits: 2 }
+	if (currency) {
+		try {
+			return new Intl.NumberFormat(locale, { ...plain, style: 'currency', currency }).format(cents / 100)
+		} catch {
+			// The column is free text, and Intl refuses a code it does not know.
+			return `${new Intl.NumberFormat(locale, plain).format(cents / 100)} ${currency}`
+		}
+	}
+
+	return new Intl.NumberFormat(locale, plain).format(cents / 100)
 }
 
 /**

@@ -11,23 +11,32 @@ import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import NcRadioGroup from '@nextcloud/vue/components/NcRadioGroup'
 import NcRadioGroupButton from '@nextcloud/vue/components/NcRadioGroupButton'
 import NcSelect from '@nextcloud/vue/components/NcSelect'
+import NcTextArea from '@nextcloud/vue/components/NcTextArea'
 import NcTextField from '@nextcloud/vue/components/NcTextField'
 import { flushPromises, shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { energyPrefill, getVehicle, recordEnergy, recordReading, recordTrip } from '../services/api.js'
+import { ConflictError, deleteEntry, energyPrefill, expensePrefill, getVehicle, maintenancePrefill, readEntry, recordEnergy, recordExpense, recordMaintenance, recordReading, recordTrip, updateEntry } from '../services/api.js'
+import { useVehiclesStore } from '../store/index.js'
 import EntrySheet from './EntrySheet.vue'
 
 // The network is the api client's own seam (api.spec.js), and the store is left real: this sheet
 // is the only caller store.log() has, so the wiring through it is part of what is under test.
 vi.mock('../services/api.js', async (original) => ({
 	...await original(),
+	deleteEntry: vi.fn(),
 	energyPrefill: vi.fn(),
+	expensePrefill: vi.fn(),
 	getVehicle: vi.fn(),
+	maintenancePrefill: vi.fn(),
+	readEntry: vi.fn(),
 	recordEnergy: vi.fn(),
+	recordExpense: vi.fn(),
+	recordMaintenance: vi.fn(),
 	recordReading: vi.fn(),
 	recordTrip: vi.fn(),
+	updateEntry: vi.fn(),
 }))
 
 const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', odo_value: 148320 }
@@ -44,11 +53,12 @@ const ARRIVAL = new Date(2026, 0, 15, 9, 45)
  * hold their choices in their own slot, so the stubs render theirs.
  *
  * @param {object} [vehicle] - the vehicle the sheet is on
+ * @param {object|null} [entry] - the timeline row it was opened on, or null for a new entry
  * @return {import('@vue/test-utils').VueWrapper} the mounted sheet
  */
-function sheet(vehicle = VEHICLE) {
+function sheet(vehicle = VEHICLE, entry = null) {
 	return shallowMount(EntrySheet, {
-		props: { vehicle },
+		props: { vehicle, entry },
 		global: {
 			renderStubDefaultSlot: true,
 			stubs: { NcDialog: { template: '<div><slot /><slot name="actions" /></div>' } },
@@ -171,6 +181,10 @@ beforeEach(() => {
 	vi.mocked(recordTrip).mockResolvedValue(/** @type {any} */ ({ uuid: 't-1', reconciled: false }))
 	vi.mocked(recordReading).mockResolvedValue(/** @type {any} */ ({ uuid: 'r-1', value: 148402 }))
 	vi.mocked(recordEnergy).mockResolvedValue(/** @type {any} */ ({ uuid: 'e-1', flags: [] }))
+	vi.mocked(recordMaintenance).mockResolvedValue(/** @type {any} */ ({ uuid: 'm-1' }))
+	vi.mocked(maintenancePrefill).mockResolvedValue({ vat_rate: 1900, vendors: ['ATU Nord', 'Reifen Müller'] })
+	vi.mocked(recordExpense).mockResolvedValue(/** @type {any} */ ({ uuid: 'x-1' }))
+	vi.mocked(expensePrefill).mockResolvedValue({ vat_rate: 1900 })
 	vi.mocked(energyPrefill).mockResolvedValue({
 		vat_rate: 1900,
 		stations: [
@@ -211,12 +225,12 @@ describe('the entry sheet', () => {
 	/**
 	 * A journey is what a logbook is for and what a driver enters daily; the counter on its own is
 	 * the escape hatch for everything not otherwise recorded (docs/ui.md). So the sheet opens on
-	 * the trip and the other kind is one tap away.
+	 * the trip and the other kinds are one tap away.
 	 */
-	it('opens on a trip and offers the odometer beside it', () => {
+	it('opens on a trip and offers the other kinds beside it, the expense last', () => {
 		const wrapper = sheet()
 
-		expect(choices(wrapper, 'Entry type')).toEqual(['Trip', 'Odometer'])
+		expect(choices(wrapper, 'Entry type')).toEqual(['Trip', 'Maintenance', 'Odometer', 'Expense'])
 		expect(chooser(wrapper, 'Entry type').props('modelValue')).toBe('trip')
 	})
 
@@ -462,8 +476,8 @@ describe('the entry sheet', () => {
 	 * that names none is not offered one - there would be nothing to choose from.
 	 */
 	it('offers energy only to a vehicle that takes some', () => {
-		expect(choices(sheet(), 'Entry type')).toEqual(['Trip', 'Odometer'])
-		expect(choices(sheet(HYBRID), 'Entry type')).toEqual(['Trip', 'Energy', 'Odometer'])
+		expect(choices(sheet(), 'Entry type')).toEqual(['Trip', 'Maintenance', 'Odometer', 'Expense'])
+		expect(choices(sheet(HYBRID), 'Entry type')).toEqual(['Trip', 'Energy', 'Maintenance', 'Odometer', 'Expense'])
 	})
 
 	/** A plug-in hybrid logs either of its two energies, and nothing else (docs/ui.md). */
@@ -666,6 +680,141 @@ describe('the entry sheet', () => {
 	})
 
 	/**
+	 * A Maintenance Record asks for its title and cost (docs/ui.md), and sends money and rates as
+	 * the integers their columns hold. The VAT is the jurisdiction's on the day, and the counters,
+	 * as on a fill-up, are never prefilled.
+	 */
+	it('writes a maintenance record as the columns hold it', async () => {
+		const wrapper = sheet(TRUCK)
+
+		await choose(wrapper, 'Entry type', 'maintenance')
+		await flushPromises()
+		const [, at, off] = vi.mocked(maintenancePrefill).mock.calls[0]
+		expect(field(wrapper, 'VAT rate (%)').props('modelValue')).toBe('19')
+		expect(field(wrapper, 'Counter reading').props('modelValue')).toBe('')
+		await field(wrapper, 'Title').vm.$emit('update:modelValue', ' Oil change ')
+		await field(wrapper, 'Cost').vm.$emit('update:modelValue', '189,90')
+		await dropdown(wrapper, 'Type').vm.$emit('update:modelValue', { id: 'service', label: 'Service' })
+		await field(wrapper, 'Vendor').vm.$emit('update:modelValue', 'ATU Nord')
+		await field(wrapper, 'Counter reading').vm.$emit('update:modelValue', '148.402')
+		await field(wrapper, 'Engine hours').vm.$emit('update:modelValue', '5011')
+		await wrapper.findComponent(NcTextArea).vm.$emit('update:modelValue', 'Filter too')
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(recordMaintenance).toHaveBeenCalledWith('v-1', {
+			done_at: at,
+			done_at_off: off,
+			title: 'Oil change',
+			type: 'service',
+			vendor: 'ATU Nord',
+			notes: 'Filter too',
+			cost: 18990,
+			vat_rate: 1900,
+			odo: 148402,
+			second_odo: 5011,
+		})
+		expect(wrapper.emitted('close')?.length).toBe(1)
+	})
+
+	/** Everything but the title may be left out, and what was left out is not sent. */
+	it('sends only what a maintenance record was given', async () => {
+		const wrapper = sheet()
+
+		await choose(wrapper, 'Entry type', 'maintenance')
+		await flushPromises()
+		await field(wrapper, 'Title').vm.$emit('update:modelValue', 'Wipers')
+		await field(wrapper, 'VAT rate (%)').vm.$emit('update:modelValue', '')
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(Object.keys(vi.mocked(recordMaintenance).mock.calls[0][1]).sort())
+			.toEqual(['done_at', 'done_at_off', 'title'])
+		expect(field(wrapper, 'Engine hours')).toBeUndefined()
+	})
+
+	/** The vendor completes from this vehicle's history, the latest first (docs/ui.md). */
+	it('offers the vendors this vehicle has used', async () => {
+		const wrapper = sheet()
+
+		await choose(wrapper, 'Entry type', 'maintenance')
+		await flushPromises()
+
+		const list = wrapper.find(`datalist#${field(wrapper, 'Vendor').attributes('list')}`)
+		expect(list.findAll('option').map((one) => one.attributes('value'))).toEqual(['ATU Nord', 'Reifen Müller'])
+	})
+
+	/** The title is the one field a Maintenance Record requires, so it is asked for here. */
+	it('writes nothing when a maintenance record has no title', async () => {
+		const wrapper = sheet()
+
+		await choose(wrapper, 'Entry type', 'maintenance')
+		await field(wrapper, 'Cost').vm.$emit('update:modelValue', '50')
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(recordMaintenance).not.toHaveBeenCalled()
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('A maintenance record needs a title.')
+	})
+
+	/**
+	 * An Expense asks for its amount, and a category, the VAT and notes beside it (docs/ui.md). The
+	 * VAT is the jurisdiction's on the day, and it asks for no counter: an Expense has none.
+	 */
+	it('writes an expense as the columns hold it', async () => {
+		const wrapper = sheet(TRUCK)
+
+		await choose(wrapper, 'Entry type', 'expense')
+		await flushPromises()
+		const [, at, off] = vi.mocked(expensePrefill).mock.calls[0]
+		expect(labels(wrapper)).toEqual(['Amount', 'VAT rate (%)'])
+		expect(field(wrapper, 'VAT rate (%)').props('modelValue')).toBe('19')
+		await field(wrapper, 'Amount').vm.$emit('update:modelValue', '640,00')
+		await dropdown(wrapper, 'Category').vm.$emit('update:modelValue', { id: 'insurance', label: 'Insurance' })
+		await wrapper.findComponent(NcTextArea).vm.$emit('update:modelValue', ' Full year ')
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(recordExpense).toHaveBeenCalledWith('v-1', {
+			spent_at: at,
+			spent_at_off: off,
+			amount: 64000,
+			category: 'insurance',
+			vat_rate: 1900,
+			notes: 'Full year',
+		})
+		expect(wrapper.emitted('close')?.length).toBe(1)
+	})
+
+	/** Everything but the amount may be left out; no category is picked for the person. */
+	it('sends only what an expense was given', async () => {
+		const wrapper = sheet()
+
+		await choose(wrapper, 'Entry type', 'expense')
+		await flushPromises()
+		expect(dropdown(wrapper, 'Category').props('modelValue')).toBeNull()
+		await field(wrapper, 'Amount').vm.$emit('update:modelValue', '4.50')
+		await field(wrapper, 'VAT rate (%)').vm.$emit('update:modelValue', '')
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(Object.keys(vi.mocked(recordExpense).mock.calls[0][1]).sort())
+			.toEqual(['amount', 'spent_at', 'spent_at_off'])
+	})
+
+	/** The amount is the one field an Expense requires, so it is asked for here. */
+	it('writes nothing when an expense has no amount', async () => {
+		const wrapper = sheet()
+
+		await choose(wrapper, 'Entry type', 'expense')
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(recordExpense).not.toHaveBeenCalled()
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('That is not an amount.')
+	})
+
+	/**
 	 * Escape in a date field belongs to the picker the browser opened over it, not to the sheet.
 	 * Chromium dismisses that picker on the key and delivers the keydown to the input all the same,
 	 * so a sheet that took it would close over a typed-up journey.
@@ -677,5 +826,185 @@ describe('the entry sheet', () => {
 		await moment(wrapper, 'Arrival').trigger('keydown.esc')
 
 		expect(wrapper.emitted('close')).toBeUndefined()
+	})
+})
+
+describe('the entry sheet on an Entry from the timeline', () => {
+	/** A fill-up as its timeline row carries it: partial, with a price, a rate and a counter. */
+	const FILL = {
+		uuid: 'e-1',
+		updated_at: 1750000000,
+		filled_at: 1788391800,
+		filled_at_off: 120,
+		energy: 'diesel',
+		amount: 48200,
+		total: 8210,
+		unit_price: 1703,
+		vat_rate: 1900,
+		odo: 148400,
+		second_odo: null,
+		full_tank: false,
+		missed_previous: false,
+		station: 'Aral Hauptstr.',
+		is_dc: false,
+		location_kind: null,
+	}
+	const FILL_ROW = { type: 'energy', occurred_at: 1788391800, occurred_at_off: 120, energy: FILL, readings: [], flags: [] }
+
+	/**
+	 * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted sheet
+	 * @param {string} text - what the button says
+	 * @return {any} the button, or undefined when the sheet has none saying that
+	 */
+	function button(wrapper, text) {
+		return wrapper.findAllComponents(NcButton).find((one) => one.text() === text)
+	}
+
+	beforeEach(() => {
+		vi.mocked(updateEntry).mockImplementation(async (uuid, type, entry, fields) => ({ ...entry, ...fields, updated_at: entry.updated_at + 1 }))
+		vi.mocked(deleteEntry).mockImplementation(async (uuid, type, entry) => ({ ...entry, updated_at: entry.updated_at + 1 }))
+	})
+
+	/**
+	 * The row is one Entry of one kind, so the sheet opens on that kind with what the Entry says,
+	 * and offers no other kind: a fill-up does not become an expense.
+	 */
+	it('opens on the Entry with what it says, and offers no other kind', async () => {
+		const wrapper = sheet(TRUCK, FILL_ROW)
+		await flushPromises()
+
+		expect(wrapper.findComponent(NcDialog).attributes('name')).toBe('Edit entry')
+		expect(chooser(wrapper, 'Entry type')).toBeUndefined()
+		expect(field(wrapper, 'Amount (l)').props('modelValue')).toBe('48.2')
+		expect(field(wrapper, 'Total price').props('modelValue')).toBe('82.1')
+		expect(field(wrapper, 'VAT rate (%)').props('modelValue')).toBe('19')
+		expect(field(wrapper, 'Counter reading').props('modelValue')).toBe('148400')
+		expect(field(wrapper, 'Engine hours').props('modelValue')).toBe('')
+		expect(field(wrapper, 'Station').props('modelValue')).toBe('Aral Hauptstr.')
+		expect(toggle(wrapper, 'Full tank').props('modelValue')).toBe(false)
+		expect(moment(wrapper, 'Date').props('modelValue')).toEqual(new Date(1788391800 * 1000))
+	})
+
+	/**
+	 * A rate left unstated is the person's word, and "not stated" is not a gap the jurisdiction
+	 * fills on the next read (docs/architecture.md#data-model).
+	 */
+	it('keeps a rate that was not stated', async () => {
+		const wrapper = sheet(TRUCK, { ...FILL_ROW, energy: { ...FILL, vat_rate: null } })
+		await flushPromises()
+
+		expect(field(wrapper, 'VAT rate (%)').props('modelValue')).toBe('')
+	})
+
+	/**
+	 * The edit is the whole Entry under the token it was read with. The price the server derived
+	 * from the total is derived again rather than pinned, so a corrected total is not contradicted
+	 * by the price it replaced.
+	 */
+	it('writes the whole Entry back under the token it was read with', async () => {
+		const wrapper = sheet(TRUCK, FILL_ROW)
+		await field(wrapper, 'Total price').vm.$emit('update:modelValue', '84,10')
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(updateEntry).toHaveBeenCalledWith('v-1', 'energy', FILL, {
+			filled_at: 1788391800,
+			filled_at_off: -new Date(1788391800 * 1000).getTimezoneOffset(),
+			energy: 'diesel',
+			full_tank: false,
+			missed_previous: false,
+			amount: 48200,
+			total: 8410,
+			vat_rate: 1900,
+			odo: 148400,
+			station: 'Aral Hauptstr.',
+		})
+		expect(recordEnergy).not.toHaveBeenCalled()
+		expect(wrapper.emitted('saved')).toHaveLength(1)
+		expect(wrapper.emitted('close')).toHaveLength(1)
+	})
+
+	/** An Odometer Entry keeps the moment it was read at: the sheet asks only for the number. */
+	it('corrects an Odometer Entry at the moment it was read', async () => {
+		const reading = { uuid: 'r-1', updated_at: 1750000000, read_at: 1788217200, read_at_off: 60, value: 148320, counter: 'second', flagged: true }
+		const wrapper = sheet(TRUCK, { type: 'odometer', occurred_at: 1788217200, occurred_at_off: 60, odometer: reading })
+
+		expect(chooser(wrapper, 'Which counter').props('modelValue')).toBe('second')
+		expect(field(wrapper, 'Counter reading').props('modelValue')).toBe('148320')
+		await field(wrapper, 'Counter reading').vm.$emit('update:modelValue', '5011')
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(updateEntry).toHaveBeenCalledWith('v-1', 'odometer', reading, { value: 5011, counter: 'second', read_at: 1788217200, read_at_off: 60 })
+	})
+
+	/**
+	 * Somebody else changed the Entry while the sheet was open. The sheet says so, and the retry
+	 * becomes _Save anyway_: it reads the Entry back and writes what is on screen under the token
+	 * that came with it (docs/ui.md).
+	 */
+	it('offers to save anyway when the Entry moved on, under the token read back', async () => {
+		vi.mocked(updateEntry).mockRejectedValueOnce(new ConflictError('Changed since you read it'))
+		vi.mocked(readEntry).mockResolvedValue(/** @type {any} */ ({ ...FILL_ROW, energy: { ...FILL, amount: 50000, updated_at: 1750000900 } }))
+		const wrapper = sheet(TRUCK, FILL_ROW)
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toContain('changed somewhere else')
+		expect(saveButton(wrapper).text()).toBe('Save anyway')
+
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(readEntry).toHaveBeenCalledWith('v-1', 'energy', 'e-1')
+		expect(updateEntry).toHaveBeenLastCalledWith('v-1', 'energy', expect.objectContaining({ updated_at: 1750000900 }), expect.objectContaining({ amount: 48200 }))
+		expect(wrapper.emitted('close')).toHaveLength(1)
+	})
+
+	/**
+	 * Nothing asks "are you sure?": the delete goes, and the way back is the toast's
+	 * (src/components/UndoToast.vue), which the store hands the token the delete answered with.
+	 */
+	it('deletes the Entry and leaves the way back with the store', async () => {
+		const wrapper = sheet(TRUCK, FILL_ROW)
+
+		await button(wrapper, 'Delete').vm.$emit('click')
+		await flushPromises()
+
+		expect(deleteEntry).toHaveBeenCalledWith('v-1', 'energy', FILL)
+		expect(useVehiclesStore().struck).toEqual({ vehicle: 'v-1', type: 'energy', entry: { ...FILL, updated_at: 1750000001 } })
+		expect(wrapper.emitted('saved')).toHaveLength(1)
+		expect(wrapper.emitted('close')).toHaveLength(1)
+	})
+
+	/**
+	 * Under Logbook Mode a trip is voided, not deleted (docs/features.md#logbook-mode); the button
+	 * says what the click does. The journey opens as it was stated - here, as a distance.
+	 */
+	it('voids a trip under Logbook Mode, and opens it as it was stated', () => {
+		const trip = {
+			uuid: 't-1',
+			updated_at: 1750000000,
+			started_at: 1788391800,
+			started_at_off: 120,
+			ended_at: 1788397200,
+			ended_at_off: 120,
+			start_odo: null,
+			end_odo: null,
+			distance: 82,
+			from_label: 'Munich',
+			to_label: 'Augsburg',
+			purpose: 'Client visit',
+			partner: 'ACME',
+			category: 'private',
+		}
+		const wrapper = sheet({ ...VEHICLE, logbook_mode: true }, { type: 'trip', occurred_at: 1788391800, occurred_at_off: 120, trip, reading: null })
+
+		expect(button(wrapper, 'Void trip')).toBeDefined()
+		expect(button(wrapper, 'Delete')).toBeUndefined()
+		expect(chooser(wrapper, 'Counter or distance').props('modelValue')).toBe('distance')
+		expect(field(wrapper, 'Distance').props('modelValue')).toBe('82')
+		expect(field(wrapper, 'Destination').props('modelValue')).toBe('Augsburg')
+		expect(dropdown(wrapper, 'Category').props('modelValue').id).toBe('private')
 	})
 })

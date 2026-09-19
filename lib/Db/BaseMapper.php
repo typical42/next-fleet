@@ -182,6 +182,39 @@ abstract class BaseMapper extends QBMapper {
 	}
 
 	/**
+	 * findByUuid(), and only where the row hangs off the vehicle the route named. A uuid alone
+	 * would be a second way in: one vehicle of their own is all somebody would need to reach a row
+	 * on anybody else's. For the tables with a `vehicle_id`, which is every one but the vehicles'.
+	 *
+	 * @return T
+	 * @throws DoesNotExistException
+	 * @throws MultipleObjectsReturnedException
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findOnVehicle(int $vehicleId, string $uuid): BaseEntity {
+		$qb = $this->byUuid($uuid);
+		$qb->andWhere($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)));
+		$qb->andWhere($qb->expr()->isNull('deleted_at'));
+
+		return $this->findEntity($qb);
+	}
+
+	/**
+	 * findAnyByUuid() under findOnVehicle()'s condition, for a restore.
+	 *
+	 * @return T
+	 * @throws DoesNotExistException
+	 * @throws MultipleObjectsReturnedException
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findAnyOnVehicle(int $vehicleId, string $uuid): BaseEntity {
+		$qb = $this->byUuid($uuid);
+		$qb->andWhere($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)));
+
+		return $this->findEntity($qb);
+	}
+
+	/**
 	 * One page of one vehicle's rows, newest first: the live ones strictly before `($at, $id)` in
 	 * `($instant, id)` order, which is the order the timeline reads in reverse
 	 * (docs/architecture.md#the-timeline). The tie-break is `id` because two rows can carry the
@@ -206,6 +239,24 @@ abstract class BaseMapper extends QBMapper {
 			->orderBy($instant, 'DESC')
 			->addOrderBy('id', 'DESC')
 			->setMaxResults($limit);
+
+		return $qb;
+	}
+
+	/**
+	 * One vehicle's live rows whose `$instant` falls in `[from, to)`, oldest first - a period a
+	 * figure is computed over (docs/architecture.md#numbers-consumption-cost-emissions).
+	 */
+	protected function between(string $instant, int $vehicleId, int $from, int $to): IQueryBuilder {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->tableName)
+			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->isNull('deleted_at'))
+			->andWhere($qb->expr()->gte($instant, $qb->createNamedParameter($from, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->lt($instant, $qb->createNamedParameter($to, IQueryBuilder::PARAM_INT)))
+			->orderBy($instant, 'ASC')
+			->addOrderBy('id', 'ASC');
 
 		return $qb;
 	}

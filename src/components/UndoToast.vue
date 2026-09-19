@@ -22,19 +22,36 @@ const undoing = ref(false)
 
 // A refusal is about the row it was refused for. The next delete is a different row and a
 // different token, so it gets an offer that has not already failed.
-watch(() => store.deleted, () => {
+watch([() => store.deleted, () => store.struck], () => {
 	failure.value = ''
 })
 
-const message = computed(() => {
-	const name = nameOf(store.deleted ?? {})
+const offered = computed(() => store.deleted !== null || store.struck !== null)
 
-	return failure.value
-		? t('nextfleet', '{name} could not be brought back: {reason}', { name, reason: failure.value })
-		: t('nextfleet', '{name} was deleted.', { name })
+const message = computed(() => {
+	if (store.deleted !== null) {
+		const name = nameOf(store.deleted)
+
+		return failure.value
+			? t('nextfleet', '{name} could not be brought back: {reason}', { name, reason: failure.value })
+			: t('nextfleet', '{name} was deleted.', { name })
+	}
+
+	// An Entry has no name of its own the way a vehicle has, and its row is gone with it.
+	if (failure.value) {
+		return t('nextfleet', 'The entry could not be brought back: {reason}', { reason: failure.value })
+	}
+	// Under Logbook Mode a trip is voided rather than deleted (docs/features.md#logbook-mode).
+	const struck = store.struck
+	return struck?.type === 'trip' && store.byUuid.get(struck.vehicle)?.logbook_mode === true
+		? t('nextfleet', 'The trip was voided.')
+		: t('nextfleet', 'The entry was deleted.')
 })
 
-/** The way back. What comes back is still the selected vehicle, so its screen returns with it. */
+/**
+ * The way back. A vehicle that comes back is still the selected one, so its screen returns with
+ * it; an Entry's timeline reads itself again off the store.
+ */
 async function undo() {
 	if (undoing.value) {
 		return
@@ -45,7 +62,7 @@ async function undo() {
 	try {
 		await store.restore()
 	} catch (error) {
-		// The row moved on since the delete, so the token matches nothing and the vehicle is still
+		// The row moved on since the delete, so the token matches nothing and the row is still
 		// deleted. Closing here would claim an undo that did not happen.
 		failure.value = error.message
 	} finally {
@@ -65,7 +82,7 @@ function dismiss() {
 	     inserted already full is not announced. Polite rather than assertive, because the deletion
 	     is what the user just asked for - it follows what they are reading, it does not cut in. -->
 	<div class="toast-region" role="status" aria-live="polite">
-		<div v-if="store.deleted" class="toast">
+		<div v-if="offered" class="toast">
 			<p class="toast__message">
 				{{ message }}
 			</p>

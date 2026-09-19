@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { categoryWord, formatCount, formatDecimal, formatDay, fullMoment, formatMonth, formatOdometer, isoInstant, monthKey, nameOf, parseDay, parseDecimal, parseWhole, shortDate, subtitleOf } from './format.js'
+import { categoryWord, formatConsumption, formatCount, formatDecimal, formatDay, formatEnergyAmount, formatMoney, formatWallSide, fullMoment, formatMonth, formatOdometer, isoInstant, monthKey, nameOf, parseDay, parseDecimal, parseWhole, shortDate, subtitleOf } from './format.js'
 
 vi.mock('@nextcloud/l10n', () => ({
 	getCanonicalLocale: () => 'en-GB',
@@ -19,6 +19,52 @@ describe('formatCount', () => {
 	it('groups thousands the way the locale does', () => {
 		expect(formatCount(148320, 'de-DE')).toBe('148.320')
 		expect(formatCount(148320, 'en-GB')).toBe('148,320')
+	})
+})
+
+describe('formatEnergyAmount', () => {
+	/** `amount` is millilitres or watt-hours by `energy` (docs/architecture.md#data-model). */
+	it('says litres for a fuel and kilowatt-hours for electricity', () => {
+		expect(formatEnergyAmount(48200, 'diesel', 'de-DE')).toBe('48,2 l')
+		expect(formatEnergyAmount(13456, 'electric', 'en-GB')).toBe('13.46 kWh')
+		expect(formatEnergyAmount(40000, 'petrol', 'en-GB')).toBe('40 l')
+	})
+})
+
+describe('formatConsumption', () => {
+	/** Units stay metric in both languages (docs/ui.md), one decimal like the mockup's `6,1 l/100`. */
+	it('says litres or kWh per 100 km, or per hour on an hour counter', () => {
+		expect(formatConsumption({ value: 6.125, per: 'km' }, 'diesel', 'de-DE')).toBe('6,1 l/100 km')
+		expect(formatConsumption({ value: 18, per: 'km' }, 'electric', 'en-GB')).toBe('18.0 kWh/100 km')
+		expect(formatConsumption({ value: 4.5, per: 'h' }, 'diesel', 'en-GB')).toBe('4.5 l/h')
+	})
+})
+
+describe('formatWallSide', () => {
+	/** Labelled approximate, and noted as including charging losses (docs/architecture.md#numbers-consumption-cost-emissions). */
+	it('marks the figure approximate and says the losses are in it', () => {
+		const { figure, note } = formatWallSide({ value: 19.04, per: 'km' }, 'de-DE')
+
+		expect(figure).toBe('≈ 19,0 kWh/100 km')
+		expect(note).toMatch(/charging losses/)
+	})
+})
+
+describe('formatMoney', () => {
+	it('writes cents in the vehicle\'s currency, the way the locale does', () => {
+		// Intl keeps the symbol on the amount's line with a no-break space.
+		expect(formatMoney(8210, 'EUR', 'de-DE')).toBe('82,10 €')
+		expect(formatMoney(8210, 'EUR', 'en-GB')).toBe('€82.10')
+	})
+
+	/** A vehicle without a currency still saves its costs (PRD); the figure carries no symbol. */
+	it('writes the bare amount when the vehicle has no currency', () => {
+		expect(formatMoney(8210, null, 'de-DE')).toBe('82,10')
+	})
+
+	/** The currency is free text of three characters (lib/Service/VehicleService.php). */
+	it('writes a code Intl does not know beside the amount rather than failing', () => {
+		expect(formatMoney(8210, 'X!', 'en-GB')).toBe('82.10 X!')
 	})
 })
 

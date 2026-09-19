@@ -8,11 +8,18 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Service;
 
+use OCA\NextFleet\Db\Energy;
+use OCA\NextFleet\Db\EnergyMapper;
+use OCA\NextFleet\Db\Expense;
+use OCA\NextFleet\Db\ExpenseMapper;
+use OCA\NextFleet\Db\Maintenance;
+use OCA\NextFleet\Db\MaintenanceMapper;
 use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Db\OdoReadingMapper;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
+use OCP\AppFramework\Db\DoesNotExistException;
 
 /**
  * The one timeline a vehicle has (docs/ui.md): everything that happened to it, merged into one
@@ -25,10 +32,21 @@ class TimelineService {
 	 * two rows at the same instant (docs/architecture.md#the-timeline), so entries added here go
 	 * at the end - moving one would re-order pages that are already being scrolled.
 	 */
-	private const TYPES = [self::ODOMETER, self::TRIP];
+	private const TYPES = [self::ODOMETER, self::TRIP, self::ENERGY, self::MAINTENANCE, self::EXPENSE];
 
 	public const TRIP = 'trip';
 	public const ODOMETER = 'odometer';
+	public const ENERGY = 'energy';
+	public const MAINTENANCE = 'maintenance';
+	/** The Costs chip (docs/ui.md). */
+	public const EXPENSE = 'expense';
+
+	/** The kinds whose Entry can write Readings of its own, each under its `source_type`. */
+	private const SOURCES = [
+		self::TRIP => OdoReading::TRIP,
+		self::ENERGY => OdoReading::ENERGY,
+		self::MAINTENANCE => OdoReading::MAINTENANCE,
+	];
 
 	/** docs/ui.md: fifty rows, then more on scroll. Five years of a company car is thousands. */
 	public const PAGE = 50;
@@ -36,9 +54,13 @@ class TimelineService {
 	public function __construct(
 		private TripMapper $trips,
 		private OdoReadingMapper $readings,
+		private EnergyMapper $energy,
+		private MaintenanceMapper $maintenance,
+		private ExpenseMapper $expenses,
 		private VehicleService $fleet,
 		private Completeness $completeness,
 		private Gaps $gaps,
+		private ConsumptionService $consumption,
 	) {
 	}
 
@@ -61,8 +83,9 @@ class TimelineService {
 	 * page starts at, which is null when there is no next page.
 	 *
 	 * A row names its kind and the moment it happened, and carries the Entry itself under that
-	 * kind's key. A trip carries the Reading it left on the counter as well, so the screen shows
-	 * one row for the two, and the fields its jurisdiction requires that it leaves unstated.
+	 * kind's key. A trip, fill-up or maintenance record carries the Readings it left on the counter
+	 * as well, so the screen shows one row for them; a trip also carries the fields its
+	 * jurisdiction requires that it leaves unstated, and a fill-up what it is flagged for.
 	 *
 	 * @param ?string $type one of TYPES, or null for all of them
 	 * @param ?string $cursor what a previous page answered with, or null for the newest rows
@@ -81,14 +104,9 @@ class TimelineService {
 		// One row more than the page, from each table: it is what says whether there is a next
 		// page, and it costs one row rather than a second count query.
 		$keyed = [];
-		if (in_array(self::TRIP, $wanted, true)) {
-			foreach ($this->trips->findBefore($vehicleId, $at, $from[self::TRIP], self::PAGE + 1) as $trip) {
-				$keyed[] = $this->row(self::TRIP, $trip->getStartedAt(), $trip->getStartedAtOff(), $trip);
-			}
-		}
-		if (in_array(self::ODOMETER, $wanted, true)) {
-			foreach ($this->readings->findEntriesBefore($vehicleId, $at, $from[self::ODOMETER], self::PAGE + 1) as $entry) {
-				$keyed[] = $this->row(self::ODOMETER, $entry->getReadAt(), $entry->getReadAtOff(), $entry);
+		foreach ($wanted as $kind) {
+			foreach ($this->before($kind, $vehicleId, $at, $from[$kind]) as $entry) {
+				$keyed[] = $this->row($kind, $entry);
 			}
 		}
 
@@ -97,7 +115,7 @@ class TimelineService {
 		$last = end($page);
 
 		return [
-			'rows' => $this->withMissing($vehicle, $this->withReadings($vehicleId, array_column($page, 'row'))),
+			'rows' => $this->dressed($vehicle, array_column($page, 'row')),
 			// The cursor names the kind rather than its rank: it is read back by the next request,
 			// and a number would pin the ranking into every client's scroll position.
 			'next' => count($keyed) > self::PAGE
@@ -107,12 +125,67 @@ class TimelineService {
 	}
 
 	/**
+	 * One Entry as page() would show it, for the sheet that edits it: an edit that lost a race
+	 * writes again under the token this carries (docs/ui.md). A Reading another Entry wrote is that
+	 * Entry's and no row of its own, so it is not found as an Odometer Entry.
+	 *
+	 * @return array<string, mixed>
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not see this vehicle
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException if there is no such live Entry on it
+	 * @throws \InvalidArgumentException if the type is not a kind of Entry
+	 * @throws \OCP\DB\Exception
+	 */
+	public function one(string $userId, string $vehicleUuid, string $type, string $entryUuid): array {
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::VIEW, $vehicleUuid);
+		$vehicleId = (int)$vehicle->getId();
+		$entry = match ($type) {
+			self::TRIP => $this->trips->findOnVehicle($vehicleId, $entryUuid),
+			self::ODOMETER => $this->readings->findOnVehicle($vehicleId, $entryUuid),
+			self::ENERGY => $this->energy->findOnVehicle($vehicleId, $entryUuid),
+			self::MAINTENANCE => $this->maintenance->findOnVehicle($vehicleId, $entryUuid),
+			self::EXPENSE => $this->expenses->findOnVehicle($vehicleId, $entryUuid),
+			default => throw new \InvalidArgumentException('type is one of ' . implode(', ', self::TYPES)),
+		};
+		if ($entry instanceof OdoReading && $entry->getSourceType() !== OdoReading::MANUAL) {
+			throw new DoesNotExistException('reading ' . $entryUuid . ' is not an Odometer Entry');
+		}
+
+		return $this->dressed($vehicle, [$this->row($type, $entry)['row']])[0];
+	}
+
+	/**
+	 * One kind's share of a page: its rows strictly before the cursor, one more than a page.
+	 *
+	 * @return list<Trip|OdoReading|Energy|Maintenance|Expense>
+	 * @throws \OCP\DB\Exception
+	 */
+	private function before(string $kind, int $vehicleId, int $at, int $from): array {
+		$mapper = match ($kind) {
+			self::TRIP => $this->trips->findBefore(...),
+			self::ODOMETER => $this->readings->findEntriesBefore(...),
+			self::ENERGY => $this->energy->findBefore(...),
+			self::MAINTENANCE => $this->maintenance->findBefore(...),
+			self::EXPENSE => $this->expenses->findBefore(...),
+		};
+
+		return $mapper($vehicleId, $at, $from, self::PAGE + 1);
+	}
+
+	/**
 	 * One row, with the key it is ordered and paged by: the moment it happened, then where its kind
-	 * ranks, then the row's own id.
+	 * ranks, then the row's own id. Each table names that moment its own way.
 	 *
 	 * @return array{key: array{int, int, int}, row: array<string, mixed>}
 	 */
-	private function row(string $type, int $occurredAt, int $offset, Trip|OdoReading $entry): array {
+	private function row(string $type, Trip|OdoReading|Energy|Maintenance|Expense $entry): array {
+		[$occurredAt, $offset] = match (true) {
+			$entry instanceof Trip => [$entry->getStartedAt(), $entry->getStartedAtOff()],
+			$entry instanceof OdoReading => [$entry->getReadAt(), $entry->getReadAtOff()],
+			$entry instanceof Energy => [$entry->getFilledAt(), $entry->getFilledAtOff()],
+			$entry instanceof Maintenance => [$entry->getDoneAt(), $entry->getDoneAtOff()],
+			$entry instanceof Expense => [$entry->getSpentAt(), $entry->getSpentAtOff()],
+		};
+
 		return [
 			'key' => [$occurredAt, self::rank($type), (int)$entry->getId()],
 			'row' => [
@@ -135,30 +208,94 @@ class TimelineService {
 	}
 
 	/**
-	 * The Reading each trip on the page left on the counter, hung on its row - one query for the
-	 * page rather than one per row. It is what makes a trip and its Reading one row on screen
+	 * Rows as the screen shows them: each with what its kind carries beside the Entry.
+	 *
+	 * @param list<array<string, mixed>> $rows
+	 * @return list<array<string, mixed>>
+	 * @throws \OCP\DB\Exception
+	 */
+	private function dressed(Vehicle $vehicle, array $rows): array {
+		return $this->withConsumption($vehicle, $this->withFlags($vehicle, $this->withMissing($vehicle, $this->withReadings((int)$vehicle->getId(), $rows))));
+	}
+
+	/**
+	 * The segment each fill-up on the page closes, or null. Measured over the vehicle's whole
+	 * chain, because the fill-up that opened it may be pages away - and only when the page holds a
+	 * fill-up at all.
+	 *
+	 * @param list<array<string, mixed>> $rows
+	 * @return list<array<string, mixed>>
+	 * @throws \OCP\DB\Exception
+	 */
+	private function withConsumption(Vehicle $vehicle, array $rows): array {
+		if (!in_array(self::ENERGY, array_column($rows, 'type'), true)) {
+			return $rows;
+		}
+
+		$closing = array_column($this->consumption->of($vehicle), null, 'closes');
+		foreach ($rows as $index => $row) {
+			if ($row['type'] === self::ENERGY) {
+				$rows[$index]['consumption'] = $closing[$row[self::ENERGY]->getUuid()] ?? null;
+			}
+		}
+
+		return $rows;
+	}
+
+	/**
+	 * The Readings each Entry on the page left on the counter, hung on its row - one query per kind
+	 * rather than one per row. It is what makes an Entry and its Readings one row on screen
 	 * (docs/architecture.md#odometer-rules, rule 5), flag and all.
+	 *
+	 * A trip leaves exactly one, as `reading`. A fill-up or maintenance record leaves one per
+	 * counter it was given, none to two, as `readings`.
 	 *
 	 * @param list<array<string, mixed>> $rows
 	 * @return list<array<string, mixed>>
 	 * @throws \OCP\DB\Exception
 	 */
 	private function withReadings(int $vehicleId, array $rows): array {
-		$tripIds = [];
+		$ids = [];
 		foreach ($rows as $row) {
-			if ($row['type'] === self::TRIP) {
-				$tripIds[] = (int)$row[self::TRIP]->getId();
+			if (isset(self::SOURCES[$row['type']])) {
+				$ids[$row['type']][] = (int)$row[$row['type']]->getId();
 			}
 		}
 
-		$byTrip = [];
-		foreach ($this->readings->findForTrips($vehicleId, $tripIds) as $reading) {
-			$byTrip[(int)$reading->getSourceId()] = $reading;
+		$bySource = [];
+		foreach ($ids as $kind => $sourceIds) {
+			foreach ($this->readings->findForSources($vehicleId, self::SOURCES[$kind], $sourceIds) as $reading) {
+				$bySource[$kind][(int)$reading->getSourceId()][] = $reading;
+			}
 		}
 
 		foreach ($rows as $index => $row) {
-			if ($row['type'] === self::TRIP) {
-				$rows[$index]['reading'] = $byTrip[(int)$row[self::TRIP]->getId()] ?? null;
+			$kind = $row['type'];
+			if (!isset(self::SOURCES[$kind])) {
+				continue;
+			}
+			$found = $bySource[$kind][(int)$row[$kind]->getId()] ?? [];
+			if ($kind === self::TRIP) {
+				$rows[$index]['reading'] = $found[0] ?? null;
+			} else {
+				$rows[$index]['readings'] = $found;
+			}
+		}
+
+		return $rows;
+	}
+
+	/**
+	 * What each fill-up on the page is flagged for, computed on read against the vehicle as it is
+	 * now (EnergyService::flags()).
+	 *
+	 * @param list<array<string, mixed>> $rows
+	 * @return list<array<string, mixed>>
+	 */
+	private function withFlags(Vehicle $vehicle, array $rows): array {
+		foreach ($rows as $index => $row) {
+			if ($row['type'] === self::ENERGY) {
+				$rows[$index]['flags'] = EnergyService::flags($vehicle, $row[self::ENERGY]);
 			}
 		}
 

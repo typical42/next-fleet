@@ -9,9 +9,11 @@ import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import NcRadioGroup from '@nextcloud/vue/components/NcRadioGroup'
 import NcRadioGroupButton from '@nextcloud/vue/components/NcRadioGroupButton'
 import { flushPromises, shallowMount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { closeGap, ConflictError, readGaps, readTimeline } from '../services/api.js'
+import { useVehiclesStore } from '../store/index.js'
 import { fullMoment } from '../utils/format.js'
 import Timeline from './Timeline.vue'
 import TimelineRow from './TimelineRow.vue'
@@ -98,9 +100,35 @@ function more(wrapper) {
 }
 
 beforeEach(() => {
+	setActivePinia(createPinia())
 	vi.resetAllMocks()
 	vi.mocked(readTimeline).mockResolvedValue(/** @type {any} */ ({ rows: [...SEPTEMBER, ...AUGUST], next: null }))
 	vi.mocked(readGaps).mockResolvedValue(GAPS)
+})
+
+describe('a row opened for editing', () => {
+	/** The sheet is the screen's to open (src/views/VehicleView.vue); the timeline says which row. */
+	it('hands the tapped row up', async () => {
+		const wrapper = await timeline()
+
+		await wrapper.findAllComponents(TimelineRow)[1].vm.$emit('open', SEPTEMBER[1])
+
+		expect(wrapper.emitted('open')).toEqual([[SEPTEMBER[1]]])
+	})
+
+	/**
+	 * An undo is made from the toast in the app shell, which knows nothing of this list - so the
+	 * list reads itself again when the store says an Entry came back.
+	 */
+	it('reads itself again when an Entry is brought back', async () => {
+		await timeline()
+		expect(readTimeline).toHaveBeenCalledTimes(1)
+
+		useVehiclesStore().restored++
+		await flushPromises()
+
+		expect(readTimeline).toHaveBeenCalledTimes(2)
+	})
 })
 
 describe('the month header under Logbook Mode', () => {
@@ -294,13 +322,31 @@ describe('the timeline', () => {
 	it('asks again from the top when a chip narrows it', async () => {
 		const wrapper = await timeline()
 		expect(wrapper.findAllComponents(NcRadioGroupButton).map((one) => String(one.props('label'))))
-			.toEqual(['All', 'Trips', 'Odometer'])
+			.toEqual(['All', 'Trips', 'Odometer', 'Energy', 'Maintenance', 'Costs'])
 		vi.mocked(readTimeline).mockResolvedValue(/** @type {any} */ ({ rows: AUGUST, next: null }))
 
 		await chip(wrapper, 'Trips')
 
 		expect(readTimeline).toHaveBeenLastCalledWith('v-1', { type: 'trip', cursor: null })
 		expect(wrapper.findAllComponents(TimelineRow)).toHaveLength(1)
+	})
+
+	/** Costs is the expenses: energy and maintenance have chips of their own (docs/ui.md). */
+	it('asks for the expenses under Costs, and lists the cost kinds each as a row', async () => {
+		const wrapper = await timeline()
+		const COSTS = [
+			{ type: 'expense', occurred_at: 1788391800, occurred_at_off: 120, expense: { uuid: 'x-1', amount: 1200 } },
+			{ type: 'energy', occurred_at: 1788391800, occurred_at_off: 120, energy: { uuid: 'x-1', energy: 'diesel', amount: 40000 }, flags: [], readings: [] },
+			{ type: 'maintenance', occurred_at: 1788391800, occurred_at_off: 120, maintenance: { uuid: 'x-2', title: 'Oil' }, readings: [] },
+		]
+		vi.mocked(readTimeline).mockResolvedValue(/** @type {any} */ ({ rows: COSTS, next: null }))
+
+		await chip(wrapper, 'Costs')
+
+		expect(readTimeline).toHaveBeenLastCalledWith('v-1', { type: 'expense', cursor: null })
+		// Two kinds may share a uuid's shape; the key keeps both rows.
+		expect(wrapper.findAllComponents(TimelineRow).map((/** @type {any} */ one) => one.props('entry').type))
+			.toEqual(['expense', 'energy', 'maintenance'])
 	})
 
 	/**

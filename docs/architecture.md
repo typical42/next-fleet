@@ -89,7 +89,9 @@ energy outside the set is saved and flagged, as one without a total is flagged "
 flags are computed on read (`EnergyService::flags()`), never stored.
 
 **`tank_ml` and `battery_wh` exist only to flag implausible amounts** — sixty litres into a
-forty-five-litre tank. They never constrain a save.
+forty-five-litre tank. They never constrain a save. The flag is `overfilled`, computed on read like
+the others: an electric amount against `battery_wh`, any other against `tank_ml`, and nothing when
+the capacity is not on file.
 
 **The plate is a label, the `uuid` is the identity.** Cars get re-registered and plates get
 transferred; changing one renames the vehicle, leaves an audit row, and breaks no history. The same
@@ -234,6 +236,12 @@ This is where logbooks quietly break. Six rules, decided once:
    transaction: its date follows the journey's end, and its number is counted again only when the
    counter, the distance or the start changed. An edit to the end time, where the trip went or why
    leaves the number alone, so a counted value is never recounted behind the driver's back.
+   A fill-up or maintenance record keeps one Reading row per counter through its edits
+   (`OdometerService::followEntry()`): a changed counter or moment moves it, an emptied counter
+   soft-deletes it, and a counter stated again brings the same row back. Its undo restores the
+   Readings for the counters it stated when it was deleted, so one an earlier edit emptied stays
+   gone. An Odometer Entry is its own Reading, so it is edited, deleted and restored as itself
+   (`…/readings/{id}`); a Reading another Entry wrote is not found there, only through its Entry.
 6. **Observed beats derived.** A driver who enters a distance instead of an end odometer leaves
    `start_odo` null; the Reading written at `ended_at` is *(latest reading at or before
    `started_at`) + distance*, marked `origin = derived`. Consumption requires **observed** readings
@@ -274,6 +282,19 @@ entirely; the Fahrtenbuch export asks its own question.
 
 A trip row also carries `missing`, the fields its ruleset requires and it leaves unstated
 ([logbook mode](features.md#logbook-mode)).
+
+The kinds are `odometer`, `trip`, `energy`, `maintenance` and `expense`, ranked in that order. A
+fill-up or maintenance row carries `readings`, the Readings it wrote (none to two, one per
+counter), for the same reason a trip carries its one; they are looked up by `(source_type,
+source_id)`, because an id is unique only inside its own table. A fill-up row carries `flags` as
+well, and `consumption`: the segment it closes, or null
+([numbers](#numbers-consumption-cost-emissions)). That is measured over the vehicle's whole energy
+chain, since the fill-up that opened the segment may be pages away.
+
+**One row reads back on its own**, `GET /api/vehicles/{uuid}/timeline/{type}/{id}`, in the same
+shape. The entry sheet asks for it after an edit lost a race, for the token its _Save anyway_ writes
+under ([ui](ui.md#the-entry-sheet-in-detail)). A Reading another Entry wrote is not a row, so it is
+not found as an `odometer`.
 
 **The Gaps are a route of their own**, `GET /api/vehicles/{uuid}/gaps`, and are not paged. A month
 header states the whole month's, and a figure that grew as rows scrolled in would state a number
@@ -385,14 +406,20 @@ fill-up B: sum the amounts of every fill-up *after* A up to and including B, div
 their own, and a vehicle's first fill-up yields no consumption at all.
 
 - A `missed_previous` flag (paid cash, forgot the receipt) **skips** the segment. So does a flagged
-  or derived reading ([odometer rules](#odometer-rules)). A gap must produce no number rather than a
-  wrong one.
+  or derived reading at either end, or an end without a counter ([odometer rules](#odometer-rules)).
+  A gap must produce no number rather than a wrong one.
+- Each energy is a chain of its own, and the distance is always the main counter's: per 100 km, or
+  per hour on a vehicle counted in hours. A truck that also counts engine hours is measured against
+  its kilometres, so its figure includes the fuel burnt working. `ConsumptionService` is the one
+  place this is computed.
 - **Electric gets a second figure, not a broken first one.** There is no wall-side equivalent of a
   full tank: people charge to 80 %, at three different chargers, and never to 100 %. The segment
   rule stays as it is and simply rarely fires for electricity. Alongside it, show a **rolling
   wall-side kWh/100 km** over all charges in the period, labelled approximate and noted as
   including charging losses. Two honestly-labelled numbers beat one that is silently wrong on most
-  rows.
+  rows. It is every live charge with its time in the period, over the main counter's newest
+  unflagged Reading in the period minus its oldest; no charge or no such distance, no figure. On a
+  hybrid that distance includes the kilometres driven on fuel, one more reason it is approximate.
 - **EVs count from the wall.** kWh drawn ≠ kWh stored — AC charging loses 10–20 %. Home vs. public
   is a separate dimension, not a correction factor.
 - **Hybrids show both figures side by side**, driven by `energy_types`. A blended number means
@@ -400,10 +427,16 @@ their own, and a vehicle's first fill-up yields no consumption at all.
 
 **Cost per km** = energy + maintenance + expenses in the period ÷ km driven in the period. Show it
 next to energy-only cost per km; the distance between the two is the actual story of the vehicle.
+`CostService` computes both, per 100 km or per hour as consumption is, over the same distance the
+wall-side figure uses. A fill-up in the period without a price makes the figure *incomplete*. With no
+distance in the period, the cost is the period's total. Under "I reclaim VAT" each row counts net of
+its own rate; a row without a stated rate counts gross, and the figure says so.
 
 **TCO** adds depreciation: (purchase − estimated residual) ÷ km over the holding period. Both fields
-are optional, and an empty field hides the KPI rather than inventing it. This is the number that
-decides buy vs. lease, and none of the tools in
+are optional, and an empty field hides the KPI rather than inventing it. The holding period's
+distance is the main counter's newest unflagged Reading minus its oldest, ever — not the period's.
+Neither price carries a VAT rate, so both count as entered, net preference or not. This is the
+number that decides buy vs. lease, and none of the tools in
 [the prior art](features.md#what-existing-tools-teach-us) shows it.
 
 **Nothing is summed across currencies or units.** Currency and `odo_unit` are per vehicle. A

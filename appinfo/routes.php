@@ -25,6 +25,11 @@ return [
 		// both (docs/adr/0001-own-access-table.md).
 		['name' => 'odometer#index', 'url' => '/api/vehicles/{uuid}/readings', 'verb' => 'GET'],
 		['name' => 'odometer#create', 'url' => '/api/vehicles/{uuid}/readings', 'verb' => 'POST'],
+		// An Odometer Entry is edited, deleted and undone like any Entry. A Reading another Entry
+		// wrote is not one: it follows that Entry (docs/architecture.md#odometer-rules, rule 5).
+		['name' => 'odometer#update', 'url' => '/api/vehicles/{uuid}/readings/{reading}', 'verb' => 'PUT'],
+		['name' => 'odometer#delete', 'url' => '/api/vehicles/{uuid}/readings/{reading}', 'verb' => 'DELETE'],
+		['name' => 'odometer#restore', 'url' => '/api/vehicles/{uuid}/readings/{reading}/restore', 'verb' => 'POST'],
 
 		// A Trip is reached the same way, and writes the one Reading it left on the counter
 		// (docs/architecture.md#odometer-rules).
@@ -42,6 +47,24 @@ return [
 		// What the sheet prefills a fill-up with: the VAT rate on its day, and this vehicle's
 		// stations with their last price (docs/ui.md).
 		['name' => 'energy#prefill', 'url' => '/api/vehicles/{uuid}/energy/prefill', 'verb' => 'GET'],
+		// Edit, delete and undo as a trip's, with its Readings following it - but a delete is a
+		// soft delete under Logbook Mode too, since the mode covers trips only.
+		['name' => 'energy#update', 'url' => '/api/vehicles/{uuid}/energy/{energy}', 'verb' => 'PUT'],
+		['name' => 'energy#delete', 'url' => '/api/vehicles/{uuid}/energy/{energy}', 'verb' => 'DELETE'],
+		['name' => 'energy#restore', 'url' => '/api/vehicles/{uuid}/energy/{energy}/restore', 'verb' => 'POST'],
+		// A Maintenance Record, with the counter rules of a fill-up; its prefill is the VAT rate
+		// and the vendors this vehicle has used.
+		['name' => 'maintenance#create', 'url' => '/api/vehicles/{uuid}/maintenance', 'verb' => 'POST'],
+		['name' => 'maintenance#prefill', 'url' => '/api/vehicles/{uuid}/maintenance/prefill', 'verb' => 'GET'],
+		['name' => 'maintenance#update', 'url' => '/api/vehicles/{uuid}/maintenance/{record}', 'verb' => 'PUT'],
+		['name' => 'maintenance#delete', 'url' => '/api/vehicles/{uuid}/maintenance/{record}', 'verb' => 'DELETE'],
+		['name' => 'maintenance#restore', 'url' => '/api/vehicles/{uuid}/maintenance/{record}/restore', 'verb' => 'POST'],
+		// An Expense knows no counter, so it writes no Reading; its prefill is the VAT rate alone.
+		['name' => 'expense#create', 'url' => '/api/vehicles/{uuid}/expenses', 'verb' => 'POST'],
+		['name' => 'expense#prefill', 'url' => '/api/vehicles/{uuid}/expenses/prefill', 'verb' => 'GET'],
+		['name' => 'expense#update', 'url' => '/api/vehicles/{uuid}/expenses/{expense}', 'verb' => 'PUT'],
+		['name' => 'expense#delete', 'url' => '/api/vehicles/{uuid}/expenses/{expense}', 'verb' => 'DELETE'],
+		['name' => 'expense#restore', 'url' => '/api/vehicles/{uuid}/expenses/{expense}/restore', 'verb' => 'POST'],
 
 		// What happened to the vehicle, every table at once and a page at a time
 		// (docs/architecture.md#the-timeline). `odometer#index` stays where it is: the counter on
@@ -49,6 +72,12 @@ return [
 		['name' => 'timeline#index', 'url' => '/api/vehicles/{uuid}/timeline', 'verb' => 'GET'],
 		// Unpaged, beside it: a month header states the whole month's Gaps, not the page's.
 		['name' => 'timeline#gaps', 'url' => '/api/vehicles/{uuid}/gaps', 'verb' => 'GET'],
+		// One row of it, read back when an edit lost a race: the sheet writes what is on screen
+		// under the token this answers with (docs/ui.md, "Save anyway").
+		['name' => 'timeline#show', 'url' => '/api/vehicles/{uuid}/timeline/{type}/{entry}', 'verb' => 'GET'],
+		// The header's figures for one period the client names, since where a year starts is the
+		// person's midnight, not the server's (docs/ui.md).
+		['name' => 'kpi#index', 'url' => '/api/vehicles/{uuid}/kpis', 'verb' => 'GET'],
 		// A Gap is named by the trip whose claim opened it, and closing one writes a trip - so it is
 		// the trips' controller that answers (docs/features.md#logbook-mode).
 		['name' => 'trip#reconcile', 'url' => '/api/vehicles/{uuid}/gaps/{trip}/close', 'verb' => 'POST'],

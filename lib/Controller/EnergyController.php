@@ -8,10 +8,8 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Controller;
 
-use OCA\NextFleet\Exception\AccessDeniedException;
 use OCA\NextFleet\Service\EnergyService;
 use OCP\AppFramework\Controller;
-use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\Attribute\NoAdminRequired;
 use OCP\AppFramework\Http\Attribute\UserRateLimit;
@@ -24,6 +22,8 @@ use OCP\IUserSession;
  * EnergyService, including the access check.
  */
 class EnergyController extends Controller {
+	use EntryAnswers;
+
 	public function __construct(
 		string $appName,
 		IRequest $request,
@@ -59,28 +59,35 @@ class EnergyController extends Controller {
 	}
 
 	/**
-	 * @param \Closure(): DataResponse $call
+	 * An edit, answered with the row as it now stands - flags included, since an edit can raise or
+	 * clear one - and the token the next write is checked against.
+	 *
+	 * @param string $energy the fill-up's uuid
 	 */
-	private function answer(\Closure $call): DataResponse {
-		try {
-			return $call();
-		} catch (DoesNotExistException) {
-			return new DataResponse(['message' => 'No such vehicle'], Http::STATUS_NOT_FOUND);
-		} catch (AccessDeniedException) {
-			return new DataResponse(['message' => 'Not yours'], Http::STATUS_FORBIDDEN);
-		} catch (\InvalidArgumentException $e) {
-			return new DataResponse(['message' => $e->getMessage()], Http::STATUS_BAD_REQUEST);
-		}
+	#[NoAdminRequired]
+	#[UserRateLimit(limit: 60, period: 60)]
+	public function update(string $uuid, string $energy): DataResponse {
+		return $this->checked(fn (int $token): array => $this->service->update($this->userId(), $uuid, $energy, $token, $this->request->getParams()));
 	}
 
-	private function userId(): string {
-		$user = $this->session->getUser();
-		if ($user === null) {
-			// The route requires a login, so this is a broken container rather than an anonymous
-			// request.
-			throw new \RuntimeException('No user in session');
-		}
+	/**
+	 * A delete, answered with the row it left so the undo toast holds the token the restore is
+	 * checked against.
+	 *
+	 * @param string $energy the fill-up's uuid
+	 */
+	#[NoAdminRequired]
+	#[UserRateLimit(limit: 60, period: 60)]
+	public function delete(string $uuid, string $energy): DataResponse {
+		return $this->checked(fn (int $token): array => $this->service->delete($this->userId(), $uuid, $energy, $token));
+	}
 
-		return $user->getUID();
+	/**
+	 * @param string $energy the fill-up's uuid
+	 */
+	#[NoAdminRequired]
+	#[UserRateLimit(limit: 60, period: 60)]
+	public function restore(string $uuid, string $energy): DataResponse {
+		return $this->checked(fn (int $token): array => $this->service->restore($this->userId(), $uuid, $energy, $token));
 	}
 }

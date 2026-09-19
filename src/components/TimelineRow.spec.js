@@ -57,6 +57,86 @@ function counter(odometer) {
 	}
 }
 
+/**
+ * @param {string} type - energy, maintenance or expense
+ * @param {object} fields - the Entry's own fields
+ * @param {object} [extra] - what the row carries beside the Entry: readings, flags
+ * @return {object} the row a timeline page carries for it
+ */
+function cost(type, fields, extra = {}) {
+	return { ...NIGHT, type, [type]: { uuid: 'c-1', ...fields }, ...extra }
+}
+
+describe('a cost row', () => {
+	const CAR = { ...VEHICLE, currency: 'EUR' }
+
+	/** One figure the person gave (docs/ui.md): the amount, in its energy's unit. */
+	it('names a fill-up by its energy and states the amount', () => {
+		const wrapper = row(cost('energy', { energy: 'diesel', amount: 48200, total: 8210, full_tank: true, station: 'Aral Nord' }, { flags: [], readings: [] }), CAR)
+
+		expect(wrapper.text()).toContain('Diesel')
+		expect(wrapper.text()).toContain('48.2 l')
+		expect(wrapper.text()).toContain('Aral Nord')
+		expect(wrapper.text()).not.toContain('82.10')
+		expect(wrapper.text()).not.toContain('Partial')
+	})
+
+	it('says a fill-up was partial or missed the one before', () => {
+		const text = row(cost('energy', { energy: 'electric', amount: 13000, full_tank: false, missed_previous: true }, { flags: [], readings: [] }), CAR).text()
+
+		expect(text).toContain('13 kWh')
+		expect(text).toContain('Partial')
+		expect(text).toContain('Previous fill-up not recorded')
+	})
+
+	/** A fill-up closing a segment also shows its consumption (docs/ui.md); one that closes none, nothing. */
+	it('states the consumption of the segment a fill-up closes', () => {
+		const closing = row(cost('energy', { energy: 'diesel', amount: 30000, full_tank: true }, {
+			flags: [], readings: [], consumption: { value: 6.04, per: 'km' },
+		}), CAR).text()
+		const opening = row(cost('energy', { energy: 'diesel', amount: 30000, full_tank: true }, {
+			flags: [], readings: [], consumption: null,
+		}), CAR).text()
+
+		expect(closing).toContain('6.0 l/100 km')
+		expect(opening).not.toContain('/100 km')
+	})
+
+	/** Flags are computed on read and said as words, never as a colour alone (docs/ui.md). */
+	it('says what a fill-up is flagged for, in words', () => {
+		const text = row(cost('energy', { energy: 'diesel', amount: 90000, full_tank: true }, {
+			flags: ['foreign_energy', 'no_price', 'overfilled'],
+			readings: [{ value: 120000, counter: 'main', flagged: true }],
+		}), CAR).text()
+
+		expect(text).toContain('Not an energy this vehicle takes')
+		expect(text).toContain('No price')
+		expect(text).toContain('More than the vehicle holds')
+		expect(text).toContain('In question')
+	})
+
+	it('names maintenance by its title and states its cost', () => {
+		const text = row(cost('maintenance', { title: 'Brake pads', type: 'repair', vendor: 'Werkstatt Huber', cost: 31200 }, { readings: [] }), CAR).text()
+
+		expect(text).toContain('Brake pads')
+		expect(text).toContain('€312.00')
+		expect(text).toContain('Repair')
+		expect(text).toContain('Werkstatt Huber')
+	})
+
+	it('states nothing for maintenance nobody priced', () => {
+		const wrapper = row(cost('maintenance', { title: 'Wipers', type: null, vendor: null, cost: null }, { readings: [] }), CAR)
+
+		expect(wrapper.get('.row__figure').text()).toBe('')
+	})
+
+	it('names an expense by its category and states the amount', () => {
+		expect(row(cost('expense', { category: 'parking', amount: 1200 }), CAR).text()).toContain('Parking')
+		expect(row(cost('expense', { category: 'parking', amount: 1200 }), CAR).text()).toContain('€12.00')
+		expect(row(cost('expense', { category: null, amount: 1200 }), { ...VEHICLE, currency: null }).text()).toContain('Expense')
+	})
+})
+
 describe('a timeline row', () => {
 	/**
 	 * The day, the route and what the journey covered - that is the line in the sketch
@@ -158,7 +238,7 @@ describe('a timeline row', () => {
 		})
 
 		expect(wrapper.text()).toContain('1,250 km unaccounted before this trip')
-		await wrapper.get('button').trigger('click')
+		await wrapper.get('.row__gap button').trigger('click')
 
 		expect(wrapper.emitted('closeGap')).toEqual([[gap]])
 	})
@@ -172,8 +252,38 @@ describe('a timeline row', () => {
 	it('offers nothing for a trip that opened no Gap', () => {
 		const wrapper = row(journey({ distance: 82 }), { ...VEHICLE, logbook_mode: true })
 
-		expect(wrapper.find('button').exists()).toBe(false)
+		expect(wrapper.text()).not.toContain('Close gap')
 		expect(wrapper.text()).not.toContain('unaccounted')
+	})
+
+	/**
+	 * Every row opens its Entry for editing (docs/ui.md). The row's name is the button, so a
+	 * keyboard and a screen reader reach it by what the row is called; the whole row is its target.
+	 */
+	it.each([
+		['trip', journey({ distance: 82, from_label: 'Munich', to_label: 'Augsburg' }), 'Munich → Augsburg'],
+		['odometer', counter({ value: 148320 }), 'Counter reading'],
+		['expense', cost('expense', { amount: 1200, category: 'parking' }), 'Parking'],
+	])('opens its %s when it is tapped', async (kind, entry, name) => {
+		const wrapper = row(entry)
+
+		const open = wrapper.find('.row__open')
+		expect(open.element.tagName).toBe('BUTTON')
+		expect(open.text()).toBe(name)
+		await open.trigger('click')
+
+		expect(wrapper.emitted('open')).toEqual([[entry]])
+	})
+
+	/** The Gap's own button is a second target on the same row, and it opens nothing else. */
+	it('closes a Gap without opening the trip', async () => {
+		const wrapper = row(journey({ distance: 82 }), { ...VEHICLE, logbook_mode: true })
+		await wrapper.setProps({ gap: { trip: 't-1', distance: 40, from_at: 1, from_at_off: 0, to_at: 2, to_at_off: 0 } })
+
+		await wrapper.get('.row__gap button').trigger('click')
+
+		expect(wrapper.emitted('closeGap')).toHaveLength(1)
+		expect(wrapper.emitted('open')).toBeUndefined()
 	})
 
 	/**
