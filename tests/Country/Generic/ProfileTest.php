@@ -29,4 +29,12 @@ class ProfileTest extends JurisdictionTestCase {
 	public function testItRequiresNoLogbookOfItsOwn(): void {
 		$this->assertNull(static::profile()->logbookRules());
 	}
+
+	/**
+	 * No rates either (docs/contributing.md): a VAT field under it starts empty, "not stated",
+	 * rather than at a rate some other country charges.
+	 */
+	public function testItStatesNoRates(): void {
+		$this->assertNull(static::profile()->rates());
+	}
 }

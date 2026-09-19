@@ -34,6 +34,9 @@ class OdometerServiceTest extends TestCase {
 	private array $rows = [];
 	private int $nextId = 1;
 	private ?int $cached = null;
+	private ?int $cachedSecond = null;
+	/** What the vehicle counts beside its kilometres: null, or `h`. */
+	private ?string $secondUnit = null;
 	/** Every read, write and transaction boundary, in the order they happened. @var list<string> */
 	private array $calls = [];
 
@@ -46,6 +49,8 @@ class OdometerServiceTest extends TestCase {
 		$this->rows = [];
 		$this->nextId = 1;
 		$this->cached = null;
+		$this->cachedSecond = null;
+		$this->secondUnit = null;
 		$this->calls = [];
 
 		// A store rather than an expectation: every rule here is about a reading read back
@@ -66,16 +71,19 @@ class OdometerServiceTest extends TestCase {
 				$reading->setFlagged($flagged);
 			},
 		);
-		$this->readings->method('findAllForVehicle')->willReturnCallback(function (int $vehicleId): array {
+		$this->readings->method('findAllForVehicle')->willReturnCallback(
+			fn (int $vehicleId): array => $this->ordered($vehicleId),
+		);
+		$this->readings->method('findChain')->willReturnCallback(function (int $vehicleId, string $counter): array {
 			$this->calls[] = 'chain read';
 
-			return $this->ordered($vehicleId);
+			return $this->ordered($vehicleId, $counter);
 		});
 		$this->readings->method('findNewestAtOrBefore')->willReturnCallback(
-			function (int $vehicleId, int $readAt): ?OdoReading {
+			function (int $vehicleId, string $counter, int $readAt): ?OdoReading {
 				$this->calls[] = 'base read';
 				$earlier = array_filter(
-					$this->ordered($vehicleId),
+					$this->ordered($vehicleId, $counter),
 					static fn (OdoReading $reading): bool => $reading->getReadAt() <= $readAt,
 				);
 
@@ -88,6 +96,10 @@ class OdometerServiceTest extends TestCase {
 			->willReturnCallback(function (int $vehicleId, ?int $value): void {
 				$this->cached = $value;
 				$this->calls[] = 'cache';
+			});
+		$this->vehicles->method('cacheSecondValue')
+			->willReturnCallback(function (int $vehicleId, ?int $value): void {
+				$this->cachedSecond = $value;
 			});
 		$this->vehicles->method('hold')->willReturnCallback(function (): void {
 			$this->calls[] = 'hold';
@@ -130,20 +142,22 @@ class OdometerServiceTest extends TestCase {
 			'uuid' => self::VEHICLE,
 			'user_id' => self::OWNER,
 			'odo_unit' => 'km',
+			'second_unit' => $this->secondUnit,
 			'updated_at' => 1750000000,
 		]);
 	}
 
 	/**
 	 * Readings come back in `(read_at, id)` order, which is the mapper's contract
-	 * (OdometerTest checks the query itself keeps it).
+	 * (OdometerTest checks the query itself keeps it), and on one counter when one is named.
 	 *
 	 * @return list<OdoReading>
 	 */
-	private function ordered(int $vehicleId): array {
+	private function ordered(int $vehicleId, ?string $counter = null): array {
 		$rows = array_values(array_filter(
 			$this->rows,
-			static fn (OdoReading $reading): bool => $reading->getVehicleId() === $vehicleId,
+			static fn (OdoReading $reading): bool => $reading->getVehicleId() === $vehicleId
+				&& ($counter === null || $reading->getCounter() === $counter),
 		));
 		usort($rows, static fn (OdoReading $a, OdoReading $b): int
 			=> [$a->getReadAt(), $a->getId()] <=> [$b->getReadAt(), $b->getId()]);
@@ -296,6 +310,60 @@ class OdometerServiceTest extends TestCase {
 			'value' => 120450,
 			'distance' => 137,
 		]);
+	}
+
+	/**
+	 * Rule 4: a truck's engine hours are a counter of their own. 5 000 hours after 120 000 km is no
+	 * counter going backwards, and the vehicle caches each chain's newest value in its own column.
+	 */
+	public function testEachCounterIsAChainOfItsOwn(): void {
+		$this->secondUnit = 'h';
+		$service = $this->service();
+		$service->record(self::OWNER, self::VEHICLE, $this->at(1750000000, 120000));
+
+		$hours = $service->record(self::OWNER, self::VEHICLE, $this->at(1750086400, 5000) + ['counter' => 'second']);
+		$km = $service->record(self::OWNER, self::VEHICLE, $this->at(1750172800, 120100));
+
+		$this->assertSame(OdoReading::SECOND, $hours->getCounter());
+		$this->assertFalse($hours->getFlagged());
+		$this->assertSame(OdoReading::MAIN, $km->getCounter());
+		$this->assertFalse($km->getFlagged());
+		$this->assertSame(120100, $this->cached);
+		$this->assertSame(5000, $this->cachedSecond);
+	}
+
+	/**
+	 * Rule 6 on the hour chain: hours worked count from the newest hour Reading, never from the
+	 * kilometres read in between.
+	 */
+	public function testADistanceOnTheHourCounterCountsFromTheHourChain(): void {
+		$this->secondUnit = 'h';
+		$service = $this->service();
+		$service->record(self::OWNER, self::VEHICLE, $this->at(1750000000, 5000) + ['counter' => 'second']);
+		$service->record(self::OWNER, self::VEHICLE, $this->at(1750086400, 120000));
+
+		$derived = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750172800, 3) + ['counter' => 'second']);
+
+		$this->assertSame(5003, $derived->getValue());
+		$this->assertSame(OdometerService::DERIVED, $derived->getOrigin());
+		$this->assertSame(5003, $this->cachedSecond);
+		$this->assertSame(120000, $this->cached);
+	}
+
+	/**
+	 * A vehicle that counts no engine hours has no second chain to put a Reading on, and a word
+	 * that names no counter is a client that does not know which one it read.
+	 */
+	public function testACounterTheVehicleDoesNotHaveIsRefused(): void {
+		$service = $this->service();
+		foreach (['second', 'hours'] as $counter) {
+			try {
+				$service->record(self::OWNER, self::VEHICLE, $this->at(1750000000, 5000) + ['counter' => $counter]);
+				$this->fail('a Reading landed on counter ' . $counter);
+			} catch (\InvalidArgumentException) {
+				$this->assertSame([], $this->rows);
+			}
+		}
 	}
 
 	/**

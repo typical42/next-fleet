@@ -40,8 +40,8 @@ class GapsTest extends TestCase {
 			static fn (Trip $trip): array => [$trip->getStartedAt(), (int)$trip->getId()],
 		));
 		$readings = $this->createMock(OdoReadingMapper::class);
-		$readings->method('findAllForVehicle')->willReturnCallback(fn (): array => $this->ordered(
-			$this->readingRows,
+		$readings->method('findChain')->willReturnCallback(fn (int $vehicleId, string $counter): array => $this->ordered(
+			array_filter($this->readingRows, static fn (OdoReading $reading): bool => $reading->getCounter() === $counter),
 			static fn (OdoReading $reading): array => [$reading->getReadAt(), (int)$reading->getId()],
 		));
 

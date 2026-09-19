@@ -10,6 +10,7 @@ namespace OCA\NextFleet\Jurisdiction\Generic;
 
 use OCA\NextFleet\Jurisdiction\IJurisdiction;
 use OCA\NextFleet\Jurisdiction\ILogbookRules;
+use OCA\NextFleet\Jurisdiction\IRateProvider;
 use OCA\NextFleet\Jurisdiction\IReportRenderer;
 
 /**
@@ -41,6 +42,11 @@ class Profile implements IJurisdiction {
 
 	/** The generic report is M5's (plan.md). Until then there is no export, not an empty one. */
 	public function logbookRenderer(): ?IReportRenderer {
+		return null;
+	}
+
+	/** A rate here would be some other country's. */
+	public function rates(): ?IRateProvider {
 		return null;
 	}
 }

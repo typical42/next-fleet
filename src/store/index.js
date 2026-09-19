@@ -6,7 +6,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
-import { createVehicle, deleteVehicle, getVehicle, listVehicles, recordReading, recordTrip, restoreVehicle, updateVehicle } from '../services/api.js'
+import { createVehicle, deleteVehicle, getVehicle, listVehicles, recordEnergy, recordReading, recordTrip, restoreVehicle, updateVehicle } from '../services/api.js'
 
 /** @typedef {import('../services/api.js').Vehicle} Vehicle */
 /** @typedef {import('../services/api.js').Reading} Reading */
@@ -155,6 +155,18 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	}
 
 	/**
+	 * Record one fill-up. The counters it carries are Readings of their own
+	 * (docs/architecture.md#odometer-rules), so the vehicle is read back like after a trip.
+	 *
+	 * @param {string} uuid - the vehicle that took it
+	 * @param {object} entry - what the sheet holds (src/services/api.js)
+	 * @return {Promise<object>} the fill-up as the server wrote it
+	 */
+	async function fill(uuid, entry) {
+		return counted(uuid, () => recordEnergy(uuid, entry))
+	}
+
+	/**
 	 * One write that moves a vehicle's counter, and the read of the vehicle that follows it:
 	 * `odo_value` is a cache the server restates from the whole chain, and counting it here would
 	 * be a second implementation of the odometer rules — a wrong one as soon as a row lands out of
@@ -182,5 +194,5 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 		return written
 	}
 
-	return { byUuid, create, deleted, forget, list, load, log, record, remove, restore, save, upsert, visible }
+	return { byUuid, create, deleted, fill, forget, list, load, log, record, remove, restore, save, upsert, visible }
 })

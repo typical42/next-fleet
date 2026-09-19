@@ -25,7 +25,7 @@ The interfaces stay — as ordinary internal seams, not as public API:
 | Jurisdiction profile | `IJurisdiction` — key, display name, units, currency, the defaults a new vehicle takes. Plate format and document kinds arrive with the feature that reads them | `de`, `generic` |
 | Logbook ruleset | `ILogbookRules` — required fields per trip category, lock delay, retention period, the URL the requirement is written at. What it answers, never what follows from it: the finding a missing field produces is the core's | German Fahrtenbuch ([logbook mode](features.md#logbook-mode)) |
 | Inspection regime | `IInspectionScheme` — names, cadence, first-due rule → reminder templates | HU/AU (24 months, 36 for new cars) |
-| Rates over time | `IRateProvider` — mileage allowance, VAT, emission factors, **each valid from a date** | 0,30 €/km, German grid factor |
+| Rates over time | `IRateProvider` — mileage allowance, VAT, emission factors, **each valid from a date**. Reached through `IJurisdiction::rates()` | German VAT (M3), 0,30 €/km, German grid factor |
 | Report renderer | `IReportRenderer` — range in, printable HTML out ([ADR 0005](adr/0005-no-pdf-library.md)) | Fahrtenbuch, mileage claim |
 | Importer | `IImporter` — foreign CSV in, our records out | Drivvo, Spritmonitor, LubeLogger |
 | Service templates | `IServiceTemplates` — intervals by market or manufacturer | Generic (oil, brakes, tyres) |
@@ -38,7 +38,7 @@ resolves to `generic` rather than throwing: a vehicle registered under a country
 dropped must still open.
 
 A seam is filled by the milestone that needs it ([milestones](../plan.md#milestones)) — the profile
-in M1, the logbook ruleset in M2 — and the classes waiting for the later ones sit in
+in M1, the logbook ruleset in M2, the VAT rate in M3 — and the classes waiting for the later ones sit in
 `lib/Jurisdiction/De/` empty and wired to nothing. A profile reaches its country's ruleset through
 `IJurisdiction::logbookRules()`, which answers null where there is none; the core asks the vehicle's
 jurisdiction and never the class.
@@ -56,7 +56,7 @@ that it does.
   core needs a German fact, the fact is missing from an interface — that is a review comment, not a
   workaround.
 - **Rates are time-versioned, always.** A 2024 mileage claim must use the 2024 rate, not today's.
-  `IRateProvider::rateAt(DateTimeInterface $when)`, never a constant. Same for VAT and emission
+  `IRateProvider::vatRateAt(DateTimeInterface $when)` and its siblings, never a constant. Same for VAT and emission
   factors. This is the detail that quietly invalidates reports when it is skipped.
 - **Store canonical, display local.** Kilometres, millilitres, cents, UTC in the database — always,
   including for a UK vehicle. Conversion happens at the edges.

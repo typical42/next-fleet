@@ -141,6 +141,28 @@ abstract class JurisdictionTestCase extends TestCase {
 	}
 
 	/**
+	 * A jurisdiction either states its rates or has none - the generic profile's answer, under which
+	 * a figure needing a rate is unavailable rather than zero (docs/contributing.md). A VAT rate is
+	 * basis points or null for "not stated", never a fraction (docs/architecture.md#data-model).
+	 */
+	public function testItsRatesAreSoundOrHonestlyAbsent(): void {
+		$rates = static::profile()->rates();
+		if ($rates === null) {
+			$this->assertNull($rates, 'a country without rates states none');
+			return;
+		}
+
+		$this->assertMatchesRegularExpression('#^https://\S+$#', $rates->vatSourceUrl(), 'the VAT source is not a URL');
+		foreach (['2020-01-01', '2026-01-01'] as $day) {
+			$rate = $rates->vatRateAt(new \DateTimeImmutable($day . 'T12:00:00Z'));
+			$this->assertTrue(
+				$rate === null || ($rate >= 0 && $rate < 10000),
+				var_export($rate, true) . ' on ' . $day . ' is not a rate in basis points',
+			);
+		}
+	}
+
+	/**
 	 * A required field is a name the core can look up on the trip it is judging: a key of the
 	 * wire form, or `plate`, the one required fact that lives on the vehicle. A name outside that
 	 * would flag every trip forever with nothing on screen able to say what is missing.

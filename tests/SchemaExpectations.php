@@ -122,7 +122,10 @@ trait SchemaExpectations {
 		sort($tables);
 
 		$this->assertSame(
-			['fleet_access', 'fleet_audit', 'fleet_odo_readings', 'fleet_trips', 'fleet_vehicles'],
+			[
+				'fleet_access', 'fleet_audit', 'fleet_energy', 'fleet_expenses', 'fleet_maintenance',
+				'fleet_odo_readings', 'fleet_trips', 'fleet_vehicles',
+			],
 			$tables,
 		);
 	}
@@ -156,6 +159,10 @@ trait SchemaExpectations {
 			'retention_months' => 'integer, null',
 			'color' => 'string(32), null',
 			'notes' => 'text, null',
+			// Null or `h`: engine hours counted beside the kilometres, on a chain of their own.
+			'second_unit' => 'string(8), null',
+			// A cache of that chain's newest Reading, as `odo_value` is of the first.
+			'second_value' => 'bigint, null',
 		]);
 	}
 
@@ -172,6 +179,8 @@ trait SchemaExpectations {
 			'flagged' => 'boolean, null, default false',
 			'source_type' => 'string(16), not null',
 			'source_id' => 'bigint, null',
+			// `main` or `second`. Null reads as `main`: every Reading before M3 is one.
+			'counter' => 'string(8), null',
 		]);
 	}
 
@@ -197,6 +206,59 @@ trait SchemaExpectations {
 			'category' => 'string(16), not null',
 			// A Reconciliation Trip, created to close a Gap.
 			'reconciled' => 'boolean, null, default false',
+		]);
+	}
+
+	public function testEnergyHoldsTheDataModelsColumnsAndNoOthers(): void {
+		$this->assertTable('fleet_energy', [
+			'vehicle_id' => 'bigint, not null',
+			'filled_at' => 'bigint, not null',
+			'filled_at_off' => 'integer, not null',
+			// Optional and never prefilled: without one the fill-up writes no Reading.
+			'odo' => 'bigint, null',
+			'second_odo' => 'bigint, null',
+			'energy' => 'string(16), not null',
+			// Millilitres or watt-hours, per `energy`.
+			'amount' => 'bigint, not null',
+			// Tenths of a cent per litre or kWh: pumps price to the tenth.
+			'unit_price' => 'bigint, null',
+			// Gross cents. Null is "no price", saved and flagged.
+			'total' => 'bigint, null',
+			// Basis points. Null is "not stated", never zero.
+			'vat_rate' => 'integer, null',
+			'full_tank' => 'boolean, null, default false',
+			'missed_previous' => 'boolean, null, default false',
+			'station' => 'string(255), null',
+			'is_dc' => 'boolean, null, default false',
+			'location_kind' => 'string(16), null',
+		]);
+	}
+
+	public function testMaintenanceHoldsTheDataModelsColumnsAndNoOthers(): void {
+		$this->assertTable('fleet_maintenance', [
+			'vehicle_id' => 'bigint, not null',
+			'type' => 'string(16), null',
+			'done_at' => 'bigint, not null',
+			'done_at_off' => 'integer, not null',
+			'odo' => 'bigint, null',
+			'second_odo' => 'bigint, null',
+			'title' => 'string(255), not null',
+			'vendor' => 'string(255), null',
+			'cost' => 'bigint, null',
+			'vat_rate' => 'integer, null',
+			'notes' => 'text, null',
+		]);
+	}
+
+	public function testExpensesHoldsTheDataModelsColumnsAndNoOthers(): void {
+		$this->assertTable('fleet_expenses', [
+			'vehicle_id' => 'bigint, not null',
+			'spent_at' => 'bigint, not null',
+			'spent_at_off' => 'integer, not null',
+			'category' => 'string(16), null',
+			'amount' => 'bigint, not null',
+			'vat_rate' => 'integer, null',
+			'notes' => 'text, null',
 		]);
 	}
 
@@ -251,6 +313,21 @@ trait SchemaExpectations {
 			'fleet_aud_entity_idx' => 'index(entity, entity_id)',
 			'fleet_aud_uuid_uniq' => 'unique(uuid)',
 		], $this->indexes('fleet_audit'));
+
+		$this->assertSame([
+			'fleet_nrg_uuid_uniq' => 'unique(uuid)',
+			'fleet_nrg_veh_fill_idx' => 'index(vehicle_id, filled_at)',
+		], $this->indexes('fleet_energy'));
+
+		$this->assertSame([
+			'fleet_mnt_uuid_uniq' => 'unique(uuid)',
+			'fleet_mnt_veh_done_idx' => 'index(vehicle_id, done_at)',
+		], $this->indexes('fleet_maintenance'));
+
+		$this->assertSame([
+			'fleet_exp_uuid_uniq' => 'unique(uuid)',
+			'fleet_exp_veh_spent_idx' => 'index(vehicle_id, spent_at)',
+		], $this->indexes('fleet_expenses'));
 	}
 
 	/**

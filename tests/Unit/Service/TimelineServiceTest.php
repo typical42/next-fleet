@@ -87,7 +87,7 @@ class TimelineServiceTest extends TestCase {
 		$this->trips->method('findAllForVehicle')->willReturnCallback(
 			fn (int $vehicleId): array => array_reverse($this->before($this->tripRows, $vehicleId, [PHP_INT_MAX, PHP_INT_MAX], PHP_INT_MAX)),
 		);
-		$this->readings->method('findAllForVehicle')->willReturnCallback(
+		$this->readings->method('findChain')->willReturnCallback(
 			fn (int $vehicleId): array => array_reverse($this->before($this->readingRows, $vehicleId, [PHP_INT_MAX, PHP_INT_MAX], PHP_INT_MAX)),
 		);
 

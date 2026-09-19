@@ -16,6 +16,7 @@ use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\Gaps;
+use OCA\NextFleet\Service\LogbookExport;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleService;
@@ -527,6 +528,58 @@ class TripTest extends TestCase {
 				$this->odometer->list(self::AUTHOR, $uuid),
 			),
 		);
+	}
+
+	/**
+	 * Rule 4 against the real queries: a truck's hour Readings sit between its trips and touch none
+	 * of the km rules. Read as one chain, the first trip's claim would open a Gap from 4 990 h, 5 000 h
+	 * after 120 000 km would flag as a counter gone backwards, and the distance-only trip would count
+	 * from the hours.
+	 */
+	public function testHourReadingsBetweenTripsStayOnTheirOwnChain(): void {
+		$uuid = $this->vehicles->create(self::AUTHOR, [
+			'plate' => 'B-XY 137',
+			'vehicle_type' => 'truck',
+			'second_unit' => 'h',
+			'jurisdiction' => 'de',
+		])->getUuid();
+		$hours = static fn (int $at, int $value): array
+			=> ['read_at' => $at, 'read_at_off' => 0, 'value' => $value, 'counter' => 'second'];
+		$this->odometer->record(self::AUTHOR, $uuid, $hours(1749900000, 4990));
+		$this->record($uuid, 1750000000, ['start_odo' => 119900, 'end_odo' => 120000]);
+		$this->odometer->record(self::AUTHOR, $uuid, $hours(1750050000, 5000));
+		$claiming = $this->record($uuid, 1750100000, ['start_odo' => 120200, 'end_odo' => 120300]);
+		$this->odometer->record(self::AUTHOR, $uuid, $hours(1750200000, 5004));
+		$this->record($uuid, 1750250000, ['distance' => 50]);
+		$gaps = \OCP\Server::get(Gaps::class);
+
+		$this->assertSame(
+			[[200, 1750005400, 1750100000]],
+			array_map(
+				static fn (array $gap): array => [$gap['distance'], $gap['from_at'], $gap['to_at']],
+				$gaps->of($this->vehicles->find(self::AUTHOR, $uuid)),
+			),
+		);
+		$this->service->reconcile(self::AUTHOR, $uuid, $claiming->getUuid(), 200, 1750005400, 1750100000);
+		$this->assertSame([], $gaps->of($this->vehicles->find(self::AUTHOR, $uuid)));
+
+		$this->assertSame(
+			[
+				[4990, 'second', false], [120000, 'main', false], [5000, 'second', false], [120200, 'main', false],
+				[120300, 'main', false], [5004, 'second', false], [120350, 'main', false],
+			],
+			array_map(
+				static fn ($reading): array => [$reading->getValue(), $reading->getCounter(), $reading->getFlagged()],
+				$this->odometer->list(self::AUTHOR, $uuid),
+			),
+		);
+		$truck = $this->vehicles->find(self::AUTHOR, $uuid);
+		$this->assertSame([120350, 5004], [$truck->getOdoValue(), $truck->getSecondValue()]);
+
+		// The Fahrtenbuch lists the four journeys and not one hour Reading between them.
+		$html = (string)\OCP\Server::get(LogbookExport::class)->year(self::AUTHOR, $uuid, 2025);
+		$this->assertSame(4, substr_count($html, '<tr', (int)strpos($html, '<tbody')));
+		$this->assertStringNotContainsString('5004', $html);
 	}
 
 	/**

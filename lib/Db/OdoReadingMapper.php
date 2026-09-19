@@ -10,6 +10,7 @@ namespace OCA\NextFleet\Db;
 
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Utility\ITimeFactory;
+use OCP\DB\QueryBuilder\ICompositeExpression;
 use OCP\DB\QueryBuilder\IQueryBuilder;
 use OCP\IDBConnection;
 use OCP\Security\ISecureRandom;
@@ -25,7 +26,8 @@ class OdoReadingMapper extends BaseMapper {
 	/**
 	 * One vehicle's readings in the only order they mean anything: by when they were read, never
 	 * by value, with `id` breaking a tie so a trip entered three days late lands where it
-	 * happened (docs/architecture.md#odometer-rules).
+	 * happened (docs/architecture.md#odometer-rules). Both counters, interleaved: this is the
+	 * odometer as a list, and a rule that compares Readings reads findChain() instead.
 	 *
 	 * @return list<OdoReading>
 	 * @throws \OCP\DB\Exception
@@ -40,6 +42,42 @@ class OdoReadingMapper extends BaseMapper {
 			->addOrderBy('id', 'ASC');
 
 		return $this->findEntities($qb);
+	}
+
+	/**
+	 * One counter's chain, in findAllForVehicle()'s order. Every rule that compares a Reading with
+	 * its neighbours reads this, because a Reading in hours next to one in kilometres is no
+	 * contradiction (rule 4).
+	 *
+	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
+	 * @return list<OdoReading>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findChain(int $vehicleId, string $counter): array {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->tableName)
+			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->isNull('deleted_at'))
+			->andWhere($this->onCounter($qb, $counter))
+			->orderBy('read_at', 'ASC')
+			->addOrderBy('id', 'ASC');
+
+		return $this->findEntities($qb);
+	}
+
+	/**
+	 * The condition that keeps a query on one counter. A null `counter` is `main`: every Reading
+	 * from before M3 is on the only counter there was (OdoReading::getCounter()).
+	 *
+	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
+	 */
+	private function onCounter(IQueryBuilder $qb, string $counter): ICompositeExpression|string {
+		$named = $qb->expr()->eq('counter', $qb->createNamedParameter($counter));
+
+		return $counter === OdoReading::MAIN
+			? $qb->expr()->orX($qb->expr()->isNull('counter'), $named)
+			: $named;
 	}
 
 	/**
@@ -126,19 +164,21 @@ class OdoReadingMapper extends BaseMapper {
 	}
 
 	/**
-	 * The reading a distance counts from: the newest one at or before that moment, in the same
-	 * order. Null when the vehicle has none yet, which is a distance with nothing to add to.
+	 * The reading a distance counts from: the newest one on that counter at or before that moment,
+	 * in the same order. Null when the chain has none yet, which is a distance with nothing to add to.
 	 *
+	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
 	 * @param ?int $except a Reading that is not a candidate: the one being restated
 	 * @throws \OCP\DB\Exception
 	 */
-	public function findNewestAtOrBefore(int $vehicleId, int $readAt, ?int $except = null): ?OdoReading {
+	public function findNewestAtOrBefore(int $vehicleId, string $counter, int $readAt, ?int $except = null): ?OdoReading {
 		$qb = $this->db->getQueryBuilder();
 		$qb->select('*')
 			->from($this->tableName)
 			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
 			->andWhere($qb->expr()->lte('read_at', $qb->createNamedParameter($readAt, IQueryBuilder::PARAM_INT)))
 			->andWhere($qb->expr()->isNull('deleted_at'))
+			->andWhere($this->onCounter($qb, $counter))
 			->orderBy('read_at', 'DESC')
 			->addOrderBy('id', 'DESC')
 			->setMaxResults(1);

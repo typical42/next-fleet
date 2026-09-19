@@ -60,9 +60,13 @@ const figure = computed(() => {
 		? odometer.value?.value
 		: trip.value.distance ?? trip.value.end_odo
 
+	// An hour Reading is on a chain of its own, in that chain's unit (rule 4). A trip never is. Hours
+	// are the only second unit there is, and switching them off keeps their Readings.
+	const unit = odometer.value?.counter === 'second' ? 'h' : props.vehicle.odo_unit
+
 	return value === null || value === undefined
 		? ''
-		: `${formatCount(value)} ${props.vehicle.odo_unit}`
+		: `${formatCount(value)} ${unit}`
 })
 
 /** What the journey was driven for, which is the question a Fahrtenbuch asks first. */

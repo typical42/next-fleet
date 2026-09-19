@@ -57,4 +57,10 @@ interface IJurisdiction {
 	 * (docs/contributing.md).
 	 */
 	public function logbookRenderer(): ?IReportRenderer;
+
+	/**
+	 * The rates this jurisdiction sets, or null where it states none - the generic profile's
+	 * answer. A figure needing a rate is then unavailable, never zero (docs/contributing.md).
+	 */
+	public function rates(): ?IRateProvider;
 }

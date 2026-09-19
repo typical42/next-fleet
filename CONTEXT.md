@@ -9,7 +9,7 @@ and the docs all use. It holds terms only; the design lives in [plan.md](plan.md
 ### Vehicle and its records
 
 **Vehicle**:
-A car, van, trailer, tractor or generator someone keeps records for. Identified by its `uuid`; the
+A car, van, truck, trailer, tractor or generator someone keeps records for. Identified by its `uuid`; the
 plate is a mutable label.
 _Avoid_: Car, asset
 
@@ -77,7 +77,8 @@ A Reading computed rather than read — the one a distance-only Trip writes. An 
 wins over a Derived one; contradicted Derived Readings are Flagged, never corrected silently.
 
 **Value**:
-What a Reading holds — kilometres or engine hours, per the vehicle's `odo_unit`. Never called "km".
+What a Reading holds — kilometres or engine hours: `odo_unit` on the main counter, `second_unit` on
+the second. Each counter is a chain of its own. Never called "km".
 
 **Segment**:
 The span between two Observed Readings that consumption may be computed over. A Gap, a Flag or a

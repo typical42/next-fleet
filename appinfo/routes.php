@@ -36,6 +36,13 @@ return [
 		['name' => 'trip#delete', 'url' => '/api/vehicles/{uuid}/trips/{trip}', 'verb' => 'DELETE'],
 		['name' => 'trip#restore', 'url' => '/api/vehicles/{uuid}/trips/{trip}/restore', 'verb' => 'POST'],
 
+		// A fill-up is reached the same way, and writes a Reading per counter it was given
+		// (docs/architecture.md#odometer-rules).
+		['name' => 'energy#create', 'url' => '/api/vehicles/{uuid}/energy', 'verb' => 'POST'],
+		// What the sheet prefills a fill-up with: the VAT rate on its day, and this vehicle's
+		// stations with their last price (docs/ui.md).
+		['name' => 'energy#prefill', 'url' => '/api/vehicles/{uuid}/energy/prefill', 'verb' => 'GET'],
+
 		// What happened to the vehicle, every table at once and a page at a time
 		// (docs/architecture.md#the-timeline). `odometer#index` stays where it is: the counter on
 		// its own is a different question from the vehicle's history.

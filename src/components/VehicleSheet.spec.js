@@ -172,6 +172,7 @@ beforeEach(() => {
 		value: 148320,
 		origin: 'observed',
 		flagged: false,
+		counter: 'main',
 	})
 })
 
@@ -296,6 +297,58 @@ describe('the vehicle sheet, editing', () => {
 			notes: 'two rows of seats',
 		}))
 		expect(emitted(wrapper, 'saved').updated_at).toBe(1700000900)
+	})
+
+	/** The unit a Reading was counted in is what its number means, so a counted vehicle keeps it. */
+	it('keeps the unit of a vehicle that has readings when it becomes a tractor', async () => {
+		const wrapper = await sheet({ ...VEHICLE, odo_value: 48200 })
+
+		await dropdown(wrapper, 'Vehicle type').vm.$emit('update:modelValue', { id: 'tractor', label: 'Tractor' })
+
+		expect(dropdown(wrapper, 'Counter unit').props('modelValue').id).toBe('km')
+	})
+
+	it('counts hours once a vehicle without readings becomes a tractor', async () => {
+		const wrapper = await sheet({ ...VEHICLE, odo_value: null })
+
+		await dropdown(wrapper, 'Vehicle type').vm.$emit('update:modelValue', { id: 'tractor', label: 'Tractor' })
+
+		expect(dropdown(wrapper, 'Counter unit').props('modelValue').id).toBe('h')
+	})
+
+	/** A truck's kilometres and its engine hours are two counters (docs/architecture.md). */
+	it('counts engine hours beside the kilometres when asked to', async () => {
+		const wrapper = await sheet(VEHICLE)
+
+		expect(toggle(wrapper, 'Also counts engine hours').props('modelValue')).toBe(false)
+		await toggle(wrapper, 'Also counts engine hours').vm.$emit('update:modelValue', true)
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ second_unit: 'h' }))
+	})
+
+	/** Switching off hides the field and keeps the hour Readings: only the column is cleared. */
+	it('stops counting engine hours when switched off', async () => {
+		const wrapper = await sheet({ ...VEHICLE, second_unit: 'h' })
+
+		expect(toggle(wrapper, 'Also counts engine hours').props('modelValue')).toBe(true)
+		await toggle(wrapper, 'Also counts engine hours').vm.$emit('update:modelValue', false)
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ second_unit: '' }))
+	})
+
+	/** Hours are a second counter beside kilometres only. */
+	it('offers no second counter when the main one counts hours', async () => {
+		const wrapper = await sheet({ ...VEHICLE, odo_unit: 'h', second_unit: 'h' })
+
+		expect(toggle(wrapper, 'Also counts engine hours')).toBeUndefined()
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ second_unit: '' }))
 	})
 
 	/**
@@ -624,15 +677,45 @@ describe('the vehicle sheet, editing', () => {
 })
 
 describe('the vehicle sheet, creating', () => {
-	/** Four fields, not twelve: the rest arrives through the edit sheet (docs/ui.md). */
+	/**
+	 * Four fields, not twelve: the rest arrives through the edit sheet (docs/ui.md). The type and
+	 * the unit come prefilled, because the counter reading beside them means nothing without them.
+	 */
 	it('asks for four fields and the counter, and nothing else', async () => {
 		const wrapper = await sheet()
 
 		expect(wrapper.findAllComponents(NcTextField).map((one) => one.props('label')))
 			.toEqual(['Registration plate', 'Manufacturer', 'Model', 'Counter reading'])
 		expect(wrapper.findAllComponents(NcSelect).map((/** @type {any} */ one) => one.props('inputLabel')))
-			.toEqual(['Engine'])
+			.toEqual(['Engine', 'Vehicle type', 'Counter unit'])
+		expect(dropdown(wrapper, 'Vehicle type').props('modelValue').id).toBe('car')
+		expect(dropdown(wrapper, 'Counter unit').props('modelValue').id).toBe('km')
 		expect(getPreferences).not.toHaveBeenCalled()
+	})
+
+	it('offers the truck', async () => {
+		const wrapper = await sheet()
+
+		expect(dropdown(wrapper, 'Vehicle type').props('options').map((/** @type {{id: string}} */ o) => o.id))
+			.toContain('truck')
+	})
+
+	/** A tractor or a generator counts hours; the person may still say otherwise. */
+	it('counts hours once a tractor or a generator is chosen, and still lets the unit change', async () => {
+		const wrapper = await sheet()
+
+		await dropdown(wrapper, 'Vehicle type').vm.$emit('update:modelValue', { id: 'tractor', label: 'Tractor' })
+		expect(dropdown(wrapper, 'Counter unit').props('modelValue').id).toBe('h')
+
+		await dropdown(wrapper, 'Vehicle type').vm.$emit('update:modelValue', { id: 'car', label: 'Car' })
+		expect(dropdown(wrapper, 'Counter unit').props('modelValue').id).toBe('km')
+
+		await dropdown(wrapper, 'Vehicle type').vm.$emit('update:modelValue', { id: 'generator', label: 'Generator' })
+		await dropdown(wrapper, 'Counter unit').vm.$emit('update:modelValue', { id: 'km', label: 'Kilometres' })
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(createVehicle).toHaveBeenCalledWith(expect.objectContaining({ vehicle_type: 'generator', odo_unit: 'km' }))
 	})
 
 	/** There is nothing to delete yet, and Cancel is what leaves a vehicle uncreated. */
@@ -656,6 +739,8 @@ describe('the vehicle sheet, creating', () => {
 			manufacturer: '',
 			model: '',
 			engine: 'electric',
+			vehicle_type: 'car',
+			odo_unit: 'km',
 		})
 		expect(recordReading).toHaveBeenCalledWith('v-new', expect.objectContaining({ value: 148320 }))
 		expect(emitted(wrapper, 'created').uuid).toBe('v-new')

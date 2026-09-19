@@ -38,6 +38,19 @@ class VehicleMapper extends BaseMapper {
 	}
 
 	/**
+	 * cacheOdoValue() for the hour chain, into `second_value`, and for the same reasons.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	public function cacheSecondValue(int $vehicleId, ?int $value): void {
+		$qb = $this->db->getQueryBuilder();
+		$qb->update($this->tableName)
+			->set('second_value', $qb->createNamedParameter($value, IQueryBuilder::PARAM_INT))
+			->where($qb->expr()->eq('id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)));
+		$qb->executeStatement();
+	}
+
+	/**
 	 * Holds the vehicle's row until the caller's transaction ends, and changes nothing on it. A
 	 * write that reads the vehicle's state before it writes - a Gap not yet closed, the chain a
 	 * Reading settles - holds the vehicle before reading, so a second writer on the same vehicle
