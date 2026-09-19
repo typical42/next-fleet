@@ -31,6 +31,7 @@ class EnergyService {
 	 */
 	public const FOREIGN_ENERGY = 'foreign_energy';
 	public const NO_PRICE = 'no_price';
+	public const OVERFILLED = 'overfilled';
 
 	/**
 	 * The columns a request may set, each with the setter it reaches and what it has to look
@@ -104,20 +105,115 @@ class EnergyService {
 		$written = $this->atomicRetry(function () use ($userId, $vehicle, $energy): Energy {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$written = $this->energies->insert($energy);
-			$this->odometer->fromEntry(
-				$vehicle,
-				$userId,
-				$written->getFilledAt(),
-				$written->getFilledAtOff(),
-				self::counters($written),
-				OdoReading::ENERGY,
-				(int)$written->getId(),
-			);
+			$this->follow($vehicle, $userId, $written);
 
 			return $written;
 		}, $this->db);
 
-		return $written->jsonSerialize() + ['flags' => self::flags($vehicle, $written)];
+		return self::wire($vehicle, $written);
+	}
+
+	/**
+	 * Rewrites one fill-up in place, and its Readings with it. The request is the whole fill-up,
+	 * as record() takes it: a field it leaves out is one the driver emptied (TripService::update()).
+	 * No audit row - Logbook Mode covers trips only (docs/features.md#logbook-mode).
+	 *
+	 * @param array<string, mixed> $fields
+	 * @param int $expectedUpdatedAt the `updated_at` the client read
+	 * @return array<string, mixed> the row as it now stands, in its wire form
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not write this vehicle
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the fill-up has changed since
+	 * @throws \InvalidArgumentException if a field is not what its column holds
+	 * @throws \OCP\DB\Exception
+	 */
+	public function update(string $userId, string $vehicleUuid, string $energyUuid, int $expectedUpdatedAt, array $fields): array {
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
+
+		// Looked up inside the transaction for the reason TripService::delete() gives.
+		$edited = $this->atomicRetry(function () use ($userId, $vehicle, $energyUuid, $expectedUpdatedAt, $fields): Energy {
+			$this->vehicles->hold((int)$vehicle->getId());
+			$energy = $this->energies->findOnVehicle((int)$vehicle->getId(), $energyUuid);
+			$this->apply($vehicle, $energy, $fields);
+			$edited = $this->energies->updateChecked($energy, $expectedUpdatedAt);
+			$this->follow($vehicle, $userId, $edited);
+
+			return $edited;
+		}, $this->db);
+
+		return self::wire($vehicle, $edited);
+	}
+
+	/**
+	 * Soft-deletes one fill-up and its Readings, and answers with the token the undo is checked
+	 * against.
+	 *
+	 * @return array<string, mixed> the row as it was left, in its wire form
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete on this vehicle
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the fill-up has changed since
+	 * @throws \OCP\DB\Exception
+	 */
+	public function delete(string $userId, string $vehicleUuid, string $energyUuid, int $expectedUpdatedAt): array {
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::DELETE, $vehicleUuid);
+
+		$deleted = $this->atomicRetry(function () use ($userId, $vehicle, $energyUuid, $expectedUpdatedAt): Energy {
+			$this->vehicles->hold((int)$vehicle->getId());
+			$energy = $this->energies->findOnVehicle((int)$vehicle->getId(), $energyUuid);
+			$deleted = $this->energies->softDelete($energy, $expectedUpdatedAt);
+			$this->follow($vehicle, $userId, $deleted);
+
+			return $deleted;
+		}, $this->db);
+
+		return self::wire($vehicle, $deleted);
+	}
+
+	/**
+	 * Undo, on the token the delete answered with (TripService::restore()).
+	 *
+	 * @return array<string, mixed> the row as it now stands, in its wire form
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete on this vehicle
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the fill-up has changed since, or was never deleted
+	 * @throws \OCP\DB\Exception
+	 */
+	public function restore(string $userId, string $vehicleUuid, string $energyUuid, int $expectedUpdatedAt): array {
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::DELETE, $vehicleUuid);
+
+		$back = $this->atomicRetry(function () use ($userId, $vehicle, $energyUuid, $expectedUpdatedAt): Energy {
+			$this->vehicles->hold((int)$vehicle->getId());
+			$energy = $this->energies->findAnyOnVehicle((int)$vehicle->getId(), $energyUuid);
+			$back = $this->energies->restoreChecked($energy, $expectedUpdatedAt);
+			$this->follow($vehicle, $userId, $back);
+
+			return $back;
+		}, $this->db);
+
+		return self::wire($vehicle, $back);
+	}
+
+	/**
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException
+	 * @throws \OCP\DB\Exception
+	 */
+	private function follow(Vehicle $vehicle, string $userId, Energy $energy): void {
+		$this->odometer->followEntry(
+			$vehicle,
+			$userId,
+			OdoReading::ENERGY,
+			(int)$energy->getId(),
+			$energy->getFilledAt(),
+			$energy->getFilledAtOff(),
+			$energy->getOdo(),
+			$energy->getSecondOdo(),
+			$energy->getDeletedAt() !== null,
+		);
+	}
+
+	/** @return array<string, mixed> */
+	private static function wire(Vehicle $vehicle, Energy $energy): array {
+		return $energy->jsonSerialize() + ['flags' => self::flags($vehicle, $energy)];
 	}
 
 	/**
@@ -135,8 +231,8 @@ class EnergyService {
 	 */
 	public function prefill(string $userId, string $vehicleUuid, array $fields): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
-		$at = $this->read('at', 'count', null, $fields['at'] ?? null);
-		$off = $this->read('off', 'offset', null, $fields['off'] ?? null);
+		$at = Field::read('at', 'count', null, $fields['at'] ?? null);
+		$off = Field::read('off', 'offset', null, $fields['off'] ?? null);
 		if (!is_int($at) || !is_int($off)) {
 			throw new \InvalidArgumentException('at and off are the moment a prefill is for');
 		}
@@ -154,24 +250,15 @@ class EnergyService {
 		}
 
 		return [
-			'vat_rate' => $this->jurisdictions->get($vehicle->getJurisdiction())->rates()?->vatRateAt(self::local($at, $off)),
+			'vat_rate' => $this->jurisdictions->vatRateAt($vehicle->getJurisdiction(), $at, $off),
 			'stations' => array_values($stations),
 		];
 	}
 
 	/**
-	 * A user-facing instant as the calendar it was entered against reads it: a rate changes on a
-	 * day, and the day is the driver's, not UTC's (docs/architecture.md#time).
-	 */
-	private static function local(int $at, int $off): \DateTimeImmutable {
-		$zone = sprintf('%s%02d:%02d', $off < 0 ? '-' : '+', intdiv(abs($off), 60), abs($off) % 60);
-
-		return (new \DateTimeImmutable('@' . $at))->setTimezone(new \DateTimeZone($zone));
-	}
-
-	/**
 	 * What the fill-up is flagged for: an energy the vehicle does not take
-	 * (docs/architecture.md#data-model), or no total, which leaves its cost unknown.
+	 * (docs/architecture.md#data-model), no total, which leaves its cost unknown, or more than the
+	 * tank or battery on file holds.
 	 *
 	 * @return list<string>
 	 */
@@ -183,20 +270,14 @@ class EnergyService {
 		if ($energy->getTotal() === null) {
 			$flags[] = self::NO_PRICE;
 		}
+		// Watt-hours go into the battery and millilitres into the tank; `amount` says which by
+		// `energy` alone. A capacity nobody entered flags nothing.
+		$capacity = $energy->getEnergy() === 'electric' ? $vehicle->getBatteryWh() : $vehicle->getTankMl();
+		if ($capacity !== null && $energy->getAmount() > $capacity) {
+			$flags[] = self::OVERFILLED;
+		}
 
 		return $flags;
-	}
-
-	/**
-	 * The counters the fill-up was read at, by chain.
-	 *
-	 * @return array<OdoReading::MAIN|OdoReading::SECOND, int>
-	 */
-	private static function counters(Energy $energy): array {
-		return array_filter(
-			[OdoReading::MAIN => $energy->getOdo(), OdoReading::SECOND => $energy->getSecondOdo()],
-			static fn (?int $value): bool => $value !== null,
-		);
 	}
 
 	/**
@@ -205,14 +286,14 @@ class EnergyService {
 	 */
 	private function apply(Vehicle $vehicle, Energy $energy, array $fields): void {
 		foreach (self::WRITABLE as $column => [$setter, $kind, $limit]) {
-			$value = $this->read($column, $kind, $limit, $fields[$column] ?? null);
+			$value = Field::read($column, $kind, $limit, $fields[$column] ?? null);
 			if ($value === null && in_array($column, self::REQUIRED, true)) {
 				throw new \InvalidArgumentException($column . ' is a field every fill-up carries');
 			}
 			$energy->$setter($value);
 		}
 		foreach (self::SWITCHES as $column => $setter) {
-			$energy->$setter($this->read($column, 'flag', null, $fields[$column] ?? null) ?? false);
+			$energy->$setter(Field::read($column, 'flag', null, $fields[$column] ?? null) ?? false);
 		}
 
 		// A litre and a kilowatt-hour are both a thousand of what `amount` counts, so cents over
@@ -221,37 +302,8 @@ class EnergyService {
 			$energy->setUnitPrice((int)round($energy->getTotal() * 10000 / $energy->getAmount()));
 		}
 
-		$energy->setOdo($this->read('odo', 'count', null, $fields['odo'] ?? null));
-		$energy->setSecondOdo($this->read('second_odo', 'count', null, $fields['second_odo'] ?? null));
-		// Refused as an Odometer Entry naming the hour counter is (OdometerService::counterOf()):
-		// the number would be a Reading on a chain the vehicle does not have.
-		if ($energy->getSecondOdo() !== null && $vehicle->getSecondUnit() === null) {
-			throw new \InvalidArgumentException('second_odo is for a vehicle that counts engine hours');
-		}
-	}
-
-	/**
-	 * One field, as its column holds it. An absent value and an empty one are the same fact, so
-	 * both arrive here as null.
-	 *
-	 * @param int|list<string>|null $limit
-	 * @throws \InvalidArgumentException
-	 */
-	private function read(string $column, string $kind, int|array|null $limit, mixed $value): string|int|bool|null {
-		if (is_string($value)) {
-			$value = trim($value);
-		}
-		if ($value === null || $value === '') {
-			return null;
-		}
-
-		return match ($kind) {
-			'text' => Field::text($column, $value, is_int($limit) ? $limit : null),
-			'word' => Field::word($column, $value, is_array($limit) ? $limit : []),
-			'count' => Field::count($column, $value),
-			'offset' => Field::offset($column, $value),
-			'flag' => Field::flag($column, $value),
-			default => throw new \InvalidArgumentException($column . ' has no readable kind'),
-		};
+		[$odo, $secondOdo] = OdometerService::entryCounters($vehicle, $fields);
+		$energy->setOdo($odo);
+		$energy->setSecondOdo($secondOdo);
 	}
 }

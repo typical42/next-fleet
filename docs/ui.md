@@ -77,8 +77,12 @@ a Gap is closed one at a time.
 
 A row states one figure, and it is the one the driver gave — the kilometres a trip covered, or the
 counter it ended on, never both and never one worked out from the other
-([odometer rules](architecture.md#odometer-rules)). A flagged Reading is carried on the row it
-belongs to, as a word rather than a colour.
+([odometer rules](architecture.md#odometer-rules)). A fill-up states its amount, a maintenance
+record its cost, an expense its amount. A flagged Reading is carried on the row it belongs to, as a
+word rather than a colour, and so is what a fill-up is flagged for — no price, an energy the
+vehicle does not take, more than it holds — and whether it was partial or missed the one before.
+A fill-up that closes a full-to-full segment also states that segment's consumption, the one figure
+on a row that is worked out rather than given.
 
 The right sidebar holds the vehicle's own data and documents — the things you set once and rarely
 touch. That keeps the middle free for the things you touch weekly.
@@ -89,7 +93,7 @@ touch. That keeps the middle free for the things you touch weekly.
 |---|---|---|
 | **Overview** | All vehicles, sorted by urgency, not alphabetically. Traffic light, plate, km, next due. | Open a vehicle |
 | **Vehicle** | Header KPIs + due banner + timeline (above) | **+ Entry** |
-| **Entry sheet** | Trip / Energy / Maintenance / Odometer — see below | Save |
+| **Entry sheet** | Trip / Energy / Maintenance / Odometer / Expense — see below | Save |
 | **Vehicle sheet** | Create with four fields; edit every writable one, plus lifecycle, jurisdiction and [logbook mode](features.md#logbook-mode); delete, undoably | Save |
 | **Costs** | One year, one vehicle: stacked bars per month, table below, export button | Export |
 | **Reports** | Fahrtenbuch, mileage claim, cost, CO₂ — pick a range, get a printable page ([ADR 0005](adr/0005-no-pdf-library.md)) | Print / export |
@@ -107,8 +111,8 @@ preference belongs to the person, so it lives where a person looks for their pre
 ### The entry sheet, in detail
 
 This is the screen the app lives or dies by. One `+` opens one sheet, and a chooser at the top of it
-picks which of four kinds is being entered — each with **one required field**. The chooser rather
-than four buttons, because the kind is a decision the driver may change after seeing the fields, and
+picks which of five kinds is being entered — each with **one required field**. The chooser rather
+than five buttons, because the kind is a decision the driver may change after seeing the fields, and
 a phone has room for one sheet at a time. It opens on the trip, which is what a logbook is for:
 
 - **Trip** — end odometer *or* distance, whichever the driver happens to know. Toggle between them.
@@ -129,11 +133,18 @@ a phone has room for one sheet at a time. It opens on the trip, which is what a 
   ([the maths](architecture.md#numbers-consumption-cost-emissions) needs it). The counter, as on a
   trip, is not prefilled; left empty, the field says consumption needs it. A charge asks home or
   public, and DC only for public.
-- **Maintenance** — title and cost. If a reminder is open for this vehicle, offer it as one tap:
-  "Closes: Oil change" — that is how recurrence stays correct without anyone thinking about it.
+- **Maintenance** — title and cost; the title is the one required field. Type is left empty until
+  picked, because "service" is one kind of work, not all of it. The vendor completes from this
+  vehicle's history. VAT and the counters work as on a fill-up, and date, VAT and counters carry
+  over when the driver switches between the two. If a reminder is open for this vehicle, offer it
+  as one tap: "Closes: Oil change" — that is how recurrence stays correct without anyone thinking
+  about it (M4).
 - **Odometer** — one number. The escape hatch for everything not otherwise recorded. On a vehicle
   that also counts engine hours, "Which counter" asks Kilometres or Engine hours first, and the
   number is prefilled from that counter. The timeline row states it in that counter's unit.
+- **Expense** — the amount; category, VAT, notes and date beside it. Last in the chooser. No category until one is picked, as with a maintenance type. VAT works as on a
+  fill-up, and date, VAT and notes carry over from the kind the driver switched from. It asks for no
+  counter: insurance or a toll says nothing about the dashboard.
 
 Rules for all four:
 
@@ -150,11 +161,16 @@ Rules for all four:
   It will also need the clock handling in [time](architecture.md#time); neither is a v1 concern.)
 - **A refused write is the one failure that is not about the values.** A save the server refused
   because the row moved on ([concurrency](architecture.md#concurrency)) leaves the sheet saying so,
-  and the retry becomes _Save anyway_: it reads the vehicle back and writes what is on screen under
-  the token that came with it. What is on screen wins — the person looking at it is the one who
+  and the retry becomes _Save anyway_: it reads the vehicle or the Entry back and writes what is on
+  screen under the token that came with it. What is on screen wins — the person looking at it is the one who
   knows whether the other change matters, and the message says that is what the button does.
 - Saving returns to where you were, with an undo toast. Nothing asks "are you sure?"; `deleted_at`
   ([data model](architecture.md#data-model)) makes undo the cheaper pattern.
+- **Tapping a timeline row opens the sheet on that Entry**, any kind. It keeps its kind — the
+  chooser is gone — and opens with what the Entry says; a rate it was saved with, stated or not,
+  stays. Save writes the whole Entry back; _Delete_ goes with the undo toast, and a trip under
+  [logbook mode](features.md#logbook-mode) offers _Void trip_ instead, whose late edits the
+  Fahrtenbuch lists. An Odometer Entry keeps the moment it was read at.
 - **The undo outlives what it undoes.** Deleting a vehicle takes its screen with it, so the toast
   hangs in the app shell rather than under the screen that asked. It carries the token the delete
   answered with ([concurrency](architecture.md#concurrency)) and no clock: a way back that

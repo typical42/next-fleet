@@ -56,6 +56,17 @@ class Jurisdictions {
 	}
 
 	/**
+	 * The VAT rate a cost is prefilled with, in basis points, or null where the profile states
+	 * none. Read on the day the moment falls on at the offset it was entered at: a rate changes on
+	 * a day, and the day is the person's, not UTC's (docs/architecture.md#time).
+	 */
+	public function vatRateAt(string $key, int $at, int $off): ?int {
+		$zone = sprintf('%s%02d:%02d', $off < 0 ? '-' : '+', intdiv(abs($off), 60), abs($off) % 60);
+
+		return $this->get($key)->rates()?->vatRateAt((new \DateTimeImmutable('@' . $at))->setTimezone(new \DateTimeZone($zone)));
+	}
+
+	/**
 	 * Every profile this release ships, in registration order - what a screen offers and what
 	 * the country test kit runs against.
 	 *

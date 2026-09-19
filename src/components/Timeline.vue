@@ -14,6 +14,7 @@ import NcRadioGroupButton from '@nextcloud/vue/components/NcRadioGroupButton'
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { closeGap, ConflictError, readGaps, readTimeline } from '../services/api.js'
+import { useVehiclesStore } from '../store/index.js'
 import { formatCount, formatMonth, fullMoment, monthKey } from '../utils/format.js'
 import TimelineRow from './TimelineRow.vue'
 
@@ -21,6 +22,11 @@ const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
 	vehicle: { type: Object, required: true },
 })
+
+// A tapped row, for the screen to open the sheet on (src/views/VehicleView.vue).
+defineEmits(['open'])
+
+const store = useVehiclesStore()
 
 /** The chip. The empty one is every kind, which is the absent parameter (src/services/api.js). */
 const chip = ref('')
@@ -45,6 +51,10 @@ const chips = computed(() => [
 	{ value: '', label: t('nextfleet', 'All') },
 	{ value: 'trip', label: t('nextfleet', 'Trips') },
 	{ value: 'odometer', label: t('nextfleet', 'Odometer') },
+	{ value: 'energy', label: t('nextfleet', 'Energy') },
+	{ value: 'maintenance', label: t('nextfleet', 'Maintenance') },
+	// Energy and maintenance cost money too, but have chips of their own; this one is the rest.
+	{ value: 'expense', label: t('nextfleet', 'Costs') },
 ])
 
 /**
@@ -126,6 +136,10 @@ watch([chip, () => props.vehicle.uuid, () => props.vehicle.logbook_mode === true
 	closing.value = null
 	reload()
 })
+
+// An undo is made from the toast in the app shell (src/components/UndoToast.vue), which holds no
+// list; the Entry it brought back is a row this one lacks.
+watch(() => store.restored, reload)
 
 // The sentinel comes and goes with the next page, so the observer follows it rather than being set
 // up once. A browser without one still has the button inside it.
@@ -282,7 +296,7 @@ defineExpose({ reload })
 	<section class="timeline">
 		<div class="timeline__head">
 			<h3>{{ t('nextfleet', 'Timeline') }}</h3>
-			<!-- The chips are one choice out of three, which is what a radio group is - and it is the
+			<!-- The chips are one choice out of six, which is what a radio group is - and it is the
 			     chooser the rest of the app already uses (src/components/EntrySheet.vue). -->
 			<NcRadioGroup v-model="chip" :label="t('nextfleet', 'Show')">
 				<NcRadioGroupButton v-for="one in chips"
@@ -308,11 +322,12 @@ defineExpose({ reload })
 			</h4>
 			<ul class="timeline__rows">
 				<TimelineRow v-for="entry in group.rows"
-					:key="`${entry.type}-${(entry.trip ?? entry.odometer).uuid}`"
+					:key="`${entry.type}-${entry[entry.type].uuid}`"
 					:entry="entry"
 					:vehicle="vehicle"
 					:gap="entry.trip === undefined ? null : gapOf.get(entry.trip.uuid) ?? null"
-					@close-gap="ask" />
+					@close-gap="ask"
+					@open="$emit('open', $event)" />
 			</ul>
 		</div>
 

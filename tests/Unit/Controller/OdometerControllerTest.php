@@ -11,6 +11,7 @@ namespace OCA\NextFleet\Tests\Unit\Controller;
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Controller\OdometerController;
 use OCA\NextFleet\Db\OdoReading;
+use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\OdometerService;
 use OCP\AppFramework\Http;
 use OCP\IRequest;
@@ -89,5 +90,55 @@ class OdometerControllerTest extends TestCase {
 
 		$this->assertSame(Http::STATUS_CREATED, $response->getStatus());
 		$this->assertSame('observed', $response->getData()->jsonSerialize()['origin']);
+	}
+
+	/** An edit reaches the service with the token it was read with, and the fields beside it. */
+	public function testAnEditIsCheckedAgainstTheTokenItCarries(): void {
+		$this->params = ['uuid' => self::UUID, 'updated_at' => '1750000000', 'value' => 148400];
+		$this->service->expects($this->once())
+			->method('update')
+			->with('alice', self::UUID, 'a reading', 1750000000, $this->params)
+			->willReturn($this->stored());
+
+		$this->assertSame(Http::STATUS_OK, $this->controller()->update(self::UUID, 'a reading')->getStatus());
+	}
+
+	public function testADeleteAndItsUndoCarryTheToken(): void {
+		$this->params = ['updated_at' => 1750000000];
+		$this->service->expects($this->once())->method('delete')->with('alice', self::UUID, 'a reading', 1750000000)->willReturn($this->stored());
+		$this->service->expects($this->once())->method('restore')->with('alice', self::UUID, 'a reading', 1750000000)->willReturn($this->stored());
+
+		$this->assertSame(Http::STATUS_OK, $this->controller()->delete(self::UUID, 'a reading')->getStatus());
+		$this->assertSame(Http::STATUS_OK, $this->controller()->restore(self::UUID, 'a reading')->getStatus());
+	}
+
+	/** @dataProvider writes */
+	public function testAWriteWithoutTheTokenIsRefused(string $method): void {
+		$this->service->expects($this->never())->method($method);
+
+		$this->assertSame(Http::STATUS_BAD_REQUEST, $this->controller()->$method(self::UUID, 'a reading')->getStatus());
+	}
+
+	/**
+	 * `conflict` is what the client tells this 412 from Nextcloud's own CSRF refusal by
+	 * (docs/architecture.md#concurrency).
+	 *
+	 * @dataProvider writes
+	 */
+	public function testAWriteThatLostTheRaceAnswersConflict(string $method): void {
+		$this->params = ['updated_at' => 1750000000];
+		$this->service->method($method)->willThrowException(new StaleUpdateException('moved'));
+
+		$response = $this->controller()->$method(self::UUID, 'a reading');
+
+		$this->assertSame(Http::STATUS_PRECONDITION_FAILED, $response->getStatus());
+		$this->assertTrue($response->getData()['conflict']);
+	}
+
+	/** @return iterable<string, array{string}> */
+	public static function writes(): iterable {
+		yield 'update' => ['update'];
+		yield 'delete' => ['delete'];
+		yield 'restore' => ['restore'];
 	}
 }

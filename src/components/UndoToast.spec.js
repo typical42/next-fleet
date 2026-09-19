@@ -8,7 +8,7 @@ import { flushPromises, shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { deleteVehicle, restoreVehicle } from '../services/api.js'
+import { deleteEntry, deleteVehicle, getVehicle, restoreEntry, restoreVehicle } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
 import UndoToast from './UndoToast.vue'
 
@@ -16,7 +16,10 @@ import UndoToast from './UndoToast.vue'
 // is the token the store holds, so the wiring through it is part of what is under test.
 vi.mock('../services/api.js', async (original) => ({
 	...await original(),
+	deleteEntry: vi.fn(),
 	deleteVehicle: vi.fn(),
+	getVehicle: vi.fn(),
+	restoreEntry: vi.fn(),
 	restoreVehicle: vi.fn(),
 }))
 
@@ -52,6 +55,9 @@ beforeEach(() => {
 	vi.resetAllMocks()
 	vi.mocked(deleteVehicle).mockResolvedValue(DELETED)
 	vi.mocked(restoreVehicle).mockResolvedValue(VEHICLE)
+	vi.mocked(getVehicle).mockResolvedValue(VEHICLE)
+	vi.mocked(deleteEntry).mockImplementation(async (uuid, type, entry) => ({ ...entry, updated_at: 1700000200 }))
+	vi.mocked(restoreEntry).mockImplementation(async (uuid, type, entry) => entry)
 })
 
 describe('the undo toast', () => {
@@ -151,6 +157,49 @@ describe('the undo toast', () => {
 		const wrapper = shallowMount(UndoToast)
 
 		expect(wrapper.find('[role="status"]').exists()).toBe(true)
+	})
+
+	/**
+	 * An Entry deleted from its row gets the same way back (docs/ui.md). Its row is gone with it, so
+	 * the toast says what kind of thing went rather than naming it.
+	 */
+	it('offers an Entry back under the token its delete answered with', async () => {
+		const store = useVehiclesStore()
+		store.upsert(VEHICLE)
+		await store.strike('v-1', 'energy', { uuid: 'e-1', updated_at: 1700000100 })
+		const wrapper = shallowMount(UndoToast, { global: { renderStubDefaultSlot: true } })
+
+		expect(deleteEntry).toHaveBeenCalledWith('v-1', 'energy', { uuid: 'e-1', updated_at: 1700000100 })
+		expect(wrapper.text()).toContain('The entry was deleted.')
+
+		await button(wrapper, 'Undo').vm.$emit('click')
+		await flushPromises()
+
+		expect(restoreEntry).toHaveBeenCalledWith('v-1', 'energy', expect.objectContaining({ updated_at: 1700000200 }))
+		// The timeline reads itself again off this: the row it lost is back.
+		expect(store.restored).toBe(1)
+		expect(wrapper.find('.toast').exists()).toBe(false)
+	})
+
+	/** Under Logbook Mode a trip is voided rather than deleted, and the toast says which. */
+	it('says a trip under Logbook Mode was voided', async () => {
+		vi.mocked(getVehicle).mockResolvedValue({ ...VEHICLE, logbook_mode: true })
+		const store = useVehiclesStore()
+		await store.strike('v-1', 'trip', { uuid: 't-1', updated_at: 1700000100 })
+		const wrapper = shallowMount(UndoToast, { global: { renderStubDefaultSlot: true } })
+
+		expect(wrapper.text()).toContain('The trip was voided.')
+	})
+
+	/** One offer at a time: the next delete, of either kind, takes the place of the last. */
+	it('keeps only the latest offer', async () => {
+		const store = useVehiclesStore()
+		await store.strike('v-1', 'energy', { uuid: 'e-1', updated_at: 1700000100 })
+		store.upsert(VEHICLE)
+		await store.remove(VEHICLE)
+
+		expect(store.struck).toBeNull()
+		expect(store.deleted).not.toBeNull()
 	})
 
 	/** The offer is made once, and dismissing it is the answer that takes nothing back. */

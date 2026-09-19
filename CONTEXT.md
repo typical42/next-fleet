@@ -14,8 +14,8 @@ plate is a mutable label.
 _Avoid_: Car, asset
 
 **Entry**:
-Anything a person creates through the entry sheet: a Trip, an Energy Entry, a Maintenance Record or
-an Odometer Entry.
+Anything a person creates through the entry sheet: a Trip, an Energy Entry, a Maintenance Record, an
+Odometer Entry or an Expense.
 _Avoid_: Record, item
 
 **Odometer Entry**:

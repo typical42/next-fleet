@@ -4,7 +4,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { closeGap, ConflictError, createVehicle, deleteVehicle, getPreferences, listVehicles, logbookUrl, readGaps, readTimeline, recordReading, recordTrip, restoreVehicle, savePreferences, updateVehicle } from './api.js'
+import { closeGap, ConflictError, createVehicle, deleteEntry, deleteVehicle, getPreferences, listVehicles, logbookUrl, readEntry, readGaps, readKpis, readTimeline, recordReading, recordTrip, restoreEntry, restoreVehicle, savePreferences, updateEntry, updateVehicle } from './api.js'
 
 vi.mock('@nextcloud/router', () => ({
 	generateUrl: (/** @type {string} */ path) => `/index.php${path}`,
@@ -68,8 +68,8 @@ describe('createVehicle', () => {
 
 describe('recordReading', () => {
 	/**
-	 * A Reading hangs off its vehicle and carries no token: it is only ever written, never
-	 * updated (docs/architecture.md#concurrency).
+	 * A new Reading hangs off its vehicle and carries no token: nothing was read that it could lose
+	 * a race against (docs/architecture.md#concurrency).
 	 */
 	it('posts to the vehicle the reading belongs to', async () => {
 		const fetch = answers(201, { uuid: 'r1', value: 148320, origin: 'observed', flagged: false })
@@ -170,6 +170,18 @@ describe('closeGap', () => {
 
 		await expect(closeGap(vehicle.uuid, { trip: 't-1', distance: 40, from_at: 1, from_at_off: 0, to_at: 2, to_at_off: 0 }))
 			.rejects.toBeInstanceOf(ConflictError)
+	})
+})
+
+describe('readKpis', () => {
+	it('asks for one period and says whether VAT is reclaimed', async () => {
+		const fetch = answers(200, { consumption: [], wall_side: null, cost: {}, hours: null })
+
+		await readKpis(vehicle.uuid, { from: 1749900000, to: 1750200000, net: true })
+
+		const [url, options] = fetch.mock.calls[0]
+		expect(url).toBe(`/index.php/apps/nextfleet/api/vehicles/${vehicle.uuid}/kpis?from=1749900000&to=1750200000&net=true`)
+		expect(options.method).toBe('GET')
 	})
 })
 
@@ -329,5 +341,41 @@ describe('logbookUrl', () => {
 	 */
 	it('names one vehicle and one year outside the api', () => {
 		expect(logbookUrl(vehicle.uuid, '2025')).toBe(`/index.php/apps/nextfleet/vehicles/${vehicle.uuid}/logbook/2025`)
+	})
+})
+
+describe('the Entry writes', () => {
+	const entry = { uuid: 'e-1', updated_at: 1750000100 }
+
+	/** Each kind is written under its own collection, and the edit carries the token beside the fields. */
+	it('puts an edit where its kind lives, token and all', async () => {
+		const fetch = answers(200, entry)
+
+		await updateEntry(vehicle.uuid, 'odometer', entry, { value: 148400 })
+
+		const [url, options] = fetch.mock.calls[0]
+		expect(url).toBe(`/index.php/apps/nextfleet/api/vehicles/${vehicle.uuid}/readings/e-1`)
+		expect(options.method).toBe('PUT')
+		expect(JSON.parse(options.body)).toEqual({ value: 148400, updated_at: 1750000100 })
+	})
+
+	it('deletes with the token in the query string, and restores with the one it answered', async () => {
+		const fetch = answers(200, entry)
+
+		await deleteEntry(vehicle.uuid, 'expense', entry)
+		await restoreEntry(vehicle.uuid, 'trip', entry)
+
+		expect(fetch.mock.calls[0][0]).toBe(`/index.php/apps/nextfleet/api/vehicles/${vehicle.uuid}/expenses/e-1?updated_at=1750000100`)
+		expect(fetch.mock.calls[0][1].method).toBe('DELETE')
+		expect(fetch.mock.calls[1][0]).toBe(`/index.php/apps/nextfleet/api/vehicles/${vehicle.uuid}/trips/e-1/restore`)
+		expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ updated_at: 1750000100 })
+	})
+
+	it('reads one Entry back as its timeline row', async () => {
+		const fetch = answers(200, { type: 'energy', energy: entry })
+
+		await readEntry(vehicle.uuid, 'energy', 'e-1')
+
+		expect(fetch.mock.calls[0][0]).toBe(`/index.php/apps/nextfleet/api/vehicles/${vehicle.uuid}/timeline/energy/e-1`)
 	})
 })

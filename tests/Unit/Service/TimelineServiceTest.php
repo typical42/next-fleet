@@ -8,6 +8,12 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Unit\Service;
 
+use OCA\NextFleet\Db\Energy;
+use OCA\NextFleet\Db\EnergyMapper;
+use OCA\NextFleet\Db\Expense;
+use OCA\NextFleet\Db\ExpenseMapper;
+use OCA\NextFleet\Db\Maintenance;
+use OCA\NextFleet\Db\MaintenanceMapper;
 use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Db\OdoReadingMapper;
 use OCA\NextFleet\Db\Trip;
@@ -18,6 +24,8 @@ use OCA\NextFleet\Jurisdiction\IJurisdiction;
 use OCA\NextFleet\Jurisdiction\ILogbookRules;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCA\NextFleet\Service\Completeness;
+use OCA\NextFleet\Service\ConsumptionService;
+use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\Gaps;
 use OCA\NextFleet\Service\TimelineService;
 use OCA\NextFleet\Service\VehicleAccess;
@@ -46,18 +54,56 @@ class TimelineServiceTest extends TestCase {
 	private array $tripRows = [];
 	/** @var list<OdoReading> */
 	private array $readingRows = [];
+	/** @var list<Energy|Maintenance|Expense> */
+	private array $costRows = [];
 	private int $nextTripId = 1;
 	private int $nextReadingId = 1;
+	private int $nextCostId = 1;
+	/** What the gate hands back: the vehicle's own fields, over its id and uuid. */
+	private array $vehicleRow = [];
 
 	private TripMapper&MockObject $trips;
 	private OdoReadingMapper&MockObject $readings;
+	private EnergyMapper&MockObject $energy;
+	private MaintenanceMapper&MockObject $maintenance;
+	private ExpenseMapper&MockObject $expenses;
 	private VehicleService&MockObject $fleet;
 
 	protected function setUp(): void {
 		$this->tripRows = [];
 		$this->readingRows = [];
+		$this->costRows = [];
 		$this->nextTripId = 1;
 		$this->nextReadingId = 1;
+		$this->nextCostId = 1;
+		$this->vehicleRow = [];
+
+		// The three cost tables page alike, each over its own rows.
+		foreach ([
+			'energy' => [EnergyMapper::class, Energy::class],
+			'maintenance' => [MaintenanceMapper::class, Maintenance::class],
+			'expenses' => [ExpenseMapper::class, Expense::class],
+		] as $property => [$mapper, $entity]) {
+			$this->$property = $this->createMock($mapper);
+			$this->$property->method('findBefore')->willReturnCallback(
+				fn (int $vehicleId, int $at, int $id, int $limit): array => $this->before(
+					array_values(array_filter($this->costRows, static fn (object $row): bool => $row instanceof $entity)),
+					$vehicleId,
+					[$at, $id],
+					$limit,
+				),
+			);
+		}
+
+		// What consumption reads: every fill-up, oldest first.
+		$this->energy->method('findAllForVehicle')->willReturnCallback(
+			fn (int $vehicleId): array => array_reverse($this->before(
+				array_values(array_filter($this->costRows, static fn (object $row): bool => $row instanceof Energy)),
+				$vehicleId,
+				[PHP_INT_MAX, PHP_INT_MAX],
+				PHP_INT_MAX,
+			)),
+		);
 
 		$this->trips = $this->createMock(TripMapper::class);
 		$this->trips->method('findBefore')->willReturnCallback(
@@ -91,12 +137,12 @@ class TimelineServiceTest extends TestCase {
 			fn (int $vehicleId): array => array_reverse($this->before($this->readingRows, $vehicleId, [PHP_INT_MAX, PHP_INT_MAX], PHP_INT_MAX)),
 		);
 
-		$this->readings->method('findForTrips')->willReturnCallback(
-			fn (int $vehicleId, array $tripIds): array => array_values(array_filter(
+		$this->readings->method('findForSources')->willReturnCallback(
+			fn (int $vehicleId, string $sourceType, array $sourceIds): array => array_values(array_filter(
 				$this->readingRows,
 				static fn (OdoReading $row): bool => $row->getVehicleId() === $vehicleId
-					&& $row->getSourceType() === OdoReading::TRIP
-					&& in_array((int)$row->getSourceId(), $tripIds, true),
+					&& $row->getSourceType() === $sourceType
+					&& in_array((int)$row->getSourceId(), $sourceIds, true),
 			)),
 		);
 
@@ -114,7 +160,7 @@ class TimelineServiceTest extends TestCase {
 					throw new AccessDeniedException();
 				}
 
-				return Vehicle::fromRow(['id' => self::VEHICLE_ID, 'uuid' => self::VEHICLE]);
+				return Vehicle::fromRow(['id' => self::VEHICLE_ID, 'uuid' => self::VEHICLE] + $this->vehicleRow);
 			},
 		);
 	}
@@ -123,30 +169,36 @@ class TimelineServiceTest extends TestCase {
 	 * What both mapper reads answer: one vehicle's rows strictly before `(instant, id)`, newest
 	 * first, at most `$limit` of them.
 	 *
-	 * @param list<Trip|OdoReading> $rows
+	 * @param list<Trip|OdoReading|Energy|Maintenance|Expense> $rows
 	 * @param array{int, int} $before
-	 * @return list<Trip|OdoReading>
+	 * @return list<Trip|OdoReading|Energy|Maintenance|Expense>
 	 */
 	private function before(array $rows, int $vehicleId, array $before, int $limit): array {
 		$mine = array_values(array_filter(
 			$rows,
-			static fn (Trip|OdoReading $row): bool => $row->getVehicleId() === $vehicleId
+			static fn (object $row): bool => $row->getVehicleId() === $vehicleId
 				&& self::key($row) < $before,
 		));
-		usort($mine, static fn (Trip|OdoReading $a, Trip|OdoReading $b): int => self::key($b) <=> self::key($a));
+		usort($mine, static fn (object $a, object $b): int => self::key($b) <=> self::key($a));
 
 		return array_slice($mine, 0, $limit);
 	}
 
 	/**
-	 * What both reads order by: when the row happened, then its id. A trip is dated by when it set
-	 * off and a Reading by when it was read - one fact under two tables' names.
+	 * What every read orders by: when the row happened, then its id. Each table names that moment
+	 * its own way - one fact under five names.
 	 *
 	 * @return array{int, int}
 	 */
-	private static function key(Trip|OdoReading $row): array {
+	private static function key(Trip|OdoReading|Energy|Maintenance|Expense $row): array {
 		return [
-			$row instanceof Trip ? $row->getStartedAt() : $row->getReadAt(),
+			match (true) {
+				$row instanceof Trip => $row->getStartedAt(),
+				$row instanceof OdoReading => $row->getReadAt(),
+				$row instanceof Energy => $row->getFilledAt(),
+				$row instanceof Maintenance => $row->getDoneAt(),
+				$row instanceof Expense => $row->getSpentAt(),
+			},
 			(int)$row->getId(),
 		];
 	}
@@ -155,9 +207,13 @@ class TimelineServiceTest extends TestCase {
 		return new TimelineService(
 			$this->trips,
 			$this->readings,
+			$this->energy,
+			$this->maintenance,
+			$this->expenses,
 			$this->fleet,
 			$this->completeness(),
 			new Gaps($this->trips, $this->readings),
+			new ConsumptionService($this->energy, $this->readings),
 		);
 	}
 
@@ -218,6 +274,52 @@ class TimelineServiceTest extends TestCase {
 		return $reading;
 	}
 
+	/** One fill-up in the store, full and priced unless told otherwise. */
+	private function fillUp(int $filledAt, int $amount = 42000, ?int $total = 7500, string $energy = 'petrol'): Energy {
+		$fill = new Energy();
+		$fill->setFilledAt($filledAt);
+		$fill->setFilledAtOff(120);
+		$fill->setEnergy($energy);
+		$fill->setAmount($amount);
+		$fill->setTotal($total);
+		$fill->setFullTank(true);
+
+		return $this->cost($fill);
+	}
+
+	private function work(int $doneAt): Maintenance {
+		$work = new Maintenance();
+		$work->setDoneAt($doneAt);
+		$work->setDoneAtOff(120);
+		$work->setTitle('Brake pads');
+
+		return $this->cost($work);
+	}
+
+	private function expense(int $spentAt): Expense {
+		$expense = new Expense();
+		$expense->setSpentAt($spentAt);
+		$expense->setSpentAtOff(120);
+		$expense->setAmount(1200);
+
+		return $this->cost($expense);
+	}
+
+	/**
+	 * @template T of Energy|Maintenance|Expense
+	 * @param T $row
+	 * @return T
+	 */
+	private function cost(Energy|Maintenance|Expense $row): Energy|Maintenance|Expense {
+		$row->setId($this->nextCostId);
+		$row->setUuid('0195e2f1-3333-4000-8000-' . sprintf('%012d', $this->nextCostId++));
+		$row->setVehicleId(self::VEHICLE_ID);
+		$row->setCreatedBy(self::OWNER);
+		$this->costRows[] = $row;
+
+		return $row;
+	}
+
 	/**
 	 * The page as a reader sees it: what kind each row is and which uuid it names, in the order
 	 * they are on screen.
@@ -269,13 +371,165 @@ class TimelineServiceTest extends TestCase {
 	}
 
 	/**
+	 * Fill-ups, maintenance and expenses are things that happened to the vehicle as much as a trip
+	 * is, so they are in the same one order (docs/ui.md), not a tab each.
+	 */
+	public function testEveryKindOfEntryIsInTheOneOrder(): void {
+		$expense = $this->expense(1750000000);
+		$trip = $this->trip(1750100000);
+		$work = $this->work(1750200000);
+		$entry = $this->entry(1750300000);
+		$fill = $this->fillUp(1750400000);
+
+		$this->assertSame(
+			[
+				'energy ' . $fill->getUuid(),
+				'odometer ' . $entry->getUuid(),
+				'maintenance ' . $work->getUuid(),
+				'trip ' . $trip->getUuid(),
+				'expense ' . $expense->getUuid(),
+			],
+			$this->shown($this->service()->page(self::OWNER, self::VEHICLE, null, null)),
+		);
+	}
+
+	/** Each chip is one kind; Costs is the expenses (docs/ui.md). */
+	public function testEachNewChipNarrowsTheTimelineToItsKind(): void {
+		$fill = $this->fillUp(1750000000);
+		$work = $this->work(1750100000);
+		$expense = $this->expense(1750200000);
+		$this->trip(1750300000);
+
+		$service = $this->service();
+		$this->assertSame(['energy ' . $fill->getUuid()], $this->shown($service->page(self::OWNER, self::VEHICLE, TimelineService::ENERGY, null)));
+		$this->assertSame(['maintenance ' . $work->getUuid()], $this->shown($service->page(self::OWNER, self::VEHICLE, TimelineService::MAINTENANCE, null)));
+		$this->assertSame(['expense ' . $expense->getUuid()], $this->shown($service->page(self::OWNER, self::VEHICLE, TimelineService::EXPENSE, null)));
+	}
+
+	/**
+	 * The cursor's tie-break holds across the new tables too: rows of three kinds at one instant,
+	 * with the page ending among them, are each served exactly once.
+	 */
+	public function testAPageBoundaryAmongTheNewKindsLosesAndRepeatsNothing(): void {
+		$expected = [];
+		for ($i = 0; $i < 20; $i++) {
+			$at = 1750000000 - $i * 1000;
+			// Inserted out of rank order, so the order below is the tie-break's and not the store's.
+			$expense = $this->expense($at);
+			$fill = $this->fillUp($at);
+			$work = $this->work($at);
+			$expected[] = 'expense ' . $expense->getUuid();
+			$expected[] = 'maintenance ' . $work->getUuid();
+			$expected[] = 'energy ' . $fill->getUuid();
+		}
+
+		$shown = [];
+		$cursor = null;
+		$pages = 0;
+		do {
+			$page = $this->service()->page(self::OWNER, self::VEHICLE, null, $cursor);
+			$shown = array_merge($shown, $this->shown($page));
+			$cursor = $page['next'];
+			$pages++;
+		} while ($cursor !== null && $pages < 10);
+
+		$this->assertSame($expected, $shown);
+		$this->assertSame(2, $pages);
+	}
+
+	/**
+	 * A fill-up's flags are computed on read (docs/architecture.md#data-model), and the timeline is
+	 * the read that says them. Overfill is measured against the vehicle's tank or battery, per energy.
+	 */
+	public function testAFillUpRowSaysWhatItIsFlaggedFor(): void {
+		$this->vehicleRow = ['energy_types' => '["petrol","electric"]', 'tank_ml' => 45000, 'battery_wh' => 13000];
+		$fine = $this->fillUp(1750000000, 40000);
+		$unpriced = $this->fillUp(1750100000, 40000, null);
+		$overfilled = $this->fillUp(1750200000, 60000);
+		$overcharged = $this->fillUp(1750300000, 20000, 500, 'electric');
+		$foreign = $this->fillUp(1750400000, 40000, 7000, 'diesel');
+
+		$flags = [];
+		foreach ($this->service()->page(self::OWNER, self::VEHICLE, null, null)['rows'] as $row) {
+			$flags[$row['energy']->getUuid()] = $row['flags'];
+		}
+
+		$this->assertSame([], $flags[$fine->getUuid()]);
+		$this->assertSame([EnergyService::NO_PRICE], $flags[$unpriced->getUuid()]);
+		$this->assertSame([EnergyService::OVERFILLED], $flags[$overfilled->getUuid()]);
+		$this->assertSame([EnergyService::OVERFILLED], $flags[$overcharged->getUuid()]);
+		$this->assertSame([EnergyService::FOREIGN_ENERGY], $flags[$foreign->getUuid()]);
+	}
+
+	/** Without a tank or battery on file there is nothing to overfill. */
+	public function testNoCapacityOnFileFlagsNoOverfill(): void {
+		$this->vehicleRow = ['energy_types' => '["petrol"]'];
+		$this->fillUp(1750000000, 900000);
+
+		$this->assertSame([], $this->service()->page(self::OWNER, self::VEHICLE, null, null)['rows'][0]['flags']);
+	}
+
+	/**
+	 * A fill-up or maintenance counter writes a Reading per counter (docs/architecture.md, rule 5),
+	 * and a flag on either is a question the row it belongs to carries - as a trip's does.
+	 */
+	public function testAFillUpAndAMaintenanceRecordCarryTheReadingsTheyWrote(): void {
+		$fill = $this->fillUp(1750000000);
+		$km = $this->reading(1750000000, 120450, OdoReading::ENERGY, (int)$fill->getId());
+		$hours = $this->reading(1750000000, 3100, OdoReading::ENERGY, (int)$fill->getId());
+		$hours->setCounter(OdoReading::SECOND);
+		$work = $this->work(1750100000);
+		// Same id as the fill-up, other table: it must not borrow the fill-up's Readings.
+		$work->setId($fill->getId());
+		$bare = $this->expense(1750200000);
+
+		$rows = $this->service()->page(self::OWNER, self::VEHICLE, null, null)['rows'];
+
+		$this->assertSame($bare, $rows[0]['expense']);
+		$this->assertArrayNotHasKey('readings', $rows[0]);
+		$this->assertSame([], $rows[1]['readings']);
+		$this->assertSame([$km, $hours], $rows[2]['readings']);
+	}
+
+	/**
+	 * A fill-up closing a segment states its consumption (docs/ui.md), even when the one that opened
+	 * it is on an earlier page; one that closes none says so with null. Which segments count is
+	 * ConsumptionServiceTest's.
+	 */
+	public function testAFillUpClosingASegmentCarriesItsConsumption(): void {
+		$this->vehicleRow = ['energy_types' => '["petrol"]', 'odo_unit' => 'km'];
+		$opening = $this->fillUp(1750000000, 40000);
+		$this->reading(1750000000, 10000, OdoReading::ENERGY, (int)$opening->getId());
+		$closing = $this->fillUp(1750100000, 30000);
+		$this->reading(1750100000, 10500, OdoReading::ENERGY, (int)$closing->getId());
+		for ($i = 1; $i <= TimelineService::PAGE; $i++) {
+			$this->expense(1750000000 + $i);
+		}
+
+		$first = $this->service()->page(self::OWNER, self::VEHICLE, null, null);
+		$second = $this->service()->page(self::OWNER, self::VEHICLE, null, $first['next']);
+
+		$this->assertSame($closing, $first['rows'][0]['energy']);
+		$this->assertSame(6.0, $first['rows'][0]['consumption']['value']);
+		$this->assertSame('km', $first['rows'][0]['consumption']['per']);
+		$oldest = end($second['rows']);
+		$this->assertSame($opening, $oldest['energy']);
+		$this->assertNull($oldest['consumption']);
+		$this->energy->method('findOnVehicle')->willReturn($closing);
+		$this->assertSame(
+			6.0,
+			$this->service()->one(self::OWNER, self::VEHICLE, TimelineService::ENERGY, $closing->getUuid())['consumption']['value'],
+		);
+	}
+
+	/**
 	 * A kind nobody serves is refused rather than answered with everything, which would look to a
 	 * client like a filter that silently does nothing.
 	 */
 	public function testAKindTheTimelineDoesNotServeIsRefused(): void {
 		$this->expectException(\InvalidArgumentException::class);
 
-		$this->service()->page(self::OWNER, self::VEHICLE, 'energy', null);
+		$this->service()->page(self::OWNER, self::VEHICLE, 'fuel', null);
 	}
 
 	/**
@@ -439,7 +693,7 @@ class TimelineServiceTest extends TestCase {
 	 * @return iterable<string, array{string}>
 	 */
 	public static function forgedCursors(): iterable {
-		yield 'a kind nobody serves' => ['1750000000:energy:4'];
+		yield 'a kind nobody serves' => ['1750000000:fuel:4'];
 		yield 'an instant that is not a number' => ['soon:trip:4'];
 		yield 'an id that is not a number' => ['1750000000:trip:'];
 		yield 'nothing to break a tie with' => ['1750000000:trip'];

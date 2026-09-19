@@ -6,7 +6,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
-import { createVehicle, deleteVehicle, getVehicle, listVehicles, recordEnergy, recordReading, recordTrip, restoreVehicle, updateVehicle } from '../services/api.js'
+import { createVehicle, deleteEntry, deleteVehicle, getVehicle, listVehicles, recordEnergy, recordExpense, recordMaintenance, recordReading, recordTrip, restoreEntry, restoreVehicle, updateEntry, updateVehicle } from '../services/api.js'
 
 /** @typedef {import('../services/api.js').Vehicle} Vehicle */
 /** @typedef {import('../services/api.js').Reading} Reading */
@@ -35,6 +35,20 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	 * @type {import('vue').Ref<Vehicle|null>}
 	 */
 	const deleted = ref(null)
+
+	/**
+	 * The Entry the last delete answered with, and where it hangs - the way back for an Entry, held
+	 * for the reason `deleted` is: the sheet that asked for the delete has closed.
+	 *
+	 * @type {import('vue').Ref<{vehicle: string, type: import('../services/api.js').Entry['type'], entry: {uuid: string, updated_at: number}}|null>}
+	 */
+	const struck = ref(null)
+
+	/**
+	 * How many Entries an undo has brought back. The toast that makes the undo lives in the app
+	 * shell and knows no timeline; a timeline watches this and reads itself again.
+	 */
+	const restored = ref(0)
 
 	const list = computed(() => [...byUuid.value.values()])
 
@@ -104,31 +118,83 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	 */
 	async function remove(vehicle) {
 		deleted.value = await deleteVehicle(vehicle)
+		struck.value = null
 		byUuid.value.delete(vehicle.uuid)
+	}
+
+	/**
+	 * Delete one Entry - a trip under Logbook Mode is voided - and hold the way back, as remove()
+	 * does for a vehicle and one offer at a time with it. A refusal is not caught, as with `save()`.
+	 *
+	 * @param {string} uuid - the vehicle the Entry hangs off
+	 * @param {import('../services/api.js').Entry['type']} type - which kind of Entry it is
+	 * @param {{uuid: string, updated_at: number}} entry - the Entry as it was read
+	 * @return {Promise<void>} when it is gone and the way back is held
+	 */
+	async function strike(uuid, type, entry) {
+		const left = await moving(uuid, type, () => deleteEntry(uuid, type, entry))
+		deleted.value = null
+		struck.value = { vehicle: uuid, type, entry: left }
 	}
 
 	/**
 	 * Undo the last delete, checked against the token that delete answered with — no newer one
 	 * exists and no older one is accepted (docs/architecture.md#concurrency). A refusal leaves the
-	 * offer standing: it is the only way back there is, and the vehicle is still deleted.
+	 * offer standing: it is the only way back there is, and the row is still deleted.
 	 *
 	 * Nothing deleted is nothing to undo, and no request: the toast is the only caller and it is
 	 * only up while there is an offer, so this is the state after a page load, not a failure.
 	 *
-	 * @return {Promise<void>} when the vehicle is back in the fleet
+	 * @return {Promise<void>} when the vehicle or the Entry is back
 	 */
 	async function restore() {
-		if (deleted.value === null) {
+		if (deleted.value !== null) {
+			upsert(await restoreVehicle(deleted.value))
+			deleted.value = null
 			return
 		}
 
-		upsert(await restoreVehicle(deleted.value))
-		deleted.value = null
+		const offer = struck.value
+		if (offer === null) {
+			return
+		}
+
+		await moving(offer.vehicle, offer.type, () => restoreEntry(offer.vehicle, offer.type, offer.entry))
+		struck.value = null
+		restored.value++
 	}
 
 	/** Let go of the way back, which is what closing the toast means. */
 	function forget() {
 		deleted.value = null
+		struck.value = null
+	}
+
+	/**
+	 * Rewrite one Entry under the token it was read with. A refusal is not caught, as with `save()`.
+	 *
+	 * @param {string} uuid - the vehicle the Entry hangs off
+	 * @param {import('../services/api.js').Entry['type']} type - which kind of Entry it is
+	 * @param {{uuid: string, updated_at: number}} entry - the Entry as it was read
+	 * @param {object} fields - the whole Entry, as the sheet holds it
+	 * @return {Promise<object>} the Entry as the server now holds it
+	 */
+	async function revise(uuid, type, entry, fields) {
+		return moving(uuid, type, () => updateEntry(uuid, type, entry, fields))
+	}
+
+	/**
+	 * A write to an Entry, and the read of the vehicle after it where the Entry moves a counter.
+	 * An Expense moves none (see spend()).
+	 *
+	 * @template T
+	 * @param {string} uuid - the vehicle
+	 * @param {import('../services/api.js').Entry['type']} type - which kind of Entry is written
+	 * @param {() => Promise<T>} write - the write to make
+	 * @return {Promise<T>} what the write answered with
+	 */
+	async function moving(uuid, type, write) {
+		return type === 'expense' ? write() : counted(uuid, write)
 	}
 
 	/**
@@ -167,6 +233,29 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	}
 
 	/**
+	 * Record one Maintenance Record. Its counters are Readings too, as a fill-up's are.
+	 *
+	 * @param {string} uuid - the vehicle the work was done on
+	 * @param {object} entry - what the sheet holds (src/services/api.js)
+	 * @return {Promise<object>} the record as the server wrote it
+	 */
+	async function maintain(uuid, entry) {
+		return counted(uuid, () => recordMaintenance(uuid, entry))
+	}
+
+	/**
+	 * Record one Expense. It knows no counter and leaves the vehicle's row as it was, so there is
+	 * nothing to read back.
+	 *
+	 * @param {string} uuid - the vehicle the money was spent on
+	 * @param {object} entry - what the sheet holds (src/services/api.js)
+	 * @return {Promise<object>} the expense as the server wrote it
+	 */
+	async function spend(uuid, entry) {
+		return recordExpense(uuid, entry)
+	}
+
+	/**
 	 * One write that moves a vehicle's counter, and the read of the vehicle that follows it:
 	 * `odo_value` is a cache the server restates from the whole chain, and counting it here would
 	 * be a second implementation of the odometer rules — a wrong one as soon as a row lands out of
@@ -194,5 +283,5 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 		return written
 	}
 
-	return { byUuid, create, deleted, fill, forget, list, load, log, record, remove, restore, save, upsert, visible }
+	return { byUuid, create, deleted, fill, forget, list, load, log, maintain, record, remove, restore, restored, revise, save, spend, strike, struck, upsert, visible }
 })

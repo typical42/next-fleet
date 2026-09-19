@@ -30,6 +30,54 @@
   price is sent only when there is no total or the driver changed it. A charge asks home or
   public, and DC only in public. An empty counter says consumption needs it. The prefill is
   `GET /api/vehicles/{uuid}/energy/prefill?at=&off=`.
+- Maintenance: `POST /api/vehicles/{uuid}/maintenance`, with a fill-up's counter rules. The entry
+  sheet offers it on every vehicle: title (required), cost, type (service, repair, inspection,
+  tyres or upgrade; none by default), date, vendor, VAT, counters and notes. The vendor completes
+  from this vehicle's history; VAT is prefilled as on a fill-up. The prefill is
+  `GET /api/vehicles/{uuid}/maintenance/prefill?at=&off=`. Date, VAT and counters are kept when
+  the sheet switches between Energy and Maintenance.
+- Expense: `POST /api/vehicles/{uuid}/expenses`. It writes no Reading. The entry sheet offers it
+  last on every vehicle: amount (required), category (insurance, vehicle tax, toll, parking, fine,
+  lease or other; none by default), date, VAT and notes. VAT is prefilled as on a fill-up; the
+  prefill is `GET /api/vehicles/{uuid}/expenses/prefill?at=&off=`.
+- Fill-ups, maintenance and expenses are in the timeline, with chips
+  `All · Trips · Odometer · Energy · Maintenance · Costs` (Costs is the expenses; `?type=energy`,
+  `maintenance`, `expense`). A fill-up row states its amount, a maintenance row its cost, an expense
+  row its amount. A row says in words what it is flagged for, whether a fill-up was partial or
+  missed the one before, and whether a counter it wrote is in question. A fill-up is now also
+  flagged `overfilled` when it exceeds `tank_ml` (or `battery_wh` for electricity).
+- Fill-ups, maintenance and expenses can be edited, deleted and restored on the server:
+  `PUT` and `DELETE /api/vehicles/{uuid}/{energy|maintenance|expenses}/{id}` and `POST …/restore`,
+  each checked against `updated_at` like a trip. A delete is a soft delete with undo and writes no
+  audit row, under Logbook Mode too. The Readings a fill-up or record wrote follow it in the same
+  transaction: an edit moves them, adds one for a counter now given and removes one for a counter
+  emptied; a delete takes them along and the undo brings them back.
+- Every timeline row opens its Entry in the entry sheet: trip, fill-up, maintenance, expense and
+  Odometer Entry. The sheet keeps the Entry's kind, saves the whole Entry back under the token it
+  was read with, and deletes it with the undo toast - a trip under Logbook Mode is voided, and the
+  button and the toast say so. An edit that lost a race says so and offers _Save anyway_, which
+  reads the Entry back and writes what is on screen. A rate the Entry was saved with, stated or
+  not, is never replaced by the jurisdiction's.
+- An Odometer Entry can be edited, deleted and restored: `PUT` and `DELETE
+  /api/vehicles/{uuid}/readings/{id}` and `POST …/restore`, on the token. An edit restates the
+  number, the moment and the counter, and settles both chains when the counter changed. A Reading
+  a trip, fill-up or maintenance record wrote is not found here: it follows its Entry.
+- `GET /api/vehicles/{uuid}/timeline/{type}/{id}` reads one Entry back as its timeline row.
+- Consumption, full tank to full tank, per energy: a fill-up closing a segment states it on its
+  timeline row (`6,1 l/100 km`, or `l/h` on a vehicle counted in hours) and carries it as
+  `consumption`. Partials count into the segment; a segment with a missed previous fill-up, a
+  flagged or derived Reading at either end, or an end without a counter states none. A plug-in
+  hybrid's petrol and electricity are measured apart, and engine hours never enter the figure.
+- A rolling wall-side kWh/100 km over every charge in a period, labelled approximate because
+  charging losses are in it (`ConsumptionService::wallSide()`). Nothing shows it yet; the header
+  KPIs will.
+- Cost per 100 km (or per hour) for a period, and energy-only cost beside it
+  (`CostService::of()`). Net of each row's own rate for a person who reclaims VAT; a row without a
+  stated rate counts gross and the figure says so. Incomplete when a fill-up has no price, a
+  period total when no distance was driven, no figures without a currency. Nothing shows it yet;
+  the header KPIs will.
+- TCO beside it: cost per 100 km plus purchase minus residual over every kilometre the vehicle has
+  run since its first Reading. Unset when either price is empty, as entered under "I reclaim VAT".
 
 - Overview, at the top of the navigation. It leads back from a vehicle or from Reports without a
   reload, and is marked whenever the overview is what shows.

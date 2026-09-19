@@ -10,6 +10,9 @@ namespace OCA\NextFleet\Tests\Integration;
 
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Controller\EnergyController;
+use OCA\NextFleet\Controller\ExpenseController;
+use OCA\NextFleet\Controller\KpiController;
+use OCA\NextFleet\Controller\MaintenanceController;
 use OCA\NextFleet\Controller\OdometerController;
 use OCA\NextFleet\Controller\PreferencesController;
 use OCA\NextFleet\Controller\ReportController;
@@ -20,7 +23,10 @@ use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Service\EnergyService;
+use OCA\NextFleet\Service\ExpenseService;
+use OCA\NextFleet\Service\KpiService;
 use OCA\NextFleet\Service\LogbookExport;
+use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\PreferencesService;
 use OCA\NextFleet\Service\TimelineService;
@@ -48,8 +54,8 @@ class VehicleIdorTest extends TestCase {
 	private const STRANGER = 'nextfleet-test-bob';
 	private const CODRIVER = 'nextfleet-test-carol';
 	private const PLATE = 'B-XY 123';
-	/** A trip uuid nothing wrote: the refusal must come before the lookup that would miss it. */
-	private const NO_SUCH_TRIP = '0195e2f1-1111-4000-8000-00000000dead';
+	/** An Entry uuid nothing wrote: the refusal must come before the lookup that would miss it. */
+	private const NO_SUCH_ENTRY = '0195e2f1-1111-4000-8000-00000000dead';
 
 	/**
 	 * The routes that reach no vehicle by identity, so a stranger gets an answer rather than a
@@ -62,7 +68,10 @@ class VehicleIdorTest extends TestCase {
 	private OdometerService $odometry;
 	private TripService $journeys;
 	private EnergyService $fillUps;
+	private MaintenanceService $workshop;
+	private ExpenseService $spending;
 	private TimelineService $history;
+	private KpiService $figures;
 	private LogbookExport $logbook;
 	private PreferencesService $settings;
 	private AccessMapper $grants;
@@ -74,7 +83,10 @@ class VehicleIdorTest extends TestCase {
 		$this->odometry = $container->get(OdometerService::class);
 		$this->journeys = $container->get(TripService::class);
 		$this->fillUps = $container->get(EnergyService::class);
+		$this->workshop = $container->get(MaintenanceService::class);
+		$this->spending = $container->get(ExpenseService::class);
 		$this->history = $container->get(TimelineService::class);
+		$this->figures = $container->get(KpiService::class);
 		$this->logbook = $container->get(LogbookExport::class);
 		$this->settings = $container->get(PreferencesService::class);
 		$this->grants = $container->get(AccessMapper::class);
@@ -102,7 +114,7 @@ class VehicleIdorTest extends TestCase {
 			->where($qb->expr()->in('grantee', $qb->createNamedParameter($people, $qb::PARAM_STR_ARRAY)));
 		$qb->executeStatement();
 
-		foreach (['fleet_odo_readings', 'fleet_trips', 'fleet_energy'] as $table) {
+		foreach (['fleet_odo_readings', 'fleet_trips', 'fleet_energy', 'fleet_maintenance', 'fleet_expenses'] as $table) {
 			$qb = $db->getQueryBuilder();
 			$qb->delete($table)
 				->where($qb->expr()->in('created_by', $qb->createNamedParameter($people, $qb::PARAM_STR_ARRAY)));
@@ -148,12 +160,39 @@ class VehicleIdorTest extends TestCase {
 	}
 
 	/**
+	 * And for the Maintenance Records.
+	 *
+	 * @param array<string, mixed> $params
+	 */
+	private function maintenance(string $userId, array $params): MaintenanceController {
+		return new MaintenanceController(Application::APP_ID, $this->request($params), $this->workshop, $this->session($userId));
+	}
+
+	/**
+	 * And for the Expenses.
+	 *
+	 * @param array<string, mixed> $params
+	 */
+	private function expense(string $userId, array $params): ExpenseController {
+		return new ExpenseController(Application::APP_ID, $this->request($params), $this->spending, $this->session($userId));
+	}
+
+	/**
 	 * And again, for the one read that shows everything at once.
 	 *
 	 * @param array<string, mixed> $params
 	 */
 	private function timeline(string $userId, array $params): TimelineController {
 		return new TimelineController(Application::APP_ID, $this->request($params), $this->history, $this->session($userId));
+	}
+
+	/**
+	 * And for the header's figures.
+	 *
+	 * @param array<string, mixed> $params
+	 */
+	private function kpis(string $userId, array $params): KpiController {
+		return new KpiController(Application::APP_ID, $this->request($params), $this->figures, $this->session($userId));
 	}
 
 	/**
@@ -246,20 +285,45 @@ class VehicleIdorTest extends TestCase {
 			'vehicle#restore' => $this->controller(self::STRANGER, $params)->restore($uuid),
 			'odometer#index' => $this->odometer(self::STRANGER, $params)->index($uuid),
 			'odometer#create' => $this->odometer(self::STRANGER, $params)->create($uuid),
+			// Walked against Readings that are not there, for the reason the trip's are below.
+			'odometer#update' => $this->odometer(self::STRANGER, $params)->update($uuid, self::NO_SUCH_ENTRY),
+			'odometer#delete' => $this->odometer(self::STRANGER, $params)->delete($uuid, self::NO_SUCH_ENTRY),
+			'odometer#restore' => $this->odometer(self::STRANGER, $params)->restore($uuid, self::NO_SUCH_ENTRY),
 			'trip#create' => $this->trip(self::STRANGER, $params)->create($uuid),
 			// Walked against a trip that is not there: the gate is the vehicle's, so a stranger
 			// is refused before any uuid of a trip is looked up, and a 404 here would be the
 			// answer telling them so.
-			'trip#update' => $this->trip(self::STRANGER, $params)->update($uuid, self::NO_SUCH_TRIP),
-			'trip#delete' => $this->trip(self::STRANGER, $params)->delete($uuid, self::NO_SUCH_TRIP),
-			'trip#restore' => $this->trip(self::STRANGER, $params)->restore($uuid, self::NO_SUCH_TRIP),
+			'trip#update' => $this->trip(self::STRANGER, $params)->update($uuid, self::NO_SUCH_ENTRY),
+			'trip#delete' => $this->trip(self::STRANGER, $params)->delete($uuid, self::NO_SUCH_ENTRY),
+			'trip#restore' => $this->trip(self::STRANGER, $params)->restore($uuid, self::NO_SUCH_ENTRY),
 			'trip#reconcile' => $this->trip(self::STRANGER, $params + ['distance' => 200, 'from_at' => 1749990000, 'to_at' => 1750000000])
-				->reconcile($uuid, self::NO_SUCH_TRIP),
+				->reconcile($uuid, self::NO_SUCH_ENTRY),
 			'energy#create' => $this->energy(self::STRANGER, $params + ['filled_at' => 1750000000, 'filled_at_off' => 120, 'energy' => 'diesel', 'amount' => 42000, 'odo' => 999999])
 				->create($uuid),
 			'energy#prefill' => $this->energy(self::STRANGER, $params + ['at' => 1750000000, 'off' => 120])->prefill($uuid),
+			'maintenance#create' => $this->maintenance(self::STRANGER, $params + ['done_at' => 1750000000, 'done_at_off' => 120, 'title' => 'Oil change', 'odo' => 999999])
+				->create($uuid),
+			'maintenance#prefill' => $this->maintenance(self::STRANGER, $params + ['at' => 1750000000, 'off' => 120])->prefill($uuid),
+			'expense#create' => $this->expense(self::STRANGER, $params + ['spent_at' => 1750000000, 'spent_at_off' => 120, 'amount' => 64000])
+				->create($uuid),
+			'expense#prefill' => $this->expense(self::STRANGER, $params + ['at' => 1750000000, 'off' => 120])->prefill($uuid),
+			// Walked against rows that are not there, for the reason the trip's are.
+			'energy#update' => $this->energy(self::STRANGER, $params + ['filled_at' => 1750000000, 'filled_at_off' => 120, 'energy' => 'diesel', 'amount' => 42000, 'odo' => 999999])
+				->update($uuid, self::NO_SUCH_ENTRY),
+			'energy#delete' => $this->energy(self::STRANGER, $params)->delete($uuid, self::NO_SUCH_ENTRY),
+			'energy#restore' => $this->energy(self::STRANGER, $params)->restore($uuid, self::NO_SUCH_ENTRY),
+			'maintenance#update' => $this->maintenance(self::STRANGER, $params + ['done_at' => 1750000000, 'done_at_off' => 120, 'title' => 'Oil change', 'odo' => 999999])
+				->update($uuid, self::NO_SUCH_ENTRY),
+			'maintenance#delete' => $this->maintenance(self::STRANGER, $params)->delete($uuid, self::NO_SUCH_ENTRY),
+			'maintenance#restore' => $this->maintenance(self::STRANGER, $params)->restore($uuid, self::NO_SUCH_ENTRY),
+			'expense#update' => $this->expense(self::STRANGER, $params + ['spent_at' => 1750000000, 'spent_at_off' => 120, 'amount' => 64000])
+				->update($uuid, self::NO_SUCH_ENTRY),
+			'expense#delete' => $this->expense(self::STRANGER, $params)->delete($uuid, self::NO_SUCH_ENTRY),
+			'expense#restore' => $this->expense(self::STRANGER, $params)->restore($uuid, self::NO_SUCH_ENTRY),
 			'timeline#index' => $this->timeline(self::STRANGER, $params)->index($uuid),
 			'timeline#gaps' => $this->timeline(self::STRANGER, $params)->gaps($uuid),
+			'timeline#show' => $this->timeline(self::STRANGER, $params)->show($uuid, 'trip', self::NO_SUCH_ENTRY),
+			'kpi#index' => $this->kpis(self::STRANGER, $params + ['from' => 1749900000, 'to' => 1750200000])->index($uuid),
 			'report#logbook' => $this->report(self::STRANGER, $params)->logbook($uuid, '2026'),
 			'preferences#index' => $this->preferences(self::STRANGER, $params)->index(),
 			'preferences#update' => $this->preferences(self::STRANGER, $params)->update(),

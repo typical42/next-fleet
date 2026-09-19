@@ -68,20 +68,118 @@ import { generateUrl } from '@nextcloud/router'
  */
 
 /**
+ * One fill-up or charging session (docs/architecture.md#data-model): `amount` in millilitres or
+ * watt-hours by `energy`, money in gross cents.
+ *
+ * @typedef {object} Energy
+ * @property {string} uuid - identity
+ * @property {string} energy - petrol, diesel, lpg, cng or electric
+ * @property {number} amount - millilitres or watt-hours
+ * @property {number|null} total - what it cost, cents
+ * @property {boolean} full_tank - filled to the brim
+ * @property {boolean} missed_previous - a fill-up before it was not recorded
+ * @property {string|null} station - where it was bought
+ */
+
+/**
+ * One Maintenance Record (CONTEXT.md).
+ *
+ * @typedef {object} Maintenance
+ * @property {string} uuid - identity
+ * @property {string} title - what was done
+ * @property {string|null} type - one of MAINTENANCE_TYPES (src/utils/format.js)
+ * @property {string|null} vendor - who did it
+ * @property {number|null} cost - gross cents
+ */
+
+/**
+ * One Expense (CONTEXT.md).
+ *
+ * @typedef {object} Expense
+ * @property {string} uuid - identity
+ * @property {string|null} category - one of EXPENSE_CATEGORIES (src/utils/format.js)
+ * @property {number} amount - gross cents
+ */
+
+/**
  * One thing that happened to a vehicle, whatever table it was written in
- * (docs/architecture.md#the-timeline). The Entry itself sits under its own kind's key, and a trip
- * carries the Reading it left on the counter — the journey and the counter it moved are one row on
- * screen (docs/architecture.md#odometer-rules, rule 5).
+ * (docs/architecture.md#the-timeline). The Entry itself sits under its own kind's key, and an Entry
+ * that wrote Readings carries them — the Entry and the counter it moved are one row on screen
+ * (docs/architecture.md#odometer-rules, rule 5).
  *
  * @typedef {object} Entry
- * @property {string} type - `trip` or `odometer`
+ * @property {'trip'|'odometer'|'energy'|'maintenance'|'expense'} type - which key the Entry is under
  * @property {number} occurred_at - when it happened, seconds; a trip is placed where it set off
  * @property {number} occurred_at_off - the UTC offset it happened at, minutes
  * @property {Trip} [trip] - the journey, when that is what this row is
  * @property {Reading} [odometer] - the counter reading, when that is what this row is
+ * @property {Energy} [energy] - the fill-up, when that is what this row is
+ * @property {Maintenance} [maintenance] - the Maintenance Record, when that is what this row is
+ * @property {Expense} [expense] - the expense, when that is what this row is
  * @property {Reading|null} [reading] - the Reading a trip left on the counter
+ * @property {Reading[]} [readings] - the Readings a fill-up or maintenance record left, one per
+ *   counter it was given
+ * @property {string[]} [flags] - what a fill-up is flagged for: `foreign_energy`, `no_price`,
+ *   `overfilled`
  * @property {string[]} [missing] - what a trip's jurisdiction requires and it leaves unstated,
  *   measured on every vehicle
+ * @property {Consumption|null} [consumption] - the segment a fill-up closes, or null when it closes
+ *   none
+ */
+
+/**
+ * A full-to-full segment (docs/architecture.md#numbers-consumption-cost-emissions), measured on the
+ * main counter.
+ *
+ * @typedef {object} Consumption
+ * @property {string} energy - the energy both ends were filled with
+ * @property {string} closes - the uuid of the fill-up that closes it
+ * @property {number} filled_at - when that fill-up was, seconds
+ * @property {number} amount - millilitres or watt-hours that went in after the opening fill-up
+ * @property {number} distance - how far the main counter moved, in its unit
+ * @property {'km'|'h'} per - the main counter's unit
+ * @property {number} value - litres or kWh per 100 km, or per hour
+ */
+
+/**
+ * One energy's consumption over the segments that close in a period: their amounts over their
+ * distances (lib/Service/ConsumptionService.php).
+ *
+ * @typedef {object} PeriodConsumption
+ * @property {string} energy - the energy
+ * @property {number} amount - millilitres or watt-hours
+ * @property {number} distance - in the main counter's unit
+ * @property {'km'|'h'} per - the main counter's unit
+ * @property {number} value - litres or kWh per 100 km, or per hour
+ */
+
+/**
+ * What a vehicle cost in a period (lib/Service/CostService.php). Money is cents; `value`,
+ * `energy_value` and `tco` are cents per 100 km, or per hour.
+ *
+ * @typedef {object} Cost
+ * @property {string|null} currency - null when the vehicle has none, and then every sum is null
+ * @property {boolean} net - whether rows count net of their VAT rate
+ * @property {'km'|'h'} per - the main counter's unit
+ * @property {number|null} distance - how far the main counter moved in the period
+ * @property {number|null} total - every cost in the period
+ * @property {number|null} energy - the fill-ups' share of it
+ * @property {number|null} value - total per 100 km or per hour; null without a distance
+ * @property {number|null} energy_value - energy per 100 km or per hour
+ * @property {number|null} tco - value plus depreciation; null unless purchase and residual are set
+ * @property {boolean} incomplete - a fill-up in the period has no price
+ * @property {boolean} unstated - under `net`, a row without a stated rate counted gross
+ */
+
+/**
+ * The vehicle header's figures for one period.
+ *
+ * @typedef {object} Kpis
+ * @property {PeriodConsumption[]} consumption - one per energy that closed a segment in it
+ * @property {{amount: number, distance: number, per: 'km'|'h', value: number}|null} wall_side - the
+ *   rolling electric figure, counted at the charger
+ * @property {Cost} cost - what it cost
+ * @property {number|null} hours - how far the second counter moved; null on a vehicle without one
  */
 
 /**
@@ -194,8 +292,8 @@ export async function restoreVehicle(vehicle) {
 }
 
 /**
- * Record one reading of a vehicle's counter. A Reading is only ever written, so it carries no
- * token and cannot lose a race (docs/architecture.md#concurrency).
+ * Record one reading of a vehicle's counter. A new Reading carries no token: nothing was read that
+ * it could lose a race against (docs/architecture.md#concurrency). Its edits do (updateEntry()).
  *
  * @param {string} uuid - the vehicle the counter belongs to
  * @param {object} entry - `value` or `distance`, never both, plus `read_at_off`, and `counter`
@@ -254,6 +352,118 @@ export async function energyPrefill(uuid, at, off) {
  */
 
 /**
+ * Record one Maintenance Record, and a Reading per counter it carries, as a fill-up does.
+ *
+ * @param {string} uuid - the vehicle the work was done on
+ * @param {object} work - what the sheet holds: the moment with its offset, the title, and whatever
+ *   of type, vendor, cost, VAT, notes and counters the person gave
+ * @return {Promise<object>} the record as the server wrote it
+ */
+export async function recordMaintenance(uuid, work) {
+	return request('POST', `/api/vehicles/${uuid}/maintenance`, work)
+}
+
+/**
+ * What the entry sheet prefills a Maintenance Record with (docs/ui.md).
+ *
+ * @param {string} uuid - the vehicle the work is for
+ * @param {number} at - the moment the sheet is on, seconds
+ * @param {number} off - the UTC offset of that moment, minutes
+ * @return {Promise<MaintenancePrefill>} the rate on that day and this vehicle's vendors
+ */
+export async function maintenancePrefill(uuid, at, off) {
+	return request('GET', `/api/vehicles/${uuid}/maintenance/prefill?${new URLSearchParams({ at: String(at), off: String(off) })}`)
+}
+
+/**
+ * @typedef {object} MaintenancePrefill
+ * @property {number|null} vat_rate - as in EnergyPrefill
+ * @property {string[]} vendors - the vendors this vehicle has used, each once, latest first
+ */
+
+/**
+ * Record one Expense. It carries no counter, so it writes no Reading.
+ *
+ * @param {string} uuid - the vehicle the money was spent on
+ * @param {object} expense - what the sheet holds: the moment with its offset, the amount, and
+ *   whatever of category, VAT and notes the person gave
+ * @return {Promise<object>} the expense as the server wrote it
+ */
+export async function recordExpense(uuid, expense) {
+	return request('POST', `/api/vehicles/${uuid}/expenses`, expense)
+}
+
+/**
+ * What the entry sheet prefills an Expense with (docs/ui.md).
+ *
+ * @param {string} uuid - the vehicle the money is spent on
+ * @param {number} at - the moment the sheet is on, seconds
+ * @param {number} off - the UTC offset of that moment, minutes
+ * @return {Promise<{vat_rate: number|null}>} the rate on that day, as in EnergyPrefill
+ */
+export async function expensePrefill(uuid, at, off) {
+	return request('GET', `/api/vehicles/${uuid}/expenses/prefill?${new URLSearchParams({ at: String(at), off: String(off) })}`)
+}
+
+/** Where each kind of Entry is written, below its vehicle. */
+const COLLECTIONS = { trip: 'trips', odometer: 'readings', energy: 'energy', maintenance: 'maintenance', expense: 'expenses' }
+
+/**
+ * One Entry as its timeline row, read back after an edit lost a race: its token is the one the
+ * next write is checked against (docs/ui.md).
+ *
+ * @param {string} uuid - the vehicle it hangs off
+ * @param {Entry['type']} type - which kind of Entry it is
+ * @param {string} entryUuid - the Entry's own identity
+ * @return {Promise<Entry>} the row as it now stands
+ */
+export async function readEntry(uuid, type, entryUuid) {
+	return request('GET', `/api/vehicles/${uuid}/timeline/${type}/${entryUuid}`)
+}
+
+/**
+ * Rewrite one Entry, checked against the `updated_at` it was read with. The fields are the whole
+ * Entry, as its create takes them: one left out is one the person emptied.
+ *
+ * @param {string} uuid - the vehicle it hangs off
+ * @param {Entry['type']} type - which kind of Entry it is
+ * @param {{uuid: string, updated_at: number}} entry - the Entry as it was read
+ * @param {object} fields - what the sheet holds
+ * @return {Promise<object>} the Entry as the server now holds it
+ * @throws {ConflictError} when it moved on since it was read
+ */
+export async function updateEntry(uuid, type, entry, fields) {
+	return request('PUT', `/api/vehicles/${uuid}/${COLLECTIONS[type]}/${entry.uuid}`, { ...fields, updated_at: entry.updated_at })
+}
+
+/**
+ * Delete one Entry - a trip under Logbook Mode is voided (docs/features.md#logbook-mode). The
+ * answer carries the token the undo is checked against, as a vehicle's does.
+ *
+ * @param {string} uuid - the vehicle it hangs off
+ * @param {Entry['type']} type - which kind of Entry it is
+ * @param {{uuid: string, updated_at: number}} entry - the Entry as it was read
+ * @return {Promise<{uuid: string, updated_at: number}>} the Entry as the delete left it
+ * @throws {ConflictError} when it moved on since it was read
+ */
+export async function deleteEntry(uuid, type, entry) {
+	return request('DELETE', `/api/vehicles/${uuid}/${COLLECTIONS[type]}/${entry.uuid}?updated_at=${entry.updated_at}`)
+}
+
+/**
+ * Undo a delete, on the token the delete answered with.
+ *
+ * @param {string} uuid - the vehicle it hangs off
+ * @param {Entry['type']} type - which kind of Entry it is
+ * @param {{uuid: string, updated_at: number}} entry - the Entry as the delete answered with it
+ * @return {Promise<object>} the Entry, back
+ * @throws {ConflictError} when it moved on since, or was never deleted
+ */
+export async function restoreEntry(uuid, type, entry) {
+	return request('POST', `/api/vehicles/${uuid}/${COLLECTIONS[type]}/${entry.uuid}/restore`, { updated_at: entry.updated_at })
+}
+
+/**
  * One page of one vehicle's timeline, newest first (docs/architecture.md#the-timeline). The merge
  * is the server's, so a client asks for a page and scrolls; it never holds two tables to work out
  * which rows come first.
@@ -277,6 +487,23 @@ export async function readTimeline(uuid, { type, cursor }) {
 	const asked = query.toString()
 
 	return request('GET', `/api/vehicles/${uuid}/timeline${asked === '' ? '' : `?${asked}`}`)
+}
+
+/**
+ * The vehicle header's figures for one period (lib/Service/KpiService.php). The period is the
+ * browser's to name, since a year starts at the person's midnight (src/utils/period.js).
+ *
+ * @param {string} uuid - the vehicle whose figures to read
+ * @param {object} period - what to read them for
+ * @param {number} period.from - its first second, unix
+ * @param {number} period.to - the second after its last
+ * @param {boolean} period.net - whether the person reclaims VAT
+ * @return {Promise<Kpis>} the figures
+ */
+export async function readKpis(uuid, { from, to, net }) {
+	const query = new URLSearchParams({ from: String(from), to: String(to), net: String(net) })
+
+	return request('GET', `/api/vehicles/${uuid}/kpis?${query}`)
 }
 
 /**

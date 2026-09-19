@@ -7,7 +7,7 @@ import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import { computed } from 'vue'
 
-import { categoryWord, fieldWords, formatCount, isoInstant, shortDate } from '../utils/format.js'
+import { categoryWord, energyWord, expenseWord, fieldWords, formatConsumption, formatCount, formatEnergyAmount, formatMoney, isoInstant, maintenanceWord, shortDate } from '../utils/format.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Entry>} */
@@ -23,12 +23,23 @@ const props = defineProps({
 	gap: { type: Object, default: null },
 })
 
-defineEmits(['closeGap'])
+// `open` is the row itself, tapped: the Entry is edited in the sheet it was entered in (docs/ui.md).
+defineEmits(['closeGap', 'open'])
 
 const unaccounted = computed(() => (props.gap === null ? '' : `${formatCount(props.gap.distance)} ${props.vehicle.odo_unit}`))
 
 const trip = computed(() => props.entry.trip)
 const odometer = computed(() => props.entry.odometer)
+const energy = computed(() => props.entry.energy)
+const maintenance = computed(() => props.entry.maintenance)
+const expense = computed(() => props.entry.expense)
+
+/** What each of EnergyService::flags() reads as. */
+const FLAG_WORDS = {
+	foreign_energy: t('nextfleet', 'Not an energy this vehicle takes'),
+	no_price: t('nextfleet', 'No price'),
+	overfilled: t('nextfleet', 'More than the vehicle holds'),
+}
 
 // A trip is placed where it set off and a Reading where it was read (lib/Service/TimelineService.php),
 // and the day is the one the offset it was entered at puts it on - not the one the reader's own
@@ -40,6 +51,15 @@ const day = computed(() => shortDate(props.entry.occurred_at, props.entry.occurr
  * a journey nobody labelled is what it was driven for, and one that is neither is still a journey.
  */
 const name = computed(() => {
+	if (energy.value !== undefined) {
+		return energyWord(energy.value.energy)
+	}
+	if (maintenance.value !== undefined) {
+		return maintenance.value.title
+	}
+	if (expense.value !== undefined) {
+		return expense.value.category ? expenseWord(expense.value.category) : t('nextfleet', 'Expense')
+	}
 	if (trip.value === undefined) {
 		return t('nextfleet', 'Counter reading')
 	}
@@ -50,12 +70,23 @@ const name = computed(() => {
 })
 
 /**
- * The one figure the row states. A trip's is what the driver gave — the kilometres, or the counter
- * it ended on — and never both, because the two are never computed into one another
- * (docs/architecture.md#odometer-rules). The Reading a distance was counted into is the server's
- * arithmetic and not a second number the driver would recognise.
+ * The one figure the row states, and it is one the person gave. A trip's is the kilometres or the
+ * counter it ended on, never both, because the two are never computed into one another
+ * (docs/architecture.md#odometer-rules); the Reading a distance was counted into is the server's
+ * arithmetic. A fill-up's is the amount, the one field it always has; maintenance and an expense
+ * state what they cost.
  */
 const figure = computed(() => {
+	if (energy.value !== undefined) {
+		return formatEnergyAmount(energy.value.amount, energy.value.energy)
+	}
+	if (maintenance.value !== undefined) {
+		return maintenance.value.cost === null ? '' : formatMoney(maintenance.value.cost, props.vehicle.currency)
+	}
+	if (expense.value !== undefined) {
+		return formatMoney(expense.value.amount, props.vehicle.currency)
+	}
+
 	const value = trip.value === undefined
 		? odometer.value?.value
 		: trip.value.distance ?? trip.value.end_odo
@@ -69,16 +100,46 @@ const figure = computed(() => {
 		: `${formatCount(value)} ${unit}`
 })
 
-/** What the journey was driven for, which is the question a Fahrtenbuch asks first. */
-const tail = computed(() => (trip.value === undefined ? '' : categoryWord(trip.value.category)))
+/**
+ * What the row says beside its figure: what a journey was driven for, which is the question a
+ * Fahrtenbuch asks first; where a fill-up was bought; what kind of work was done and by whom.
+ */
+const tail = computed(() => {
+	if (trip.value !== undefined) {
+		return [categoryWord(trip.value.category)]
+	}
+	if (energy.value !== undefined) {
+		return [
+			props.entry.consumption ? formatConsumption(props.entry.consumption, energy.value.energy) : '',
+			energy.value.station,
+			// Neither is a flag: both are true things the driver said. They are what makes a
+			// fill-up close no consumption segment, so the row says them.
+			energy.value.full_tank === false ? t('nextfleet', 'Partial') : '',
+			energy.value.missed_previous === true ? t('nextfleet', 'Previous fill-up not recorded') : '',
+		].filter(Boolean)
+	}
+	if (maintenance.value !== undefined) {
+		return [maintenance.value.type ? maintenanceWord(maintenance.value.type) : '', maintenance.value.vendor].filter(Boolean)
+	}
+
+	return []
+})
+
+/** What a fill-up is flagged for, computed on read by the server, each as words. */
+const flagWords = computed(() => (props.entry.flags ?? []).map((flag) => FLAG_WORDS[flag] ?? flag))
 
 /**
  * A Reading that contradicts the chain before it is flagged rather than corrected
  * (docs/architecture.md#odometer-rules), and the timeline is where that question gets put
- * (docs/ui.md). A trip's question is the Reading it left on the counter, because the journey and
- * that Reading are one row.
+ * (docs/ui.md). An Entry's question is the Readings it left on the counter, because the Entry and
+ * those Readings are one row.
  */
-const inQuestion = computed(() => (trip.value === undefined ? odometer.value : props.entry.reading)?.flagged === true)
+const inQuestion = computed(() => {
+	const own = odometer.value ?? props.entry.reading
+	const readings = own ? [own] : props.entry.readings ?? []
+
+	return readings.some((reading) => reading.flagged === true)
+})
 
 /** Said only under Logbook Mode (docs/features.md#logbook-mode). */
 const missingWords = computed(() => (props.vehicle.logbook_mode === true ? fieldWords(props.entry.missing ?? []) : ''))
@@ -89,10 +150,16 @@ const missingWords = computed(() => (props.vehicle.logbook_mode === true ? field
 		<!-- The whole moment, so what a machine reads off the markup is the moment the text beside
 		     it states - offset and all (src/utils/format.js). -->
 		<time class="row__day" :datetime="isoInstant(entry.occurred_at, entry.occurred_at_off)">{{ day }}</time>
-		<span class="row__name">{{ name }}</span>
+		<!-- The name is the button, so it is what a keyboard and a screen reader reach the row by;
+		     its hit area is stretched over the whole row. -->
+		<button type="button" class="row__open" @click="$emit('open', entry)">
+			{{ name }}
+		</button>
 		<span class="row__figure">{{ figure }}</span>
 		<span class="row__tail">
-			{{ tail }}
+			<span v-for="(said, index) in tail" :key="index">{{ said }}</span>
+			<!-- A word, not a colour: status is never colour alone (docs/ui.md). -->
+			<span v-for="flag in flagWords" :key="flag" class="row__flag">{{ flag }}</span>
 			<!-- Closed a Gap: the counter's arithmetic, not a journey somebody recorded (CONTEXT.md). -->
 			<span v-if="trip?.reconciled === true">{{ t('nextfleet', 'Reconciled') }}</span>
 			<!-- A word, not a colour: status is never colour alone (docs/ui.md). -->
@@ -117,6 +184,10 @@ const missingWords = computed(() => (props.vehicle.logbook_mode === true ? field
 
 <style scoped>
 .row {
+	position: relative;
+	/* The Gap's button sits above the row's own target; this keeps that stacking inside the row,
+	   under the sticky month header. */
+	isolation: isolate;
 	display: grid;
 	/* The day is as wide as a date and no wider, the name takes what is left, and the figure keeps
 	   its own column so a column of numbers lines up. At 320 px the tail wraps under the rest
@@ -128,16 +199,45 @@ const missingWords = computed(() => (props.vehicle.logbook_mode === true ? field
 	border-bottom: 1px solid var(--color-border);
 }
 
+.row:hover {
+	background-color: var(--color-background-hover);
+}
+
 .row__day,
 .row__tail {
 	color: var(--color-text-maxcontrast);
 	font-size: 0.9em;
 }
 
-.row__name {
+.row__open {
 	overflow: hidden;
+	min-width: 0;
+	margin: 0;
+	padding: 0;
+	border: none;
+	background: none;
+	color: inherit;
+	font: inherit;
+	text-align: start;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+	cursor: pointer;
+}
+
+/* The whole row is the target, which is what "tap a row" means on a phone. */
+.row__open::after {
+	content: '';
+	position: absolute;
+	inset: 0;
+}
+
+.row__open:focus-visible {
+	outline: none;
+}
+
+.row__open:focus-visible::after {
+	outline: 2px solid var(--color-primary-element);
+	outline-offset: -2px;
 }
 
 .row__figure {
@@ -157,6 +257,9 @@ const missingWords = computed(() => (props.vehicle.logbook_mode === true ? field
 }
 
 .row__gap {
+	/* Above the stretched row target, so the Gap's own button is still the Gap's. */
+	position: relative;
+	z-index: 1;
 	grid-column: 2 / -1;
 	display: flex;
 	flex-wrap: wrap;

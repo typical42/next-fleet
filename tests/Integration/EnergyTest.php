@@ -10,9 +10,11 @@ namespace OCA\NextFleet\Tests\Integration;
 
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\OdoReading;
+use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\VehicleService;
+use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\IDBConnection;
 use PHPUnit\Framework\TestCase;
 
@@ -227,6 +229,151 @@ class EnergyTest extends TestCase {
 		$this->energy->record(self::OWNER, $other->getUuid(), $this->fillUp(['station' => 'Shell Ring']));
 
 		$this->assertSame([], $this->energy->prefill(self::OWNER, $mine->getUuid(), ['at' => 1750200000, 'off' => 120])['stations']);
+	}
+
+	/**
+	 * An edit rewrites the fill-up in place, and its Reading follows it to the new number and the
+	 * new moment - the same row, not a second one.
+	 */
+	public function testAnEditMovesTheFillUpAndItsReading(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'energy_types' => ['diesel']]);
+		$uuid = $vehicle->getUuid();
+		$written = $this->energy->record(self::OWNER, $uuid, $this->fillUp(['odo' => 120450]));
+		$before = $this->odometer->list(self::OWNER, $uuid)[0];
+
+		$edited = $this->energy->update(self::OWNER, $uuid, $written['uuid'], $written['updated_at'], $this->fillUp([
+			'filled_at' => 1750003600,
+			'odo' => 120540,
+			'total' => '',
+		]));
+
+		$this->assertSame($written['uuid'], $edited['uuid']);
+		$this->assertSame(1750003600, $edited['filled_at']);
+		$this->assertSame([EnergyService::NO_PRICE], $edited['flags']);
+		$readings = $this->odometer->list(self::OWNER, $uuid);
+		$this->assertCount(1, $readings);
+		$this->assertSame($before->getUuid(), $readings[0]->getUuid());
+		$this->assertSame(120540, $readings[0]->getValue());
+		$this->assertSame(1750003600, $readings[0]->getReadAt());
+		$this->assertSame(120540, $this->vehicles->find(self::OWNER, $uuid)->getOdoValue());
+	}
+
+	/**
+	 * A counter emptied on edit takes its Reading off the chain, and one added writes a Reading -
+	 * each counter on its own chain, each cache restated.
+	 */
+	public function testAnEditAddsAndRemovesReadingsPerCounter(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, [
+			'plate' => 'B-XY 123',
+			'vehicle_type' => 'truck',
+			'second_unit' => 'h',
+			'energy_types' => ['diesel'],
+		]);
+		$uuid = $vehicle->getUuid();
+		$written = $this->energy->record(self::OWNER, $uuid, $this->fillUp(['odo' => 300000]));
+
+		$this->energy->update(self::OWNER, $uuid, $written['uuid'], $written['updated_at'], $this->fillUp(['second_odo' => 5120]));
+
+		$readings = $this->odometer->list(self::OWNER, $uuid);
+		$this->assertCount(1, $readings);
+		$this->assertSame(OdoReading::SECOND, $readings[0]->getCounter());
+		$this->assertSame(5120, $readings[0]->getValue());
+		$read = $this->vehicles->find(self::OWNER, $uuid);
+		$this->assertNull($read->getOdoValue());
+		$this->assertSame(5120, $read->getSecondValue());
+	}
+
+	/** A counter emptied and then stated again, at a new number, brings back the same Reading row. */
+	public function testACounterStatedAgainReusesItsReading(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'energy_types' => ['diesel']]);
+		$uuid = $vehicle->getUuid();
+		$written = $this->energy->record(self::OWNER, $uuid, $this->fillUp(['odo' => 120450]));
+		$first = $this->odometer->list(self::OWNER, $uuid)[0];
+		$emptied = $this->energy->update(self::OWNER, $uuid, $written['uuid'], $written['updated_at'], $this->fillUp());
+
+		$this->energy->update(self::OWNER, $uuid, $written['uuid'], $emptied['updated_at'], $this->fillUp(['odo' => 120500]));
+
+		$readings = $this->odometer->list(self::OWNER, $uuid);
+		$this->assertCount(1, $readings);
+		$this->assertSame($first->getUuid(), $readings[0]->getUuid());
+		$this->assertSame(120500, $readings[0]->getValue());
+		$this->assertSame(120500, $this->vehicles->find(self::OWNER, $uuid)->getOdoValue());
+	}
+
+	/** An edit on a token somebody else has moved on from changes nothing. */
+	public function testAnEditThatLostTheRaceChangesNothing(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'energy_types' => ['diesel']]);
+		$uuid = $vehicle->getUuid();
+		$written = $this->energy->record(self::OWNER, $uuid, $this->fillUp(['odo' => 120450]));
+		$this->energy->update(self::OWNER, $uuid, $written['uuid'], $written['updated_at'], $this->fillUp(['odo' => 120460]));
+
+		try {
+			$this->energy->update(self::OWNER, $uuid, $written['uuid'], $written['updated_at'], $this->fillUp(['odo' => 999999]));
+			$this->fail('a stale edit was written');
+		} catch (StaleUpdateException) {
+		}
+
+		$this->assertSame(120460, $this->odometer->list(self::OWNER, $uuid)[0]->getValue());
+	}
+
+	/**
+	 * A delete soft-deletes the fill-up and every Reading it wrote; undo brings back the same rows,
+	 * on the token the delete answered with.
+	 */
+	public function testDeleteTakesTheReadingsAlongAndUndoBringsThemBack(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, [
+			'plate' => 'B-XY 123',
+			'vehicle_type' => 'truck',
+			'second_unit' => 'h',
+			'energy_types' => ['diesel'],
+		]);
+		$uuid = $vehicle->getUuid();
+		$written = $this->energy->record(self::OWNER, $uuid, $this->fillUp(['odo' => 300000, 'second_odo' => 5120]));
+
+		$deleted = $this->energy->delete(self::OWNER, $uuid, $written['uuid'], $written['updated_at']);
+
+		$this->assertNotNull($deleted['deleted_at']);
+		$this->assertSame([], $this->odometer->list(self::OWNER, $uuid));
+		$read = $this->vehicles->find(self::OWNER, $uuid);
+		$this->assertNull($read->getOdoValue());
+		$this->assertNull($read->getSecondValue());
+
+		$back = $this->energy->restore(self::OWNER, $uuid, $written['uuid'], $deleted['updated_at']);
+
+		$this->assertNull($back['deleted_at']);
+		$this->assertSame(
+			[300000, 5120],
+			array_map(static fn (OdoReading $reading): int => $reading->getValue(), $this->odometer->list(self::OWNER, $uuid)),
+		);
+		$read = $this->vehicles->find(self::OWNER, $uuid);
+		$this->assertSame(300000, $read->getOdoValue());
+		$this->assertSame(5120, $read->getSecondValue());
+	}
+
+	/**
+	 * A counter an earlier edit emptied stays gone through a delete and its undo: the undo brings
+	 * back what the fill-up stated when it was deleted, nothing older.
+	 */
+	public function testUndoDoesNotBringBackAReadingAnEditRemoved(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'energy_types' => ['diesel']]);
+		$uuid = $vehicle->getUuid();
+		$written = $this->energy->record(self::OWNER, $uuid, $this->fillUp(['odo' => 120450]));
+		$edited = $this->energy->update(self::OWNER, $uuid, $written['uuid'], $written['updated_at'], $this->fillUp());
+		$deleted = $this->energy->delete(self::OWNER, $uuid, $written['uuid'], $edited['updated_at']);
+
+		$this->energy->restore(self::OWNER, $uuid, $written['uuid'], $deleted['updated_at']);
+
+		$this->assertSame([], $this->odometer->list(self::OWNER, $uuid));
+	}
+
+	/** Another vehicle's fill-up is not reached through this one, even by its owner. */
+	public function testAFillUpIsReachedOnlyThroughItsOwnVehicle(): void {
+		$mine = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'energy_types' => ['diesel']]);
+		$other = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 124', 'energy_types' => ['diesel']]);
+		$written = $this->energy->record(self::OWNER, $other->getUuid(), $this->fillUp());
+
+		$this->expectException(DoesNotExistException::class);
+		$this->energy->delete(self::OWNER, $mine->getUuid(), $written['uuid'], $written['updated_at']);
 	}
 
 	/**

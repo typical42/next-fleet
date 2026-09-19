@@ -10,6 +10,7 @@ namespace OCA\NextFleet\Controller;
 
 use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Exception\AccessDeniedException;
+use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\OdometerService;
 use OCP\AppFramework\Controller;
 use OCP\AppFramework\Db\DoesNotExistException;
@@ -40,8 +41,9 @@ class OdometerController extends Controller {
 	}
 
 	/**
-	 * A Reading is only ever written, never updated: it carries no token, and `flagged` is
-	 * restated from the whole chain rather than edited (docs/architecture.md#concurrency).
+	 * A new Reading carries no token: nothing was read that it could have lost a race against.
+	 * `flagged` is restated from the whole chain rather than edited
+	 * (docs/architecture.md#concurrency).
 	 */
 	#[NoAdminRequired]
 	#[UserRateLimit(limit: 60, period: 60)]
@@ -53,7 +55,54 @@ class OdometerController extends Controller {
 	}
 
 	/**
-	 * The two answers both routes share.
+	 * An Odometer Entry corrected from its row, checked against the token it was read with.
+	 *
+	 * @param string $reading the Reading's uuid
+	 */
+	#[NoAdminRequired]
+	#[UserRateLimit(limit: 60, period: 60)]
+	public function update(string $uuid, string $reading): DataResponse {
+		return $this->checked(fn (int $token): OdoReading => $this->service->update($this->userId(), $uuid, $reading, $token, $this->request->getParams()));
+	}
+
+	/**
+	 * Answers with the row the delete left, so the undo toast holds the token the restore is
+	 * checked against.
+	 *
+	 * @param string $reading the Reading's uuid
+	 */
+	#[NoAdminRequired]
+	#[UserRateLimit(limit: 60, period: 60)]
+	public function delete(string $uuid, string $reading): DataResponse {
+		return $this->checked(fn (int $token): OdoReading => $this->service->delete($this->userId(), $uuid, $reading, $token));
+	}
+
+	/**
+	 * @param string $reading the Reading's uuid
+	 */
+	#[NoAdminRequired]
+	#[UserRateLimit(limit: 60, period: 60)]
+	public function restore(string $uuid, string $reading): DataResponse {
+		return $this->checked(fn (int $token): OdoReading => $this->service->restore($this->userId(), $uuid, $reading, $token));
+	}
+
+	/**
+	 * A write checked against the `updated_at` the client read: in the body of a PUT, in the query
+	 * string of a DELETE, and a request parameter either way.
+	 *
+	 * @param callable(int):OdoReading $write given the token
+	 */
+	private function checked(callable $write): DataResponse {
+		$token = filter_var($this->request->getParams()['updated_at'] ?? null, FILTER_VALIDATE_INT);
+		if ($token === false) {
+			return new DataResponse(['message' => 'updated_at is missing, so this write cannot be checked'], Http::STATUS_BAD_REQUEST);
+		}
+
+		return $this->answer(fn (): OdoReading => $write($token));
+	}
+
+	/**
+	 * The answers every route here shares.
 	 *
 	 * @param callable():(OdoReading|list<OdoReading>) $work
 	 */
@@ -64,6 +113,13 @@ class OdometerController extends Controller {
 			return new DataResponse(['message' => 'No such vehicle'], Http::STATUS_NOT_FOUND);
 		} catch (AccessDeniedException) {
 			return new DataResponse(['message' => 'Not yours'], Http::STATUS_FORBIDDEN);
+		} catch (StaleUpdateException) {
+			// `conflict` tells this apart from Nextcloud's own failed CSRF check, which is a 412 as
+			// well (docs/architecture.md#concurrency).
+			return new DataResponse(
+				['message' => 'Changed since you read it', 'conflict' => true],
+				Http::STATUS_PRECONDITION_FAILED,
+			);
 		} catch (\InvalidArgumentException $e) {
 			return new DataResponse(['message' => $e->getMessage()], Http::STATUS_BAD_REQUEST);
 		}

@@ -11,8 +11,11 @@ namespace OCA\NextFleet\Tests\Integration;
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Db\OdoReadingMapper;
+use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\OdometerService;
+use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleService;
+use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\IDBConnection;
 use PHPUnit\Framework\TestCase;
 
@@ -43,7 +46,7 @@ class OdometerTest extends TestCase {
 	/** The rows this suite invents, gone for real - a soft delete would outlive the run. */
 	private function forgetTestRows(): void {
 		$db = \OCP\Server::get(IDBConnection::class);
-		foreach (['fleet_vehicles' => 'user_id', 'fleet_odo_readings' => 'created_by'] as $table => $column) {
+		foreach (['fleet_vehicles' => 'user_id', 'fleet_odo_readings' => 'created_by', 'fleet_trips' => 'created_by'] as $table => $column) {
 			$qb = $db->getQueryBuilder();
 			$qb->delete($table)->where($qb->expr()->eq($column, $qb->createNamedParameter(self::OWNER)));
 			$qb->executeStatement();
@@ -178,6 +181,90 @@ class OdometerTest extends TestCase {
 		$this->assertSame($written->getUuid(), $read[0]->getUuid());
 		$this->assertSame(0, $read[0]->getValue());
 		$this->assertSame(0, $read[0]->getReadAtOff());
+	}
+
+	/**
+	 * An Odometer Entry edited from its row: the same Reading takes the new number and moment, and
+	 * the chain around it is flagged and cached again.
+	 */
+	public function testAnEditedEntryIsRestatedWithTheChain(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$uuid = $vehicle->getUuid();
+		$this->odometer->record(self::OWNER, $uuid, $this->at(1750000000, 120000));
+		$typo = $this->odometer->record(self::OWNER, $uuid, $this->at(1750086400, 12050));
+		$this->assertTrue($typo->getFlagged());
+
+		$fixed = $this->odometer->update(self::OWNER, $uuid, $typo->getUuid(), $typo->getUpdatedAt(), [
+			'read_at' => 1750090000,
+			'read_at_off' => 60,
+			'value' => 120500,
+		]);
+
+		$this->assertSame($typo->getUuid(), $fixed->getUuid());
+		$this->assertSame([120500, 1750090000, 60, false], [$fixed->getValue(), $fixed->getReadAt(), $fixed->getReadAtOff(), $fixed->getFlagged()]);
+		$this->assertGreaterThan($typo->getUpdatedAt(), $fixed->getUpdatedAt());
+		$this->assertSame(120500, $this->vehicles->find(self::OWNER, $uuid)->getOdoValue());
+
+		$this->expectException(StaleUpdateException::class);
+		$this->odometer->update(self::OWNER, $uuid, $typo->getUuid(), $typo->getUpdatedAt(), $this->at(1750090000, 120600));
+	}
+
+	/**
+	 * A number put on the wrong counter moves to the other one, and both chains are settled: the
+	 * one it left and the one it joined.
+	 */
+	public function testAnEditMovesAnEntryToTheOtherCounter(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'second_unit' => 'h']);
+		$uuid = $vehicle->getUuid();
+		$this->odometer->record(self::OWNER, $uuid, $this->at(1750000000, 120000));
+		$hours = $this->odometer->record(self::OWNER, $uuid, $this->at(1750086400, 3400));
+
+		$this->odometer->update(self::OWNER, $uuid, $hours->getUuid(), $hours->getUpdatedAt(), $this->at(1750086400, 3400) + ['counter' => 'second']);
+
+		$read = $this->vehicles->find(self::OWNER, $uuid);
+		$this->assertSame([120000, 3400], [$read->getOdoValue(), $read->getSecondValue()]);
+	}
+
+	/**
+	 * Delete and undo, on the token the delete answered with: the counter falls back to the Reading
+	 * before, and comes back with it.
+	 */
+	public function testADeletedEntryLeavesTheChainAndItsUndoBringsItBack(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$uuid = $vehicle->getUuid();
+		$this->odometer->record(self::OWNER, $uuid, $this->at(1750000000, 120000));
+		$newest = $this->odometer->record(self::OWNER, $uuid, $this->at(1750086400, 120500));
+
+		$deleted = $this->odometer->delete(self::OWNER, $uuid, $newest->getUuid(), $newest->getUpdatedAt());
+
+		$this->assertNotNull($deleted->getDeletedAt());
+		$this->assertSame(120000, $this->vehicles->find(self::OWNER, $uuid)->getOdoValue());
+
+		$back = $this->odometer->restore(self::OWNER, $uuid, $newest->getUuid(), $deleted->getUpdatedAt());
+
+		$this->assertNull($back->getDeletedAt());
+		$this->assertSame(120500, $this->vehicles->find(self::OWNER, $uuid)->getOdoValue());
+	}
+
+	/**
+	 * A Reading a trip or a fill-up wrote is that Entry's, and is edited through it (rule 5). Here
+	 * it is not found, as a Reading on another vehicle is.
+	 */
+	public function testOnlyAnOdometerEntryIsEditedAsOne(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$trip = (new Application())->getContainer()->get(TripService::class)->record(self::OWNER, $vehicle->getUuid(), [
+			'started_at' => 1750000000,
+			'started_at_off' => 120,
+			'ended_at' => 1750005400,
+			'ended_at_off' => 120,
+			'end_odo' => 120450,
+			'category' => 'private',
+		]);
+		$reading = $this->reading($vehicle->getUuid(), 120450);
+		$this->assertSame($trip->getId(), $reading->getSourceId());
+
+		$this->expectException(DoesNotExistException::class);
+		$this->odometer->delete(self::OWNER, $vehicle->getUuid(), $reading->getUuid(), $reading->getUpdatedAt());
 	}
 
 	/**
