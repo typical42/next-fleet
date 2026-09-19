@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Tests\Integration;
 
 use OCA\NextFleet\AppInfo\Application;
+use OCA\NextFleet\Controller\EnergyController;
 use OCA\NextFleet\Controller\OdometerController;
 use OCA\NextFleet\Controller\PreferencesController;
 use OCA\NextFleet\Controller\ReportController;
@@ -18,6 +19,7 @@ use OCA\NextFleet\Controller\VehicleController;
 use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\Vehicle;
+use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\LogbookExport;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\PreferencesService;
@@ -59,6 +61,7 @@ class VehicleIdorTest extends TestCase {
 	private VehicleService $service;
 	private OdometerService $odometry;
 	private TripService $journeys;
+	private EnergyService $fillUps;
 	private TimelineService $history;
 	private LogbookExport $logbook;
 	private PreferencesService $settings;
@@ -70,6 +73,7 @@ class VehicleIdorTest extends TestCase {
 		$this->service = $container->get(VehicleService::class);
 		$this->odometry = $container->get(OdometerService::class);
 		$this->journeys = $container->get(TripService::class);
+		$this->fillUps = $container->get(EnergyService::class);
 		$this->history = $container->get(TimelineService::class);
 		$this->logbook = $container->get(LogbookExport::class);
 		$this->settings = $container->get(PreferencesService::class);
@@ -98,7 +102,7 @@ class VehicleIdorTest extends TestCase {
 			->where($qb->expr()->in('grantee', $qb->createNamedParameter($people, $qb::PARAM_STR_ARRAY)));
 		$qb->executeStatement();
 
-		foreach (['fleet_odo_readings', 'fleet_trips'] as $table) {
+		foreach (['fleet_odo_readings', 'fleet_trips', 'fleet_energy'] as $table) {
 			$qb = $db->getQueryBuilder();
 			$qb->delete($table)
 				->where($qb->expr()->in('created_by', $qb->createNamedParameter($people, $qb::PARAM_STR_ARRAY)));
@@ -132,6 +136,15 @@ class VehicleIdorTest extends TestCase {
 	 */
 	private function trip(string $userId, array $params): TripController {
 		return new TripController(Application::APP_ID, $this->request($params), $this->journeys, $this->session($userId));
+	}
+
+	/**
+	 * And for the fill-ups.
+	 *
+	 * @param array<string, mixed> $params
+	 */
+	private function energy(string $userId, array $params): EnergyController {
+		return new EnergyController(Application::APP_ID, $this->request($params), $this->fillUps, $this->session($userId));
 	}
 
 	/**
@@ -242,6 +255,9 @@ class VehicleIdorTest extends TestCase {
 			'trip#restore' => $this->trip(self::STRANGER, $params)->restore($uuid, self::NO_SUCH_TRIP),
 			'trip#reconcile' => $this->trip(self::STRANGER, $params + ['distance' => 200, 'from_at' => 1749990000, 'to_at' => 1750000000])
 				->reconcile($uuid, self::NO_SUCH_TRIP),
+			'energy#create' => $this->energy(self::STRANGER, $params + ['filled_at' => 1750000000, 'filled_at_off' => 120, 'energy' => 'diesel', 'amount' => 42000, 'odo' => 999999])
+				->create($uuid),
+			'energy#prefill' => $this->energy(self::STRANGER, $params + ['at' => 1750000000, 'off' => 120])->prefill($uuid),
 			'timeline#index' => $this->timeline(self::STRANGER, $params)->index($uuid),
 			'timeline#gaps' => $this->timeline(self::STRANGER, $params)->gaps($uuid),
 			'report#logbook' => $this->report(self::STRANGER, $params)->logbook($uuid, '2026'),

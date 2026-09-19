@@ -53,14 +53,15 @@ class OdometerService {
 	public function record(string $userId, string $vehicleUuid, array $fields): OdoReading {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
 
-		$readAt = $this->count('read_at', $fields['read_at'] ?? null);
-		$readAtOff = $this->offset('read_at_off', $fields['read_at_off'] ?? null);
+		$readAt = Field::count('read_at', $fields['read_at'] ?? null);
+		$readAtOff = Field::offset('read_at_off', $fields['read_at_off'] ?? null);
+		$counter = self::counterOf($vehicle, $fields['counter'] ?? null);
 
 		// Retried for the reason TripService::record() gives. The replay builds a fresh row.
-		return $this->atomicRetry(function () use ($vehicle, $userId, $readAt, $readAtOff, $fields): OdoReading {
+		return $this->atomicRetry(function () use ($vehicle, $userId, $readAt, $readAtOff, $counter, $fields): OdoReading {
 			// Held before the distance is counted from the chain, as settle() asks.
 			$this->vehicles->hold((int)$vehicle->getId());
-			[$value, $origin] = $this->valueOf((int)$vehicle->getId(), $readAt, $fields);
+			[$value, $origin] = $this->valueOf((int)$vehicle->getId(), $counter, $readAt, $fields);
 
 			return $this->write(
 				$vehicle,
@@ -69,6 +70,7 @@ class OdometerService {
 				$readAtOff,
 				$value,
 				$origin,
+				$counter,
 				OdoReading::MANUAL,
 				null,
 			);
@@ -76,7 +78,27 @@ class OdometerService {
 	}
 
 	/**
-	 * The one Reading a Trip writes, at the moment it ended (rule 5). `start_odo` is a claim about
+	 * Which chain an Odometer Entry reads (rule 4): `main` unless the request names the engine
+	 * hours of a vehicle that counts them. A trip never asks - it is on `main` by definition.
+	 *
+	 * @return OdoReading::MAIN|OdoReading::SECOND
+	 * @throws \InvalidArgumentException
+	 */
+	private static function counterOf(Vehicle $vehicle, mixed $counter): string {
+		if ($counter === null || $counter === '') {
+			return OdoReading::MAIN;
+		}
+		$counters = $vehicle->getSecondUnit() === null
+			? [OdoReading::MAIN]
+			: [OdoReading::MAIN, OdoReading::SECOND];
+
+		return Field::word('counter', $counter, $counters) === OdoReading::SECOND
+			? OdoReading::SECOND
+			: OdoReading::MAIN;
+	}
+
+	/**
+	 * The one Reading a Trip writes, at the moment it ended, on the main chain (rules 4 and 5). `start_odo` is a claim about
 	 * the counter and never a Reading - comparing the two is what gap detection is made of.
 	 *
 	 * The vehicle is passed in rather than looked up: the caller has already reached it through
@@ -95,9 +117,25 @@ class OdometerService {
 			$trip->getEndedAtOff(),
 			$value,
 			$origin,
+			OdoReading::MAIN,
 			OdoReading::TRIP,
 			(int)$trip->getId(),
 		);
+	}
+
+	/**
+	 * The Readings a fill-up or a maintenance record writes: one per counter it was given, each
+	 * Observed, and none without (rule 5). No trip wrote them, so they account for no kilometre.
+	 *
+	 * The caller has reached and held the vehicle, as for fromTrip().
+	 *
+	 * @param array<OdoReading::MAIN|OdoReading::SECOND, int> $counters each counter's number
+	 * @throws \OCP\DB\Exception
+	 */
+	public function fromEntry(Vehicle $vehicle, string $userId, int $readAt, int $readAtOff, array $counters, string $sourceType, int $sourceId): void {
+		foreach ($counters as $counter => $value) {
+			$this->write($vehicle, $userId, $readAt, $readAtOff, $value, self::OBSERVED, $counter, $sourceType, $sourceId);
+		}
 	}
 
 	/**
@@ -117,7 +155,7 @@ class OdometerService {
 		if ($distance !== null) {
 			// Counted from where the vehicle stood when the journey began, and not from
 			// `start_odo`: that one is the driver's claim, and rule 6 counts from a Reading.
-			return [$this->derive((int)$vehicle->getId(), $trip->getStartedAt(), $distance, $own), self::DERIVED];
+			return [$this->derive((int)$vehicle->getId(), OdoReading::MAIN, $trip->getStartedAt(), $distance, $own), self::DERIVED];
 		}
 
 		throw new \InvalidArgumentException('a trip writes its Reading off a counter or a distance');
@@ -155,7 +193,7 @@ class OdometerService {
 		}
 		$this->readings->updateChecked($reading, $reading->getUpdatedAt());
 
-		$this->settle($vehicle);
+		$this->settle($vehicle, OdoReading::MAIN);
 	}
 
 	/**
@@ -173,6 +211,7 @@ class OdometerService {
 	 * between an Odometer Entry and an Entry with content of its own is only where the numbers
 	 * came from, which is the caller's to say.
 	 *
+	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
 	 * @throws \OCP\DB\Exception
 	 */
 	private function write(
@@ -182,6 +221,7 @@ class OdometerService {
 		int $readAtOff,
 		int $value,
 		string $origin,
+		string $counter,
 		string $sourceType,
 		?int $sourceId,
 	): OdoReading {
@@ -196,10 +236,11 @@ class OdometerService {
 		$reading->setFlagged(false);
 		$reading->setSourceType($sourceType);
 		$reading->setSourceId($sourceId);
+		$reading->setCounter($counter);
 
 		$written = $this->readings->insert($reading);
 
-		return $this->restate($vehicle, $written->getUuid());
+		return $this->restate($vehicle, $counter, $written->getUuid());
 	}
 
 	/**
@@ -228,7 +269,7 @@ class OdometerService {
 			$this->readings->softDelete($reading, $reading->getUpdatedAt());
 		}
 
-		$this->settle($vehicle);
+		$this->settle($vehicle, OdoReading::MAIN);
 	}
 
 	/**
@@ -248,10 +289,11 @@ class OdometerService {
 	/**
 	 * The chain as it now stands, and the row the caller just wrote picked back out of it.
 	 *
+	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
 	 * @throws \OCP\DB\Exception
 	 */
-	private function restate(Vehicle $vehicle, string $uuid): OdoReading {
-		foreach ($this->settle($vehicle) as $reading) {
+	private function restate(Vehicle $vehicle, string $counter, string $uuid): OdoReading {
+		foreach ($this->settle($vehicle, $counter) as $reading) {
 			if ($reading->getUuid() === $uuid) {
 				return $reading;
 			}
@@ -261,8 +303,9 @@ class OdometerService {
 	}
 
 	/**
-	 * Reads the vehicle's whole odometer back, decides every flag from scratch and caches the
-	 * newest value on the vehicle. Nothing is ever incremented in place, so two drivers logging
+	 * Reads one counter's whole chain back, decides every flag from scratch and caches the newest
+	 * value on the vehicle: `odo_value` for the main chain, `second_value` for the hours. Only the
+	 * chain the write touched - the other holds no Reading that could flag against it (rule 4). Nothing is ever incremented in place, so two drivers logging
 	 * at once cannot corrupt a running total (rule 2).
 	 *
 	 * Recomputing is not enough on its own: a writer that read the chain before another's Reading
@@ -281,11 +324,12 @@ class OdometerService {
 	 * and a recomputed one would be a counter nobody ever read. The kilometres that journey
 	 * covered are a fact of their own.
 	 *
+	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
 	 * @return list<OdoReading> the chain the caller's write left behind
 	 * @throws \OCP\DB\Exception
 	 */
-	private function settle(Vehicle $vehicle): array {
-		$readings = $this->readings->findAllForVehicle((int)$vehicle->getId());
+	private function settle(Vehicle $vehicle, string $counter): array {
+		$readings = $this->readings->findChain((int)$vehicle->getId(), $counter);
 
 		foreach ($this->flags($readings) as $index => $flagged) {
 			if ($readings[$index]->getFlagged() !== $flagged) {
@@ -293,10 +337,12 @@ class OdometerService {
 			}
 		}
 
-		$this->vehicles->cacheOdoValue(
-			(int)$vehicle->getId(),
-			$readings === [] ? null : end($readings)->getValue(),
-		);
+		$newest = $readings === [] ? null : end($readings)->getValue();
+		if ($counter === OdoReading::MAIN) {
+			$this->vehicles->cacheOdoValue((int)$vehicle->getId(), $newest);
+		} else {
+			$this->vehicles->cacheSecondValue((int)$vehicle->getId(), $newest);
+		}
 
 		return $readings;
 	}
@@ -306,16 +352,17 @@ class OdometerService {
 	 * or the newest reading before this moment plus the distance driven since (rule 6). Which of
 	 * the two it is stays the service's to say - `origin` is not a field a client fills in.
 	 *
+	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
 	 * @param array<string, mixed> $fields
 	 * @return array{int, string}
 	 * @throws \InvalidArgumentException
 	 * @throws \OCP\DB\Exception
 	 */
-	private function valueOf(int $vehicleId, int $readAt, array $fields): array {
+	private function valueOf(int $vehicleId, string $counter, int $readAt, array $fields): array {
 		$distance = $fields['distance'] ?? null;
 		$given = $fields['value'] ?? null;
 		if ($distance === null || $distance === '') {
-			return [$this->count('value', $given), self::OBSERVED];
+			return [Field::count('value', $given), self::OBSERVED];
 		}
 		if ($given !== null && $given !== '') {
 			// The sheet toggles between the two (docs/ui.md). Preferring either would throw away
@@ -323,21 +370,22 @@ class OdometerService {
 			throw new \InvalidArgumentException('a reading is a value or a distance, not both');
 		}
 
-		return [$this->derive($vehicleId, $readAt, $this->count('distance', $distance)), self::DERIVED];
+		return [$this->derive($vehicleId, $counter, $readAt, Field::count('distance', $distance)), self::DERIVED];
 	}
 
 	/**
-	 * Rule 6's arithmetic, in the one place that does it: the newest reading at or before the
-	 * moment the distance started running, plus the distance. An Odometer Entry counts from the
+	 * Rule 6's arithmetic, in the one place that does it: the newest reading on the same counter at
+	 * or before the moment the distance started running, plus the distance. An Odometer Entry counts from the
 	 * moment it was read at, a Trip from the moment it set off - the caller says which.
 	 *
+	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
 	 * @param ?int $own the Reading being restated, if any: an edited trip moved past its old end
 	 *                  would otherwise find its own Reading before its new start
-	 * @throws \InvalidArgumentException if the vehicle has no reading that early
+	 * @throws \InvalidArgumentException if the chain has no reading that early
 	 * @throws \OCP\DB\Exception
 	 */
-	private function derive(int $vehicleId, int $from, int $distance, ?int $own = null): int {
-		$base = $this->readings->findNewestAtOrBefore($vehicleId, $from, $own);
+	private function derive(int $vehicleId, string $counter, int $from, int $distance, ?int $own = null): int {
+		$base = $this->readings->findNewestAtOrBefore($vehicleId, $counter, $from, $own);
 		if ($base === null) {
 			// Adding a distance to nothing would invent a counter that starts at the distance.
 			throw new \InvalidArgumentException('distance has no earlier reading to count from');
@@ -382,30 +430,5 @@ class OdometerService {
 		}
 
 		return $flags;
-	}
-
-	/**
-	 * The offset the moment was read at, in minutes (docs/architecture.md#time). Real ones run
-	 * from -12:00 to +14:00, and a number outside that is a field that did not mean minutes.
-	 *
-	 * @throws \InvalidArgumentException
-	 */
-	private function offset(string $field, mixed $value): int {
-		$minutes = filter_var($value, FILTER_VALIDATE_INT);
-		if ($minutes === false || $minutes < -720 || $minutes > 840) {
-			throw new \InvalidArgumentException($field . ' is a UTC offset in minutes');
-		}
-
-		return $minutes;
-	}
-
-	/** @throws \InvalidArgumentException */
-	private function count(string $field, mixed $value): int {
-		$number = filter_var($value, FILTER_VALIDATE_INT);
-		if ($number === false || $number < 0) {
-			throw new \InvalidArgumentException($field . ' is a whole number, never negative');
-		}
-
-		return $number;
 	}
 }

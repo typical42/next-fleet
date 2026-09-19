@@ -29,11 +29,13 @@ class VehicleService {
 	use TTransactional;
 
 	/** CONTEXT.md's vocabulary, and the only words these columns take. */
-	private const VEHICLE_TYPES = ['car', 'van', 'trailer', 'tractor', 'generator'];
+	private const VEHICLE_TYPES = ['car', 'van', 'truck', 'trailer', 'tractor', 'generator'];
 	private const ENGINES = ['petrol', 'diesel', 'lpg', 'cng', 'electric', 'hybrid'];
-	private const ENERGIES = ['petrol', 'diesel', 'lpg', 'cng', 'electric'];
+	public const ENERGIES = ['petrol', 'diesel', 'lpg', 'cng', 'electric'];
 	/** Kilometres or engine hours - a tractor counts neither in km nor in miles. */
 	private const ODO_UNITS = ['km', 'h'];
+	/** A second counter is engine hours beside kilometres, and nothing else. */
+	private const SECOND_UNITS = ['h'];
 	private const LIFECYCLES = ['active', 'laid_up', 'disposed'];
 
 	/**
@@ -42,7 +44,7 @@ class VehicleService {
 	 * `number` and `count` (never negative) as integers, `date` as one calendar day.
 	 *
 	 * What is missing is the point. `uuid` is the identity and `user_id`/`created_by` the
-	 * provenance, so a request cannot choose them; `odo_value` is a cache recomputed from the
+	 * provenance, so a request cannot choose them; `odo_value` and `second_value` are caches recomputed from the
 	 * Readings (docs/architecture.md#odometer-rules); and `folder_file_id` waits for the documents
 	 * that fill the folder.
 	 *
@@ -61,6 +63,7 @@ class VehicleService {
 		'disposed_at' => ['setDisposedAt', 'date', null],
 		'vin' => ['setVin', 'text', 32],
 		'odo_unit' => ['setOdoUnit', 'word', self::ODO_UNITS],
+		'second_unit' => ['setSecondUnit', 'word', self::SECOND_UNITS],
 		'purchase_price' => ['setPurchasePrice', 'number', null],
 		'residual_est' => ['setResidualEst', 'number', null],
 		'currency' => ['setCurrency', 'text', 3],
@@ -319,6 +322,13 @@ class VehicleService {
 
 			$vehicle->$setter($value);
 		}
+
+		// Hours beside hours would be one chain counted twice. Dropped rather than refused: the
+		// sheet never blocks on validation, and switching the main counter to hours is the
+		// answer that makes the second one moot. Its Readings stay (docs/architecture.md).
+		if ($vehicle->getOdoUnit() !== 'km' && $vehicle->getSecondUnit() !== null) {
+			$vehicle->setSecondUnit(null);
+		}
 	}
 
 	/**
@@ -337,41 +347,15 @@ class VehicleService {
 		}
 
 		return match ($kind) {
-			'text' => $this->text($column, $value, is_int($limit) ? $limit : null),
-			'word' => $this->word($column, $value, is_array($limit) ? $limit : []),
+			'text' => Field::text($column, $value, is_int($limit) ? $limit : null),
+			'word' => Field::word($column, $value, is_array($limit) ? $limit : []),
 			'set' => $this->set($column, $value, is_array($limit) ? $limit : []),
 			'number' => $this->number($column, $value, false),
 			'count' => $this->number($column, $value, true),
-			'flag' => $this->flag($column, $value),
+			'flag' => Field::flag($column, $value),
 			'date' => $this->date($column, $value),
 			default => throw new \InvalidArgumentException($column . ' has no readable kind'),
 		};
-	}
-
-	/** @throws \InvalidArgumentException */
-	private function text(string $column, mixed $value, ?int $length): string {
-		if (!is_string($value)) {
-			throw new \InvalidArgumentException($column . ' is text');
-		}
-		// Refused rather than truncated: the database would refuse it too, and a 500 tells the
-		// user nothing about which field was too long.
-		if ($length !== null && mb_strlen($value) > $length) {
-			throw new \InvalidArgumentException($column . ' is longer than ' . $length . ' characters');
-		}
-
-		return $value;
-	}
-
-	/**
-	 * @param list<string> $vocabulary
-	 * @throws \InvalidArgumentException
-	 */
-	private function word(string $column, mixed $value, array $vocabulary): string {
-		if (!is_string($value) || !in_array($value, $vocabulary, true)) {
-			throw new \InvalidArgumentException($column . ' is one of ' . implode(', ', $vocabulary));
-		}
-
-		return $value;
 	}
 
 	/**
@@ -386,7 +370,7 @@ class VehicleService {
 
 		$words = [];
 		foreach ($value as $word) {
-			$words[] = $this->word($column, $word, $vocabulary);
+			$words[] = Field::word($column, $word, $vocabulary);
 		}
 
 		return array_values(array_unique($words));
@@ -403,22 +387,6 @@ class VehicleService {
 		}
 
 		return $number;
-	}
-
-	/**
-	 * A boolean column, which a form posts as a word and JSON as itself. `false` never reaches
-	 * here as an empty value - only `''` does, and that is a field nobody answered, which for a
-	 * three-valued boolean column is its own state (docs/architecture.md#data-model).
-	 *
-	 * @throws \InvalidArgumentException
-	 */
-	private function flag(string $column, mixed $value): bool {
-		$flag = filter_var($value, FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE);
-		if ($flag === null) {
-			throw new \InvalidArgumentException($column . ' is true or false');
-		}
-
-		return $flag;
 	}
 
 	/**

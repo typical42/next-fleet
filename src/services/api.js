@@ -19,6 +19,8 @@ import { generateUrl } from '@nextcloud/router'
  * @property {string} [engine] - the drivetrain classification (CONTEXT.md)
  * @property {number|null} [odo_value] - the newest Reading, cached; null until one exists
  * @property {string} [odo_unit] - `km` or `h`, the vehicle's own
+ * @property {string|null} [second_unit] - `h` when engine hours are counted beside the kilometres
+ * @property {number|null} [second_value] - the newest hour Reading, cached; null until one exists
  * @property {string} [lifecycle] - `active`, `laid_up` or `disposed` (CONTEXT.md)
  * @property {string} [jurisdiction] - the country whose rules it is kept under (CONTEXT.md)
  * @property {boolean|null} [logbook_mode] - under its jurisdiction's logbook rules; null is off
@@ -37,9 +39,10 @@ import { generateUrl } from '@nextcloud/router'
  * @property {string} uuid - identity
  * @property {number} read_at - the instant it was read, seconds
  * @property {number} read_at_off - the UTC offset it was read at, minutes
- * @property {number} value - kilometres or engine hours, per the vehicle's `odo_unit`
+ * @property {number} value - in the unit of its counter: `odo_unit` on `main`, `second_unit` on `second`
  * @property {string} origin - `observed` when somebody read it, `derived` when it was computed
- * @property {boolean} flagged - it contradicts the reading before it
+ * @property {boolean} flagged - it contradicts the reading before it on the same counter
+ * @property {'main'|'second'} counter - which of the vehicle's chains it is on
  */
 
 /**
@@ -195,7 +198,8 @@ export async function restoreVehicle(vehicle) {
  * token and cannot lose a race (docs/architecture.md#concurrency).
  *
  * @param {string} uuid - the vehicle the counter belongs to
- * @param {object} entry - `value` or `distance`, never both, plus `read_at_off`
+ * @param {object} entry - `value` or `distance`, never both, plus `read_at_off`, and `counter`
+ *   (`main` by default, `second` for engine hours)
  * @return {Promise<Reading>} the reading as the server judged it, `origin` and `flagged` included
  */
 export async function recordReading(uuid, entry) {
@@ -215,6 +219,39 @@ export async function recordReading(uuid, entry) {
 export async function recordTrip(uuid, trip) {
 	return request('POST', `/api/vehicles/${uuid}/trips`, trip)
 }
+
+/**
+ * Record one fill-up or charging session, and a Reading per counter it carries
+ * (docs/architecture.md#odometer-rules). Written only, like a trip, so it carries no token.
+ *
+ * @param {string} uuid - the vehicle that took it
+ * @param {object} fill - what the sheet holds: the moment with its offset, the energy and amount,
+ *   and whatever of price, VAT, counters and station the driver gave
+ * @return {Promise<object>} the fill-up as the server wrote it, its `flags` included
+ */
+export async function recordEnergy(uuid, fill) {
+	return request('POST', `/api/vehicles/${uuid}/energy`, fill)
+}
+
+/**
+ * What the entry sheet prefills a fill-up with (docs/ui.md).
+ *
+ * @param {string} uuid - the vehicle the fill-up is for
+ * @param {number} at - the moment the sheet is on, seconds
+ * @param {number} off - the UTC offset of that moment, minutes
+ * @return {Promise<EnergyPrefill>} the rate on that day and this vehicle's stations
+ */
+export async function energyPrefill(uuid, at, off) {
+	return request('GET', `/api/vehicles/${uuid}/energy/prefill?${new URLSearchParams({ at: String(at), off: String(off) })}`)
+}
+
+/**
+ * @typedef {object} EnergyPrefill
+ * @property {number|null} vat_rate - the jurisdiction's standard rate on the day, basis points, or
+ *   null where it states none
+ * @property {{ station: string, energy: string, unit_price: number|null }[]} stations - where this
+ *   vehicle filled up, latest first, with the price each last charged per energy
+ */
 
 /**
  * One page of one vehicle's timeline, newest first (docs/architecture.md#the-timeline). The merge

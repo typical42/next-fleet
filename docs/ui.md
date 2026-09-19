@@ -119,14 +119,21 @@ a phone has room for one sheet at a time. It opens on the trip, which is what a 
   to ask. Both moments default to now; route, purpose and
   partner autocomplete from this vehicle's own history, which is what keeps six spellings of one
   client out of the reports.
-- **Energy** — amount and total price. Which energy types are offered comes from the vehicle's
-  `energy_types`, so a plug-in hybrid can log either and a diesel is never asked
-  ([data model](architecture.md#data-model)). Unit price is derived, and the station remembers its
-  last price. "Full tank" defaults to on, because it usually is
-  ([the maths](architecture.md#numbers-consumption-cost-emissions) needs it).
+- **Energy** — amount and total price. Offered only on a vehicle with `energy_types`, and only
+  with those, so a plug-in hybrid can log either and a diesel is never asked
+  ([data model](architecture.md#data-model)). Unit price is derived from the total. The station
+  completes from this vehicle's history and prefills the price it last charged; that guess is
+  sent only when there is no total, or the driver changed it. VAT is the jurisdiction's rate on
+  the fill-up's day, asked again when the date moves, and clears to "not stated". "Full tank"
+  defaults to on, because it usually is
+  ([the maths](architecture.md#numbers-consumption-cost-emissions) needs it). The counter, as on a
+  trip, is not prefilled; left empty, the field says consumption needs it. A charge asks home or
+  public, and DC only for public.
 - **Maintenance** — title and cost. If a reminder is open for this vehicle, offer it as one tap:
   "Closes: Oil change" — that is how recurrence stays correct without anyone thinking about it.
-- **Odometer** — one number. The escape hatch for everything not otherwise recorded.
+- **Odometer** — one number. The escape hatch for everything not otherwise recorded. On a vehicle
+  that also counts engine hours, "Which counter" asks Kilometres or Engine hours first, and the
+  number is prefilled from that counter. The timeline row states it in that counter's unit.
 
 Rules for all four:
 
@@ -164,7 +171,9 @@ not a project.
 ### Details that decide whether it feels easy
 
 - **Ask for four fields, not twelve.** Creating a vehicle needs plate, make/model, engine and
-  current km. VIN, first registration and the capacity of the energy the vehicle takes — a tank for
+  current km. The vehicle type and the counter unit sit beside the counter, prefilled with car and
+  km, so they cost no answer; choosing a tractor or a generator switches the unit to hours, still
+  changeable. VIN, first registration and the capacity of the energy the vehicle takes — a tank for
   a diesel, a battery for an electric one — arrive through a dismissible "complete this vehicle"
   hint on the overview. A twelve-field wall on first run loses people before they have a single
   record. The hint asks per vehicle and the vehicle's name in it opens the screen the edit sheet is

@@ -297,6 +297,49 @@ class VehicleServiceTest extends TestCase {
 		$this->assertSame('laid_up', $vehicle->getLifecycle());
 	}
 
+	/** A truck counts kilometres and may count engine hours beside them. */
+	public function testATruckCountsEngineHoursBesideItsKilometres(): void {
+		$vehicle = $this->service()->create('alice', ['vehicle_type' => 'truck', 'second_unit' => 'h']);
+
+		$this->assertSame('truck', $vehicle->getVehicleType());
+		$this->assertSame('km', $vehicle->getOdoUnit());
+		$this->assertSame('h', $vehicle->getSecondUnit());
+	}
+
+	/** Hours are the only second counter (PRD M3, out of scope: anything else). */
+	public function testASecondCounterIsHoursOrNothing(): void {
+		$this->expectException(\InvalidArgumentException::class);
+
+		$this->service()->create('alice', ['second_unit' => 'km']);
+	}
+
+	/**
+	 * Switching the second counter off is an empty field. The hour Readings stay; the switch
+	 * only hides them.
+	 */
+	public function testSwitchingTheSecondCounterOffClearsIt(): void {
+		$stored = $this->stored();
+		$stored->setSecondUnit('h');
+		$stored->resetUpdatedFields();
+		$this->mapper->method('findByUuid')->willReturn($stored);
+		$this->mapper->method('updateChecked')->willReturnArgument(0);
+
+		$vehicle = $this->service()->update(self::OWNER, self::UUID, 1750000000, ['second_unit' => '']);
+
+		$this->assertNull($vehicle->getSecondUnit());
+	}
+
+	/**
+	 * Hours count beside kilometres and nothing else: a vehicle whose main counter is hours
+	 * carries no second one, whatever the request says.
+	 */
+	public function testAnHourVehicleCarriesNoSecondCounter(): void {
+		$vehicle = $this->service()->create('alice', ['odo_unit' => 'h', 'second_unit' => 'h']);
+
+		$this->assertSame('h', $vehicle->getOdoUnit());
+		$this->assertNull($vehicle->getSecondUnit());
+	}
+
 	/**
 	 * An update is a write to the row the client read: the fields it sends, and the token it
 	 * read, in one statement (docs/architecture.md#concurrency).

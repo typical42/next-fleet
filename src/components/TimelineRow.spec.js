@@ -103,6 +103,17 @@ describe('a timeline row', () => {
 		expect(wrapper.text()).toContain('Counter reading')
 	})
 
+	/** An hour Reading is on the second chain (rule 4), and says it in that chain's unit. */
+	it('says engine hours in hours', () => {
+		const truck = { ...VEHICLE, second_unit: 'h' }
+
+		expect(row(counter({ value: 5004, counter: 'second' }), truck).text()).toContain('5,004 h')
+		expect(row(counter({ value: 148320, counter: 'main' }), truck).text()).toContain('148,320 km')
+		// Switching the hours off keeps their Readings, and they still read in hours.
+		expect(row(counter({ value: 5004, counter: 'second' }), { ...VEHICLE, second_unit: null }).text())
+			.toContain('5,004 h')
+	})
+
 	/**
 	 * A flagged Reading is a question the timeline is where people answer (docs/ui.md), so the row
 	 * it sits on has to carry it - and carry it as a word, because status is never colour alone.

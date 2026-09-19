@@ -102,7 +102,7 @@ describe('vehicles store', () => {
 		it('re-reads the vehicle instead of counting the new value itself', async () => {
 			const store = useVehiclesStore()
 			store.upsert(vehicle({ uuid: 'a', odo_value: 148000 }))
-			vi.mocked(recordReading).mockResolvedValue({ uuid: 'r1', value: 148320, origin: 'observed', flagged: false, read_at: 1750000000, read_at_off: 120 })
+			vi.mocked(recordReading).mockResolvedValue({ uuid: 'r1', value: 148320, origin: 'observed', flagged: false, read_at: 1750000000, read_at_off: 120, counter: 'main' })
 			vi.mocked(getVehicle).mockResolvedValue(vehicle({ uuid: 'a', odo_value: 148320 }))
 
 			const reading = await store.record('a', { value: 148320, read_at_off: 120 })
@@ -122,7 +122,7 @@ describe('vehicles store', () => {
 		it('does not report a written reading as failed because the vehicle would not come back', async () => {
 			const store = useVehiclesStore()
 			store.upsert(vehicle({ uuid: 'a', odo_value: 148000 }))
-			vi.mocked(recordReading).mockResolvedValue({ uuid: 'r1', value: 148320, origin: 'observed', flagged: false, read_at: 1750000000, read_at_off: 120 })
+			vi.mocked(recordReading).mockResolvedValue({ uuid: 'r1', value: 148320, origin: 'observed', flagged: false, read_at: 1750000000, read_at_off: 120, counter: 'main' })
 			vi.mocked(getVehicle).mockRejectedValue(new Error('The server answered 503'))
 
 			const reading = await store.record('a', { value: 148320, read_at_off: 120 })

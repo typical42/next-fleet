@@ -10,6 +10,7 @@ namespace OCA\NextFleet\Tests\Integration;
 
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\OdoReading;
+use OCA\NextFleet\Db\OdoReadingMapper;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\IDBConnection;
@@ -126,6 +127,35 @@ class OdometerTest extends TestCase {
 				$this->odometer->list(self::OWNER, $uuid),
 			),
 		);
+	}
+
+	/**
+	 * A Reading from before M3 has no `counter` at all, and the km chain is where it lives: a
+	 * distance counts from it and the vehicle caches it, while the hour chain never sees it.
+	 */
+	public function testAReadingWrittenBeforeTheCounterColumnIsOnTheMainChain(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'second_unit' => 'h']);
+		$legacy = new OdoReading();
+		$legacy->setVehicleId((int)$vehicle->getId());
+		$legacy->setCreatedBy(self::OWNER);
+		$legacy->setReadAt(1750000000);
+		$legacy->setReadAtOff(0);
+		$legacy->setValue(120000);
+		$legacy->setKind('reading');
+		$legacy->setOrigin(OdometerService::OBSERVED);
+		$legacy->setSourceType(OdoReading::MANUAL);
+		$readings = \OCP\Server::get(OdoReadingMapper::class);
+		$readings->insert($legacy);
+
+		$derived = $this->odometer->record(self::OWNER, $vehicle->getUuid(), [
+			'read_at' => 1750086400,
+			'read_at_off' => 0,
+			'distance' => 137,
+		]);
+
+		$this->assertSame(120137, $derived->getValue());
+		$this->assertSame([], $readings->findChain((int)$vehicle->getId(), OdoReading::SECOND));
+		$this->assertSame(120137, $this->vehicles->find(self::OWNER, $vehicle->getUuid())->getOdoValue());
 	}
 
 	/**

@@ -6,6 +6,7 @@
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcDateTimePickerNative from '@nextcloud/vue/components/NcDateTimePickerNative'
 import NcDialog from '@nextcloud/vue/components/NcDialog'
+import NcFormBoxSwitch from '@nextcloud/vue/components/NcFormBoxSwitch'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import NcRadioGroup from '@nextcloud/vue/components/NcRadioGroup'
 import NcRadioGroupButton from '@nextcloud/vue/components/NcRadioGroupButton'
@@ -15,19 +16,23 @@ import { flushPromises, shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { getVehicle, recordReading, recordTrip } from '../services/api.js'
+import { energyPrefill, getVehicle, recordEnergy, recordReading, recordTrip } from '../services/api.js'
 import EntrySheet from './EntrySheet.vue'
 
 // The network is the api client's own seam (api.spec.js), and the store is left real: this sheet
 // is the only caller store.log() has, so the wiring through it is part of what is under test.
 vi.mock('../services/api.js', async (original) => ({
 	...await original(),
+	energyPrefill: vi.fn(),
 	getVehicle: vi.fn(),
+	recordEnergy: vi.fn(),
 	recordReading: vi.fn(),
 	recordTrip: vi.fn(),
 }))
 
 const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', odo_value: 148320 }
+const TRUCK = { ...VEHICLE, odo_unit: 'km', second_unit: 'h', second_value: 5004, energy_types: ['diesel'] }
+const HYBRID = { ...VEHICLE, odo_unit: 'km', energy_types: ['petrol', 'electric'] }
 
 /** The two moments of one journey, an hour and a quarter apart. */
 const DEPARTURE = new Date(2026, 0, 15, 8, 30)
@@ -38,11 +43,12 @@ const ARRIVAL = new Date(2026, 0, 15, 9, 45)
  * so that one component is rendered and the rest stay stubs (docs/development.md). The choosers
  * hold their choices in their own slot, so the stubs render theirs.
  *
+ * @param {object} [vehicle] - the vehicle the sheet is on
  * @return {import('@vue/test-utils').VueWrapper} the mounted sheet
  */
-function sheet() {
+function sheet(vehicle = VEHICLE) {
 	return shallowMount(EntrySheet, {
-		props: { vehicle: VEHICLE },
+		props: { vehicle },
 		global: {
 			renderStubDefaultSlot: true,
 			stubs: { NcDialog: { template: '<div><slot /><slot name="actions" /></div>' } },
@@ -119,6 +125,15 @@ function dropdown(wrapper, label) {
 }
 
 /**
+ * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted sheet
+ * @param {string} label - the label beside the switch
+ * @return {any} the switch, or undefined when the sheet does not show it
+ */
+function toggle(wrapper, label) {
+	return wrapper.findAllComponents(NcFormBoxSwitch).find((/** @type {any} */ one) => one.props('label') === label)
+}
+
+/**
  * The sheet's own button: the last of the two the dialog's actions hold, because a failed save
  * renames it (docs/ui.md).
  *
@@ -155,6 +170,14 @@ beforeEach(() => {
 	// (src/services/api.js).
 	vi.mocked(recordTrip).mockResolvedValue(/** @type {any} */ ({ uuid: 't-1', reconciled: false }))
 	vi.mocked(recordReading).mockResolvedValue(/** @type {any} */ ({ uuid: 'r-1', value: 148402 }))
+	vi.mocked(recordEnergy).mockResolvedValue(/** @type {any} */ ({ uuid: 'e-1', flags: [] }))
+	vi.mocked(energyPrefill).mockResolvedValue({
+		vat_rate: 1900,
+		stations: [
+			{ station: 'Aral Hauptstr.', energy: 'electric', unit_price: 530 },
+			{ station: 'Aral Hauptstr.', energy: 'diesel', unit_price: 1799 },
+		],
+	})
 })
 
 describe('the entry sheet', () => {
@@ -206,6 +229,35 @@ describe('the entry sheet', () => {
 		expect(labels(wrapper)).toEqual(['Counter reading'])
 		expect(moment(wrapper, 'Departure')).toBeUndefined()
 		expect(chooser(wrapper, 'Counter or distance')).toBeUndefined()
+		expect(chooser(wrapper, 'Which counter')).toBeUndefined()
+	})
+
+	/**
+	 * A truck that also counts engine hours has two chains (docs/architecture.md#odometer-rules,
+	 * rule 4), so the one number has to say which it is. Kilometres first: the chain trips run on.
+	 */
+	it('asks which counter it reads on a vehicle that counts engine hours', async () => {
+		const wrapper = sheet(TRUCK)
+
+		await choose(wrapper, 'Entry type', 'odometer')
+
+		expect(choices(wrapper, 'Which counter')).toEqual(['Kilometres', 'Engine hours'])
+		expect(chooser(wrapper, 'Which counter').props('modelValue')).toBe('main')
+		expect(field(wrapper, 'Counter reading').props('modelValue')).toBe('148320')
+	})
+
+	/** The hours are prefilled as they stand, like the kilometres, and land on their own chain. */
+	it('records engine hours on the hour chain', async () => {
+		const wrapper = sheet(TRUCK)
+
+		await choose(wrapper, 'Entry type', 'odometer')
+		await choose(wrapper, 'Which counter', 'second')
+		expect(field(wrapper, 'Counter reading').props('modelValue')).toBe('5004')
+		await field(wrapper, 'Counter reading').vm.$emit('update:modelValue', '5011')
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(recordReading).toHaveBeenCalledWith('v-1', expect.objectContaining({ value: 5011, counter: 'second' }))
 	})
 
 	/**
@@ -403,6 +455,214 @@ describe('the entry sheet', () => {
 		expect(recordTrip).not.toHaveBeenCalled()
 		expect(wrapper.findComponent(NcNoteCard).props('text'))
 			.toBe('A trip carries the moment it set off and the moment it arrived.')
+	})
+
+	/**
+	 * A fill-up is of an energy the vehicle takes (docs/architecture.md#data-model), so a vehicle
+	 * that names none is not offered one - there would be nothing to choose from.
+	 */
+	it('offers energy only to a vehicle that takes some', () => {
+		expect(choices(sheet(), 'Entry type')).toEqual(['Trip', 'Odometer'])
+		expect(choices(sheet(HYBRID), 'Entry type')).toEqual(['Trip', 'Energy', 'Odometer'])
+	})
+
+	/** A plug-in hybrid logs either of its two energies, and nothing else (docs/ui.md). */
+	it('asks which of the vehicle energies a fill-up is of', async () => {
+		const wrapper = sheet(HYBRID)
+
+		await choose(wrapper, 'Entry type', 'energy')
+
+		expect(dropdown(wrapper, 'Energy').props('options').map((/** @type {any} */ one) => one.label))
+			.toEqual(['Petrol', 'Electric'])
+		expect(dropdown(wrapper, 'Energy').props('modelValue').id).toBe('petrol')
+		expect(field(wrapper, 'Amount (l)')).toBeDefined()
+	})
+
+	/**
+	 * Amounts and money are typed as a pump shows them and sent as the integers their columns hold
+	 * (docs/architecture.md#data-model). The VAT rate is the jurisdiction's on the day, asked of the
+	 * server for the moment the sheet is on, and "full tank" is on because it usually is.
+	 */
+	it('writes a fill-up as the columns hold it', async () => {
+		const wrapper = sheet(TRUCK)
+
+		await choose(wrapper, 'Entry type', 'energy')
+		await flushPromises()
+		const [, at, off] = vi.mocked(energyPrefill).mock.calls[0]
+		expect(field(wrapper, 'VAT rate (%)').props('modelValue')).toBe('19')
+		await field(wrapper, 'Amount (l)').vm.$emit('update:modelValue', '48,2')
+		await field(wrapper, 'Total price').vm.$emit('update:modelValue', '85,10')
+		await field(wrapper, 'Counter reading').vm.$emit('update:modelValue', '148.402')
+		await field(wrapper, 'Engine hours').vm.$emit('update:modelValue', '5011')
+		await field(wrapper, 'Station').vm.$emit('update:modelValue', 'Shell Ring')
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(recordEnergy).toHaveBeenCalledWith('v-1', {
+			filled_at: at,
+			filled_at_off: off,
+			energy: 'diesel',
+			amount: 48200,
+			total: 8510,
+			vat_rate: 1900,
+			full_tank: true,
+			missed_previous: false,
+			odo: 148402,
+			second_odo: 5011,
+			station: 'Shell Ring',
+		})
+		expect(wrapper.emitted('close')?.length).toBe(1)
+	})
+
+	/**
+	 * Null means "not stated", never zero (docs/architecture.md#data-model): a receipt without a
+	 * VAT line is a cleared field, and the sheet sends no rate rather than inventing one.
+	 */
+	it('states no VAT rate when the field is cleared', async () => {
+		const wrapper = sheet(TRUCK)
+
+		await choose(wrapper, 'Entry type', 'energy')
+		await flushPromises()
+		await field(wrapper, 'Amount (l)').vm.$emit('update:modelValue', '48,2')
+		await field(wrapper, 'VAT rate (%)').vm.$emit('update:modelValue', '')
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(vi.mocked(recordEnergy).mock.calls[0][1]).not.toHaveProperty('vat_rate')
+		expect(vi.mocked(recordEnergy).mock.calls[0][1]).not.toHaveProperty('total')
+	})
+
+	/**
+	 * The station completes from this vehicle's history and prefills the price it last charged
+	 * for this energy (docs/ui.md). A total answers the price better than a guess does, so the
+	 * guess is not sent beside one - the server derives it instead.
+	 */
+	it('prefills the price the station last charged, and lets a total overrule it', async () => {
+		const wrapper = sheet(TRUCK)
+
+		await choose(wrapper, 'Entry type', 'energy')
+		await flushPromises()
+		expect(wrapper.findAll('datalist option').map((one) => one.attributes('value'))).toEqual(['Aral Hauptstr.'])
+		await field(wrapper, 'Station').vm.$emit('update:modelValue', 'Aral Hauptstr.')
+		expect(field(wrapper, 'Price per litre').props('modelValue')).toBe('1.799')
+		await field(wrapper, 'Amount (l)').vm.$emit('update:modelValue', '40')
+		await field(wrapper, 'Total price').vm.$emit('update:modelValue', '70')
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(vi.mocked(recordEnergy).mock.calls[0][1]).not.toHaveProperty('unit_price')
+	})
+
+	/**
+	 * The prefilled price belongs to one station and one energy. Another station, or another
+	 * energy, is asked afresh, and one with no price leaves the field empty rather than carrying
+	 * the last station's guess into this fill-up.
+	 */
+	it('follows the station and the energy with the price it prefilled', async () => {
+		const wrapper = sheet(HYBRID)
+
+		await choose(wrapper, 'Entry type', 'energy')
+		await flushPromises()
+		await field(wrapper, 'Station').vm.$emit('update:modelValue', 'Aral Hauptstr.')
+		expect(field(wrapper, 'Price per litre').props('modelValue')).toBe('')
+		await dropdown(wrapper, 'Energy').vm.$emit('update:modelValue', { id: 'electric', label: 'Electric' })
+		expect(field(wrapper, 'Price per kWh').props('modelValue')).toBe('0.53')
+		await field(wrapper, 'Station').vm.$emit('update:modelValue', 'Shell Ring')
+		expect(field(wrapper, 'Price per kWh').props('modelValue')).toBe('')
+	})
+
+	/** Without a total, the price is the one figure there is, and a typed price is the driver's word. */
+	it('sends the price when there is no total, or when the driver typed it', async () => {
+		const wrapper = sheet(TRUCK)
+
+		await choose(wrapper, 'Entry type', 'energy')
+		await flushPromises()
+		await field(wrapper, 'Station').vm.$emit('update:modelValue', 'Aral Hauptstr.')
+		await field(wrapper, 'Amount (l)').vm.$emit('update:modelValue', '40')
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+		expect(recordEnergy).toHaveBeenLastCalledWith('v-1', expect.objectContaining({ unit_price: 1799 }))
+
+		await field(wrapper, 'Price per litre').vm.$emit('update:modelValue', '1,759')
+		await field(wrapper, 'Total price').vm.$emit('update:modelValue', '70')
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+		expect(recordEnergy).toHaveBeenLastCalledWith('v-1', expect.objectContaining({ unit_price: 1759, total: 7000 }))
+	})
+
+	/**
+	 * A charge is at home or in public, and only a public charger offers direct current. The sheet
+	 * does not answer where for the driver.
+	 */
+	it('asks an electric charge where it was, and DC only in public', async () => {
+		const wrapper = sheet(HYBRID)
+
+		await choose(wrapper, 'Entry type', 'energy')
+		expect(chooser(wrapper, 'Where')).toBeUndefined()
+		await dropdown(wrapper, 'Energy').vm.$emit('update:modelValue', { id: 'electric', label: 'Electric' })
+		expect(field(wrapper, 'Amount (kWh)')).toBeDefined()
+		expect(choices(wrapper, 'Where')).toEqual(['Home', 'Public'])
+		expect(toggle(wrapper, 'DC fast charging')).toBeUndefined()
+
+		await choose(wrapper, 'Where', 'public')
+		await toggle(wrapper, 'DC fast charging').vm.$emit('update:modelValue', true)
+		await field(wrapper, 'Amount (kWh)').vm.$emit('update:modelValue', '30,5')
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(recordEnergy).toHaveBeenCalledWith('v-1', expect.objectContaining({
+			energy: 'electric',
+			amount: 30500,
+			location_kind: 'public',
+			is_dc: true,
+		}))
+	})
+
+	/** The counter is optional and never prefilled, so an empty one says what it costs. */
+	it('says consumption needs the counter while it is empty', async () => {
+		const wrapper = sheet(TRUCK)
+
+		await choose(wrapper, 'Entry type', 'energy')
+		expect(field(wrapper, 'Counter reading').props('modelValue')).toBe('')
+		expect(field(wrapper, 'Counter reading').props('helperText')).toBe('Consumption needs the counter reading.')
+
+		await field(wrapper, 'Counter reading').vm.$emit('update:modelValue', '148402')
+		expect(field(wrapper, 'Counter reading').props('helperText')).toBe('')
+	})
+
+	/**
+	 * The rate changes on a day, so a fill-up dated back is asked about again - and a rate the
+	 * driver typed is theirs and stays.
+	 */
+	it('asks the rate again for another day, unless the driver stated one', async () => {
+		const wrapper = sheet(TRUCK)
+		await choose(wrapper, 'Entry type', 'energy')
+		await flushPromises()
+
+		vi.mocked(energyPrefill).mockResolvedValue({ vat_rate: 1600, stations: [] })
+		const day = new Date(2020, 8, 1, 12, 0)
+		await moment(wrapper, 'Date').vm.$emit('update:modelValue', day)
+		await flushPromises()
+		expect(energyPrefill).toHaveBeenLastCalledWith('v-1', Math.floor(day.getTime() / 1000), -day.getTimezoneOffset())
+		expect(field(wrapper, 'VAT rate (%)').props('modelValue')).toBe('16')
+
+		await field(wrapper, 'VAT rate (%)').vm.$emit('update:modelValue', '7')
+		vi.mocked(energyPrefill).mockResolvedValue({ vat_rate: 1900, stations: [] })
+		await moment(wrapper, 'Date').vm.$emit('update:modelValue', new Date(2026, 0, 1, 12, 0))
+		await flushPromises()
+		expect(field(wrapper, 'VAT rate (%)').props('modelValue')).toBe('7')
+	})
+
+	/** The amount is the one field a fill-up requires (docs/ui.md), so it is asked for here. */
+	it('writes nothing when a fill-up has no amount', async () => {
+		const wrapper = sheet(TRUCK)
+
+		await choose(wrapper, 'Entry type', 'energy')
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(recordEnergy).not.toHaveBeenCalled()
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('That is not an amount.')
 	})
 
 	/**

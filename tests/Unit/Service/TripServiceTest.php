@@ -188,7 +188,8 @@ class TripServiceTest extends TestCase {
 				$reading->setFlagged($flagged);
 			},
 		);
-		$this->readingMapper->method('findAllForVehicle')
+		// Every Reading here is a trip's, so on the main chain.
+		$this->readingMapper->method('findChain')
 			->willReturnCallback(fn (int $vehicleId): array => $this->ordered($vehicleId));
 		$this->readingMapper->method('findAnyForTrip')->willReturnCallback(
 			function (int $vehicleId, int $tripId): ?OdoReading {
@@ -232,7 +233,7 @@ class TripServiceTest extends TestCase {
 			},
 		);
 		$this->readingMapper->method('findNewestAtOrBefore')->willReturnCallback(
-			function (int $vehicleId, int $readAt, ?int $except = null): ?OdoReading {
+			function (int $vehicleId, string $counter, int $readAt, ?int $except = null): ?OdoReading {
 				$earlier = array_filter(
 					$this->ordered($vehicleId),
 					static fn (OdoReading $reading): bool

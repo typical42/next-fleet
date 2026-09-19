@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+- The M3 schema: `fleet_energy`, `fleet_maintenance` and `fleet_expenses`, a `counter` on each
+  Reading (`main` or `second`; every existing Reading reads as `main`), and `second_unit` and
+  `second_value` on the vehicle for engine hours beside the kilometres. Nothing writes them yet.
+  A vehicle and a Reading now carry the new fields on the wire.
+- A vehicle can be a truck. The create sheet asks for the vehicle type and the counter unit beside
+  the counter; choosing a tractor or a generator switches the unit to engine hours, still
+  changeable, and never on a vehicle that already has Readings. The edit sheet's "Also counts engine
+  hours" switch, offered on a km vehicle, sets `second_unit`; switching it off keeps the hour
+  Readings. A vehicle counted in hours carries no second counter.
+- Engine hours are a chain of their own. An Odometer Entry on a vehicle with a second counter asks
+  which counter it read (`counter` on `POST …/readings`; `second` is refused on a vehicle without
+  one). Each chain is flagged and cached on its own, `second_value` for the hours; trips, Gaps and
+  the Fahrtenbuch read kilometres only. The timeline states an hour Reading in hours.
+- A jurisdiction states its VAT rate by date (`IJurisdiction::rates()`). Germany answers 19 %, and
+  16 % from 2020-07-01 to 2020-12-31, citing §12 UStG; nothing before 2007. The generic profile
+  states no rates. Nothing reads it yet.
+- A fill-up on the server: `POST /api/vehicles/{uuid}/energy`. Each counter given (`odo`,
+  `second_odo`) writes an Observed Reading at `filled_at` that accounts for no kilometre; none
+  given, none written. `second_odo` is refused on a vehicle without engine hours. `unit_price` is
+  derived from `total` and `amount` when not given. The answer carries `flags`: `foreign_energy`
+  for an energy outside `energy_types`, `no_price` for a missing total.
+- Energy in the entry sheet, offered on a vehicle with `energy_types` and only with those. Amount
+  (required) and total are typed as the pump shows them, with a comma or a point. VAT comes
+  prefilled with the jurisdiction's rate on the fill-up's day and clears to "not stated". The
+  station completes from this vehicle's history and prefills the price it last charged; that
+  price is sent only when there is no total or the driver changed it. A charge asks home or
+  public, and DC only in public. An empty counter says consumption needs it. The prefill is
+  `GET /api/vehicles/{uuid}/energy/prefill?at=&off=`.
+
 - Overview, at the top of the navigation. It leads back from a vehicle or from Reports without a
   reload, and is marked whenever the overview is what shows.
 - Two writes on one vehicle at once no longer leave its kilometres on the older Reading. Every

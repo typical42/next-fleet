@@ -36,8 +36,9 @@ class Gaps {
 	 */
 	public function of(Vehicle $vehicle): array {
 		$vehicleId = (int)$vehicle->getId();
-		// Both reads are ordered, so one walk over the chain serves every trip.
-		$readings = $this->readings->findAllForVehicle($vehicleId);
+		// Both reads are ordered, so one walk over the chain serves every trip. Kilometres only:
+		// engine hours never open or bracket a Gap (rule 4).
+		$readings = $this->readings->findChain($vehicleId, OdoReading::MAIN);
 		$next = 0;
 
 		$gaps = [];

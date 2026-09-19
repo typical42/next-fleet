@@ -455,62 +455,11 @@ class TripService {
 		}
 
 		return match ($kind) {
-			'text' => $this->text($column, $value, is_int($limit) ? $limit : null),
-			'word' => $this->word($column, $value, is_array($limit) ? $limit : []),
-			'count' => $this->count($column, $value),
-			'offset' => $this->offset($column, $value),
+			'text' => Field::text($column, $value, is_int($limit) ? $limit : null),
+			'word' => Field::word($column, $value, is_array($limit) ? $limit : []),
+			'count' => Field::count($column, $value),
+			'offset' => Field::offset($column, $value),
 			default => throw new \InvalidArgumentException($column . ' has no readable kind'),
 		};
-	}
-
-	/** @throws \InvalidArgumentException */
-	private function text(string $column, mixed $value, ?int $length): string {
-		if (!is_string($value)) {
-			throw new \InvalidArgumentException($column . ' is text');
-		}
-		// Refused rather than truncated: the database would refuse it too, and a 500 tells the
-		// user nothing about which field was too long.
-		if ($length !== null && mb_strlen($value) > $length) {
-			throw new \InvalidArgumentException($column . ' is longer than ' . $length . ' characters');
-		}
-
-		return $value;
-	}
-
-	/**
-	 * @param list<string> $vocabulary
-	 * @throws \InvalidArgumentException
-	 */
-	private function word(string $column, mixed $value, array $vocabulary): string {
-		if (!is_string($value) || !in_array($value, $vocabulary, true)) {
-			throw new \InvalidArgumentException($column . ' is one of ' . implode(', ', $vocabulary));
-		}
-
-		return $value;
-	}
-
-	/** @throws \InvalidArgumentException */
-	private function count(string $column, mixed $value): int {
-		$number = filter_var($value, FILTER_VALIDATE_INT);
-		if ($number === false || $number < 0) {
-			throw new \InvalidArgumentException($column . ' is a whole number, never negative');
-		}
-
-		return $number;
-	}
-
-	/**
-	 * The offset the moment was entered at, in minutes (docs/architecture.md#time). Real ones run
-	 * from -12:00 to +14:00, and a number outside that is a field that did not mean minutes.
-	 *
-	 * @throws \InvalidArgumentException
-	 */
-	private function offset(string $column, mixed $value): int {
-		$minutes = filter_var($value, FILTER_VALIDATE_INT);
-		if ($minutes === false || $minutes < -720 || $minutes > 840) {
-			throw new \InvalidArgumentException($column . ' is a UTC offset in minutes');
-		}
-
-		return $minutes;
 	}
 }

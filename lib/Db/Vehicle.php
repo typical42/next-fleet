@@ -64,6 +64,10 @@ use OCP\DB\Types;
  * @method void setColor(?string $color)
  * @method string|null getNotes()
  * @method void setNotes(?string $notes)
+ * @method string|null getSecondUnit()
+ * @method void setSecondUnit(?string $secondUnit)
+ * @method int|null getSecondValue()
+ * @method void setSecondValue(?int $secondValue)
  */
 class Vehicle extends BaseEntity implements \JsonSerializable {
 	protected string $userId = '';
@@ -91,6 +95,10 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 	protected ?int $retentionMonths = null;
 	protected ?string $color = null;
 	protected ?string $notes = null;
+	/** Null, or `h` when engine hours are counted beside the kilometres. */
+	protected ?string $secondUnit = null;
+	/** The second chain's `odoValue`: a cache, written by the odometer. */
+	protected ?int $secondValue = null;
 
 	public function __construct() {
 		parent::__construct();
@@ -118,6 +126,8 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 		$this->addType('retentionMonths', Types::INTEGER);
 		$this->addType('color', Types::STRING);
 		$this->addType('notes', Types::STRING);
+		$this->addType('secondUnit', Types::STRING);
+		$this->addType('secondValue', Types::BIGINT);
 	}
 
 	/**
@@ -154,6 +164,8 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 			'retention_months' => $this->retentionMonths,
 			'color' => $this->color,
 			'notes' => $this->notes,
+			'second_unit' => $this->secondUnit,
+			'second_value' => $this->secondValue,
 			'created_at' => $this->createdAt,
 			'updated_at' => $this->updatedAt,
 			'deleted_at' => $this->deletedAt,

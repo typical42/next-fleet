@@ -16,7 +16,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 
 import { ConflictError, getPreferences, getVehicle } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
-import { formatDay, jurisdictionWord, lifecycleWord, parseDay, parseWhole } from '../utils/format.js'
+import { energyWord, formatDay, jurisdictionWord, lifecycleWord, parseDay, parseWhole } from '../utils/format.js'
 
 const props = defineProps({
 	/**
@@ -89,19 +89,14 @@ const countries = ref([])
 const types = computed(() => [
 	{ id: 'car', label: t('nextfleet', 'Car') },
 	{ id: 'van', label: t('nextfleet', 'Van') },
+	{ id: 'truck', label: t('nextfleet', 'Truck') },
 	{ id: 'trailer', label: t('nextfleet', 'Trailer') },
 	{ id: 'tractor', label: t('nextfleet', 'Tractor') },
 	{ id: 'generator', label: t('nextfleet', 'Generator') },
 ])
 
-const engines = computed(() => [
-	{ id: 'petrol', label: t('nextfleet', 'Petrol') },
-	{ id: 'diesel', label: t('nextfleet', 'Diesel') },
-	{ id: 'lpg', label: t('nextfleet', 'LPG') },
-	{ id: 'cng', label: t('nextfleet', 'CNG') },
-	{ id: 'electric', label: t('nextfleet', 'Electric') },
-	{ id: 'hybrid', label: t('nextfleet', 'Hybrid') },
-])
+const engines = computed(() => ['petrol', 'diesel', 'lpg', 'cng', 'electric', 'hybrid']
+	.map((id) => ({ id, label: energyWord(id) })))
 
 // An Engine classifies the drivetrain; Energy Types is the set the vehicle actually accepts, and
 // hybrid is not one of them - a plug-in hybrid is `hybrid` / `[petrol, electric]` (CONTEXT.md).
@@ -128,6 +123,10 @@ const energyTypes = ref((props.vehicle?.energy_types ?? [])
 const odoUnit = ref(chosen(units.value, props.vehicle?.odo_unit ?? 'km'))
 const lifecycle = ref(chosen(lifecycles.value, props.vehicle?.lifecycle ?? 'active'))
 const jurisdiction = ref(text(props.vehicle?.jurisdiction))
+// Engine hours beside the kilometres, a second counter of its own (docs/architecture.md#odometer-rules).
+const countsHours = ref(props.vehicle?.second_unit === 'h')
+// A second counter only ever sits beside kilometres, so the switch goes with them.
+const offersHours = computed(() => odoUnit.value?.id === 'km')
 // A column nobody ever wrote is null rather than false, which is the same answer to the question
 // this switch asks (docs/architecture.md#data-model).
 const logbookMode = ref(props.vehicle?.logbook_mode === true)
@@ -154,6 +153,23 @@ watch(logbookMode, (on) => {
 		confirmedOff.value = false
 	}
 })
+
+/**
+ * The type, and the unit it suggests: a tractor or a generator counts hours, anything else
+ * kilometres. Only on a vehicle nothing has been counted on yet - a Reading's number means what its
+ * unit meant when it was read. The unit stays a field of its own the person can still change.
+ *
+ * @param {{ id: string, label: string }|null} option - the type chosen
+ */
+function chooseType(option) {
+	vehicleType.value = option
+	const counted = (held.value?.odo_value ?? null) !== null || (held.value?.second_value ?? null) !== null
+	if (option === null || counted) {
+		return
+	}
+
+	odoUnit.value = chosen(units.value, ['tractor', 'generator'].includes(option.id) ? 'h' : 'km')
+}
 
 // The disposal day is a fact about a disposed vehicle and about no other, so it appears with that
 // lifecycle and is written away again with any other one - see fields().
@@ -247,6 +263,7 @@ function fields() {
 		disposed_at: disposing.value ? formatDay(disposedAt.value) : '',
 		vin: vin.value,
 		odo_unit: odoUnit.value?.id ?? '',
+		second_unit: offersHours.value && countsHours.value ? 'h' : '',
 		purchase_price: purchasePrice.value,
 		residual_est: residualEst.value,
 		currency: currency.value,
@@ -360,6 +377,8 @@ async function add() {
 			manufacturer: manufacturer.value,
 			model: model.value,
 			engine: engine.value?.id ?? '',
+			vehicle_type: vehicleType.value?.id ?? '',
+			odo_unit: odoUnit.value?.id ?? '',
 		})
 	}
 
@@ -443,6 +462,21 @@ function chosen(options, id) {
 				:input-label="t('nextfleet', 'Engine')"
 				:disabled="saving || !!created"
 				label="label" />
+			<!-- Type and unit sit with the counter on a create, because the number means nothing
+			     without them. Both come prefilled, so they cost no field (docs/ui.md). -->
+			<NcSelect :model-value="vehicleType"
+				:options="types"
+				:input-label="t('nextfleet', 'Vehicle type')"
+				:disabled="saving || !!created"
+				:clearable="false"
+				label="label"
+				@update:model-value="chooseType" />
+			<NcSelect v-model="odoUnit"
+				:options="units"
+				:input-label="t('nextfleet', 'Counter unit')"
+				:disabled="saving || !!created"
+				:clearable="false"
+				label="label" />
 			<NcTextField v-if="!editing"
 				v-model="counter"
 				:label="t('nextfleet', 'Counter reading')"
@@ -450,12 +484,12 @@ function chosen(options, id) {
 				inputmode="decimal" />
 
 			<template v-if="editing">
-				<NcSelect v-model="vehicleType"
-					:options="types"
-					:input-label="t('nextfleet', 'Vehicle type')"
-					:disabled="saving"
-					:clearable="false"
-					label="label" />
+				<!-- Switching off hides the hour field and keeps the hour Readings. -->
+				<NcFormBoxSwitch v-if="offersHours"
+					v-model="countsHours"
+					class="sheet__wide"
+					:label="t('nextfleet', 'Also counts engine hours')"
+					:disabled="saving" />
 				<NcSelect v-model="energyTypes"
 					:options="energies"
 					:input-label="t('nextfleet', 'Energy types')"
@@ -470,12 +504,6 @@ function chosen(options, id) {
 					:label="t('nextfleet', 'First registration')"
 					:disabled="saving"
 					@keydown.esc.stop="keepPicker" />
-				<NcSelect v-model="odoUnit"
-					:options="units"
-					:input-label="t('nextfleet', 'Counter unit')"
-					:disabled="saving"
-					:clearable="false"
-					label="label" />
 				<!-- Integers in the units the database keeps: cents, millilitres, watt-hours
 				     (docs/contributing.md). The label says which, because nothing converts yet. -->
 				<NcTextField v-model="tankMl"

@@ -10,6 +10,7 @@ namespace OCA\NextFleet\Tests;
 
 use OCA\NextFleet\Migration\Version000001Date20260101000000;
 use OCA\NextFleet\Migration\Version000002Date20260909000000;
+use OCA\NextFleet\Migration\Version000003Date20260919000000;
 use OCP\Migration\SimpleMigrationStep;
 
 /**
@@ -23,6 +24,7 @@ final class MigrationSteps {
 		return [
 			new Version000001Date20260101000000(),
 			new Version000002Date20260909000000(),
+			new Version000003Date20260919000000(),
 		];
 	}
 
@@ -33,6 +35,9 @@ final class MigrationSteps {
 	 * @return list<string>
 	 */
 	public static function tables(): array {
-		return ['fleet_vehicles', 'fleet_odo_readings', 'fleet_access', 'fleet_trips', 'fleet_audit'];
+		return [
+			'fleet_vehicles', 'fleet_odo_readings', 'fleet_access', 'fleet_trips', 'fleet_audit',
+			'fleet_energy', 'fleet_maintenance', 'fleet_expenses',
+		];
 	}
 }

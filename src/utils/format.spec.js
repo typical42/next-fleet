@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { categoryWord, formatCount, formatDay, fullMoment, formatMonth, formatOdometer, isoInstant, monthKey, nameOf, parseDay, parseWhole, shortDate, subtitleOf } from './format.js'
+import { categoryWord, formatCount, formatDecimal, formatDay, fullMoment, formatMonth, formatOdometer, isoInstant, monthKey, nameOf, parseDay, parseDecimal, parseWhole, shortDate, subtitleOf } from './format.js'
 
 vi.mock('@nextcloud/l10n', () => ({
 	getCanonicalLocale: () => 'en-GB',
@@ -100,6 +100,52 @@ describe('parseWhole', () => {
 		expect(parseWhole('full')).toBeNull()
 		expect(parseWhole('-5')).toBeNull()
 		expect(parseWhole('')).toBeNull()
+	})
+})
+
+describe('formatDecimal', () => {
+	/**
+	 * A prefilled rate or price is written the way the reader's locale writes a decimal, and reads
+	 * back through parseDecimal() to what it was: 1 900 basis points is 19 %, 1 799 tenths of a
+	 * cent is 1.799 a litre.
+	 */
+	it('writes a scaled integer as the field would hold it', () => {
+		expect(formatDecimal(1900, 2, 'de-DE')).toBe('19')
+		expect(formatDecimal(1650, 2, 'de-DE')).toBe('16,5')
+		expect(formatDecimal(1799, 3, 'de-DE')).toBe('1,799')
+		expect(formatDecimal(123456, 3, 'en-GB')).toBe('123.456')
+		expect(parseDecimal(formatDecimal(1799, 3, 'de-DE'), 3)).toBe(1799)
+		// A locale with digits of its own still writes what parseDecimal() reads back.
+		expect(parseDecimal(formatDecimal(1650, 2, 'fa'), 2)).toBe(1650)
+	})
+})
+
+describe('parseDecimal', () => {
+	/**
+	 * A decimal field takes `7,2` and `7.2` alike (docs/ui.md#languages) and stores whole
+	 * thousandths or hundredths (docs/architecture.md#data-model): 48,2 litres is 48 200 ml, 85,10
+	 * euros is 8 510 cents, 1,799 a litre is 1 799 tenths of a cent.
+	 */
+	it('reads either decimal mark into the integer the column holds', () => {
+		expect(parseDecimal('48,2', 3)).toBe(48200)
+		expect(parseDecimal('48.2', 3)).toBe(48200)
+		expect(parseDecimal('85,10', 2)).toBe(8510)
+		expect(parseDecimal('1,799', 3)).toBe(1799)
+		expect(parseDecimal('19', 2)).toBe(1900)
+		expect(parseDecimal(' 7 ', 2)).toBe(700)
+		expect(parseDecimal(',5', 3)).toBe(500)
+	})
+
+	/**
+	 * More digits than the column keeps, or a grouped thousand, is a question for the driver rather
+	 * than a number to round: `1.234,5` could be either reading of the marks.
+	 */
+	it('says nothing about a field it cannot read without guessing', () => {
+		expect(parseDecimal('1,2345', 3)).toBeNull()
+		expect(parseDecimal('1.234,5', 3)).toBeNull()
+		expect(parseDecimal('-5', 2)).toBeNull()
+		expect(parseDecimal('full', 2)).toBeNull()
+		expect(parseDecimal('', 2)).toBeNull()
 	})
 })
 

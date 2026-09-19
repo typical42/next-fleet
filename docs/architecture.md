@@ -54,12 +54,12 @@ Tables (prefix `fleet_`; Nextcloud prepends `oc_`, so names stay under 27 charac
 
 | Table | Key columns |
 |---|---|
-| `fleet_vehicles` | `user_id` (owner), `plate`, `manufacturer`, `model`, `vehicle_type`, `engine`, `energy_types`, `tank_ml`, `battery_wh`, `first_reg`, `vin`, `odo_value` (cache), `odo_unit` (km/h), `purchase_price`, `residual_est`, `currency`, `jurisdiction`, `logbook_mode`, `lifecycle`, `disposed_at`, `folder_file_id`, `retention_months`, `color`, `notes` |
-| `fleet_odo_readings` | `vehicle_id`, `read_at`, `read_at_off`, `value`, `kind` (reading/reset/correction), `origin` (observed/derived), `flagged`, `source_type` (manual/trip/energy/maintenance), `source_id` |
+| `fleet_vehicles` | `user_id` (owner), `plate`, `manufacturer`, `model`, `vehicle_type`, `engine`, `energy_types`, `tank_ml`, `battery_wh`, `first_reg`, `vin`, `odo_value` (cache), `odo_unit` (km/h), `second_unit` (null/h), `second_value` (cache), `purchase_price`, `residual_est`, `currency`, `jurisdiction`, `logbook_mode`, `lifecycle`, `disposed_at`, `folder_file_id`, `retention_months`, `color`, `notes` |
+| `fleet_odo_readings` | `vehicle_id`, `read_at`, `read_at_off`, `value`, `kind` (reading/reset/correction), `origin` (observed/derived), `flagged`, `source_type` (manual/trip/energy/maintenance), `source_id`, `counter` (main/second, null reads as main) |
 | `fleet_trips` | `vehicle_id`, `started_at`, `started_at_off`, `ended_at`, `ended_at_off`, `start_odo` (nullable claim), `end_odo`, `distance`, `from_label`, `to_label`, `purpose`, `partner`, `category` (business/private/commute), `reconciled` |
-| `fleet_energy` | `vehicle_id`, `filled_at`, `odo`, `energy` (petrol/diesel/lpg/cng/electric), `amount` (ml or Wh, per `energy`), `unit_price`, `total`, `vat_rate`, `full_tank`, `missed_previous`, `station`, `is_dc`, `location_kind` (home/public) |
-| `fleet_maintenance` | `vehicle_id`, `type` (service/repair/inspection/tyres/upgrade), `done_at`, `odo`, `title`, `vendor`, `cost`, `vat_rate`, `notes`, `reminder_id` |
-| `fleet_expenses` | `vehicle_id`, `spent_at`, `category` (insurance/tax/toll/parking/fine/lease/other), `amount`, `vat_rate`, `notes` |
+| `fleet_energy` | `vehicle_id`, `filled_at`, `filled_at_off`, `odo`, `second_odo`, `energy` (petrol/diesel/lpg/cng/electric), `amount` (ml or Wh, per `energy`), `unit_price` (tenths of a cent per l or kWh), `total`, `vat_rate`, `full_tank`, `missed_previous`, `station`, `is_dc`, `location_kind` (home/public) |
+| `fleet_maintenance` | `vehicle_id`, `type` (service/repair/inspection/tyres/upgrade), `done_at`, `done_at_off`, `odo`, `second_odo`, `title`, `vendor`, `cost`, `vat_rate`, `notes`, `reminder_id` (M4) |
+| `fleet_expenses` | `vehicle_id`, `spent_at`, `spent_at_off`, `category` (insurance/tax/toll/parking/fine/lease/other), `amount`, `vat_rate`, `notes` |
 | `fleet_reminders` | `vehicle_id`, `template_key` (nullable — seeded templates translate, user titles do not), `title`, `due_date`, `due_odo`, `mode` (date/odo/either), `lead_days`, `lead_odo`, `recur_months`, `recur_odo`, `state`, `snoozed_until`, `cal_uid`, `cal_uri` |
 | `fleet_reminder_notifications` | `reminder_id`, `channel` (app/mail/calendar), `sent_at` |
 | `fleet_documents` | `vehicle_id`, `file_id`, `kind` (registration/insurance/manual/receipt/photo), `linked_type`, `linked_id` |
@@ -68,7 +68,8 @@ Tables (prefix `fleet_`; Nextcloud prepends `oc_`, so names stay under 27 charac
 | `fleet_bookings` *(M6+)* | `vehicle_id`, `user_id`, `starts_at`, `ends_at`, `purpose`, `state` |
 
 Money as integer cents, distances as integer km, volumes as integer millilitres, energy as integer
-watt-hours. No floats. Money also needs a `currency`, and business users need `vat_rate` — a report
+watt-hours. No floats. A unit price is the one exception to cents: pumps price to a tenth of a cent,
+so `unit_price` counts tenths. Money also needs a `currency`, and business users need `vat_rate` — a report
 that mixes net and gross is useless for accounting.
 
 **`vat_rate` is nullable and null means "not stated".** Never zero. A receipt without a VAT line and
@@ -83,7 +84,9 @@ in `energy`, because a plug-in hybrid has both kinds of row. The table is `fleet
 **`engine` classifies, `energy_types` decides.** `engine` (petrol/diesel/lpg/cng/electric/hybrid) is
 for display, filtering and emission defaults. `energy_types` is the set the vehicle actually
 accepts, and it is authoritative: it decides which options the entry sheet offers and which
-consumption figures exist. A plug-in hybrid is `hybrid` / `[petrol, electric]`.
+consumption figures exist. A plug-in hybrid is `hybrid` / `[petrol, electric]`. A fill-up of an
+energy outside the set is saved and flagged, as one without a total is flagged "no price"; both
+flags are computed on read (`EnergyService::flags()`), never stored.
 
 **`tank_ml` and `battery_wh` exist only to flag implausible amounts** — sixty litres into a
 forty-five-litre tank. They never constrain a save.
@@ -211,9 +214,17 @@ This is where logbooks quietly break. Six rules, decided once:
    is answered the flag stands and the segment is broken, exactly like `missed_previous`. Only an
    answered `reset` starts a new segment.
 4. **`value` is km or engine hours**, per vehicle. Trailers count neither, tractors and generators
-   count hours. One nullable column now; every query rewritten later.
-5. **An Entry writes exactly one Reading**, at the moment it happened: a trip at `ended_at`, a
-   fill-up at `filled_at`, maintenance at `done_at`. A trip's `start_odo` is a *claim*, not a
+   count hours. A km vehicle — a truck, say — may also count engine hours: `second_unit = h`
+   switches on a second chain of Readings (`counter = second`; null reads as `main`). Each chain is
+   ordered, flagged and cached on its own — `odo_value` for `main`, `second_value` for `second` —
+   and a distance counts from its own chain. Trips, Gaps, Reconciliation Trips, Logbook Mode and the
+   Fahrtenbuch read `main` only. An Odometer Entry on a two-counter vehicle says which counter it
+   read. Switching it off clears the column and keeps the Readings. The main unit is never switched
+   by picking a type once the vehicle has Readings, because their numbers mean what the unit meant
+   when they were read.
+5. **An Entry writes its Readings** at the moment it happened: a trip exactly one, at `ended_at`,
+   on `main`; a fill-up at `filled_at` and maintenance at `done_at`, one per counter given and none
+   without. A trip's `start_odo` is a *claim*, not a
    reading — comparing it with the Reading the last trip before it left is precisely what produces
    gap detection ([logbook mode](features.md#logbook-mode)). A Reading no trip wrote is not what
    the claim is compared with: it proves the counter moved and accounts for no kilometre. The Reading goes where its Entry goes: voiding the
@@ -226,7 +237,7 @@ This is where logbooks quietly break. Six rules, decided once:
 6. **Observed beats derived.** A driver who enters a distance instead of an end odometer leaves
    `start_odo` null; the Reading written at `ended_at` is *(latest reading at or before
    `started_at`) + distance*, marked `origin = derived`. Consumption requires **observed** readings
-   at both ends of a segment, which costs nothing because fill-ups always carry a real number. When
+   at both ends of a segment; a fill-up without a counter has none, and its segment yields no number. When
    a later observed reading contradicts the derived chain, the observed value wins and the derived
    rows are flagged — never silently corrected. Winning is not an alibi: if that reading is still
    below the last row left standing, it is flagged too, and both questions get asked.

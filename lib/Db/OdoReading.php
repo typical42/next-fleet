@@ -36,10 +36,18 @@ class OdoReading extends BaseEntity implements \JsonSerializable {
 	/**
 	 * An Odometer Entry is its own Reading and carries nothing beyond the number (CONTEXT.md), so
 	 * it is a row of the timeline in its own right. Every other source type names the Entry that
-	 * wrote the Reading, and that Entry is the row - `trip` is the only one M2 has.
+	 * wrote the Reading, and that Entry is the row.
 	 */
 	public const MANUAL = 'manual';
 	public const TRIP = 'trip';
+	public const ENERGY = 'energy';
+
+	/**
+	 * Which of a vehicle's counters the Reading is on: the one `odo_unit` names, or the engine
+	 * hours `second_unit` adds beside it. Each is a chain of its own.
+	 */
+	public const MAIN = 'main';
+	public const SECOND = 'second';
 
 	protected int $vehicleId = 0;
 	protected int $readAt = 0;
@@ -50,6 +58,7 @@ class OdoReading extends BaseEntity implements \JsonSerializable {
 	protected ?bool $flagged = null;
 	protected string $sourceType = '';
 	protected ?int $sourceId = null;
+	protected ?string $counter = null;
 
 	public function __construct() {
 		parent::__construct();
@@ -62,6 +71,19 @@ class OdoReading extends BaseEntity implements \JsonSerializable {
 		$this->addType('flagged', Types::BOOLEAN);
 		$this->addType('sourceType', Types::STRING);
 		$this->addType('sourceId', Types::BIGINT);
+		$this->addType('counter', Types::STRING);
+	}
+
+	/**
+	 * Null is `main`: the column arrived with M3, and every Reading written before it is on the
+	 * only counter there was.
+	 */
+	public function getCounter(): string {
+		return $this->counter ?? self::MAIN;
+	}
+
+	public function setCounter(string $counter): void {
+		$this->setter('counter', [$counter]);
 	}
 
 	/**
@@ -93,6 +115,7 @@ class OdoReading extends BaseEntity implements \JsonSerializable {
 			'flagged' => $this->getFlagged(),
 			'source_type' => $this->sourceType,
 			'source_id' => $this->sourceId,
+			'counter' => $this->getCounter(),
 			'created_at' => $this->createdAt,
 			'updated_at' => $this->updatedAt,
 			'deleted_at' => $this->deletedAt,

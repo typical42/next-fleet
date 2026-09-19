@@ -10,6 +10,7 @@ namespace OCA\NextFleet\Jurisdiction\De;
 
 use OCA\NextFleet\Jurisdiction\IJurisdiction;
 use OCA\NextFleet\Jurisdiction\ILogbookRules;
+use OCA\NextFleet\Jurisdiction\IRateProvider;
 use OCA\NextFleet\Jurisdiction\IReportRenderer;
 
 /** Germany, the first jurisdiction (plan.md). */
@@ -42,5 +43,10 @@ class Profile implements IJurisdiction {
 	/** Built here for the reason the ruleset is. */
 	public function logbookRenderer(): ?IReportRenderer {
 		return new FahrtenbuchRenderer();
+	}
+
+	/** Built here for the reason the ruleset is: the table is its own constants. */
+	public function rates(): ?IRateProvider {
+		return new RateProvider();
 	}
 }

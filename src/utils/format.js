@@ -86,6 +86,28 @@ export function categoryWord(category) {
 }
 
 /**
+ * An engine or an energy is a code in the database and a word on screen (docs/ui.md#languages).
+ * One list for both, because an energy is an engine's code minus `hybrid` (CONTEXT.md) and the
+ * vehicle sheet and the entry sheet name them alike.
+ *
+ * @param {string} code - petrol, diesel, lpg, cng, electric or hybrid
+ * @return {string} the word for it, or the code where there is none
+ */
+export function energyWord(code) {
+	/** @type {Record<string, string>} */
+	const words = {
+		petrol: t('nextfleet', 'Petrol'),
+		diesel: t('nextfleet', 'Diesel'),
+		lpg: t('nextfleet', 'LPG'),
+		cng: t('nextfleet', 'CNG'),
+		electric: t('nextfleet', 'Electric'),
+		hybrid: t('nextfleet', 'Hybrid'),
+	}
+
+	return words[code] ?? code
+}
+
+/**
  * A country is a code in the config and a word on screen (docs/ui.md#languages). The words live
  * here rather than in lib/Jurisdiction/, because the catalogues are the frontend's, and they are
  * looked up on call because the catalogue is registered by the page and not by this module.
@@ -179,13 +201,28 @@ export function formatOdometer(vehicle, locale = getCanonicalLocale()) {
 }
 
 /**
+ * A column's integer as a decimal field shows it, in what parseDecimal() reads back: Latin digits,
+ * no grouping, and the locale's mark where that is a comma, a point everywhere else.
+ *
+ * @param {number} value - the integer the column holds: basis points, tenths of a cent
+ * @param {number} places - how many of its digits are decimals
+ * @param {string} [locale] - defaults to the one Nextcloud resolved for this session
+ * @return {string} the decimal, without trailing zeros
+ */
+export function formatDecimal(value, places, locale = getCanonicalLocale()) {
+	const decimal = new Intl.NumberFormat(locale).formatToParts(0.5).find((part) => part.type === 'decimal')
+
+	return String(value / 10 ** places).replace('.', decimal?.value === ',' ? ',' : '.')
+}
+
+/**
  * A counter as somebody typed it into the sheet. It reads in whole kilometres or whole hours
  * (docs/architecture.md#data-model), so a dot, comma or space in it groups thousands - which is
  * what the app itself wrote out a moment earlier, `148.320` in German and `148,320` in English
  * (docs/ui.md#languages). Grouping is what separates three digits and nothing else, so `7,2` is
  * not a counter: it is a question for the driver rather than a number to round.
  *
- * A decimal parser belongs to the sheet that has a decimal field; litres arrive with M2.
+ * A litre or a euro is read by parseDecimal() instead.
  *
  * @param {string} input - what the field holds
  * @return {number|null} the counter, or null when the field says nothing usable
@@ -197,6 +234,25 @@ export function parseWhole(input) {
 	}
 
 	return GROUPED.test(typed) ? Number(typed.replace(/\D/g, '')) : null
+}
+
+/**
+ * A decimal as somebody typed it, as the integer its column holds (docs/architecture.md#data-model):
+ * litres as millilitres, euros as cents. A comma and a point are both the decimal mark
+ * (docs/ui.md#languages), so a field carries at most one, and no grouping - `1.234,5` is read two
+ * ways by two locales, and a fill-up is never a thousand litres often enough to guess.
+ *
+ * @param {string} input - what the field holds
+ * @param {number} places - how many decimals the column keeps: 3 for thousandths, 2 for cents
+ * @return {number|null} the scaled whole number, or null when the field says nothing usable
+ */
+export function parseDecimal(input, places) {
+	const parts = /^(\d*)(?:[.,](\d*))?$/.exec(String(input).trim())
+	if (parts === null || (parts[1] + (parts[2] ?? '')) === '' || (parts[2] ?? '').length > places) {
+		return null
+	}
+
+	return Number(parts[1] + (parts[2] ?? '').padEnd(places, '0'))
 }
 
 /**
