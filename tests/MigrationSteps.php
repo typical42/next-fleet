@@ -8,9 +8,12 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests;
 
+use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Migration\Version000001Date20260101000000;
 use OCA\NextFleet\Migration\Version000002Date20260909000000;
 use OCA\NextFleet\Migration\Version000003Date20260919000000;
+use OCA\NextFleet\Migration\Version000004Date20260922000000;
+use OCP\IDBConnection;
 use OCP\Migration\SimpleMigrationStep;
 
 /**
@@ -19,12 +22,18 @@ use OCP\Migration\SimpleMigrationStep;
  * tests fails them instead of being silently skipped.
  */
 final class MigrationSteps {
-	/** @return list<SimpleMigrationStep> */
-	public static function inOrder(): array {
+	/**
+	 * The fourth step writes rows after its schema change, so it is handed what it writes them
+	 * with; a schema test calls only changeSchema() and can pass stand-ins.
+	 *
+	 * @return list<SimpleMigrationStep>
+	 */
+	public static function inOrder(IDBConnection $db, ReminderRecipientMapper $recipients): array {
 		return [
 			new Version000001Date20260101000000(),
 			new Version000002Date20260909000000(),
 			new Version000003Date20260919000000(),
+			new Version000004Date20260922000000($db, $recipients),
 		];
 	}
 
@@ -37,7 +46,8 @@ final class MigrationSteps {
 	public static function tables(): array {
 		return [
 			'fleet_vehicles', 'fleet_odo_readings', 'fleet_access', 'fleet_trips', 'fleet_audit',
-			'fleet_energy', 'fleet_maintenance', 'fleet_expenses',
+			'fleet_energy', 'fleet_maintenance', 'fleet_expenses', 'fleet_reminders',
+			'fleet_reminder_receipts', 'fleet_reminder_recipients',
 		];
 	}
 }

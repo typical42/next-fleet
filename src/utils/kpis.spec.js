@@ -121,6 +121,26 @@ describe('the header tiles', () => {
 		expect(tile(tiles, 'Cost')).toBeUndefined()
 	})
 
+	it('compares no cost against a period before that recorded none', () => {
+		const empty = { total: null, energy: null, value: null, energy_value: null, tco: null }
+
+		const tiles = tilesOf(CAR, kpis(), kpis({ cost: cost(empty) }), 'en')
+		const alone = tilesOf(CAR, kpis({ cost: cost(empty) }), null, 'en')
+
+		expect(tile(tiles, 'Cost')).toMatchObject({ figure: '€20.00/100 km', change: null })
+		expect(tile(tiles, 'Energy cost')?.change).toBeNull()
+		expect(tile(alone, 'Cost')?.figure).toBe('€0.00/100 km')
+	})
+
+	it('compares a period that recorded no cost against nothing', () => {
+		const empty = { total: null, energy: null, value: null, energy_value: null, tco: null }
+
+		const tiles = tilesOf(CAR, kpis({ cost: cost(empty) }), kpis(), 'en')
+
+		expect(tile(tiles, 'Cost')).toMatchObject({ figure: '€0.00/100 km', change: null })
+		expect(tile(tiles, 'Energy cost')?.change).toBeNull()
+	})
+
 	it('says "no currency" instead of any cost on a vehicle without one', () => {
 		const answer = kpis({ cost: cost({ currency: null, total: null, energy: null, value: null, energy_value: null }) })
 

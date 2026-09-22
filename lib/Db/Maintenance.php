@@ -37,6 +37,8 @@ use OCP\DB\Types;
  * @method void setVatRate(?int $vatRate)
  * @method string|null getNotes()
  * @method void setNotes(?string $notes)
+ * @method int|null getReminderId()
+ * @method void setReminderId(?int $reminderId)
  */
 class Maintenance extends BaseEntity implements \JsonSerializable {
 	protected int $vehicleId = 0;
@@ -50,6 +52,8 @@ class Maintenance extends BaseEntity implements \JsonSerializable {
 	protected ?int $cost = null;
 	protected ?int $vatRate = null;
 	protected ?string $notes = null;
+	/** The reminder this record closed. An id, so it stays off the wire. */
+	protected ?int $reminderId = null;
 
 	public function __construct() {
 		parent::__construct();
@@ -64,6 +68,7 @@ class Maintenance extends BaseEntity implements \JsonSerializable {
 		$this->addType('cost', Types::BIGINT);
 		$this->addType('vatRate', Types::INTEGER);
 		$this->addType('notes', Types::STRING);
+		$this->addType('reminderId', Types::BIGINT);
 	}
 
 	/**

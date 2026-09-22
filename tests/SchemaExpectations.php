@@ -124,7 +124,8 @@ trait SchemaExpectations {
 		$this->assertSame(
 			[
 				'fleet_access', 'fleet_audit', 'fleet_energy', 'fleet_expenses', 'fleet_maintenance',
-				'fleet_odo_readings', 'fleet_trips', 'fleet_vehicles',
+				'fleet_odo_readings', 'fleet_reminder_receipts', 'fleet_reminder_recipients',
+				'fleet_reminders', 'fleet_trips', 'fleet_vehicles',
 			],
 			$tables,
 		);
@@ -163,6 +164,9 @@ trait SchemaExpectations {
 			'second_unit' => 'string(8), null',
 			// A cache of that chain's newest Reading, as `odo_value` is of the first.
 			'second_value' => 'bigint, null',
+			// off, daily, weekly or monthly. Defaulted, so the vehicles already there need no
+			// backfill.
+			'reminder_mail' => "string(8), not null, default 'weekly'",
 		]);
 	}
 
@@ -247,6 +251,8 @@ trait SchemaExpectations {
 			'cost' => 'bigint, null',
 			'vat_rate' => 'integer, null',
 			'notes' => 'text, null',
+			// The reminder this record closed, if it closed one.
+			'reminder_id' => 'bigint, null',
 		]);
 	}
 
@@ -259,6 +265,50 @@ trait SchemaExpectations {
 			'amount' => 'bigint, not null',
 			'vat_rate' => 'integer, null',
 			'notes' => 'text, null',
+		]);
+	}
+
+	public function testRemindersHoldsTheDataModelsColumnsAndNoOthers(): void {
+		$this->assertTable('fleet_reminders', [
+			'vehicle_id' => 'bigint, not null',
+			// A template's title translates and is not stored; a user's title is stored as typed.
+			'template_key' => 'string(32), null',
+			'title' => 'string(255), null',
+			'mode' => 'string(8), not null',
+			// A plain calendar date: due is a day, not an instant.
+			'due_date' => 'date, null',
+			'due_odo' => 'bigint, null',
+			'lead_odo' => 'bigint, null',
+			// The warning points of a date reminder. Each sends once.
+			'warn_month_before' => 'boolean, null, default true',
+			'warn_month_start' => 'boolean, null, default false',
+			'warn_due_date' => 'boolean, null, default true',
+			'recur_months' => 'integer, null',
+			'recur_odo' => 'bigint, null',
+			'state' => 'string(16), not null',
+			'snoozed_until' => 'date, null',
+			// Counts the recurrences, so a receipt belongs to one of them and the next one sends
+			// afresh.
+			'occurrence' => 'integer, not null',
+		]);
+	}
+
+	public function testReminderReceiptsHoldsTheDataModelsColumnsAndNoOthers(): void {
+		$this->assertTable('fleet_reminder_receipts', [
+			'reminder_id' => 'bigint, not null',
+			'occurrence' => 'integer, not null',
+			// Which warning point, or overdue.
+			'point' => 'string(16), not null',
+			'channel' => 'string(8), not null',
+			'user_id' => 'string(64), not null',
+			'sent_at' => 'bigint, not null',
+		]);
+	}
+
+	public function testReminderRecipientsHoldsTheDataModelsColumnsAndNoOthers(): void {
+		$this->assertTable('fleet_reminder_recipients', [
+			'vehicle_id' => 'bigint, not null',
+			'user_id' => 'string(64), not null',
 		]);
 	}
 
@@ -320,6 +370,7 @@ trait SchemaExpectations {
 		], $this->indexes('fleet_energy'));
 
 		$this->assertSame([
+			'fleet_mnt_reminder_idx' => 'index(reminder_id)',
 			'fleet_mnt_uuid_uniq' => 'unique(uuid)',
 			'fleet_mnt_veh_done_idx' => 'index(vehicle_id, done_at)',
 		], $this->indexes('fleet_maintenance'));
@@ -328,6 +379,24 @@ trait SchemaExpectations {
 			'fleet_exp_uuid_uniq' => 'unique(uuid)',
 			'fleet_exp_veh_spent_idx' => 'index(vehicle_id, spent_at)',
 		], $this->indexes('fleet_expenses'));
+
+		$this->assertSame([
+			'fleet_rem_uuid_uniq' => 'unique(uuid)',
+			'fleet_rem_veh_idx' => 'index(vehicle_id)',
+		], $this->indexes('fleet_reminders'));
+
+		// Unique, so a point sends once per occurrence, channel and recipient even when two runs
+		// of the job overlap.
+		$this->assertSame([
+			'fleet_rrc_once_uniq' => 'unique(reminder_id, occurrence, point, channel, user_id)',
+			'fleet_rrc_user_sent_idx' => 'index(user_id, channel, sent_at)',
+			'fleet_rrc_uuid_uniq' => 'unique(uuid)',
+		], $this->indexes('fleet_reminder_receipts'));
+
+		$this->assertSame([
+			'fleet_rcp_uuid_uniq' => 'unique(uuid)',
+			'fleet_rcp_veh_user_uniq' => 'unique(vehicle_id, user_id)',
+		], $this->indexes('fleet_reminder_recipients'));
 	}
 
 	/**
@@ -377,6 +446,8 @@ trait SchemaExpectations {
 			foreach ($names as $identifier) {
 				$this->assertLessThanOrEqual(30, strlen($identifier), $identifier . ' is too long for Oracle');
 			}
+			// The table's own name leaves three characters for the prefix, `oc_`.
+			$this->assertLessThanOrEqual(27, strlen($name), $name . ' is too long for Nextcloud');
 		}
 	}
 }

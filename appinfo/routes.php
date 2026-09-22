@@ -66,6 +66,15 @@ return [
 		['name' => 'expense#update', 'url' => '/api/vehicles/{uuid}/expenses/{expense}', 'verb' => 'PUT'],
 		['name' => 'expense#delete', 'url' => '/api/vehicles/{uuid}/expenses/{expense}', 'verb' => 'DELETE'],
 		['name' => 'expense#restore', 'url' => '/api/vehicles/{uuid}/expenses/{expense}/restore', 'verb' => 'POST'],
+		// A Reminder is not an Entry - nothing happened yet - but it is reached the same way. Its
+		// state is the engine's (docs/architecture.md#reminder-engine), so an edit cannot set it.
+		['name' => 'reminder#index', 'url' => '/api/vehicles/{uuid}/reminders', 'verb' => 'GET'],
+		['name' => 'reminder#create', 'url' => '/api/vehicles/{uuid}/reminders', 'verb' => 'POST'],
+		['name' => 'reminder#update', 'url' => '/api/vehicles/{uuid}/reminders/{reminder}', 'verb' => 'PUT'],
+		['name' => 'reminder#delete', 'url' => '/api/vehicles/{uuid}/reminders/{reminder}', 'verb' => 'DELETE'],
+		['name' => 'reminder#restore', 'url' => '/api/vehicles/{uuid}/reminders/{reminder}/restore', 'verb' => 'POST'],
+		['name' => 'reminder#snooze', 'url' => '/api/vehicles/{uuid}/reminders/{reminder}/snooze', 'verb' => 'POST'],
+		['name' => 'reminder#dismiss', 'url' => '/api/vehicles/{uuid}/reminders/{reminder}/dismiss', 'verb' => 'POST'],
 
 		// What happened to the vehicle, every table at once and a page at a time
 		// (docs/architecture.md#the-timeline). `odometer#index` stays where it is: the counter on

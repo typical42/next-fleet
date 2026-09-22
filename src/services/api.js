@@ -30,6 +30,8 @@ import { generateUrl } from '@nextcloud/router'
  * @property {number|null} [tank_ml] - the tank, in millilitres
  * @property {number|null} [battery_wh] - the battery, in watt-hours
  * @property {string|null} [currency] - the code its costs are in; null leaves them unsummed
+ * @property {string} [reminder_mail] - how often the reminder digest covers it: `off`, `daily`,
+ *   `weekly` or `monthly`
  */
 
 /**
@@ -156,10 +158,11 @@ import { generateUrl } from '@nextcloud/router'
 
 /**
  * What a vehicle cost in a period (lib/Service/CostService.php). Money is cents; `value`,
- * `energy_value` and `tco` are cents per 100 km, or per hour.
+ * `energy_value` and `tco` are cents per 100 km, or per hour. Every sum is null on a vehicle without
+ * a currency, and in a period with no fill-up, record or expense.
  *
  * @typedef {object} Cost
- * @property {string|null} currency - null when the vehicle has none, and then every sum is null
+ * @property {string|null} currency - null when the vehicle has none
  * @property {boolean} net - whether rows count net of their VAT rate
  * @property {'km'|'h'} per - the main counter's unit
  * @property {number|null} distance - how far the main counter moved in the period

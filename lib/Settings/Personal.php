@@ -30,8 +30,7 @@ class Personal implements ISettings {
 	/**
 	 * Nextcloud's own catch-all section. An app that owns a section registers one, and one
 	 * jurisdiction dropdown is not enough to make a page of its own worth the extra class and
-	 * icon; it becomes one when the calendar target and the digest cadence join it
-	 * (docs/architecture.md#extension-points).
+	 * icon (docs/architecture.md#extension-points).
 	 */
 	public function getSection(): string {
 		return 'additional';

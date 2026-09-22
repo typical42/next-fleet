@@ -7,6 +7,6 @@
 
 namespace OCA\NextFleet\BackgroundJob;
 
-// TODO: hourly TimedJob — evaluate due reminders, notify, mail, calendar.
+// TODO: hourly TimedJob — evaluate due reminders, notify, mail.
 class ReminderJob {
 }

@@ -91,6 +91,22 @@ final class Field {
 	}
 
 	/**
+	 * A calendar day, one fact, so it carries no offset and no time of day
+	 * (docs/architecture.md#time). `!` zeroes what the format does not name, which is also what
+	 * keeps the clock out of it.
+	 *
+	 * @throws \InvalidArgumentException
+	 */
+	public static function day(string $column, mixed $value): \DateTime {
+		$day = is_string($value) ? \DateTime::createFromFormat('!Y-m-d', $value) : false;
+		if ($day === false || $day->format('Y-m-d') !== $value) {
+			throw new \InvalidArgumentException($column . ' is a day, as YYYY-MM-DD');
+		}
+
+		return $day;
+	}
+
+	/**
 	 * The offset a moment was entered at, in minutes (docs/architecture.md#time). Real ones run
 	 * from -12:00 to +14:00, and a number outside that is a field that did not mean minutes.
 	 *

@@ -63,4 +63,10 @@ interface IJurisdiction {
 	 * answer. A figure needing a rate is then unavailable, never zero (docs/contributing.md).
 	 */
 	public function rates(): ?IRateProvider;
+
+	/**
+	 * The periodic inspection this jurisdiction requires, or null where it requires none - the
+	 * generic profile's answer, under which no vehicle is asked when one is due.
+	 */
+	public function inspectionScheme(): ?IInspectionScheme;
 }

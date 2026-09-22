@@ -8,12 +8,16 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Country;
 
+use OCA\NextFleet\Db\Reminder;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\Vehicle;
+use OCA\NextFleet\Jurisdiction\Generic\ServiceTemplates;
 use OCA\NextFleet\Jurisdiction\IJurisdiction;
 use OCA\NextFleet\Jurisdiction\ILogbookRules;
 use OCA\NextFleet\Jurisdiction\LogbookReport;
+use OCA\NextFleet\Jurisdiction\ReminderTemplate;
 use OCA\NextFleet\Service\ExpenseService;
+use OCA\NextFleet\Service\VehicleService;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -146,6 +150,35 @@ abstract class JurisdictionTestCase extends TestCase {
 	 * a figure needing a rate is unavailable rather than zero (docs/contributing.md). A VAT rate is
 	 * basis points or null for "not stated", never a fraction (docs/architecture.md#data-model).
 	 */
+	/**
+	 * A jurisdiction either states how every vehicle type is inspected or has no scheme at all -
+	 * the generic profile's answer, under which no vehicle is asked for an inspection date. Asked
+	 * of every type the core writes: a scheme silent about a trailer leaves a trailer undue.
+	 */
+	public function testItsInspectionSchemeIsSoundOrHonestlyAbsent(): void {
+		$scheme = static::profile()->inspectionScheme();
+		if ($scheme === null) {
+			$this->assertNull($scheme, 'a country without an inspection scheme states none');
+			return;
+		}
+
+		// A template key names the translation of every reminder made from it, so one the
+		// service templates already use would retitle an oil change as an inspection.
+		$taken = array_map(static fn (ReminderTemplate $template): string => $template->key, (new ServiceTemplates())->all());
+		foreach (VehicleService::VEHICLE_TYPES as $type) {
+			$template = $scheme->template($type);
+
+			$this->assertMatchesRegularExpression('/^[a-z][a-z0-9_]{0,31}$/', $template->key, 'the key does not fit template_key');
+			$this->assertNotContains($template->key, $taken, $template->key . ' is a service template already');
+			// Due on the sticker's month, never by the counter.
+			$this->assertSame(Reminder::DATE, $template->mode, $type . ' is inspected by date');
+			$this->assertGreaterThan(0, $template->recurMonths, $type . ' recurs at no interval');
+			$this->assertNull($template->recurOdo);
+			$this->assertNull($template->leadOdo);
+			$this->assertGreaterThanOrEqual($template->recurMonths, $scheme->firstDueMonths($type), $type . ' is first due sooner than it recurs');
+		}
+	}
+
 	public function testItsRatesAreSoundOrHonestlyAbsent(): void {
 		$rates = static::profile()->rates();
 		if ($rates === null) {

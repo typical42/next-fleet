@@ -8,6 +8,8 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\AppInfo;
 
+use OCA\NextFleet\Jurisdiction\Generic\ServiceTemplates;
+use OCA\NextFleet\Jurisdiction\IServiceTemplates;
 use OCP\AppFramework\App;
 use OCP\AppFramework\Bootstrap\IBootContext;
 use OCP\AppFramework\Bootstrap\IBootstrap;
@@ -21,11 +23,12 @@ class Application extends App implements IBootstrap {
 	}
 
 	/**
-	 * Controllers, services and mappers are autowired from their constructor types, so
-	 * nothing is registered here yet. The notifier, the dashboard widget and the search
-	 * provider arrive with the milestones that need them.
+	 * Controllers, services and mappers are autowired from their constructor types; only an
+	 * interface needs telling which class it is. The notifier, the dashboard widget and the
+	 * search provider arrive with the milestones that need them.
 	 */
 	public function register(IRegistrationContext $context): void {
+		$context->registerServiceAlias(IServiceTemplates::class, ServiceTemplates::class);
 	}
 
 	public function boot(IBootContext $context): void {

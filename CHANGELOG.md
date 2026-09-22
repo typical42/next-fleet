@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+- Snooze and dismiss: `POST …/reminders/{reminder}/snooze` (with `until`, a day still to come) and
+  `…/dismiss`, owner and managers only. Dismissing moves a recurring reminder one recurrence on
+  from its planned due; one that does not recur stays dismissed. The state of a reminder at any day
+  and counter reading is now computed in one place (docs/architecture.md, "The state at an
+  instant"). By km a reminder is due and stays due; overdue is the date's.
+- Reminders on the server: `GET`/`POST /api/vehicles/{uuid}/reminders`, and `PUT`, `DELETE` and
+  `POST …/restore` on `…/reminders/{reminder}`. A reminder is made from a template the vehicle
+  offers, HU/AU only where its jurisdiction requires one, or under the user's own title. It is due
+  by date, by km or by either, with warning points and a recurrence. The owner and managers write;
+  drivers and viewers read. Nothing evaluates or sends them yet.
+- Reminder templates. `IServiceTemplates` offers oil change (12 months or 15 000 km, warned
+  1 000 km ahead), brake fluid (24 months) and tyre swap (6 months), the same everywhere. A
+  jurisdiction states its inspection (`IJurisdiction::inspectionScheme()`): Germany's is HU/AU,
+  every 12 months for a truck or tractor and 24 for the rest, first due after 36 months for a
+  car. The generic profile has none.
+- Reminders write no calendar event: public `OCP` on NC 31–34 cannot update or delete one, so a
+  changed or completed reminder would leave an event that still rings. The empty `CalendarService`
+  is gone; the in-app notification and the mail digest carry reminders.
+- The M4 schema: `fleet_reminders`, `fleet_reminder_receipts` (one row per point, occurrence,
+  channel and recipient, unique) and `fleet_reminder_recipients`, `reminder_id` on a maintenance
+  record and `reminder_mail` on the vehicle (default `weekly`). Every vehicle already there gets
+  its owner as its one recipient. The receipts table is not `fleet_reminder_notifications`, which
+  is one character over the 27 Nextcloud allows. No service writes them yet; a vehicle carries
+  `reminder_mail` on the wire.
 - The M3 schema: `fleet_energy`, `fleet_maintenance` and `fleet_expenses`, a `counter` on each
   Reading (`main` or `second`; every existing Reading reads as `main`), and `second_unit` and
   `second_value` on the vehicle for engine hours beside the kilometres. Nothing writes them yet.
@@ -100,6 +124,10 @@
 - `tests/e2e/m3-slice.spec.js` drives the M3 slice on both majors: a fill-up moving the header, a
   hybrid's two figures, an edit, a delete and its undo, the period picker, and an axe audit at
   320 × 640 in the dark. The M1 and M2 slices find the odometer in the new header.
+- A period with no fill-up, maintenance record or expense has no cost: every sum in the KPIs' `cost`
+  is `null` rather than 0, TCO included, so its tile hides. The header still shows such a period as
+  zero but compares nothing with it, so a vehicle bought four months ago shows no swing against the
+  months before it existed.
 
 - Overview, at the top of the navigation. It leads back from a vehicle or from Reports without a
   reload, and is marked whenever the overview is what shows.

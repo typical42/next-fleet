@@ -158,6 +158,32 @@ class CostServiceTest extends TestCase {
 		$this->assertNull($cost['energy_value']);
 	}
 
+	public function testAPeriodWithoutRowsHasNoCostRatherThanZero(): void {
+		$this->reading(100, 10000);
+		$this->reading(900, 11000);
+
+		$cost = $this->of($this->vehicle(purchase: 3000000, residual: 1000000));
+
+		$this->assertSame(1000, $cost['distance']);
+		$this->assertNull($cost['total']);
+		$this->assertNull($cost['energy']);
+		$this->assertNull($cost['value']);
+		$this->assertNull($cost['energy_value']);
+		$this->assertNull($cost['tco']);
+	}
+
+	public function testARecordWithoutACostStillMakesThePeriodCostZero(): void {
+		$this->reading(100, 10000);
+		$this->reading(900, 11000);
+		$this->maintain(null, null);
+
+		$cost = $this->of($this->vehicle());
+
+		$this->assertSame(0, $cost['total']);
+		$this->assertSame(0, $cost['energy']);
+		$this->assertSame(0.0, $cost['value']);
+	}
+
 	public function testAnHourCountedVehicleCostsPerHour(): void {
 		$this->reading(100, 1000);
 		$this->reading(900, 1040);

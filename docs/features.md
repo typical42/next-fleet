@@ -11,11 +11,11 @@ Part of the [NextFleet plan](../plan.md). Terms are defined in [CONTEXT.md](../C
   monthly trend. Copy the reporting angle, not the ad-driven cloud.
 - Nextcloud already has [Car Fuel & Maintenance](https://apps.nextcloud.com/apps/carfuelmaintance)
   and [Vehicle Manager](https://github.com/jonathan-berthet/Nextcloud-VehicleManager). Both are
-  single-user logbooks. Neither does calendar-backed reminders nor a tax-grade Fahrtenbuch.
+  single-user logbooks. Neither keeps a tax-grade Fahrtenbuch.
 
 **Our differentiator** is the freelancer's paperwork ([who it is for](../plan.md#who-it-is-for)):
 a defensible logbook, gap detection, a mileage claim — on top of deep Nextcloud integration
-(calendar, notifications, files, search, dashboard). The two existing apps cover the fuel log; that
+(notifications, files, search, dashboard). The two existing apps cover the fuel log; that
 is not the reason anyone would switch.
 
 ## Feature backlog

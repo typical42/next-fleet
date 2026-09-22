@@ -69,7 +69,8 @@ gets two, and the wall-side kWh beside them), cost, energy-only cost and TCO, pe
 hours beside its kilometres adds the hours in the period, noting that the consumption includes fuel
 used while working. The period is picked above the figures — last 12 months by default, this year,
 last year, or one month — and each figure is compared with the period before, of the same length, as
-a signed difference rather than a colour. A figure the period before lacks gets no comparison. With
+a signed difference rather than a colour. A figure either period lacks gets no comparison; a period that recorded no cost shows it as zero,
+uncompared. With
 no distance in the period the costs are period totals; without a currency the header says so in
 place of every cost. The client names the period, because a year starts at midnight where the
 person is; the server answers `GET …/kpis?from=&to=&net=` once for each of the two. The chosen
@@ -265,8 +266,7 @@ but shipping only `de` would give company users "du". Ship both, worded differen
   `IFactory::get('nextfleet', $lang)`. Getting this wrong sends German mails to English users and is
   invisible in single-user testing.
 - **Notifications translate late.** Store parameters in the notification, translate in
-  `INotifier::prepare()`, which receives the language. Same for activity entries and calendar event
-  summaries.
+  `INotifier::prepare()`, which receives the language. Same for activity entries.
 - **Enums are codes, never words.** `petrol`, `diesel`, `electric`, `hybrid` in the DB; labels come
   from l10n. ("Otto" is *petrol*/*gasoline* in English — not a word an English user recognises.)
 - **HU/AU has no English equivalent.** Label it "Technical inspection (HU/AU)". Never "TÜV"

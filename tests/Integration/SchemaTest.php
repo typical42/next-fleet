@@ -10,6 +10,7 @@ namespace OCA\NextFleet\Tests\Integration;
 
 use Doctrine\DBAL\Schema\Schema;
 use Doctrine\DBAL\Schema\Table;
+use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Tests\Fixture\SchemaWrapper;
 use OCA\NextFleet\Tests\MigrationSteps as Steps;
 use OCA\NextFleet\Tests\SchemaExpectations;
@@ -55,7 +56,7 @@ class SchemaTest extends TestCase {
 			$db->getDatabasePlatform(),
 		);
 
-		foreach (Steps::inOrder() as $step) {
+		foreach (Steps::inOrder($db, Server::get(ReminderRecipientMapper::class)) as $step) {
 			$step->changeSchema(
 				$this->createMock(IOutput::class),
 				static fn (): ISchemaWrapper => $wrapper,
