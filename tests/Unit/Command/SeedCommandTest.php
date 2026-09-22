@@ -11,6 +11,7 @@ namespace OCA\NextFleet\Tests\Unit\Command;
 use OCA\NextFleet\Command\SeedCommand;
 use OCA\NextFleet\Db\AuditMapper;
 use OCA\NextFleet\Db\OdoReading;
+use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
@@ -169,6 +170,7 @@ class SeedCommandTest extends TestCase {
 			new Jurisdictions($container),
 			$this->createMock(AuditMapper::class),
 			$this->createMock(IDBConnection::class),
+			$this->createMock(ReminderRecipientMapper::class),
 		);
 
 		return new CommandTester(new SeedCommand(

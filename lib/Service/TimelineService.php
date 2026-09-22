@@ -16,6 +16,7 @@ use OCA\NextFleet\Db\Maintenance;
 use OCA\NextFleet\Db\MaintenanceMapper;
 use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Db\OdoReadingMapper;
+use OCA\NextFleet\Db\ReminderMapper;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
@@ -57,6 +58,7 @@ class TimelineService {
 		private EnergyMapper $energy,
 		private MaintenanceMapper $maintenance,
 		private ExpenseMapper $expenses,
+		private ReminderMapper $reminders,
 		private VehicleService $fleet,
 		private Completeness $completeness,
 		private Gaps $gaps,
@@ -215,7 +217,34 @@ class TimelineService {
 	 * @throws \OCP\DB\Exception
 	 */
 	private function dressed(Vehicle $vehicle, array $rows): array {
-		return $this->withConsumption($vehicle, $this->withFlags($vehicle, $this->withMissing($vehicle, $this->withReadings((int)$vehicle->getId(), $rows))));
+		return $this->withClosing((int)$vehicle->getId(), $this->withConsumption($vehicle, $this->withFlags($vehicle, $this->withMissing($vehicle, $this->withReadings((int)$vehicle->getId(), $rows)))));
+	}
+
+	/**
+	 * The reminder each maintenance record on the page closed, by uuid, or null - one query for
+	 * the page. The sheet that edits the record sends it back.
+	 *
+	 * @param list<array<string, mixed>> $rows
+	 * @return list<array<string, mixed>>
+	 * @throws \OCP\DB\Exception
+	 */
+	private function withClosing(int $vehicleId, array $rows): array {
+		$ids = [];
+		foreach ($rows as $row) {
+			if ($row['type'] === self::MAINTENANCE && $row[self::MAINTENANCE]->getReminderId() !== null) {
+				$ids[] = (int)$row[self::MAINTENANCE]->getReminderId();
+			}
+		}
+		$reminders = $this->reminders->findAnyByIds($vehicleId, $ids);
+
+		foreach ($rows as $index => $row) {
+			if ($row['type'] === self::MAINTENANCE) {
+				$id = $row[self::MAINTENANCE]->getReminderId();
+				$rows[$index]['closes'] = $id === null ? null : ($reminders[$id] ?? null)?->getUuid();
+			}
+		}
+
+		return $rows;
 	}
 
 	/**

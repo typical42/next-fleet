@@ -4,10 +4,11 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { closeGap, ConflictError, createVehicle, deleteEntry, deleteVehicle, getPreferences, listVehicles, logbookUrl, readEntry, readGaps, readKpis, readTimeline, recordReading, recordTrip, restoreEntry, restoreVehicle, savePreferences, updateEntry, updateVehicle } from './api.js'
+import { addRecipient, closeGap, ConflictError, createReminder, createVehicle, deleteEntry, deleteVehicle, dismissReminder, getPreferences, listFleetReminders, listRecipients, listReminders, listVehicles, logbookUrl, readEntry, readGaps, readKpis, readTimeline, recordReading, recordTrip, reminderTemplates, removeRecipient, restoreEntry, searchUsers, restoreVehicle, savePreferences, snoozeReminder, updateEntry, updateVehicle } from './api.js'
 
 vi.mock('@nextcloud/router', () => ({
 	generateUrl: (/** @type {string} */ path) => `/index.php${path}`,
+	generateOcsUrl: (/** @type {string} */ path) => `/ocs/v2.php/${path}`,
 }))
 vi.mock('@nextcloud/auth', () => ({ getRequestToken: () => 'a-request-token' }))
 
@@ -377,5 +378,90 @@ describe('the Entry writes', () => {
 		await readEntry(vehicle.uuid, 'energy', 'e-1')
 
 		expect(fetch.mock.calls[0][0]).toBe(`/index.php/apps/nextfleet/api/vehicles/${vehicle.uuid}/timeline/energy/e-1`)
+	})
+})
+
+describe('the reminder calls', () => {
+	const reminder = { uuid: 'r-1', updated_at: 1750000200 }
+	const base = `/index.php/apps/nextfleet/api/vehicles/${vehicle.uuid}`
+
+	it('reads the list and the templates of the vehicle they hang off', async () => {
+		const fetch = answers(200, [])
+
+		await listReminders(vehicle.uuid)
+		await reminderTemplates(vehicle.uuid)
+
+		expect(fetch.mock.calls[0][0]).toBe(`${base}/reminders`)
+		expect(fetch.mock.calls[1][0]).toBe(`${base}/reminder-templates`)
+	})
+
+	it('reads the whole fleet\'s in one request', async () => {
+		const fetch = answers(200, [])
+
+		await listFleetReminders()
+
+		expect(fetch.mock.calls[0][0]).toBe('/index.php/apps/nextfleet/api/reminders')
+	})
+
+	it('creates without a token and snoozes and dismisses with one', async () => {
+		const fetch = answers(200, reminder)
+
+		await createReminder(vehicle.uuid, { template_key: 'hu_au', due_date: '2027-05-31' })
+		await snoozeReminder(vehicle.uuid, reminder, '2026-10-01')
+		await dismissReminder(vehicle.uuid, reminder)
+
+		expect(fetch.mock.calls[0][0]).toBe(`${base}/reminders`)
+		expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ template_key: 'hu_au', due_date: '2027-05-31' })
+		expect(fetch.mock.calls[1][0]).toBe(`${base}/reminders/r-1/snooze`)
+		expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ until: '2026-10-01', updated_at: 1750000200 })
+		expect(fetch.mock.calls[2][0]).toBe(`${base}/reminders/r-1/dismiss`)
+		expect(JSON.parse(fetch.mock.calls[2][1].body)).toEqual({ updated_at: 1750000200 })
+	})
+
+	/** An edit, a delete and its undo are reached the way an Entry's are, so they share its calls. */
+	it('edits, deletes and restores under the reminders collection', async () => {
+		const fetch = answers(200, reminder)
+
+		await updateEntry(vehicle.uuid, 'reminder', reminder, { mode: 'date' })
+		await deleteEntry(vehicle.uuid, 'reminder', reminder)
+		await restoreEntry(vehicle.uuid, 'reminder', reminder)
+
+		expect(fetch.mock.calls[0][0]).toBe(`${base}/reminders/r-1`)
+		expect(fetch.mock.calls[1][0]).toBe(`${base}/reminders/r-1?updated_at=1750000200`)
+		expect(fetch.mock.calls[2][0]).toBe(`${base}/reminders/r-1/restore`)
+	})
+})
+
+describe('the recipient calls', () => {
+	const base = `/index.php/apps/nextfleet/api/vehicles/${vehicle.uuid}/recipients`
+
+	// An account name may hold a space or an at sign, and it travels in the path of a remove.
+	it('reads, adds and removes by account without a token', async () => {
+		const fetch = answers(200, [])
+
+		await listRecipients(vehicle.uuid)
+		await addRecipient(vehicle.uuid, 'jane doe@example.org')
+		await removeRecipient(vehicle.uuid, 'jane doe@example.org')
+
+		expect(fetch.mock.calls[0][0]).toBe(base)
+		expect(fetch.mock.calls[1][0]).toBe(base)
+		expect(fetch.mock.calls[1][1].method).toBe('POST')
+		expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ user_id: 'jane doe@example.org' })
+		expect(fetch.mock.calls[2][0]).toBe(`${base}/jane%20doe%40example.org`)
+		expect(fetch.mock.calls[2][1].method).toBe('DELETE')
+	})
+
+	/** The picker asks core, which applies the instance's own rules on who may find whom. */
+	it('searches accounts through the core autocomplete and hands back id and name', async () => {
+		const fetch = answers(200, { ocs: { data: [{ id: 'jane', label: 'Jane Doe', source: 'users' }] } })
+
+		const found = await searchUsers('ja ne')
+
+		const url = new URL(fetch.mock.calls[0][0], 'https://cloud.example')
+		expect(url.pathname).toBe('/ocs/v2.php/core/autocomplete/get')
+		expect(url.searchParams.get('search')).toBe('ja ne')
+		expect(url.searchParams.getAll('shareTypes[]')).toEqual(['0'])
+		expect(fetch.mock.calls[0][1].headers['OCS-APIRequest']).toBe('true')
+		expect(found).toEqual([{ user_id: 'jane', display_name: 'Jane Doe' }])
 	})
 })

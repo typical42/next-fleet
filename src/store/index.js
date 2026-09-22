@@ -6,15 +6,15 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
-import { createVehicle, deleteEntry, deleteVehicle, getVehicle, listVehicles, recordEnergy, recordExpense, recordMaintenance, recordReading, recordTrip, restoreEntry, restoreVehicle, updateEntry, updateVehicle } from '../services/api.js'
+import { createReminder, createVehicle, deleteEntry, deleteVehicle, getVehicle, listVehicles, recordEnergy, recordExpense, recordMaintenance, recordReading, recordTrip, restoreEntry, restoreVehicle, updateEntry, updateVehicle } from '../services/api.js'
 
 /** @typedef {import('../services/api.js').Vehicle} Vehicle */
 /** @typedef {import('../services/api.js').Reading} Reading */
 
 /**
  * A sold vehicle leaves the overview and a laid-up one sinks below the vehicles somebody still
- * drives (docs/ui.md). Reminders are what turn the rest of the order into urgency; until they
- * arrive (M4) the server's order stands, and Array#sort keeps it.
+ * drives (docs/ui.md). The overview orders the rest by urgency (`fleetByUrgency`,
+ * src/utils/reminders.js); the navigation keeps the server's order, and Array#sort keeps it.
  */
 /** @type {Record<string, number>} */
 const RANK = { active: 0, laid_up: 1 }
@@ -40,7 +40,7 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	 * The Entry the last delete answered with, and where it hangs - the way back for an Entry, held
 	 * for the reason `deleted` is: the sheet that asked for the delete has closed.
 	 *
-	 * @type {import('vue').Ref<{vehicle: string, type: import('../services/api.js').Entry['type'], entry: {uuid: string, updated_at: number}}|null>}
+	 * @type {import('vue').Ref<{vehicle: string, type: import('../services/api.js').Written, entry: {uuid: string, updated_at: number}}|null>}
 	 */
 	const struck = ref(null)
 
@@ -49,6 +49,13 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	 * shell and knows no timeline; a timeline watches this and reads itself again.
 	 */
 	const restored = ref(0)
+
+	/**
+	 * How many writes moved a reminder behind the due banner's back: an HU/AU the vehicle sheet
+	 * added through `remind()`, and every write to a Maintenance Record, which may close one or take
+	 * that back. The banner watches this and reads itself again.
+	 */
+	const reminded = ref(0)
 
 	const list = computed(() => [...byUuid.value.values()])
 
@@ -123,11 +130,12 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	}
 
 	/**
-	 * Delete one Entry - a trip under Logbook Mode is voided - and hold the way back, as remove()
-	 * does for a vehicle and one offer at a time with it. A refusal is not caught, as with `save()`.
+	 * Delete one Entry or Reminder - a trip under Logbook Mode is voided - and hold the way back, as
+	 * remove() does for a vehicle and one offer at a time with it. A refusal is not caught, as with
+	 * `save()`.
 	 *
-	 * @param {string} uuid - the vehicle the Entry hangs off
-	 * @param {import('../services/api.js').Entry['type']} type - which kind of Entry it is
+	 * @param {string} uuid - the vehicle it hangs off
+	 * @param {import('../services/api.js').Written} type - which kind it is
 	 * @param {{uuid: string, updated_at: number}} entry - the Entry as it was read
 	 * @return {Promise<void>} when it is gone and the way back is held
 	 */
@@ -164,6 +172,20 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 		restored.value++
 	}
 
+	/**
+	 * Add a reminder, and tell whoever lists them. A refusal is not caught, as with `save()`.
+	 *
+	 * @param {string} uuid - the vehicle it hangs off
+	 * @param {Record<string, unknown>} fields - what the sheet writes
+	 * @return {Promise<import('../services/api.js').Reminder>} the reminder as the server wrote it
+	 */
+	async function remind(uuid, fields) {
+		const reminder = await createReminder(uuid, fields)
+		reminded.value++
+
+		return reminder
+	}
+
 	/** Let go of the way back, which is what closing the toast means. */
 	function forget() {
 		deleted.value = null
@@ -171,10 +193,11 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	}
 
 	/**
-	 * Rewrite one Entry under the token it was read with. A refusal is not caught, as with `save()`.
+	 * Rewrite one Entry or Reminder under the token it was read with. A refusal is not caught, as
+	 * with `save()`.
 	 *
-	 * @param {string} uuid - the vehicle the Entry hangs off
-	 * @param {import('../services/api.js').Entry['type']} type - which kind of Entry it is
+	 * @param {string} uuid - the vehicle it hangs off
+	 * @param {import('../services/api.js').Written} type - which kind it is
 	 * @param {{uuid: string, updated_at: number}} entry - the Entry as it was read
 	 * @param {object} fields - the whole Entry, as the sheet holds it
 	 * @return {Promise<object>} the Entry as the server now holds it
@@ -184,17 +207,21 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	}
 
 	/**
-	 * A write to an Entry, and the read of the vehicle after it where the Entry moves a counter.
-	 * An Expense moves none (see spend()).
+	 * A write to an Entry or a Reminder, and the read of the vehicle after it where the write moves
+	 * a counter. An Expense moves none (see spend()), and neither does a Reminder.
 	 *
 	 * @template T
 	 * @param {string} uuid - the vehicle
-	 * @param {import('../services/api.js').Entry['type']} type - which kind of Entry is written
+	 * @param {import('../services/api.js').Written} type - which kind is written
 	 * @param {() => Promise<T>} write - the write to make
 	 * @return {Promise<T>} what the write answered with
 	 */
 	async function moving(uuid, type, write) {
-		return type === 'expense' ? write() : counted(uuid, write)
+		if (type === 'maintenance') {
+			return serviced(uuid, write)
+		}
+
+		return type === 'expense' || type === 'reminder' ? write() : counted(uuid, write)
 	}
 
 	/**
@@ -240,7 +267,23 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	 * @return {Promise<object>} the record as the server wrote it
 	 */
 	async function maintain(uuid, entry) {
-		return counted(uuid, () => recordMaintenance(uuid, entry))
+		return serviced(uuid, () => recordMaintenance(uuid, entry))
+	}
+
+	/**
+	 * A write to a Maintenance Record: counted() for its counters, and a word to whoever lists
+	 * reminders, since the reminder it closes moves with it.
+	 *
+	 * @template T
+	 * @param {string} uuid - the vehicle the work was done on
+	 * @param {() => Promise<T>} write - the write to make
+	 * @return {Promise<T>} what the write answered with
+	 */
+	async function serviced(uuid, write) {
+		const written = await counted(uuid, write)
+		reminded.value++
+
+		return written
 	}
 
 	/**
@@ -283,5 +326,5 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 		return written
 	}
 
-	return { byUuid, create, deleted, fill, forget, list, load, log, maintain, record, remove, restore, restored, revise, save, spend, strike, struck, upsert, visible }
+	return { byUuid, create, deleted, fill, forget, list, load, log, maintain, record, remind, reminded, remove, restore, restored, revise, save, spend, strike, struck, upsert, visible }
 })

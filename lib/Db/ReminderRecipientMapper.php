@@ -37,4 +37,18 @@ class ReminderRecipientMapper extends BaseMapper {
 
 		return $this->findEntities($qb);
 	}
+
+	/**
+	 * Takes one user off a vehicle's list for good. Not a soft delete: nothing undoes it, and the
+	 * unique index on (vehicle_id, user_id) would refuse adding them again beside a hidden row.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	public function deleteByUser(int $vehicleId, string $userId): void {
+		$qb = $this->db->getQueryBuilder();
+		$qb->delete($this->tableName)
+			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->eq('user_id', $qb->createNamedParameter($userId)));
+		$qb->executeStatement();
+	}
 }

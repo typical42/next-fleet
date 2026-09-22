@@ -4,7 +4,7 @@
  */
 
 import { getRequestToken } from '@nextcloud/auth'
-import { generateUrl } from '@nextcloud/router'
+import { generateOcsUrl, generateUrl } from '@nextcloud/router'
 
 /**
  * A vehicle as it travels: the JSON keys are the column names, so what a client reads is what it
@@ -128,6 +128,8 @@ import { generateUrl } from '@nextcloud/router'
  *   measured on every vehicle
  * @property {Consumption|null} [consumption] - the segment a fill-up closes, or null when it closes
  *   none
+ * @property {string|null} [closes] - the uuid of the reminder a maintenance record closed, sent back
+ *   as `closes` when the record is saved (docs/architecture.md#reminder-engine)
  */
 
 /**
@@ -184,6 +186,52 @@ import { generateUrl } from '@nextcloud/router'
  *   rolling electric figure, counted at the charger
  * @property {Cost} cost - what it cost
  * @property {number|null} hours - how far the second counter moved; null on a vehicle without one
+ */
+
+/**
+ * Something coming due on a vehicle (docs/architecture.md#reminder-engine). Not an Entry: nothing
+ * has happened yet.
+ *
+ * @typedef {object} Reminder
+ * @property {string} uuid - identity
+ * @property {number} updated_at - the token the next write is checked against
+ * @property {string|null} template_key - the template it was made from; its title translates
+ * @property {string|null} title - the user's own title, when there is no template
+ * @property {'date'|'odo'|'either'} mode - due by date, by the main counter, or by whichever is first
+ * @property {string|null} due_date - a plain day, `YYYY-MM-DD`
+ * @property {number|null} due_odo - on the main counter, in its unit
+ * @property {number|null} lead_odo - how far before `due_odo` it warns
+ * @property {boolean} warn_month_before - warns a month before the due date
+ * @property {boolean} warn_month_start - warns at the start of the month it is due
+ * @property {boolean} warn_due_date - warns on the due date
+ * @property {number|null} recur_months - the recurrence by date
+ * @property {number|null} recur_odo - the recurrence by counter
+ * @property {'planned'|'warned'|'due'|'overdue'|'done'|'snoozed'|'dismissed'} state - where it
+ *   stands today; the list evaluates it, a write answers what is stored
+ * @property {string|null} snoozed_until - the day a snooze ends
+ * @property {string|null} [estimate] - the day the counter is expected to reach `due_odo`, or null
+ *   without enough data; only the list carries it
+ */
+
+/**
+ * What a Reminder Template (CONTEXT.md) fills in.
+ *
+ * @typedef {object} ReminderTemplate
+ * @property {string} key - what the reminder's `template_key` becomes
+ * @property {'date'|'odo'|'either'} mode - how it comes due
+ * @property {number|null} recur_months - its recurrence by date
+ * @property {number|null} recur_odo - its recurrence by counter
+ * @property {number|null} lead_odo - how far before the due km it warns
+ * @property {number|null} first_due_months - on the inspection only: how long after the first
+ *   registration the first one falls
+ */
+
+/**
+ * One account a vehicle's reminders go to.
+ *
+ * @typedef {object} Recipient
+ * @property {string} user_id - the account
+ * @property {string} display_name - its name, or the account where it has none any more
  */
 
 /**
@@ -412,8 +460,15 @@ export async function expensePrefill(uuid, at, off, category = null) {
 	return request('GET', `/api/vehicles/${uuid}/expenses/prefill?${query}`)
 }
 
-/** Where each kind of Entry is written, below its vehicle. */
-const COLLECTIONS = { trip: 'trips', odometer: 'readings', energy: 'energy', maintenance: 'maintenance', expense: 'expenses' }
+/**
+ * What an edit, a delete and an undo reach below a vehicle: every kind of Entry, and a Reminder,
+ * which is not an Entry but is written the same way.
+ *
+ * @typedef {Entry['type']|'reminder'} Written
+ */
+
+/** Where each of them is written, below its vehicle. */
+const COLLECTIONS = { trip: 'trips', odometer: 'readings', energy: 'energy', maintenance: 'maintenance', expense: 'expenses', reminder: 'reminders' }
 
 /**
  * One Entry as its timeline row, read back after an edit lost a race: its token is the one the
@@ -429,11 +484,11 @@ export async function readEntry(uuid, type, entryUuid) {
 }
 
 /**
- * Rewrite one Entry, checked against the `updated_at` it was read with. The fields are the whole
- * Entry, as its create takes them: one left out is one the person emptied.
+ * Rewrite one Entry or Reminder, checked against the `updated_at` it was read with. The fields are
+ * the whole row, as its create takes them: one left out is one the person emptied.
  *
  * @param {string} uuid - the vehicle it hangs off
- * @param {Entry['type']} type - which kind of Entry it is
+ * @param {Written} type - which kind it is
  * @param {{uuid: string, updated_at: number}} entry - the Entry as it was read
  * @param {object} fields - what the sheet holds
  * @return {Promise<object>} the Entry as the server now holds it
@@ -444,11 +499,12 @@ export async function updateEntry(uuid, type, entry, fields) {
 }
 
 /**
- * Delete one Entry - a trip under Logbook Mode is voided (docs/features.md#logbook-mode). The
- * answer carries the token the undo is checked against, as a vehicle's does.
+ * Delete one Entry or Reminder - a trip under Logbook Mode is voided
+ * (docs/features.md#logbook-mode). The answer carries the token the undo is checked against, as a
+ * vehicle's does.
  *
  * @param {string} uuid - the vehicle it hangs off
- * @param {Entry['type']} type - which kind of Entry it is
+ * @param {Written} type - which kind it is
  * @param {{uuid: string, updated_at: number}} entry - the Entry as it was read
  * @return {Promise<{uuid: string, updated_at: number}>} the Entry as the delete left it
  * @throws {ConflictError} when it moved on since it was read
@@ -461,13 +517,140 @@ export async function deleteEntry(uuid, type, entry) {
  * Undo a delete, on the token the delete answered with.
  *
  * @param {string} uuid - the vehicle it hangs off
- * @param {Entry['type']} type - which kind of Entry it is
- * @param {{uuid: string, updated_at: number}} entry - the Entry as the delete answered with it
- * @return {Promise<object>} the Entry, back
+ * @param {Written} type - which kind it is
+ * @param {{uuid: string, updated_at: number}} entry - the row as the delete answered with it
+ * @return {Promise<object>} the row, back
  * @throws {ConflictError} when it moved on since, or was never deleted
  */
 export async function restoreEntry(uuid, type, entry) {
 	return request('POST', `/api/vehicles/${uuid}/${COLLECTIONS[type]}/${entry.uuid}/restore`, { updated_at: entry.updated_at })
+}
+
+/**
+ * One vehicle's reminders, live ones only, in the server's order (src/utils/reminders.js sorts
+ * them). The state is where each stands today, and only this read carries the estimate, so a
+ * screen reads it again after a write.
+ *
+ * @param {string} uuid - the vehicle they hang off
+ * @return {Promise<Reminder[]>} the reminders
+ */
+export async function listReminders(uuid) {
+	return request('GET', `/api/vehicles/${uuid}/reminders`)
+}
+
+/**
+ * Every reminder on the vehicles the overview lists, as `listReminders` answers each.
+ *
+ * @return {Promise<Array<Reminder & {vehicle: string}>>} each naming the vehicle's uuid
+ */
+export async function listFleetReminders() {
+	return request('GET', '/api/reminders')
+}
+
+/**
+ * What the reminder sheet may start from on this vehicle, and what each fills in.
+ *
+ * @param {string} uuid - the vehicle
+ * @return {Promise<ReminderTemplate[]>} the service intervals, then the inspection where there is one
+ */
+export async function reminderTemplates(uuid) {
+	return request('GET', `/api/vehicles/${uuid}/reminder-templates`)
+}
+
+/**
+ * Add a reminder. It carries no token: nothing was read that it could lose a race against.
+ *
+ * @param {string} uuid - the vehicle it hangs off
+ * @param {object} fields - what the sheet holds: a template key or a title, the mode and what it reads
+ * @return {Promise<Reminder>} the reminder as the server wrote it
+ */
+export async function createReminder(uuid, fields) {
+	return request('POST', `/api/vehicles/${uuid}/reminders`, fields)
+}
+
+/**
+ * Silence a reminder until a day; its due date stays (docs/architecture.md#reminder-engine).
+ *
+ * @param {string} uuid - the vehicle it hangs off
+ * @param {{uuid: string, updated_at: number}} reminder - as it was read
+ * @param {string} until - a plain day still to come, `YYYY-MM-DD`
+ * @return {Promise<Reminder>} the reminder as it now stands
+ * @throws {ConflictError} when it moved on since it was read
+ */
+export async function snoozeReminder(uuid, reminder, until) {
+	return request('POST', `/api/vehicles/${uuid}/reminders/${reminder.uuid}/snooze`, { until, updated_at: reminder.updated_at })
+}
+
+/**
+ * Skip this occurrence; a recurring reminder moves on to its next one.
+ *
+ * @param {string} uuid - the vehicle it hangs off
+ * @param {{uuid: string, updated_at: number}} reminder - as it was read
+ * @return {Promise<Reminder>} the reminder as it now stands
+ * @throws {ConflictError} when it moved on since it was read
+ */
+export async function dismissReminder(uuid, reminder) {
+	return request('POST', `/api/vehicles/${uuid}/reminders/${reminder.uuid}/dismiss`, { updated_at: reminder.updated_at })
+}
+
+/**
+ * Who the vehicle's reminders go to. Only someone who may edit the vehicle reads it; anyone else
+ * is refused.
+ *
+ * @param {string} uuid - the vehicle
+ * @return {Promise<Recipient[]>} the list, in the order it was added to
+ */
+export async function listRecipients(uuid) {
+	return request('GET', `/api/vehicles/${uuid}/recipients`)
+}
+
+/**
+ * Put an account on the list. No token: adding and removing one person commute.
+ *
+ * @param {string} uuid - the vehicle
+ * @param {string} userId - the account
+ * @return {Promise<Recipient[]>} the list as it now stands
+ */
+export async function addRecipient(uuid, userId) {
+	return request('POST', `/api/vehicles/${uuid}/recipients`, { user_id: userId })
+}
+
+/**
+ * Take an account off the list, the owner's included.
+ *
+ * @param {string} uuid - the vehicle
+ * @param {string} userId - the account
+ * @return {Promise<Recipient[]>} the list as it now stands
+ */
+export async function removeRecipient(uuid, userId) {
+	return request('DELETE', `/api/vehicles/${uuid}/recipients/${encodeURIComponent(userId)}`)
+}
+
+/**
+ * Accounts matching what was typed, for the recipient picker. Core's own search rather than one of
+ * ours: it already applies the instance's rules on who may find whom, which the sharing dialog
+ * uses too.
+ *
+ * @param {string} term - what was typed
+ * @return {Promise<Recipient[]>} at most ten accounts
+ */
+export async function searchUsers(term) {
+	const query = new URLSearchParams({ search: term, itemType: 'nextfleet', itemId: '', limit: '10' })
+	// A user share only: groups, mail addresses and remote accounts are nobody the job can notify.
+	query.append('shareTypes[]', '0')
+	const response = await fetch(`${generateOcsUrl('core/autocomplete/get')}?${query}`, {
+		headers: {
+			Accept: 'application/json',
+			'OCS-APIRequest': 'true',
+			requesttoken: getRequestToken() ?? '',
+		},
+	})
+	if (!response.ok) {
+		throw new Error(`The server answered ${response.status}`)
+	}
+
+	const answer = await response.json()
+	return (answer?.ocs?.data ?? []).map((/** @type {{id: string, label: string}} */ one) => ({ user_id: one.id, display_name: one.label }))
 }
 
 /**

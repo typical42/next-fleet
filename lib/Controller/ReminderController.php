@@ -39,6 +39,16 @@ class ReminderController extends Controller {
 	}
 
 	#[NoAdminRequired]
+	public function fleet(): DataResponse {
+		return $this->answer(fn (): DataResponse => new DataResponse($this->service->fleet($this->userId())));
+	}
+
+	#[NoAdminRequired]
+	public function templates(string $uuid): DataResponse {
+		return $this->answer(fn (): DataResponse => new DataResponse($this->service->templates($this->userId(), $uuid)));
+	}
+
+	#[NoAdminRequired]
 	#[UserRateLimit(limit: 60, period: 60)]
 	public function create(string $uuid): DataResponse {
 		return $this->answer(fn (): DataResponse => new DataResponse(

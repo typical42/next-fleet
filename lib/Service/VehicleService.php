@@ -11,6 +11,8 @@ namespace OCA\NextFleet\Service;
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\Audit;
 use OCA\NextFleet\Db\AuditMapper;
+use OCA\NextFleet\Db\ReminderRecipient;
+use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Exception\AccessDeniedException;
@@ -36,7 +38,7 @@ class VehicleService {
 	private const ODO_UNITS = ['km', 'h'];
 	/** A second counter is engine hours beside kilometres, and nothing else. */
 	private const SECOND_UNITS = ['h'];
-	private const LIFECYCLES = ['active', 'laid_up', 'disposed'];
+	private const LIFECYCLES = [Vehicle::ACTIVE, Vehicle::LAID_UP, Vehicle::DISPOSED];
 
 	/**
 	 * The columns a request may set, each with the setter it reaches and what it has to look
@@ -73,13 +75,17 @@ class VehicleService {
 		'retention_months' => ['setRetentionMonths', 'count', null],
 		'color' => ['setColor', 'text', 32],
 		'notes' => ['setNotes', 'text', null],
+		'reminder_mail' => ['setReminderMail', 'word', self::MAIL_CADENCES],
 	];
+
+	/** How often the reminder digest goes out for this vehicle (docs/architecture.md#reminder-engine). */
+	private const MAIL_CADENCES = [Vehicle::MAIL_OFF, Vehicle::MAIL_DAILY, Vehicle::MAIL_WEEKLY, Vehicle::MAIL_MONTHLY];
 
 	/**
 	 * The columns the database will not default. A request that empties one keeps what the row
 	 * already has rather than being refused: the sheet never blocks on validation (docs/ui.md).
 	 */
-	private const REQUIRED = ['vehicle_type', 'odo_unit', 'jurisdiction', 'lifecycle'];
+	private const REQUIRED = ['vehicle_type', 'odo_unit', 'jurisdiction', 'lifecycle', 'reminder_mail'];
 
 	/**
 	 * What the create sheet does not ask for (docs/ui.md) and no country decides: neither a car
@@ -103,6 +109,7 @@ class VehicleService {
 		private Jurisdictions $jurisdictions,
 		private AuditMapper $audit,
 		private IDBConnection $db,
+		private ReminderRecipientMapper $recipients,
 	) {
 	}
 
@@ -129,7 +136,18 @@ class VehicleService {
 		$vehicle->setCurrency($profile->currency());
 		$this->apply($vehicle, $fields);
 
-		return $this->mapper->insert($vehicle);
+		// The owner is where the reminders go until somebody edits the list, which is what the
+		// migration gave every vehicle that existed before it.
+		return $this->atomic(function () use ($userId, $vehicle): Vehicle {
+			$written = $this->mapper->insert($vehicle);
+			$owner = new ReminderRecipient();
+			$owner->setVehicleId((int)$written->getId());
+			$owner->setUserId($userId);
+			$owner->setCreatedBy($userId);
+			$this->recipients->insert($owner);
+
+			return $written;
+		}, $this->db);
 	}
 
 	/**

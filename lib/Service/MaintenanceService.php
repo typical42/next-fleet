@@ -11,6 +11,8 @@ namespace OCA\NextFleet\Service;
 use OCA\NextFleet\Db\Maintenance;
 use OCA\NextFleet\Db\MaintenanceMapper;
 use OCA\NextFleet\Db\OdoReading;
+use OCA\NextFleet\Db\Reminder;
+use OCA\NextFleet\Db\ReminderMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
@@ -59,6 +61,8 @@ class MaintenanceService {
 		private VehicleService $fleet,
 		private VehicleMapper $vehicles,
 		private Jurisdictions $jurisdictions,
+		private ReminderService $reminders,
+		private ReminderMapper $reminderRows,
 		private IDBConnection $db,
 	) {
 	}
@@ -82,15 +86,18 @@ class MaintenanceService {
 		$this->apply($vehicle, $record, $fields);
 
 		// Retried for the reason TripService::record() gives.
-		$written = $this->atomicRetry(function () use ($userId, $vehicle, $record): Maintenance {
+		return $this->atomicRetry(function () use ($userId, $vehicle, $record, $fields): array {
 			$this->vehicles->hold((int)$vehicle->getId());
+			$closes = $this->reminders->closable((int)$vehicle->getId(), $fields['closes'] ?? null, null);
+			$record->setReminderId($closes?->getId());
 			$written = $this->records->insert($record);
 			$this->follow($vehicle, $userId, $written);
+			if ($closes !== null) {
+				$this->reminders->closeBy($closes, $written);
+			}
 
-			return $written;
+			return self::wire($written, $closes);
 		}, $this->db);
-
-		return $written->jsonSerialize();
 	}
 
 	/**
@@ -112,11 +119,25 @@ class MaintenanceService {
 		return $this->atomicRetry(function () use ($userId, $vehicle, $recordUuid, $expectedUpdatedAt, $fields): array {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$record = $this->records->findOnVehicle((int)$vehicle->getId(), $recordUuid);
+			$before = clone $record;
+			$current = $this->closed($record);
 			$this->apply($vehicle, $record, $fields);
+			$closes = $this->reminders->closable((int)$vehicle->getId(), $fields['closes'] ?? null, $current);
+			$record->setReminderId($closes?->getId());
 			$edited = $this->records->updateChecked($record, $expectedUpdatedAt);
 			$this->follow($vehicle, $userId, $edited);
 
-			return $edited->jsonSerialize();
+			$moved = [$before->getDoneAt(), $before->getDoneAtOff(), $before->getOdo()] !== [$edited->getDoneAt(), $edited->getDoneAtOff(), $edited->getOdo()];
+			if ($current !== $closes || $moved) {
+				// Taken back and closed again from where the record now says the work was done.
+				// A reminder that has moved on since is no longer this record's to move.
+				$reopened = $current !== null && $this->reminders->reopenBy($current, $before);
+				if ($closes !== null && ($closes !== $current || $reopened)) {
+					$this->reminders->closeBy($closes, $edited);
+				}
+			}
+
+			return self::wire($edited, $closes);
 		}, $this->db);
 	}
 
@@ -137,8 +158,12 @@ class MaintenanceService {
 			$record = $this->records->findOnVehicle((int)$vehicle->getId(), $recordUuid);
 			$deleted = $this->records->softDelete($record, $expectedUpdatedAt);
 			$this->follow($vehicle, $userId, $deleted);
+			$closes = $this->closed($deleted);
+			if ($closes !== null) {
+				$this->reminders->reopenBy($closes, $deleted);
+			}
 
-			return $deleted->jsonSerialize();
+			return self::wire($deleted, $closes);
 		}, $this->db);
 	}
 
@@ -159,9 +184,38 @@ class MaintenanceService {
 			$record = $this->records->findAnyOnVehicle((int)$vehicle->getId(), $recordUuid);
 			$back = $this->records->restoreChecked($record, $expectedUpdatedAt);
 			$this->follow($vehicle, $userId, $back);
+			$closes = $this->closed($back);
+			if ($closes !== null && !$this->reminders->recloseBy($closes, $back)) {
+				// Something else moved the reminder on meanwhile. A link kept here would take that
+				// back the next time this record is withdrawn.
+				$closes = null;
+				$back->setReminderId(null);
+				$back = $this->records->updateChecked($back, $back->getUpdatedAt());
+			}
 
-			return $back->jsonSerialize();
+			return self::wire($back, $closes);
 		}, $this->db);
+	}
+
+	/**
+	 * The reminder the record closes, as it now stands, deleted or not.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	private function closed(Maintenance $record): ?Reminder {
+		$id = $record->getReminderId();
+
+		return $id === null ? null : $this->reminderRows->findAnyByIds($record->getVehicleId(), [$id])[$id] ?? null;
+	}
+
+	/**
+	 * The wire form, with the reminder the record closes named by its uuid: `reminder_id` is an
+	 * id and stays off the wire.
+	 *
+	 * @return array<string, mixed>
+	 */
+	private static function wire(Maintenance $record, ?Reminder $closes): array {
+		return $record->jsonSerialize() + ['closes' => $closes?->getUuid()];
 	}
 
 	/**

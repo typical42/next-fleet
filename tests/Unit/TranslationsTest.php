@@ -71,22 +71,30 @@ class TranslationsTest extends TestCase {
 	}
 
 	/**
-	 * Every string the Vue sources hand to `t()`. The app id is spelled out in the pattern
-	 * because a call naming another app would be translated from another catalogue.
+	 * Every string the Vue sources hand to `t()`, and every one the PHP sources hand to an
+	 * IL10N's `->t()` - the notifier's, which translate late (docs/architecture.md#reminder-engine).
+	 * The app id is spelled out in the Vue pattern because a call naming another app would be
+	 * translated from another catalogue.
 	 *
 	 * @return list<string>
 	 */
 	private static function markedStrings(): array {
-		$strings = [];
-		$sources = new \RegexIterator(
-			new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(self::root() . '/src')),
-			'/\.(js|vue)$/',
-		);
+		$quoted = '\'((?:[^\'\\\\]|\\\\.)*)\'';
+		$patterns = [
+			'/src' => ['/\.(js|vue)$/', '/\bt\(\s*\'' . preg_quote(Application::APP_ID, '/') . '\'\s*,\s*' . $quoted . '/'],
+			'/lib' => ['/\.php$/', '/->t\(\s*' . $quoted . '/'],
+		];
 
-		foreach ($sources as $source) {
-			$pattern = '/\bt\(\s*\'' . preg_quote(Application::APP_ID, '/') . '\'\s*,\s*\'((?:[^\'\\\\]|\\\\.)*)\'/';
-			preg_match_all($pattern, (string)file_get_contents((string)$source), $matches);
-			$strings = array_merge($strings, $matches[1]);
+		$strings = [];
+		foreach ($patterns as $directory => [$files, $pattern]) {
+			$sources = new \RegexIterator(
+				new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(self::root() . $directory)),
+				$files,
+			);
+			foreach ($sources as $source) {
+				preg_match_all($pattern, (string)file_get_contents((string)$source), $matches);
+				$strings = array_merge($strings, $matches[1]);
+			}
 		}
 
 		return array_values(array_unique($strings));

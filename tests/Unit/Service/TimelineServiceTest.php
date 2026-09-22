@@ -16,6 +16,7 @@ use OCA\NextFleet\Db\Maintenance;
 use OCA\NextFleet\Db\MaintenanceMapper;
 use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Db\OdoReadingMapper;
+use OCA\NextFleet\Db\ReminderMapper;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
@@ -210,6 +211,8 @@ class TimelineServiceTest extends TestCase {
 			$this->energy,
 			$this->maintenance,
 			$this->expenses,
+			// No record here closes a reminder: that lookup is TimelineTest's, over real SQL.
+			$this->createMock(ReminderMapper::class),
 			$this->fleet,
 			$this->completeness(),
 			new Gaps($this->trips, $this->readings),

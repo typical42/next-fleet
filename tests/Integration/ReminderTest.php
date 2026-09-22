@@ -18,6 +18,7 @@ use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\ReminderService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Db\DoesNotExistException;
+use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\IDBConnection;
 use PHPUnit\Framework\TestCase;
 
@@ -96,6 +97,27 @@ class ReminderTest extends TestCase {
 		$this->assertSame(Reminder::DATE, $written['mode']);
 		$this->assertSame(12, $written['recur_months']);
 		$this->assertNull($written['lead_odo']);
+		$this->assertNull($written['recur_odo']);
+	}
+
+	/**
+	 * A field the sheet sends empty is one the user cleared, not one left out: an oil change made a
+	 * one-off stays a one-off.
+	 */
+	public function testATemplateDoesNotRefillAFieldTheSheetCleared(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+
+		$written = $this->reminders->create(self::OWNER, $vehicle->getUuid(), [
+			'template_key' => 'oil_change',
+			'due_date' => '2027-03-31',
+			'due_odo' => 135000,
+			'lead_odo' => '',
+			'recur_months' => null,
+			'recur_odo' => null,
+		]);
+
+		$this->assertNull($written['lead_odo']);
+		$this->assertNull($written['recur_months']);
 		$this->assertNull($written['recur_odo']);
 	}
 
@@ -271,6 +293,90 @@ class ReminderTest extends TestCase {
 
 		$this->assertSame(150000, $dismissed['due_odo']);
 		$this->assertSame(Reminder::WARNED, $dismissed['state']);
+	}
+
+	/** The list carries each reminder's estimated day beside its state; a date reminder has none. */
+	public function testAReminderByKmIsListedWithItsEstimate(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$now = \OCP\Server::get(ITimeFactory::class)->now();
+		// 800 km in 40 days is 20 a day; 400 more is 20 days after the last Reading.
+		$this->odometer->record(self::OWNER, $vehicle->getUuid(), ['read_at' => $now->getTimestamp() - 41 * 86400, 'read_at_off' => 0, 'value' => 10000]);
+		$this->odometer->record(self::OWNER, $vehicle->getUuid(), ['read_at' => $now->getTimestamp() - 86400, 'read_at_off' => 0, 'value' => 10800]);
+		$this->reminders->create(self::OWNER, $vehicle->getUuid(), ['title' => 'Chain', 'mode' => Reminder::ODO, 'due_odo' => 11200]);
+		$this->reminders->create(self::OWNER, $vehicle->getUuid(), ['title' => 'Insurance renewal', 'mode' => Reminder::DATE, 'due_date' => '2036-01-01']);
+
+		$listed = $this->reminders->list(self::OWNER, $vehicle->getUuid());
+
+		$this->assertSame([$now->modify('+19 days')->format('Y-m-d'), null], array_column($listed, 'estimate'));
+	}
+
+	/**
+	 * The banner shows a reminder as it stands today, not as the job last left it: a reminder
+	 * written after its due date is listed overdue, and one whose km the counter has passed is due.
+	 */
+	public function testTheListStatesEachReminderAsItStandsToday(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$yesterday = \OCP\Server::get(ITimeFactory::class)->now()->modify('-1 day')->format('Y-m-d');
+		$this->odometer->record(self::OWNER, $vehicle->getUuid(), ['read_at' => 1750000000, 'read_at_off' => 120, 'value' => 150000]);
+		$this->reminders->create(self::OWNER, $vehicle->getUuid(), ['title' => 'Insurance renewal', 'mode' => Reminder::DATE, 'due_date' => $yesterday]);
+		$this->reminders->create(self::OWNER, $vehicle->getUuid(), ['title' => 'Chain', 'mode' => Reminder::ODO, 'due_odo' => 149000]);
+		$this->reminders->create(self::OWNER, $vehicle->getUuid(), ['title' => 'Wax', 'mode' => Reminder::DATE, 'due_date' => '2036-01-01']);
+
+		$listed = $this->reminders->list(self::OWNER, $vehicle->getUuid());
+
+		$this->assertSame([Reminder::OVERDUE, Reminder::DUE, Reminder::PLANNED], array_column($listed, 'state'));
+	}
+
+	/**
+	 * The overview reads the whole fleet's reminders at once: every vehicle the user may see, each
+	 * row naming its vehicle, a sold one left out as the overview leaves it out.
+	 */
+	public function testTheFleetListsTheRemindersOfEveryVehicleTheUserMaySee(): void {
+		$mine = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$shared = $this->vehicles->create(self::MANAGER, ['plate' => 'B-XY 456']);
+		$sold = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 789']);
+		$this->grant((int)$shared->getId(), self::OWNER, 'viewer');
+		$first = $this->reminders->create(self::OWNER, $mine->getUuid(), ['template_key' => 'tyre_swap', 'due_date' => '2036-04-15']);
+		$second = $this->reminders->create(self::MANAGER, $shared->getUuid(), ['title' => 'Wax', 'mode' => Reminder::DATE, 'due_date' => '2036-01-01']);
+		$this->reminders->create(self::OWNER, $sold->getUuid(), ['title' => 'Wax', 'mode' => Reminder::DATE, 'due_date' => '2036-01-01']);
+		$this->vehicles->update(self::OWNER, $sold->getUuid(), $sold->getUpdatedAt(), ['lifecycle' => 'disposed', 'disposed_at' => '2030-01-01']);
+
+		$fleet = $this->reminders->fleet(self::OWNER);
+
+		$this->assertSame(
+			[[$first['uuid'], $mine->getUuid()], [$second['uuid'], $shared->getUuid()]],
+			array_map(static fn (array $row): array => [$row['uuid'], $row['vehicle']], $fleet),
+		);
+		$this->assertSame(Reminder::PLANNED, $fleet[0]['state']);
+		$this->assertArrayHasKey('estimate', $fleet[0]);
+		$this->assertSame([$second['uuid']], array_column($this->reminders->fleet(self::MANAGER), 'uuid'));
+	}
+
+	/**
+	 * What the sheet offers to start from: the service intervals everywhere, and the inspection at
+	 * the type's cadence where the jurisdiction has one. Reading them is reading the vehicle.
+	 */
+	public function testTheTemplatesAreTheOnesTheVehicleOffers(): void {
+		$truck = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'vehicle_type' => 'truck', 'jurisdiction' => 'de']);
+		$elsewhere = $this->vehicles->create(self::OWNER, ['plate' => 'XY 123', 'jurisdiction' => 'generic']);
+		$this->grant((int)$truck->getId(), self::DRIVER, 'driver');
+
+		$offered = $this->reminders->templates(self::DRIVER, $truck->getUuid());
+
+		$this->assertSame(['oil_change', 'brake_fluid', 'tyre_swap', 'hu_au'], array_column($offered, 'key'));
+		$this->assertSame(['key' => 'hu_au', 'mode' => Reminder::DATE, 'recur_months' => 12, 'recur_odo' => null, 'lead_odo' => null, 'first_due_months' => 12], $offered[3]);
+		$this->assertSame(['key' => 'oil_change', 'mode' => Reminder::EITHER, 'recur_months' => 12, 'recur_odo' => 15000, 'lead_odo' => 1000, 'first_due_months' => null], $offered[0]);
+		$this->assertSame(['oil_change', 'brake_fluid', 'tyre_swap'], array_column($this->reminders->templates(self::OWNER, $elsewhere->getUuid()), 'key'));
+	}
+
+	/** A new car's first HU/AU comes later than its cadence, so the sticker question can prefill it. */
+	public function testTheInspectionTemplateStatesWhenTheFirstOneIsDue(): void {
+		$car = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'vehicle_type' => 'car', 'jurisdiction' => 'de']);
+
+		$inspection = array_column($this->reminders->templates(self::OWNER, $car->getUuid()), null, 'key')['hu_au'];
+
+		$this->assertSame(24, $inspection['recur_months']);
+		$this->assertSame(36, $inspection['first_due_months']);
 	}
 
 	/** Without a recurrence there is no next occurrence, and a dismissed one takes no snooze. */

@@ -8,6 +8,7 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Service;
 
+use OCA\NextFleet\Db\Maintenance;
 use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Db\OdoReadingMapper;
 use OCA\NextFleet\Db\Reminder;
@@ -37,22 +38,93 @@ class ReminderService {
 		private OdoReadingMapper $readings,
 		private ITimeFactory $time,
 		private IDBConnection $db,
+		private NotificationService $notifications,
 	) {
 	}
 
 	/**
-	 * @return list<array<string, mixed>> the vehicle's live reminders, in their wire form
+	 * The state is evaluated at now rather than read from the row: the row holds what the job last
+	 * persisted, and the banner shows where the reminder stands. Nothing is written.
+	 *
+	 * @return list<array<string, mixed>> the vehicle's live reminders, in their wire form, each
+	 *                                    with its `estimate` (ReminderEngine::estimate())
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not see this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCP\DB\Exception
 	 */
 	public function list(string $userId, string $vehicleUuid): array {
-		$vehicle = $this->fleet->reach($userId, VehicleAccess::VIEW, $vehicleUuid);
+		return $this->listed($this->fleet->reach($userId, VehicleAccess::VIEW, $vehicleUuid));
+	}
+
+	/**
+	 * The overview's read: every vehicle the user may see, as `list()` answers each, and each row
+	 * names its `vehicle`. A sold vehicle has left the overview, so its reminders are not read.
+	 *
+	 * @return list<array<string, mixed>>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function fleet(string $userId): array {
+		$rows = [];
+		foreach ($this->fleet->list($userId) as $vehicle) {
+			if ($vehicle->getLifecycle() === Vehicle::DISPOSED) {
+				continue;
+			}
+			foreach ($this->listed($vehicle) as $row) {
+				$rows[] = ['vehicle' => $vehicle->getUuid()] + $row;
+			}
+		}
+
+		return $rows;
+	}
+
+	/**
+	 * @return list<array<string, mixed>>
+	 * @throws \OCP\DB\Exception
+	 */
+	private function listed(Vehicle $vehicle): array {
+		$reminders = $this->reminders->findByVehicle((int)$vehicle->getId());
+		$now = $this->time->now();
+		$today = $this->today();
+		// Only a reminder by km reads the chain, so a vehicle without one skips the query.
+		$chain = array_filter($reminders, static fn (Reminder $r): bool => $r->getMode() !== Reminder::DATE) === []
+			? []
+			: $this->readings->findChain((int)$vehicle->getId(), OdoReading::MAIN);
+		// The newest value, flagged or not, as dismiss() reads it. The chain is oldest first.
+		$odo = $chain === [] ? null : $chain[array_key_last($chain)]->getValue();
 
 		return array_map(
-			static fn (Reminder $reminder): array => $reminder->jsonSerialize(),
-			$this->reminders->findByVehicle((int)$vehicle->getId()),
+			static fn (Reminder $reminder): array => [
+				'state' => ReminderEngine::evaluate($reminder, $today, $odo)['state'],
+				'estimate' => ReminderEngine::estimate($reminder, $chain, $now),
+			] + $reminder->jsonSerialize(),
+			$reminders,
 		);
+	}
+
+	/**
+	 * What the sheet may start a reminder from on this vehicle, with what each fills in.
+	 *
+	 * `first_due_months` is set on the inspection only: a new vehicle's first one may come later
+	 * than its cadence, and the sticker question prefills from it.
+	 *
+	 * @return list<array{key: string, mode: string, recur_months: ?int, recur_odo: ?int, lead_odo: ?int, first_due_months: ?int}>
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not see this vehicle
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException
+	 * @throws \OCP\DB\Exception
+	 */
+	public function templates(string $userId, string $vehicleUuid): array {
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::VIEW, $vehicleUuid);
+		$scheme = $this->jurisdictions->get($vehicle->getJurisdiction())->inspectionScheme();
+		$inspection = $scheme?->template($vehicle->getVehicleType())->key;
+
+		return array_map(static fn (ReminderTemplate $template): array => [
+			'key' => $template->key,
+			'mode' => $template->mode,
+			'recur_months' => $template->recurMonths,
+			'recur_odo' => $template->recurOdo,
+			'lead_odo' => $template->leadOdo,
+			'first_due_months' => $template->key === $inspection ? $scheme?->firstDueMonths($vehicle->getVehicleType()) : null,
+		], $this->offered($vehicle));
 	}
 
 	/**
@@ -129,12 +201,16 @@ class ReminderService {
 	public function delete(string $userId, string $vehicleUuid, string $reminderUuid, int $expectedUpdatedAt): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
 
-		return $this->atomicRetry(function () use ($vehicle, $reminderUuid, $expectedUpdatedAt): array {
+		$deleted = $this->atomicRetry(function () use ($vehicle, $reminderUuid, $expectedUpdatedAt): Reminder {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$reminder = $this->reminders->findOnVehicle((int)$vehicle->getId(), $reminderUuid);
 
-			return $this->reminders->softDelete($reminder, $expectedUpdatedAt)->jsonSerialize();
+			return $this->reminders->softDelete($reminder, $expectedUpdatedAt);
 		}, $this->db);
+		// The job reads live reminders only, so it would never take this one's back.
+		$this->notifications->withdraw($deleted);
+
+		return $deleted->jsonSerialize();
 	}
 
 	/**
@@ -176,14 +252,17 @@ class ReminderService {
 			throw new \InvalidArgumentException('until is a day still to come');
 		}
 
-		return $this->atomicRetry(function () use ($vehicle, $reminderUuid, $expectedUpdatedAt, $day): array {
+		$snoozed = $this->atomicRetry(function () use ($vehicle, $reminderUuid, $expectedUpdatedAt, $day): Reminder {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$reminder = $this->open((int)$vehicle->getId(), $reminderUuid);
 			$reminder->setSnoozedUntil($day);
 			$reminder->setState(Reminder::SNOOZED);
 
-			return $this->reminders->updateChecked($reminder, $expectedUpdatedAt)->jsonSerialize();
+			return $this->reminders->updateChecked($reminder, $expectedUpdatedAt);
 		}, $this->db);
+		$this->notifications->withdraw($snoozed);
+
+		return $snoozed->jsonSerialize();
 	}
 
 	/**
@@ -200,23 +279,131 @@ class ReminderService {
 	public function dismiss(string $userId, string $vehicleUuid, string $reminderUuid, int $expectedUpdatedAt): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
 
-		return $this->atomicRetry(function () use ($vehicle, $reminderUuid, $expectedUpdatedAt): array {
+		$dismissed = $this->atomicRetry(function () use ($vehicle, $reminderUuid, $expectedUpdatedAt): Reminder {
 			$vehicleId = (int)$vehicle->getId();
 			$this->vehicles->hold($vehicleId);
 			$reminder = $this->open($vehicleId, $reminderUuid);
 
 			if (ReminderEngine::advance($reminder, $reminder->getDueDate()?->format('Y-m-d'), $reminder->getDueOdo())) {
-				// The new occurrence starts afresh, so the evaluation must not keep the old state.
-				$reminder->setState(Reminder::PLANNED);
-				$odo = $this->readings->findNewestAtOrBefore($vehicleId, OdoReading::MAIN, $this->time->getTime())?->getValue();
-				$reminder->setState(ReminderEngine::evaluate($reminder, $this->today(), $odo)['state']);
+				$this->reevaluate($reminder);
 			} else {
 				$reminder->setSnoozedUntil(null);
 				$reminder->setState(Reminder::DISMISSED);
 			}
 
-			return $this->reminders->updateChecked($reminder, $expectedUpdatedAt)->jsonSerialize();
+			return $this->reminders->updateChecked($reminder, $expectedUpdatedAt);
 		}, $this->db);
+		$this->notifications->withdraw($dismissed);
+
+		return $dismissed->jsonSerialize();
+	}
+
+	/**
+	 * The reminder a maintenance record's `closes` names: a live, open one on the record's
+	 * vehicle, or the one the record already closes, whatever became of it since.
+	 *
+	 * For MaintenanceService, which has reached the vehicle and holds it.
+	 *
+	 * @param mixed $uuid the request's `closes`
+	 * @param ?Reminder $current the reminder the record closes as it stands, if it does
+	 * @throws \InvalidArgumentException if it names no reminder the record may close
+	 * @throws \OCP\DB\Exception
+	 */
+	public function closable(int $vehicleId, mixed $uuid, ?Reminder $current): ?Reminder {
+		$uuid = Field::read('closes', 'text', 36, $uuid);
+		if (!is_string($uuid)) {
+			return null;
+		}
+		if ($uuid === $current?->getUuid()) {
+			return $current;
+		}
+		try {
+			return $this->open($vehicleId, $uuid);
+		} catch (\OCP\AppFramework\Db\DoesNotExistException) {
+			// Not a 404: the route's record exists, it is the field that names nothing.
+			throw new \InvalidArgumentException('closes is not a reminder on this vehicle');
+		}
+	}
+
+	/**
+	 * Closes the reminder's occurrence with a maintenance record. One that recurs moves on from
+	 * the record's own day and counter (rule 4); one that does not is done.
+	 *
+	 * @throws \InvalidArgumentException if it recurs by km and the record states no counter
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException
+	 * @throws \OCP\DB\Exception
+	 */
+	public function closeBy(Reminder $reminder, Maintenance $record): void {
+		if ($reminder->getRecurOdo() !== null && $record->getOdo() === null) {
+			// The next due km would be the old one, and the next occurrence due at once.
+			throw new \InvalidArgumentException('odo is the counter this reminder recurs from');
+		}
+		if (ReminderEngine::advance($reminder, self::dayOf($record), $record->getOdo())) {
+			$this->reevaluate($reminder);
+		} else {
+			$reminder->setState(Reminder::DONE);
+		}
+		$this->reminders->updateChecked($reminder, $reminder->getUpdatedAt());
+		$this->notifications->withdraw($reminder);
+	}
+
+	/**
+	 * Takes back what closeBy() did with this record, when nothing has moved the reminder since.
+	 * A deleted reminder is left as it was deleted.
+	 *
+	 * @return bool whether it was taken back
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException
+	 * @throws \OCP\DB\Exception
+	 */
+	public function reopenBy(Reminder $reminder, Maintenance $record): bool {
+		if ($reminder->getDeletedAt() !== null) {
+			return false;
+		}
+		$recurs = $reminder->getRecurMonths() !== null || $reminder->getRecurOdo() !== null;
+		if ($recurs ? !ReminderEngine::retreat($reminder, self::dayOf($record), $record->getOdo()) : $reminder->getState() !== Reminder::DONE) {
+			return false;
+		}
+		$this->reevaluate($reminder);
+		$this->reminders->updateChecked($reminder, $reminder->getUpdatedAt());
+		// The occurrence it sent for is gone, and the job sees no state change to take it back.
+		$this->notifications->withdraw($reminder);
+
+		return true;
+	}
+
+	/**
+	 * Undo of a withdrawal: closes the reminder with the record again, when it stands where
+	 * reopenBy() left it. One another record closed meanwhile stays closed by that one.
+	 *
+	 * @return bool whether it was closed again
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException
+	 * @throws \OCP\DB\Exception
+	 */
+	public function recloseBy(Reminder $reminder, Maintenance $record): bool {
+		if ($reminder->getDeletedAt() !== null || in_array($reminder->getState(), [Reminder::DONE, Reminder::DISMISSED], true)
+			|| !ReminderEngine::standsAt($reminder, self::dayOf($record), $record->getOdo())) {
+			return false;
+		}
+		$this->closeBy($reminder, $record);
+
+		return true;
+	}
+
+	/**
+	 * Where a reminder stands now that its occurrence starts afresh: the old state must not carry
+	 * over, so it is evaluated from planned, against the newest counter.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	private function reevaluate(Reminder $reminder): void {
+		$reminder->setState(Reminder::PLANNED);
+		$odo = $this->readings->findNewestAtOrBefore($reminder->getVehicleId(), OdoReading::MAIN, $this->time->getTime())?->getValue();
+		$reminder->setState(ReminderEngine::evaluate($reminder, $this->today(), $odo)['state']);
+	}
+
+	/** The plain day the work was done on, where it was done (docs/architecture.md#time). */
+	private static function dayOf(Maintenance $record): string {
+		return gmdate('Y-m-d', $record->getDoneAt() + $record->getDoneAtOff() * 60);
 	}
 
 	/**
@@ -251,19 +438,24 @@ class ReminderService {
 	 * @throws \InvalidArgumentException if the vehicle offers no such template
 	 */
 	private function template(Vehicle $vehicle, string $key): ReminderTemplate {
-		$offered = $this->services->all();
-		$scheme = $this->jurisdictions->get($vehicle->getJurisdiction())->inspectionScheme();
-		if ($scheme !== null) {
-			$offered[] = $scheme->template($vehicle->getVehicleType());
-		}
-
-		foreach ($offered as $template) {
+		foreach ($this->offered($vehicle) as $template) {
 			if ($template->key === $key) {
 				return $template;
 			}
 		}
 
 		throw new \InvalidArgumentException('template_key is not a template this vehicle offers');
+	}
+
+	/** @return list<ReminderTemplate> the service intervals, then the inspection where there is one */
+	private function offered(Vehicle $vehicle): array {
+		$offered = $this->services->all();
+		$scheme = $this->jurisdictions->get($vehicle->getJurisdiction())->inspectionScheme();
+		if ($scheme !== null) {
+			$offered[] = $scheme->template($vehicle->getVehicleType());
+		}
+
+		return $offered;
 	}
 
 	/**
@@ -296,9 +488,14 @@ class ReminderService {
 		$dueDate = $fields['due_date'] ?? null;
 		$dueDate = $dueDate === null || $dueDate === '' ? null : Field::day('due_date', $dueDate);
 		$dueOdo = self::count('due_odo', $fields);
-		$leadOdo = self::count('lead_odo', $fields) ?? ($byOdo ? $defaults?->leadOdo : null);
-		$recurMonths = self::count('recur_months', $fields) ?? ($byDate ? $defaults?->recurMonths : null);
-		$recurOdo = self::count('recur_odo', $fields) ?? ($byOdo ? $defaults?->recurOdo : null);
+		// A field the request names, even empty, is one the user cleared; only an absent one is
+		// the template's to fill.
+		$filled = static fn (string $column, bool $read, ?int $default): ?int => array_key_exists($column, $fields) || !$read
+			? self::count($column, $fields)
+			: $default;
+		$leadOdo = $filled('lead_odo', $byOdo, $defaults?->leadOdo);
+		$recurMonths = $filled('recur_months', $byDate, $defaults?->recurMonths);
+		$recurOdo = $filled('recur_odo', $byOdo, $defaults?->recurOdo);
 
 		if ($byDate && $dueDate === null) {
 			throw new \InvalidArgumentException('due_date is a field every reminder by date carries');

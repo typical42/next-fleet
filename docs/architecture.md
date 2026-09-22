@@ -380,8 +380,9 @@ One rule set, used by HU/AU, oil change, insurance renewal, tyre swap, licence c
 2. A date reminder warns at its ticked warning points — a month before, at the start of the month
    it is due, on the due date; an odometer reminder at `due_odo − lead_odo`.
 3. On trigger: in-app notification, mail digest entry.
-4. Completing it creates a `fleet_maintenance` record and, if recurring, moves the reminder to its
-   next `occurrence`, due from the **actual** completion date/km — not the planned one.
+4. Completing it is a `fleet_maintenance` record that names it (`reminder_id`). If it recurs, the
+   reminder moves to its next `occurrence`, due from the **actual** completion date/km — not the
+   planned one; otherwise it is `done`.
 5. **Prediction needs data to be honest.** Predicted km/day comes from the last 90 days and requires
    a floor of 30 days and two readings. Below that, the UI says "not enough data yet" rather than
    inventing a date. An odometer reminder with no usable prediction stays odometer-only: no
@@ -415,13 +416,90 @@ it, so a test moves the same clock the job does.
   reminder recurs on both axes or on neither; the sheet refuses one, since its next occurrence
   would be due at once. Done and dismissed take no snooze and no second dismissal.
 - The day is the server's, `ITimeFactory`'s. A due date is a plain day with no zone.
+- `…/reminders` lists each reminder evaluated at now, against the main chain's newest value, and
+  writes nothing. The stored state is what the job last persisted; the banner shows where the
+  reminder stands. `GET /api/reminders` answers the same for every vehicle the user may see but a
+  disposed one, each row naming its `vehicle`, so the overview reads the fleet in one request.
+
+**The estimate.** `ReminderEngine::estimate()` answers rule 5 for a reminder by km or by either,
+and `…/reminders` lists it beside the state. The pace is the main chain's newest segment inside the
+last 90 days: flagged Readings do not count, and a lower unflagged value is an answered reset, so
+the pace starts again there. It needs two Readings 30 days apart and a rising counter; the day is
+where it reaches the due km, and never earlier than today. A due km already reached has no
+estimate; the state says it is due. Without a pace the screen says "not enough data yet". The state
+never reads it.
 
 **What the sheet writes.** `…/reminders` takes the mode, the due date or km, the lead, the warning
 points and the recurrence; the state and the occurrence are the engine's. A template fills what the
-request left out, at creation only, so an edit can clear a recurrence. Its title stays null and
+request left out, at creation only, so an edit can clear a recurrence. A field the request names
+empty is one the user cleared, and the template does not fill it. `…/reminder-templates`
+lists the templates the vehicle offers and what each fills in, so the sheet can show it; the
+inspection also states `first_due_months`, for the sticker question to prefill. Its title stays null and
 translates from `template_key`. A date reminder refuses a km field and an odometer one a date
 field: the engine would never read them. The owner and managers write reminders, delete included;
 drivers and viewers read them.
+
+**What a maintenance record closes.** `…/maintenance` takes `closes`, a reminder uuid, and every
+maintenance row answers with it (the timeline too), since `reminder_id` stays off the wire. It
+names a live, open reminder on the same vehicle, or the one the record already closes; a done or
+dismissed one is not closed twice. The record's day is `done_at` in its own offset. A reminder that
+recurs by km needs the record's counter, or its next occurrence would be due at once. The edit
+sheet is a full replace, so a record saved without `closes` closes nothing any more.
+
+Withdrawing the work takes the occurrence back, in the same transaction:
+
+- An edit that moves the day or the counter, or names another reminder, takes back the old close
+  and closes again from the record as it now is.
+- A delete takes it back, and its undo closes again.
+- Taking back undoes rule 4's step: the occurrence counts down, and the due is the record's own day
+  and km. The planned due is not stored anywhere, so it cannot come back. A one-off goes from `done`
+  back to where it stands.
+- A reminder something else has moved since — a dismissal, an edit, another record — no longer
+  stands where this record put it (`ReminderEngine::retreat()` checks), and is left alone. So is a
+  deleted one. An undo closes again only while the reminder stands where the delete left it;
+  otherwise the record comes back closing nothing, so withdrawing it again moves nothing.
+
+**Who is told.** Each vehicle has a list of recipients; a new vehicle starts with its owner on it.
+`…/recipients` lists it, `POST` adds an account (`user_id`), `DELETE …/recipients/{recipient}`
+takes one off, the owner included, and each answers with the list as it now stands. Reading the list
+takes `EDIT` as writing it does: who gets told is the managers' business, and the sheet shows the
+list only to whoever may change it. An added account must exist; being on the list grants nothing,
+since Vehicle Access decides what the notification's link opens. A removal is a hard delete, so the
+same account can be added again under the unique index. The mail cadence is the vehicle's
+`reminder_mail`, written with the vehicle like any other column.
+
+**The job.** `ReminderJob` runs hourly (`info.xml`) and hands the round to `NotificationService`.
+Each vehicle not disposed of is held, one transaction each; every live reminder is evaluated at
+`ITimeFactory`'s now against the newest main-chain value, and a state that changed is persisted.
+The newest point reached goes to each recipient once: the `app` receipt is claimed first, and only
+a new receipt sends. So a run missed for a day skips the points in between, and a second run
+sends nothing. Sending waits for the commit, so a rollback cannot leave a notification without its
+receipt. A vehicle that fails is logged and the round goes on.
+
+- The notification stores parameters — vehicle, plate, template key or title, due date and km —
+  and `Notifier::prepare()` translates them in the reader's language and locale. It links to
+  `…/apps/nextfleet/?vehicle=<uuid>` only for someone with `VIEW`; everyone else on the list gets
+  the plate and title. It has no actions.
+- Its object is the reminder. A new point replaces the recipient's old one. A point already sent
+  stays up while the state moves on: an unticked due date leaves "due on" standing. The job takes
+  it back when the reminder moves to where nothing is told, and so do snoozing, dismissing,
+  deleting, and a maintenance record closing the reminder or being withdrawn.
+- `laid_up` evaluates and persists but sends nothing. Back to `active`, the point it stands at has
+  no receipt yet, so it sends once. `disposed` is not evaluated at all.
+- A receipt is per point and occurrence, and the schema has no more. A snooze that ends on a point
+  already sent therefore sends nothing until the next point. An edit that moves the due date
+  without changing the point leaves the sent text with the old date.
+
+**The digest.** After the notifications, the job hands the round to `MailService`. Each enabled
+recipient with an address gets at most one mail a day, from 07:00 in their time zone (`core`
+`timezone`, else the server's `default_timezone`). It covers every active vehicle on their list
+whose `reminder_mail` falls that day — daily, weekly on Monday, monthly on the 1st, in the
+recipient's day — and has news: a point this user has no `mail` receipt for. No news, no mail. The
+points are the ones the notification tells, and the lines say what it says, without the plate
+(`ReminderWords`), grouped under each vehicle's plate; the plate links only for someone with
+`VIEW`. The receipts are claimed under each vehicle's hold and the mail is sent in the same
+transaction, so a refused mail rolls them back: the notification has its own receipt and stays,
+and the next run tries again. A day counts as mailed by its newest `mail` receipt up to now.
 
 The same prediction warns on leasing mileage overrun.
 

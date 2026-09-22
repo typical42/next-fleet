@@ -38,4 +38,30 @@ class ReminderMapper extends BaseMapper {
 
 		return $this->findEntities($qb);
 	}
+
+	/**
+	 * The reminders a vehicle's maintenance records closed, deleted ones too: `reminder_id` is an
+	 * id, and the wire names a reminder by its uuid.
+	 *
+	 * @param list<int> $ids
+	 * @return array<int, Reminder> by id
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findAnyByIds(int $vehicleId, array $ids): array {
+		if ($ids === []) {
+			return [];
+		}
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->tableName)
+			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->in('id', $qb->createNamedParameter($ids, IQueryBuilder::PARAM_INT_ARRAY)));
+
+		$byId = [];
+		foreach ($this->findEntities($qb) as $reminder) {
+			$byId[(int)$reminder->getId()] = $reminder;
+		}
+
+		return $byId;
+	}
 }

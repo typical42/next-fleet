@@ -72,6 +72,10 @@ use OCP\DB\Types;
  * @method void setReminderMail(string $reminderMail)
  */
 class Vehicle extends BaseEntity implements \JsonSerializable {
+	public const ACTIVE = 'active';
+	public const LAID_UP = 'laid_up';
+	public const DISPOSED = 'disposed';
+
 	public const MAIL_OFF = 'off';
 	public const MAIL_DAILY = 'daily';
 	public const MAIL_WEEKLY = 'weekly';

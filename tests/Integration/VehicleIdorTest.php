@@ -15,6 +15,7 @@ use OCA\NextFleet\Controller\KpiController;
 use OCA\NextFleet\Controller\MaintenanceController;
 use OCA\NextFleet\Controller\OdometerController;
 use OCA\NextFleet\Controller\PreferencesController;
+use OCA\NextFleet\Controller\RecipientController;
 use OCA\NextFleet\Controller\ReminderController;
 use OCA\NextFleet\Controller\ReportController;
 use OCA\NextFleet\Controller\TimelineController;
@@ -30,6 +31,7 @@ use OCA\NextFleet\Service\LogbookExport;
 use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\PreferencesService;
+use OCA\NextFleet\Service\RecipientService;
 use OCA\NextFleet\Service\ReminderService;
 use OCA\NextFleet\Service\TimelineService;
 use OCA\NextFleet\Service\TripService;
@@ -64,7 +66,7 @@ class VehicleIdorTest extends TestCase {
 	 * refusal - their own fleet, their own settings. Listed rather than inferred: a route added
 	 * here is a claim that nothing in its answer belongs to anybody else.
 	 */
-	private const NAMES_NO_VEHICLE = ['vehicle#index', 'vehicle#create', 'preferences#index', 'preferences#update'];
+	private const NAMES_NO_VEHICLE = ['vehicle#index', 'vehicle#create', 'reminder#fleet', 'preferences#index', 'preferences#update'];
 
 	private VehicleService $service;
 	private OdometerService $odometry;
@@ -73,6 +75,7 @@ class VehicleIdorTest extends TestCase {
 	private MaintenanceService $workshop;
 	private ExpenseService $spending;
 	private ReminderService $reminders;
+	private RecipientService $recipients;
 	private TimelineService $history;
 	private KpiService $figures;
 	private LogbookExport $logbook;
@@ -89,6 +92,7 @@ class VehicleIdorTest extends TestCase {
 		$this->workshop = $container->get(MaintenanceService::class);
 		$this->spending = $container->get(ExpenseService::class);
 		$this->reminders = $container->get(ReminderService::class);
+		$this->recipients = $container->get(RecipientService::class);
 		$this->history = $container->get(TimelineService::class);
 		$this->figures = $container->get(KpiService::class);
 		$this->logbook = $container->get(LogbookExport::class);
@@ -118,7 +122,7 @@ class VehicleIdorTest extends TestCase {
 			->where($qb->expr()->in('grantee', $qb->createNamedParameter($people, $qb::PARAM_STR_ARRAY)));
 		$qb->executeStatement();
 
-		foreach (['fleet_odo_readings', 'fleet_trips', 'fleet_energy', 'fleet_maintenance', 'fleet_expenses', 'fleet_reminders'] as $table) {
+		foreach (['fleet_odo_readings', 'fleet_trips', 'fleet_energy', 'fleet_maintenance', 'fleet_expenses', 'fleet_reminders', 'fleet_reminder_recipients'] as $table) {
 			$qb = $db->getQueryBuilder();
 			$qb->delete($table)
 				->where($qb->expr()->in('created_by', $qb->createNamedParameter($people, $qb::PARAM_STR_ARRAY)));
@@ -191,6 +195,15 @@ class VehicleIdorTest extends TestCase {
 	}
 
 	/**
+	 * And for who the reminders go to.
+	 *
+	 * @param array<string, mixed> $params
+	 */
+	private function recipient(string $userId, array $params): RecipientController {
+		return new RecipientController(Application::APP_ID, $this->request($params), $this->recipients, $this->session($userId));
+	}
+
+	/**
 	 * And again, for the one read that shows everything at once.
 	 *
 	 * @param array<string, mixed> $params
@@ -257,6 +270,10 @@ class VehicleIdorTest extends TestCase {
 		foreach (is_array($data) ? $data : [$data] as $item) {
 			if ($item instanceof Vehicle) {
 				$uuids[] = $item->getUuid();
+			}
+			// A fleet-wide row names the vehicle it hangs off.
+			if (is_array($item) && is_string($item['vehicle'] ?? null)) {
+				$uuids[] = $item['vehicle'];
 			}
 		}
 
@@ -334,6 +351,8 @@ class VehicleIdorTest extends TestCase {
 			'expense#delete' => $this->expense(self::STRANGER, $params)->delete($uuid, self::NO_SUCH_ENTRY),
 			'expense#restore' => $this->expense(self::STRANGER, $params)->restore($uuid, self::NO_SUCH_ENTRY),
 			'reminder#index' => $this->reminder(self::STRANGER, $params)->index($uuid),
+			'reminder#fleet' => $this->reminder(self::STRANGER, $params)->fleet(),
+			'reminder#templates' => $this->reminder(self::STRANGER, $params)->templates($uuid),
 			'reminder#create' => $this->reminder(self::STRANGER, $params + ['template_key' => 'oil_change', 'due_date' => '2027-03-31', 'due_odo' => 999999])
 				->create($uuid),
 			// Walked against a reminder that is not there, for the reason the trip's are.
@@ -343,6 +362,10 @@ class VehicleIdorTest extends TestCase {
 			'reminder#restore' => $this->reminder(self::STRANGER, $params)->restore($uuid, self::NO_SUCH_ENTRY),
 			'reminder#snooze' => $this->reminder(self::STRANGER, $params + ['until' => '2036-05-01'])->snooze($uuid, self::NO_SUCH_ENTRY),
 			'reminder#dismiss' => $this->reminder(self::STRANGER, $params)->dismiss($uuid, self::NO_SUCH_ENTRY),
+			'recipient#index' => $this->recipient(self::STRANGER, $params)->index($uuid),
+			// A real account, so the refusal cannot be the unknown user's 400.
+			'recipient#create' => $this->recipient(self::STRANGER, $params + ['user_id' => 'admin'])->create($uuid),
+			'recipient#delete' => $this->recipient(self::STRANGER, $params)->delete($uuid, self::OWNER),
 			'timeline#index' => $this->timeline(self::STRANGER, $params)->index($uuid),
 			'timeline#gaps' => $this->timeline(self::STRANGER, $params)->gaps($uuid),
 			'timeline#show' => $this->timeline(self::STRANGER, $params)->show($uuid, 'trip', self::NO_SUCH_ENTRY),
@@ -369,6 +392,7 @@ class VehicleIdorTest extends TestCase {
 		// A refused write must not have moved the odometer either, cache included.
 		$this->assertNull($untouched->getOdoValue());
 		$this->assertSame([], $this->reminders->list(self::OWNER, $uuid));
+		$this->assertSame([self::OWNER], array_column($this->recipients->list(self::OWNER, $uuid), 'user_id'));
 	}
 
 	/**
