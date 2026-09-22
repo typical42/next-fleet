@@ -1,6 +1,6 @@
 # NextFleet — Plan
 
-A Nextcloud app for keeping a vehicle logbook. Backend: Nextcloud DB, user system, calendar,
+A Nextcloud app for keeping a vehicle logbook. Backend: Nextcloud DB, user system,
 notifications, mail. Frontend: Nextcloud web UI. An Android client comes later and reuses the same
 services.
 
@@ -33,7 +33,7 @@ what remains is sized for one person to finish.
 ## Scope
 
 **In scope (v1 = M0–M5):** vehicles, odometer, trips, fuel and charging, maintenance records,
-expenses, due-date reminders with notification + mail + calendar, cost overview, CSV export,
+expenses, due-date reminders with notification + mail, cost overview, CSV export,
 HTML/print reports.
 
 **Later:** shared vehicles with roles, bookings, handover protocols, import from other tools, the
@@ -54,7 +54,7 @@ directory that someone else can add by merge request ([contributing](docs/contri
 | M1 | One vertical slice first (migration → mapper → route → Vue), then vehicles, odometer readings, `fleet_access` and `VehicleAccess::may`, optimistic concurrency, jurisdiction defaulting, personal settings. **Three tables, not eleven** — a migration is easy to add and hard to withdraw | A vehicle can be created, its km updated, a stale write is rejected, and a foreign user is denied |
 | M2 | Trips, derived odometer, timeline, filters, gap detection, Logbook Mode with the `de` ruleset (append-only + `fleet_audit`) | Adding a trip moves the vehicle's km; a voided locked trip survives in the export; the German rules sit in `lib/Jurisdiction/De/`, not scattered through services |
 | M3 | Energy entries, maintenance records, expenses, VAT, and the [consumption and cost maths](docs/architecture.md#numbers-consumption-cost-emissions) | Per-vehicle cost per 100 km is correct, and a plug-in hybrid shows two consumption figures |
-| M4 | Reminder engine, TimedJob, notifications, mail digest, calendar sync | HU/AU due in 4 weeks reaches the phone |
+| M4 | Reminder engine, TimedJob, notifications, mail digest | HU/AU due in 4 weeks reaches the phone |
 | M5 | Documents, the Costs screen, CO₂, dashboard widget, search, CSV export, HTML/print reports, generic jurisdiction | Feature-complete v1, app store release |
 | M6+ | Sharing UI, fleet view, bookings, handover. Then the OCS API, `?since=` delta endpoint, app passwords, API docs | Multi-driver pool works; an Android client can be built against it |
 
@@ -108,9 +108,8 @@ the index.
     record rather than removing it.
 15. **Gaps are closed one at a time, as private trips only**
     ([logbook mode](docs/features.md#logbook-mode)).
-16. **The calendar is a one-way projection**
-    ([reminder engine](docs/architecture.md#reminder-engine)). Two-way sync with CalDAV is a trap we
-    are not walking into.
+16. **No calendar** ([Nextcloud integration](docs/architecture.md#nextcloud-integration)). A
+    reminder whose event cannot be changed or removed keeps ringing after it is done.
 17. **Dismissing a reminder skips one occurrence; deleting it ends the recurrence**
     ([reminder engine](docs/architecture.md#reminder-engine)).
 18. **File downloads are proxied through the app**
@@ -124,15 +123,11 @@ the index.
 
 ## Still open
 
-1. **Does `ICreateFromString` upsert on a repeated UID?** Decides whether a changed reminder updates
-   its calendar event or has to cancel and recreate. Spike at M4.
-2. **Which `@nextcloud/vue` major spans NC 31 to 34?** The M0 gate answers it. If none does, the
+1. **Which `@nextcloud/vue` major spans NC 31 to 34?** The M0 gate answers it. If none does, the
    31 floor is what moves — not the UI.
 
 ## Risks
 
-- **Calendar write API is thin.** Update/delete semantics unclear — see the M4 spike. Fallback: the
-  app's own notifications carry the feature; the calendar is a bonus.
 - **Mail depends on server SMTP.** Not every instance has it. Notifications must stand alone.
 - **App store compatibility churn.** Nextcloud majors break APIs twice a year; four supported
   majors is a deliberate cost, paid at M0 and again at every release.

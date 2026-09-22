@@ -44,7 +44,8 @@ erDiagram
     ENERGY ||--|| ODO_READINGS : writes
     MAINTENANCE ||--|| ODO_READINGS : writes
     MAINTENANCE }o--o| REMINDERS : "closes, then recurs"
-    REMINDERS ||--o{ REMINDER_NOTIFICATIONS : "one row per channel"
+    REMINDERS ||--o{ REMINDER_RECEIPTS : "one row per point, channel and recipient"
+    VEHICLES ||--o{ REMINDER_RECIPIENTS : "reminders go to"
     BOOKINGS ||--o| TRIPS : becomes
     TRIPS ||--o{ AUDIT : "revisions, Logbook Mode only"
     VEHICLES ||--o{ AUDIT : "every flip of the mode"
@@ -54,14 +55,15 @@ Tables (prefix `fleet_`; Nextcloud prepends `oc_`, so names stay under 27 charac
 
 | Table | Key columns |
 |---|---|
-| `fleet_vehicles` | `user_id` (owner), `plate`, `manufacturer`, `model`, `vehicle_type`, `engine`, `energy_types`, `tank_ml`, `battery_wh`, `first_reg`, `vin`, `odo_value` (cache), `odo_unit` (km/h), `second_unit` (null/h), `second_value` (cache), `purchase_price`, `residual_est`, `currency`, `jurisdiction`, `logbook_mode`, `lifecycle`, `disposed_at`, `folder_file_id`, `retention_months`, `color`, `notes` |
+| `fleet_vehicles` | `user_id` (owner), `plate`, `manufacturer`, `model`, `vehicle_type`, `engine`, `energy_types`, `tank_ml`, `battery_wh`, `first_reg`, `vin`, `odo_value` (cache), `odo_unit` (km/h), `second_unit` (null/h), `second_value` (cache), `purchase_price`, `residual_est`, `currency`, `jurisdiction`, `logbook_mode`, `lifecycle`, `disposed_at`, `folder_file_id`, `retention_months`, `color`, `notes`, `reminder_mail` (off/daily/weekly/monthly, default weekly) |
 | `fleet_odo_readings` | `vehicle_id`, `read_at`, `read_at_off`, `value`, `kind` (reading/reset/correction), `origin` (observed/derived), `flagged`, `source_type` (manual/trip/energy/maintenance), `source_id`, `counter` (main/second, null reads as main) |
 | `fleet_trips` | `vehicle_id`, `started_at`, `started_at_off`, `ended_at`, `ended_at_off`, `start_odo` (nullable claim), `end_odo`, `distance`, `from_label`, `to_label`, `purpose`, `partner`, `category` (business/private/commute), `reconciled` |
 | `fleet_energy` | `vehicle_id`, `filled_at`, `filled_at_off`, `odo`, `second_odo`, `energy` (petrol/diesel/lpg/cng/electric), `amount` (ml or Wh, per `energy`), `unit_price` (tenths of a cent per l or kWh), `total`, `vat_rate`, `full_tank`, `missed_previous`, `station`, `is_dc`, `location_kind` (home/public) |
-| `fleet_maintenance` | `vehicle_id`, `type` (service/repair/inspection/tyres/upgrade), `done_at`, `done_at_off`, `odo`, `second_odo`, `title`, `vendor`, `cost`, `vat_rate`, `notes`, `reminder_id` (M4) |
+| `fleet_maintenance` | `vehicle_id`, `type` (service/repair/inspection/tyres/upgrade), `done_at`, `done_at_off`, `odo`, `second_odo`, `title`, `vendor`, `cost`, `vat_rate`, `notes`, `reminder_id` (the reminder it closed) |
 | `fleet_expenses` | `vehicle_id`, `spent_at`, `spent_at_off`, `category` (insurance/tax/toll/parking/fine/lease/other), `amount`, `vat_rate`, `notes` |
-| `fleet_reminders` | `vehicle_id`, `template_key` (nullable — seeded templates translate, user titles do not), `title`, `due_date`, `due_odo`, `mode` (date/odo/either), `lead_days`, `lead_odo`, `recur_months`, `recur_odo`, `state`, `snoozed_until`, `cal_uid`, `cal_uri` |
-| `fleet_reminder_notifications` | `reminder_id`, `channel` (app/mail/calendar), `sent_at` |
+| `fleet_reminders` | `vehicle_id`, `template_key` (nullable — seeded templates translate, user titles do not), `title`, `mode` (date/odo/either), `due_date` (a plain date), `due_odo`, `lead_odo`, `warn_month_before`, `warn_month_start`, `warn_due_date`, `recur_months`, `recur_odo`, `state`, `snoozed_until`, `occurrence` (counts up with each recurrence) |
+| `fleet_reminder_receipts` | `reminder_id`, `occurrence`, `point`, `channel` (app/mail), `user_id`, `sent_at` — unique per send |
+| `fleet_reminder_recipients` | `vehicle_id`, `user_id` — unique per vehicle; starts as the owner |
 | `fleet_documents` | `vehicle_id`, `file_id`, `kind` (registration/insurance/manual/receipt/photo), `linked_type`, `linked_id` |
 | `fleet_audit` | `entity`, `entity_id`, `diff_json` — only written under Logbook Mode |
 | `fleet_access` | `vehicle_id`, `grantee`, `grantee_type` (user/group), `role` (manager/driver/viewer) |
@@ -355,8 +357,7 @@ twelve west: exactly the instants some trip of the year could set off at.
 | Concern | Mechanism |
 |---|---|
 | Identity, ACL | `OCP\IUserSession`, `IGroupManager`. Every query runs through `VehicleAccess::may` from M1 on: owner, or a row in `fleet_access` with a sufficient role ([ADR 0001](adr/0001-own-access-table.md)). A route that names one vehicle asks `may`; a route that lists them asks `reachableVehicleIds` instead, so the widening is one query and not one per row. |
-| Reminders → push | Own `TimedJob` (hourly) evaluates due reminders, then `OCP\Notification\IManager` + an `INotifier`. This is the reliable path: it works without the Calendar app. |
-| Reminders → calendar | User picks one writable calendar in settings; we write real events with alarms through `OCP\Calendar\IManager` (`createEventBuilder()` → `createInCalendar()`, needs a calendar implementing `ICreateFromString`; app `dav` as dependency). Store `cal_uid` so we can re-write or cancel. Real events sync over CalDAV, so the phone rings without our app. |
+| Reminders → push | Own `TimedJob` (hourly) evaluates due reminders, then `OCP\Notification\IManager` + an `INotifier`. It reaches the phone through the Nextcloud app. |
 | Reminders → mail | `OCP\Mail\IMailer` + `IEMailTemplate`, using the server's configured SMTP. Digest, not one mail per item. |
 | Files, receipts | `OCP\Files\IRootFolder`. A vehicle's folder is created as `/Fleet/<plate> — <make model>/` for humans who browse Files, and then **referenced only by `folder_file_id`**. A plate change renames it best-effort; a failed rename, or a user who moved the folder themselves, breaks nothing. Documents are `file_id` too. |
 | …but served by us | Downloads go **through our controller**, so access follows the vehicle's access grant, not the file's. Otherwise a receipt on a shared car is invisible to the other driver unless the owner shares their folder. A `file_id` survives a move but not a delete — handle the missing node instead of 500ing. |
@@ -364,35 +365,63 @@ twelve west: exactly the instants some trip of the year could set off at.
 | Activity stream | `OCA\Activity` provider — optional, after v1. |
 | Dashboard | `OCP\Dashboard\IAPIWidgetV2`: "next due" list. |
 | Unified search | `OCP\Search\IProvider`: find a vehicle by plate. |
-| Settings | Personal settings (calendar target, mail digest cadence, default jurisdiction). |
+| Settings | Personal settings (default jurisdiction). The mail cadence is per vehicle. |
 | CLI | `occ nextfleet:import`, `occ nextfleet:report` for scripting and imports. |
 
-**Spike needed (M4):** `ICreateFromString` documents creation and cancellation, not update. Confirm
-whether re-writing the same UID upserts. If not, cancel + recreate.
+**No calendar.** Public `OCP` on NC 31–34 can create a calendar event but cannot update or delete
+one. A reminder that is changed, snoozed or completed would leave an event that still rings, so
+reminders write none.
 
 ## Reminder engine
 
 One rule set, used by HU/AU, oil change, insurance renewal, tyre swap, licence check.
 
 1. A reminder is due by date, by odometer, or by whichever comes first.
-2. `lead_days` / `lead_odo` define when it starts warning.
-3. On trigger: in-app notification, calendar event (if configured), mail digest entry.
-4. Completing it creates a `fleet_maintenance` record and, if recurring, spawns the next reminder
-   from the **actual** completion date/km — not the planned one.
+2. A date reminder warns at its ticked warning points — a month before, at the start of the month
+   it is due, on the due date; an odometer reminder at `due_odo − lead_odo`.
+3. On trigger: in-app notification, mail digest entry.
+4. Completing it creates a `fleet_maintenance` record and, if recurring, moves the reminder to its
+   next `occurrence`, due from the **actual** completion date/km — not the planned one.
 5. **Prediction needs data to be honest.** Predicted km/day comes from the last 90 days and requires
    a floor of 30 days and two readings. Below that, the UI says "not enough data yet" rather than
    inventing a date. An odometer reminder with no usable prediction stays odometer-only: no
-   estimated date, no calendar event, no false precision.
+   estimated date, no false precision.
 6. **States:** `planned → warned → due → overdue → done`, plus `snoozed` and `dismissed`.
    **Dismissing skips this occurrence; the recurrence continues.** Ending it is deleting the
    reminder — an explicit act. Someone who dismisses one oil change does not mean "never again", and
    the alternative silently terminates a legal duty. Snooze is not a nicety either: a reminder you
    cannot postpone gets muted permanently, and then the app is lying to you.
-7. **The calendar is a one-way projection.** The app is the source of truth and the event says so.
-   Editing the event does not change the reminder; switching the target calendar cleans up the
-   events left in the old one.
-8. Notification receipts are per channel, in `fleet_reminder_notifications`, so a broken SMTP server
-   does not silence the in-app notification — and so "what did we send, when" is a query.
+7. Notification receipts are per channel, in `fleet_reminder_receipts`, so a broken SMTP server
+   does not silence the in-app notification — and so "what did we send, when" is a query. Not
+   `fleet_reminder_notifications`: Nextcloud refuses a table name over 27 characters.
+
+**The state at an instant.** `ReminderEngine::evaluate()` is pure: a reminder, a plain day and the
+main chain's newest value in, a state and a point out. Everything that shows or sends a state asks
+it, so a test moves the same clock the job does.
+
+- By date: `warned` from the earliest ticked point, `due` on the due date, `overdue` from the day
+  after. A month before a 31st is the month's last day, and a month's last day counts back to the
+  previous month's last day (30 April → 31 March). With no point ticked, the reminder is `planned`
+  until it is due.
+- By km: `warned` from `due_odo − lead_odo` (no lead, no warning), `due` from `due_odo`. A counter
+  has no day after, so by km a reminder is due and stays due. `either` takes whichever axis is
+  further along; its overdue is the date's.
+- The point is the newest one reached, and a receipt is written under it: `month_before`,
+  `month_start`, `due_date`, `odo`, `odo_due`, `overdue`. An unticked due date sends nothing on the
+  day, but the reminder is still due.
+- Snoozed until a day: `snoozed` until that day, and on it back where it stands. The due date stays.
+- Dismissing a recurring reminder moves it one recurrence on from the **planned** due, since nothing
+  was done, and evaluates it at once. One that does not recur stays `dismissed`. An `either`
+  reminder recurs on both axes or on neither; the sheet refuses one, since its next occurrence
+  would be due at once. Done and dismissed take no snooze and no second dismissal.
+- The day is the server's, `ITimeFactory`'s. A due date is a plain day with no zone.
+
+**What the sheet writes.** `…/reminders` takes the mode, the due date or km, the lead, the warning
+points and the recurrence; the state and the occurrence are the engine's. A template fills what the
+request left out, at creation only, so an edit can clear a recurrence. Its title stays null and
+translates from `template_key`. A date reminder refuses a km field and an odometer one a date
+field: the engine would never read them. The owner and managers write reminders, delete included;
+drivers and viewers read them.
 
 The same prediction warns on leasing mileage overrun.
 
@@ -429,7 +458,10 @@ their own, and a vehicle's first fill-up yields no consumption at all.
 Show it next to energy-only cost per 100 km; the distance between the two is the actual story of the vehicle.
 `CostService` computes both, per 100 km or per hour as consumption is, over the same distance the
 wall-side figure uses. A fill-up in the period without a price makes the figure *incomplete*. With no
-distance in the period, the cost is the period's total. Under "I reclaim VAT" each row counts net of
+distance in the period, the cost is the period's total. A period with no fill-up, record or expense
+has no cost rather than zero — and so no TCO — since 0 would mean both "nothing spent" and "nothing
+recorded", and a new vehicle would swing against months in which it did not exist. The header shows
+such a period as zero and compares nothing with it. Under "I reclaim VAT" each row counts net of
 its own rate; a row without a stated rate counts gross, and the figure says so.
 
 **TCO** adds depreciation: (purchase − estimated residual) ÷ km over the holding period. Both fields

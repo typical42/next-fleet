@@ -37,4 +37,9 @@ class ProfileTest extends JurisdictionTestCase {
 	public function testItStatesNoRates(): void {
 		$this->assertNull(static::profile()->rates());
 	}
+
+	/** No inspection scheme either (CONTEXT.md): no vehicle under it is asked when one is due. */
+	public function testItStatesNoInspectionScheme(): void {
+		$this->assertNull(static::profile()->inspectionScheme());
+	}
 }

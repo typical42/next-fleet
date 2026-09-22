@@ -8,6 +8,7 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Jurisdiction\De;
 
+use OCA\NextFleet\Jurisdiction\IInspectionScheme;
 use OCA\NextFleet\Jurisdiction\IJurisdiction;
 use OCA\NextFleet\Jurisdiction\ILogbookRules;
 use OCA\NextFleet\Jurisdiction\IRateProvider;
@@ -48,5 +49,10 @@ class Profile implements IJurisdiction {
 	/** Built here for the reason the ruleset is: the table is its own constants. */
 	public function rates(): ?IRateProvider {
 		return new RateProvider();
+	}
+
+	/** Built here for the reason the ruleset is. */
+	public function inspectionScheme(): ?IInspectionScheme {
+		return new InspectionScheme();
 	}
 }

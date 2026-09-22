@@ -47,21 +47,26 @@ class CostService {
 
 		$energy = 0;
 		$incomplete = false;
-		foreach ($this->energy->findBetween($vehicleId, $from, $to) as $fill) {
+		$fills = $this->energy->findBetween($vehicleId, $from, $to);
+		foreach ($fills as $fill) {
 			$incomplete = $incomplete || $fill->getTotal() === null;
 			$energy += $count($fill->getTotal(), $fill->getVatRate());
 		}
 		$total = $energy;
-		foreach ($this->maintenance->findBetween($vehicleId, $from, $to) as $record) {
+		$records = $this->maintenance->findBetween($vehicleId, $from, $to);
+		foreach ($records as $record) {
 			$total += $count($record->getCost(), $record->getVatRate());
 		}
-		foreach ($this->expenses->findBetween($vehicleId, $from, $to) as $expense) {
+		$expenses = $this->expenses->findBetween($vehicleId, $from, $to);
+		foreach ($expenses as $expense) {
 			$total += $count($expense->getAmount(), $expense->getVatRate());
 		}
 		$distance = $this->consumption->distance($vehicle, $from, $to);
 		$per = ConsumptionService::per($vehicle);
-		// Money without a currency is a number nobody can read, so the figures stay unset.
-		$priced = $vehicle->getCurrency() !== null;
+		// Money without a currency is a number nobody can read, and a period with no rows has no
+		// figure rather than 0 (docs/architecture.md#numbers-consumption-cost-emissions).
+		$recorded = $fills !== [] || $records !== [] || $expenses !== [];
+		$priced = $vehicle->getCurrency() !== null && $recorded;
 		$value = $priced ? self::value($total, $distance, $per) : null;
 
 		return [

@@ -107,7 +107,9 @@ One thing that will come due for one vehicle, by date, by odometer, or by whiche
 _Avoid_: Due item, task, alert
 
 **Reminder Template**:
-A seeded, translatable definition a Reminder can be created from (oil change, HU/AU, tyre swap).
+A translatable definition a Reminder can be created from (oil change, HU/AU, tyre swap): mode,
+recurrence and lead, never a due date. Service templates are the same everywhere; the inspection
+is the Jurisdiction's.
 _Avoid_: Preset, rule
 
 ### Access

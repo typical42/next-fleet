@@ -8,6 +8,7 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Jurisdiction\Generic;
 
+use OCA\NextFleet\Jurisdiction\IInspectionScheme;
 use OCA\NextFleet\Jurisdiction\IJurisdiction;
 use OCA\NextFleet\Jurisdiction\ILogbookRules;
 use OCA\NextFleet\Jurisdiction\IRateProvider;
@@ -47,6 +48,11 @@ class Profile implements IJurisdiction {
 
 	/** A rate here would be some other country's. */
 	public function rates(): ?IRateProvider {
+		return null;
+	}
+
+	/** An inspection cadence here would be some other country's law. */
+	public function inspectionScheme(): ?IInspectionScheme {
 		return null;
 	}
 }

@@ -9,10 +9,12 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Tests\Unit\Migration;
 
 use Doctrine\DBAL\Schema\Table;
+use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Tests\Fixture\SchemaWrapper;
 use OCA\NextFleet\Tests\MigrationSteps as Steps;
 use OCA\NextFleet\Tests\SchemaExpectations;
 use OCP\DB\ISchemaWrapper;
+use OCP\IDBConnection;
 use OCP\Migration\IOutput;
 use PHPUnit\Framework\TestCase;
 
@@ -29,7 +31,8 @@ class SchemaTest extends TestCase {
 	private function migrate(): SchemaWrapper {
 		if ($this->migrated === null) {
 			$schema = new SchemaWrapper();
-			foreach (Steps::inOrder() as $step) {
+			$steps = Steps::inOrder($this->createMock(IDBConnection::class), $this->createMock(ReminderRecipientMapper::class));
+			foreach ($steps as $step) {
 				$returned = $step->changeSchema(
 					$this->createMock(IOutput::class),
 					static fn (): ISchemaWrapper => $schema,
@@ -53,5 +56,22 @@ class SchemaTest extends TestCase {
 
 	protected function table(string $name): Table {
 		return $this->migrate()->getTable($name);
+	}
+
+	/**
+	 * A primary key left unnamed takes its name from the table on PostgreSQL and Oracle, so
+	 * Nextcloud refuses the app over a table name of 23 characters or more. Only the declared
+	 * schema knows the name: MariaDB calls every key PRIMARY.
+	 */
+	public function testALongTableNamesItsPrimaryKey(): void {
+		foreach ($this->fleetTableNames() as $name) {
+			$primary = $this->table($name)->getPrimaryKey();
+			$this->assertNotNull($primary);
+
+			if (strlen($name) >= 23) {
+				$this->assertNotSame('primary', strtolower($primary->getName()), $name . ' needs a named primary key');
+				$this->assertLessThanOrEqual(30, strlen($primary->getName()));
+			}
+		}
 	}
 }

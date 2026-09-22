@@ -19,8 +19,8 @@ import { energyWord, formatConsumption, formatCount, formatMoney, formatOdometer
 /**
  * The vehicle header, one tile per figure (docs/ui.md). Every figure but the odometer belongs to
  * the period, and is compared with the same figure of the period before it: a number without
- * context means nothing. A figure the period before lacks gets no comparison rather than one
- * against zero.
+ * context means nothing. A figure either period lacks gets no comparison rather than one against
+ * zero.
  *
  * @param {import('../services/api.js').Vehicle} vehicle - the vehicle as it was read
  * @param {import('../services/api.js').Kpis|null} now - the period's figures, null until read
@@ -117,9 +117,10 @@ function costTiles(cost, before, locale) {
 	 */
 	const tile = (label, field, notes) => ({
 		label,
-		// Every sum is set once there is a currency, which is settled above; tco is checked below.
+		// A period that recorded nothing has no sums. It reads as zero, but a swing to or from a
+		// period with no figure says nothing (docs/architecture.md#numbers-consumption-cost-emissions).
 		figure: write(cost[field] ?? 0),
-		change: comparable ? changeOf(cost[field] ?? 0, before[field], write) : null,
+		change: comparable && cost[field] !== null ? changeOf(cost[field], before[field], write) : null,
 		notes,
 	})
 

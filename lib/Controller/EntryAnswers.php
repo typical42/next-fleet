@@ -15,7 +15,7 @@ use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\DataResponse;
 
 /**
- * What the fill-up, maintenance and expense controllers answer alike: the refusals a service
+ * What the fill-up, maintenance, expense and reminder controllers answer alike: the refusals a service
  * throws, as the status each one means, and the token an edit, a delete or an undo is checked
  * against. The trip's controller spells the same out on its own, since its service answers with an
  * entity.

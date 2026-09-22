@@ -15,6 +15,7 @@ use OCA\NextFleet\Controller\KpiController;
 use OCA\NextFleet\Controller\MaintenanceController;
 use OCA\NextFleet\Controller\OdometerController;
 use OCA\NextFleet\Controller\PreferencesController;
+use OCA\NextFleet\Controller\ReminderController;
 use OCA\NextFleet\Controller\ReportController;
 use OCA\NextFleet\Controller\TimelineController;
 use OCA\NextFleet\Controller\TripController;
@@ -29,6 +30,7 @@ use OCA\NextFleet\Service\LogbookExport;
 use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\PreferencesService;
+use OCA\NextFleet\Service\ReminderService;
 use OCA\NextFleet\Service\TimelineService;
 use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleService;
@@ -70,6 +72,7 @@ class VehicleIdorTest extends TestCase {
 	private EnergyService $fillUps;
 	private MaintenanceService $workshop;
 	private ExpenseService $spending;
+	private ReminderService $reminders;
 	private TimelineService $history;
 	private KpiService $figures;
 	private LogbookExport $logbook;
@@ -85,6 +88,7 @@ class VehicleIdorTest extends TestCase {
 		$this->fillUps = $container->get(EnergyService::class);
 		$this->workshop = $container->get(MaintenanceService::class);
 		$this->spending = $container->get(ExpenseService::class);
+		$this->reminders = $container->get(ReminderService::class);
 		$this->history = $container->get(TimelineService::class);
 		$this->figures = $container->get(KpiService::class);
 		$this->logbook = $container->get(LogbookExport::class);
@@ -114,7 +118,7 @@ class VehicleIdorTest extends TestCase {
 			->where($qb->expr()->in('grantee', $qb->createNamedParameter($people, $qb::PARAM_STR_ARRAY)));
 		$qb->executeStatement();
 
-		foreach (['fleet_odo_readings', 'fleet_trips', 'fleet_energy', 'fleet_maintenance', 'fleet_expenses'] as $table) {
+		foreach (['fleet_odo_readings', 'fleet_trips', 'fleet_energy', 'fleet_maintenance', 'fleet_expenses', 'fleet_reminders'] as $table) {
 			$qb = $db->getQueryBuilder();
 			$qb->delete($table)
 				->where($qb->expr()->in('created_by', $qb->createNamedParameter($people, $qb::PARAM_STR_ARRAY)));
@@ -175,6 +179,15 @@ class VehicleIdorTest extends TestCase {
 	 */
 	private function expense(string $userId, array $params): ExpenseController {
 		return new ExpenseController(Application::APP_ID, $this->request($params), $this->spending, $this->session($userId));
+	}
+
+	/**
+	 * And for the reminders.
+	 *
+	 * @param array<string, mixed> $params
+	 */
+	private function reminder(string $userId, array $params): ReminderController {
+		return new ReminderController(Application::APP_ID, $this->request($params), $this->reminders, $this->session($userId));
 	}
 
 	/**
@@ -320,6 +333,16 @@ class VehicleIdorTest extends TestCase {
 				->update($uuid, self::NO_SUCH_ENTRY),
 			'expense#delete' => $this->expense(self::STRANGER, $params)->delete($uuid, self::NO_SUCH_ENTRY),
 			'expense#restore' => $this->expense(self::STRANGER, $params)->restore($uuid, self::NO_SUCH_ENTRY),
+			'reminder#index' => $this->reminder(self::STRANGER, $params)->index($uuid),
+			'reminder#create' => $this->reminder(self::STRANGER, $params + ['template_key' => 'oil_change', 'due_date' => '2027-03-31', 'due_odo' => 999999])
+				->create($uuid),
+			// Walked against a reminder that is not there, for the reason the trip's are.
+			'reminder#update' => $this->reminder(self::STRANGER, $params + ['mode' => 'date', 'due_date' => '2027-03-31'])
+				->update($uuid, self::NO_SUCH_ENTRY),
+			'reminder#delete' => $this->reminder(self::STRANGER, $params)->delete($uuid, self::NO_SUCH_ENTRY),
+			'reminder#restore' => $this->reminder(self::STRANGER, $params)->restore($uuid, self::NO_SUCH_ENTRY),
+			'reminder#snooze' => $this->reminder(self::STRANGER, $params + ['until' => '2036-05-01'])->snooze($uuid, self::NO_SUCH_ENTRY),
+			'reminder#dismiss' => $this->reminder(self::STRANGER, $params)->dismiss($uuid, self::NO_SUCH_ENTRY),
 			'timeline#index' => $this->timeline(self::STRANGER, $params)->index($uuid),
 			'timeline#gaps' => $this->timeline(self::STRANGER, $params)->gaps($uuid),
 			'timeline#show' => $this->timeline(self::STRANGER, $params)->show($uuid, 'trip', self::NO_SUCH_ENTRY),
@@ -345,6 +368,7 @@ class VehicleIdorTest extends TestCase {
 		$this->assertNull($untouched->getDeletedAt());
 		// A refused write must not have moved the odometer either, cache included.
 		$this->assertNull($untouched->getOdoValue());
+		$this->assertSame([], $this->reminders->list(self::OWNER, $uuid));
 	}
 
 	/**

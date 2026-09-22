@@ -68,8 +68,15 @@ use OCP\DB\Types;
  * @method void setSecondUnit(?string $secondUnit)
  * @method int|null getSecondValue()
  * @method void setSecondValue(?int $secondValue)
+ * @method string getReminderMail()
+ * @method void setReminderMail(string $reminderMail)
  */
 class Vehicle extends BaseEntity implements \JsonSerializable {
+	public const MAIL_OFF = 'off';
+	public const MAIL_DAILY = 'daily';
+	public const MAIL_WEEKLY = 'weekly';
+	public const MAIL_MONTHLY = 'monthly';
+
 	protected string $userId = '';
 	protected ?string $plate = null;
 	protected ?string $manufacturer = null;
@@ -99,6 +106,8 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 	protected ?string $secondUnit = null;
 	/** The second chain's `odoValue`: a cache, written by the odometer. */
 	protected ?int $secondValue = null;
+	/** How often the reminder digest covers this vehicle; the column's default. */
+	protected string $reminderMail = self::MAIL_WEEKLY;
 
 	public function __construct() {
 		parent::__construct();
@@ -128,6 +137,7 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 		$this->addType('notes', Types::STRING);
 		$this->addType('secondUnit', Types::STRING);
 		$this->addType('secondValue', Types::BIGINT);
+		$this->addType('reminderMail', Types::STRING);
 	}
 
 	/**
@@ -166,6 +176,7 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 			'notes' => $this->notes,
 			'second_unit' => $this->secondUnit,
 			'second_value' => $this->secondValue,
+			'reminder_mail' => $this->reminderMail,
 			'created_at' => $this->createdAt,
 			'updated_at' => $this->updatedAt,
 			'deleted_at' => $this->deletedAt,

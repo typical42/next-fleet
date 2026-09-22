@@ -29,7 +29,7 @@ class VehicleService {
 	use TTransactional;
 
 	/** CONTEXT.md's vocabulary, and the only words these columns take. */
-	private const VEHICLE_TYPES = ['car', 'van', 'truck', 'trailer', 'tractor', 'generator'];
+	public const VEHICLE_TYPES = ['car', 'van', 'truck', 'trailer', 'tractor', 'generator'];
 	private const ENGINES = ['petrol', 'diesel', 'lpg', 'cng', 'electric', 'hybrid'];
 	public const ENERGIES = ['petrol', 'diesel', 'lpg', 'cng', 'electric'];
 	/** Kilometres or engine hours - a tractor counts neither in km nor in miles. */
@@ -353,7 +353,7 @@ class VehicleService {
 			'number' => $this->number($column, $value, false),
 			'count' => $this->number($column, $value, true),
 			'flag' => Field::flag($column, $value),
-			'date' => $this->date($column, $value),
+			'date' => Field::day($column, $value),
 			default => throw new \InvalidArgumentException($column . ' has no readable kind'),
 		};
 	}
@@ -387,21 +387,5 @@ class VehicleService {
 		}
 
 		return $number;
-	}
-
-	/**
-	 * A calendar day, one fact, so it carries no offset and no time of day
-	 * (docs/architecture.md#time). `!` zeroes what the format does not name, which is also what
-	 * keeps the clock out of it.
-	 *
-	 * @throws \InvalidArgumentException
-	 */
-	private function date(string $column, mixed $value): \DateTime {
-		$day = is_string($value) ? \DateTime::createFromFormat('!Y-m-d', $value) : false;
-		if ($day === false || $day->format('Y-m-d') !== $value) {
-			throw new \InvalidArgumentException($column . ' is a day, as YYYY-MM-DD');
-		}
-
-		return $day;
 	}
 }
