@@ -181,6 +181,27 @@ describe('the undo toast', () => {
 		expect(wrapper.find('.toast').exists()).toBe(false)
 	})
 
+	/**
+	 * A reminder is deleted from the banner and taken back the same way. It moves no counter, so
+	 * the vehicle is not read again, and the toast does not call it an entry.
+	 */
+	it('offers a reminder back, and says it is one', async () => {
+		const store = useVehiclesStore()
+		store.upsert(VEHICLE)
+		await store.strike('v-1', 'reminder', { uuid: 'r-1', updated_at: 1700000100 })
+		const wrapper = shallowMount(UndoToast, { global: { renderStubDefaultSlot: true } })
+
+		expect(getVehicle).not.toHaveBeenCalled()
+		expect(wrapper.text()).toContain('The reminder was deleted.')
+
+		await button(wrapper, 'Undo').vm.$emit('click')
+		await flushPromises()
+
+		expect(restoreEntry).toHaveBeenCalledWith('v-1', 'reminder', expect.objectContaining({ updated_at: 1700000200 }))
+		expect(getVehicle).not.toHaveBeenCalled()
+		expect(store.restored).toBe(1)
+	})
+
 	/** Under Logbook Mode a trip is voided rather than deleted, and the toast says which. */
 	it('says a trip under Logbook Mode was voided', async () => {
 		vi.mocked(getVehicle).mockResolvedValue({ ...VEHICLE, logbook_mode: true })

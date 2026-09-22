@@ -92,6 +92,20 @@ class InfoXmlTest extends TestCase {
 		);
 	}
 
+	/** The same again for the job list: an unlisted job never runs, and no reminder is sent. */
+	public function testEveryBackgroundJobIsRegistered(): void {
+		$info = simplexml_load_file(self::ROOT . '/appinfo/info.xml');
+		$this->assertNotFalse($info);
+
+		$jobs = [];
+		foreach (glob(self::ROOT . '/lib/BackgroundJob/*.php') ?: [] as $file) {
+			$jobs[] = 'OCA\\NextFleet\\BackgroundJob\\' . basename($file, '.php');
+		}
+
+		$this->assertNotEmpty($jobs);
+		$this->assertEqualsCanonicalizing($jobs, array_map('strval', $info->xpath('/info/background-jobs/job') ?: []));
+	}
+
 	/**
 	 * Every class under lib/Settings/ the settings manager could render. A stub that does not
 	 * implement ISettings yet is not one of them.

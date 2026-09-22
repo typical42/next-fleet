@@ -8,6 +8,7 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Service;
 
+use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Db\Reminder;
 
 /**
@@ -25,6 +26,10 @@ final class ReminderEngine {
 
 	/** How far along an occurrence is, so "whichever comes first" is the larger. */
 	private const RANK = [Reminder::PLANNED => 0, Reminder::WARNED => 1, Reminder::DUE => 2, Reminder::OVERDUE => 3];
+
+	/** The pace looks back 90 days and needs 30 of them (rule 5). */
+	private const PACE_WINDOW = 90 * 86400;
+	private const PACE_FLOOR = 30 * 86400;
 
 	/**
 	 * The state the reminder is in, and the newest point it has reached — the one a notification
@@ -78,6 +83,89 @@ final class ReminderEngine {
 		$reminder->setSnoozedUntil(null);
 
 		return true;
+	}
+
+	/**
+	 * Takes back advance() from that base, when the reminder still stands where it put it: the
+	 * record that moved it on was withdrawn. The planned due is not kept, so the occurrence comes
+	 * back due at the base itself.
+	 *
+	 * @param string $fromDay a plain day, YYYY-MM-DD
+	 * @return bool false, and nothing changed, when something else has moved the reminder since
+	 */
+	public static function retreat(Reminder $reminder, string $fromDay, ?int $fromOdo): bool {
+		$advanced = clone $reminder;
+		if ($reminder->getOccurrence() < 2 || !self::advance($advanced, $fromDay, $fromOdo)
+			|| $advanced->getDueDate()?->format('Y-m-d') !== $reminder->getDueDate()?->format('Y-m-d')
+			|| $advanced->getDueOdo() !== $reminder->getDueOdo()) {
+			return false;
+		}
+
+		if ($reminder->getRecurMonths() !== null) {
+			$reminder->setDueDate(new \DateTime($fromDay));
+		}
+		if ($reminder->getRecurOdo() !== null && $fromOdo !== null) {
+			$reminder->setDueOdo($fromOdo);
+		}
+		$reminder->setOccurrence($reminder->getOccurrence() - 1);
+
+		return true;
+	}
+
+	/**
+	 * Whether the reminder stands where retreat() from that base left it, so an undo may advance
+	 * it again.
+	 *
+	 * @param string $fromDay a plain day, YYYY-MM-DD
+	 */
+	public static function standsAt(Reminder $reminder, string $fromDay, ?int $fromOdo): bool {
+		return ($reminder->getRecurMonths() === null || $reminder->getDueDate()?->format('Y-m-d') === $fromDay)
+			&& ($reminder->getRecurOdo() === null || $fromOdo === null || $reminder->getDueOdo() === $fromOdo);
+	}
+
+	/**
+	 * The day the pace of the main chain reaches the due km (rule 5). Display only: the state
+	 * never reads it.
+	 *
+	 * @param list<OdoReading> $chain the main chain, in findChain()'s order
+	 * @param \DateTimeImmutable $now its zone is the zone of the day returned
+	 * @return ?string a plain day, YYYY-MM-DD, never before today; null without an honest pace
+	 */
+	public static function estimate(Reminder $reminder, array $chain, \DateTimeImmutable $now): ?string {
+		$due = $reminder->getDueOdo();
+		if ($reminder->getMode() === Reminder::DATE || $due === null) {
+			return null;
+		}
+
+		$segment = [];
+		$from = $now->getTimestamp() - self::PACE_WINDOW;
+		foreach ($chain as $reading) {
+			if ($reading->getFlagged() || $reading->getReadAt() < $from || $reading->getReadAt() > $now->getTimestamp()) {
+				continue;
+			}
+			// An unflagged drop is an answered reset (odometer rule 3): the pace starts again.
+			if ($segment !== [] && $reading->getValue() < end($segment)->getValue()) {
+				$segment = [];
+			}
+			$segment[] = $reading;
+		}
+		if (count($segment) < 2) {
+			return null;
+		}
+		$first = $segment[0];
+		$last = end($segment);
+		$span = $last->getReadAt() - $first->getReadAt();
+		$driven = $last->getValue() - $first->getValue();
+		$left = $due - $last->getValue();
+		if ($span < self::PACE_FLOOR || $driven <= 0 || $left <= 0) {
+			return null;
+		}
+
+		// Integer arithmetic: km × seconds stays far inside 64 bits.
+		$at = $last->getReadAt() + intdiv($left * $span, $driven);
+		$day = (new \DateTimeImmutable('@' . $at))->setTimezone($now->getTimezone())->format('Y-m-d');
+
+		return max($day, $now->format('Y-m-d'));
 	}
 
 	/**

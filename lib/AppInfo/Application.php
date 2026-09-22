@@ -10,6 +10,7 @@ namespace OCA\NextFleet\AppInfo;
 
 use OCA\NextFleet\Jurisdiction\Generic\ServiceTemplates;
 use OCA\NextFleet\Jurisdiction\IServiceTemplates;
+use OCA\NextFleet\Notification\Notifier;
 use OCP\AppFramework\App;
 use OCP\AppFramework\Bootstrap\IBootContext;
 use OCP\AppFramework\Bootstrap\IBootstrap;
@@ -24,11 +25,12 @@ class Application extends App implements IBootstrap {
 
 	/**
 	 * Controllers, services and mappers are autowired from their constructor types; only an
-	 * interface needs telling which class it is. The notifier, the dashboard widget and the
-	 * search provider arrive with the milestones that need them.
+	 * interface needs telling which class it is. The dashboard widget and the search provider
+	 * arrive with the milestones that need them. The reminder job is registered in info.xml.
 	 */
 	public function register(IRegistrationContext $context): void {
 		$context->registerServiceAlias(IServiceTemplates::class, ServiceTemplates::class);
+		$context->registerNotifierService(Notifier::class);
 	}
 
 	public function boot(IBootContext $context): void {

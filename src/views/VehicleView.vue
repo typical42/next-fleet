@@ -8,6 +8,7 @@ import NcButton from '@nextcloud/vue/components/NcButton'
 import { useHotKey } from '@nextcloud/vue/composables/useHotKey'
 import { ref } from 'vue'
 
+import DueBanner from '../components/DueBanner.vue'
 import EntrySheet from '../components/EntrySheet.vue'
 import KpiHeader from '../components/KpiHeader.vue'
 import Timeline from '../components/Timeline.vue'
@@ -27,6 +28,12 @@ const editing = ref(false)
  * @type {import('vue').Ref<import('../services/api.js').Entry|null>}
  */
 const opened = ref(null)
+/**
+ * The reminder a new Maintenance Record is to close, from "Done" in the due banner, or null.
+ *
+ * @type {import('vue').Ref<string|null>}
+ */
+const closing = ref(null)
 
 // The timeline holds its own pages and its own chip, the header its own period, and neither is
 // this screen's business - what is, is that a write happened and both are now a row behind.
@@ -70,6 +77,8 @@ useHotKey('n', () => {
 
 		<KpiHeader ref="kpis" :vehicle="vehicle" />
 
+		<DueBanner :vehicle="vehicle" @done="closing = $event" />
+
 		<!-- One timeline of everything that happened to this vehicle, which is the question people
 		     actually ask (docs/ui.md). -->
 		<Timeline ref="timeline" :vehicle="vehicle" @open="opened = $event" />
@@ -77,6 +86,11 @@ useHotKey('n', () => {
 		<EntrySheet v-if="entering"
 			:vehicle="vehicle"
 			@close="entering = false"
+			@saved="written" />
+		<EntrySheet v-if="closing"
+			:vehicle="vehicle"
+			:closes="closing"
+			@close="closing = null"
 			@saved="written" />
 		<EntrySheet v-if="opened"
 			:vehicle="vehicle"

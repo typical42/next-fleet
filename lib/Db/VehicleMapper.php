@@ -69,6 +69,24 @@ class VehicleMapper extends BaseMapper {
 	}
 
 	/**
+	 * Every live vehicle not disposed of, whoever owns it: the reminder job's round. A disposed
+	 * one's reminders stop (docs/architecture.md#data-model).
+	 *
+	 * @return list<Vehicle>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findInService(): array {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->tableName)
+			->where($qb->expr()->neq('lifecycle', $qb->createNamedParameter(Vehicle::DISPOSED)))
+			->andWhere($qb->expr()->isNull('deleted_at'))
+			->orderBy('id', 'ASC');
+
+		return $this->findEntities($qb);
+	}
+
+	/**
 	 * The vehicles one user reaches: the ones they own, and the ones they were granted, which
 	 * VehicleAccess has already resolved to ids. Ordering is the overview's business - it sorts
 	 * by urgency, which is not a column (docs/ui.md) - so this only makes the order stable.

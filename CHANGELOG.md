@@ -2,6 +2,51 @@
 
 ## Unreleased
 
+- The overview by urgency. Each vehicle shows a traffic light with its word, its km and its most
+  urgent open reminder; the most urgent vehicle comes first, then by plate, laid-up ones last.
+  `GET /api/reminders` lists the reminders of every vehicle the user may see in one read.
+
+- The mail digest. After the notifications, `ReminderJob` mails each recipient at most once a
+  day, from 07:00 in their time zone: every vehicle whose cadence falls that day (daily, weekly on
+  Monday, monthly on the 1st) and has a point not yet mailed to them, grouped by vehicle, in their
+  language. No news, no mail. A mail server that refuses it silences neither the notification nor
+  the next day's mail.
+
+- Reminders reach people. The hourly `ReminderJob` evaluates every reminder of every vehicle in
+  service, persists its state, and sends each recipient a Nextcloud notification once per warning
+  point, due and overdue, in their language; it opens the vehicle for whoever may see it. A newer
+  point replaces the older one; snoozing, dismissing, deleting or closing a reminder takes it back. A laid-up
+  vehicle sends nothing until it is back in service. The app is now 0.0.5, so `occ upgrade`
+  registers the job.
+
+- Who reminders go to. The edit sheet shows owner and managers a recipients picker and the mail
+  cadence (`reminder_mail`: no mail, daily, weekly on Monday, monthly on the 1st); drivers and
+  viewers see neither. `GET/POST …/recipients` and `DELETE …/recipients/{recipient}` read and
+  edit the list, and need edit rights to read too. A new vehicle starts with its owner as
+  recipient, as the migration gave every existing one.
+
+- A maintenance record closes a reminder. The entry sheet offers the vehicle's open reminders as
+  chips, and picks the most urgent one when the work is its kind; _Done_ in the due banner opens
+  the sheet with that reminder picked. `…/maintenance` takes and answers `closes` (a reminder
+  uuid), and the timeline states it. A recurring reminder moves on from the record's own day and
+  counter; a one-off is done. Editing or deleting the record takes that back and redoes it; the
+  reopened occurrence is due at the withdrawn work's day and km, since the planned due is not kept.
+
+- HU/AU from the sticker. Where the jurisdiction requires an inspection and the vehicle has no
+  open HU/AU reminder, the due banner asks for the month and year on the sticker; the reminder is
+  due on that month's last day. A vehicle before its first inspection is prefilled from its first
+  registration. The edit sheet sets the inspection interval (12 or 24 months) on that reminder,
+  or offers to add one. `…/reminder-templates` states `first_due_months` on the inspection.
+
+- The due banner on the vehicle screen lists its open reminders, most urgent first, each with its
+  state as a word, when it is due, and an estimate or "not enough data yet". _+ Reminder_ and a
+  tap on a row open the reminder sheet: a template or an own title, due by date, km or either,
+  warning points, recurrence; on an existing one also snooze, skip and delete with undo. Reminders
+  are not timeline rows. `…/reminders` now lists each state as it stands today rather than as
+  stored, and `GET …/reminder-templates` states what each template fills in.
+- A reminder by km, or by either, is listed with an `estimate`: the day the main chain's pace of
+  the last 90 days reaches its due km, or null with under 30 days or two Readings of pace. Flagged
+  Readings do not count, and an answered reset starts the pace again. It is display only.
 - Snooze and dismiss: `POST …/reminders/{reminder}/snooze` (with `until`, a day still to come) and
   `…/dismiss`, owner and managers only. Dismissing moves a recurring reminder one recurrence on
   from its planned due; one that does not recur stays dismissed. The state of a reminder at any day

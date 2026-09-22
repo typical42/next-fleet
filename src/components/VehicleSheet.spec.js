@@ -14,9 +14,11 @@ import { flushPromises, shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ConflictError, createVehicle, deleteVehicle, getPreferences, getVehicle, recordReading, updateVehicle } from '../services/api.js'
+import { ConflictError, createVehicle, deleteVehicle, getPreferences, getVehicle, listReminders, recordReading, reminderTemplates, updateEntry, updateVehicle } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
 import { formatDay } from '../utils/format.js'
+import InspectionSticker from './InspectionSticker.vue'
+import ReminderRecipients from './ReminderRecipients.vue'
 import VehicleSheet from './VehicleSheet.vue'
 
 // The network is the api client's own seam (api.spec.js), and the store is left real: this sheet
@@ -29,7 +31,10 @@ vi.mock('../services/api.js', async (original) => ({
 	deleteVehicle: vi.fn(),
 	getPreferences: vi.fn(),
 	getVehicle: vi.fn(),
+	listReminders: vi.fn(),
 	recordReading: vi.fn(),
+	reminderTemplates: vi.fn(),
+	updateEntry: vi.fn(),
 	updateVehicle: vi.fn(),
 }))
 
@@ -158,6 +163,9 @@ beforeEach(() => {
 		preferences: { jurisdiction: 'de', dismissed_hints: [], reclaim_vat: false, kpi_period: 'last-12' },
 		jurisdictions: [{ key: 'de', name: 'Germany', logbook_export: true }, { key: 'generic', name: 'Generic', logbook_export: false }],
 	})
+	// No inspection unless a case asks for one (the HU/AU cases below).
+	vi.mocked(reminderTemplates).mockResolvedValue([])
+	vi.mocked(listReminders).mockResolvedValue([])
 	vi.mocked(createVehicle).mockImplementation(async (fields) => ({ ...fields, uuid: 'v-new', updated_at: 1 }))
 	vi.mocked(updateVehicle).mockImplementation(async (vehicle) => ({ ...vehicle, updated_at: 1700000900 }))
 	// The delete advances the token, and the one it answers with is the only one the undo is
@@ -297,6 +305,29 @@ describe('the vehicle sheet, editing', () => {
 			notes: 'two rows of seats',
 		}))
 		expect(emitted(wrapper, 'saved').updated_at).toBe(1700000900)
+	})
+
+	/**
+	 * The recipients are written on each pick; the cadence is a column of the vehicle, so it is
+	 * saved with it. A vehicle read before the column existed says nothing and keeps the default.
+	 */
+	it('saves the reminder mail cadence the recipients section hands it', async () => {
+		const wrapper = await sheet({ ...VEHICLE, reminder_mail: 'daily' })
+		const section = /** @type {any} */ (wrapper.findComponent(ReminderRecipients))
+
+		expect(section.props('vehicle')).toBe('v-1')
+		expect(section.props('cadence')).toBe('daily')
+		await section.vm.$emit('update:cadence', 'monthly')
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ reminder_mail: 'monthly' }))
+	})
+
+	it('has no recipients section while creating', async () => {
+		const wrapper = await sheet()
+
+		expect(wrapper.findComponent(ReminderRecipients).exists()).toBe(false)
 	})
 
 	/** The unit a Reading was counted in is what its number means, so a counted vehicle keeps it. */
@@ -756,5 +787,145 @@ describe('the vehicle sheet, creating', () => {
 
 		expect(createVehicle).not.toHaveBeenCalled()
 		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('That is not a counter reading.')
+	})
+})
+
+describe('the vehicle sheet, the HU/AU', () => {
+	/** @type {any} */
+	const HU_AU = { key: 'hu_au', mode: 'date', recur_months: 24, recur_odo: null, lead_odo: null, first_due_months: 24 }
+
+	/** @type {any} */
+	const HU = {
+		uuid: 'r-hu',
+		updated_at: 1700000100,
+		template_key: 'hu_au',
+		title: null,
+		mode: 'date',
+		due_date: '2027-05-31',
+		due_odo: null,
+		lead_odo: null,
+		warn_month_before: true,
+		warn_month_start: false,
+		warn_due_date: true,
+		recur_months: 24,
+		recur_odo: null,
+		state: 'planned',
+		snoozed_until: null,
+		estimate: null,
+	}
+
+	beforeEach(() => {
+		vi.mocked(reminderTemplates).mockResolvedValue([HU_AU])
+		vi.mocked(listReminders).mockResolvedValue([HU])
+		vi.mocked(updateEntry).mockImplementation(async (uuid, type, reminder, fields) => ({ ...reminder, ...fields, updated_at: 1700000200 }))
+	})
+
+	it('shows the inspection interval the HU/AU reminder recurs at', async () => {
+		const wrapper = await sheet(VEHICLE)
+
+		expect(reminderTemplates).toHaveBeenCalledWith('v-1')
+		expect(dropdown(wrapper, 'Inspection interval').props('modelValue').id).toBe(24)
+		expect(dropdown(wrapper, 'Inspection interval').props('options').map((/** @type {any} */ one) => one.id)).toEqual([12, 24])
+		expect(button(wrapper, 'Add HU/AU reminder')).toBeUndefined()
+	})
+
+	/** The interval is the reminder's recurrence; an edit is a full replace, so the rest travels with it. */
+	it('writes a changed interval to the reminder along with the vehicle', async () => {
+		const wrapper = await sheet(VEHICLE)
+		const interval = dropdown(wrapper, 'Inspection interval')
+		await interval.vm.$emit('update:modelValue', interval.props('options')[0])
+
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(updateEntry).toHaveBeenCalledWith('v-1', 'reminder', HU, {
+			mode: 'date',
+			due_date: '2027-05-31',
+			recur_months: 12,
+			warn_month_before: true,
+			warn_month_start: false,
+			warn_due_date: true,
+		})
+		expect(updateVehicle).toHaveBeenCalledTimes(1)
+		expect(emitted(wrapper, 'saved')).toBeDefined()
+	})
+
+	it('leaves the reminder alone when the interval did not change', async () => {
+		const wrapper = await sheet(VEHICLE)
+
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(updateEntry).not.toHaveBeenCalled()
+		expect(updateVehicle).toHaveBeenCalledTimes(1)
+	})
+
+	/** A retry after the vehicle failed must not write the interval a second time on a spent token. */
+	it('writes the interval once when the vehicle save is tried again', async () => {
+		vi.mocked(updateVehicle).mockRejectedValueOnce(new Error('The server answered 500'))
+		const wrapper = await sheet(VEHICLE)
+		const interval = dropdown(wrapper, 'Inspection interval')
+		await interval.vm.$emit('update:modelValue', interval.props('options')[0])
+
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(updateEntry).toHaveBeenCalledTimes(1)
+		expect(updateVehicle).toHaveBeenCalledTimes(2)
+	})
+
+	/** The reminder's own token was refused; the next save goes out under the one read back. */
+	it('reads the reminder back when its write was refused', async () => {
+		vi.mocked(updateEntry).mockRejectedValueOnce(new ConflictError('Changed since you read it'))
+		const wrapper = await sheet(VEHICLE)
+		const interval = dropdown(wrapper, 'Inspection interval')
+		await interval.vm.$emit('update:modelValue', interval.props('options')[0])
+		vi.mocked(listReminders).mockResolvedValue([{ ...HU, updated_at: 1700000150 }])
+
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('The HU/AU reminder was changed somewhere else while you had it open. Saving again writes this interval over that change.')
+		expect(updateVehicle).not.toHaveBeenCalled()
+
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(vi.mocked(updateEntry).mock.calls[1][2].updated_at).toBe(1700000150)
+		expect(updateVehicle).toHaveBeenCalledTimes(1)
+	})
+
+	it('offers to add the HU/AU where the vehicle has none, and then shows its interval', async () => {
+		vi.mocked(listReminders).mockResolvedValue([])
+		const wrapper = await sheet(VEHICLE)
+		expect(dropdown(wrapper, 'Inspection interval')).toBeUndefined()
+
+		await button(wrapper, 'Add HU/AU reminder').vm.$emit('click')
+		const sticker = /** @type {any} */ (wrapper.findComponent(InspectionSticker))
+		expect(sticker.props('template')).toEqual(HU_AU)
+
+		vi.mocked(listReminders).mockResolvedValue([HU])
+		await sticker.vm.$emit('saved')
+		await flushPromises()
+
+		expect(wrapper.findComponent(InspectionSticker).exists()).toBe(false)
+		expect(dropdown(wrapper, 'Inspection interval').props('modelValue').id).toBe(24)
+	})
+
+	it('says nothing of an inspection where the jurisdiction requires none', async () => {
+		vi.mocked(reminderTemplates).mockResolvedValue([])
+		const wrapper = await sheet(VEHICLE)
+
+		expect(dropdown(wrapper, 'Inspection interval')).toBeUndefined()
+		expect(button(wrapper, 'Add HU/AU reminder')).toBeUndefined()
+	})
+
+	it('reads no reminders for a vehicle still being created', async () => {
+		await sheet()
+
+		expect(reminderTemplates).not.toHaveBeenCalled()
+		expect(listReminders).not.toHaveBeenCalled()
 	})
 })

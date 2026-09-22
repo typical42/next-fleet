@@ -16,9 +16,10 @@ import NcTextArea from '@nextcloud/vue/components/NcTextArea'
 import NcTextField from '@nextcloud/vue/components/NcTextField'
 import { computed, ref, useId, watch } from 'vue'
 
-import { ConflictError, energyPrefill, expensePrefill, maintenancePrefill, readEntry } from '../services/api.js'
+import { ConflictError, energyPrefill, expensePrefill, listReminders, maintenancePrefill, readEntry } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
 import { CATEGORIES, EXPENSE_CATEGORIES, MAINTENANCE_TYPES, categoryWord, energyWord, expenseWord, formatDecimal, maintenanceWord, parseDecimal, parseWhole } from '../utils/format.js'
+import { closedByDefault, openByUrgency, reminderTitle } from '../utils/reminders.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -30,6 +31,8 @@ const props = defineProps({
 	 * @type {import('vue').PropType<import('../services/api.js').Entry|null>}
 	 */
 	entry: { type: Object, default: null },
+	/** The uuid of a reminder a new Maintenance Record is to close: "Done" in the due banner. */
+	closes: { type: String, default: null },
 })
 
 // Two things, because the screen behind needs them apart: `saved` is what happened to the vehicle,
@@ -41,7 +44,7 @@ const store = useVehiclesStore()
 // A journey is what a logbook is for and what a driver enters daily; the counter on its own is the
 // escape hatch for everything not otherwise recorded (docs/ui.md). An Entry opened from its row is
 // of its own kind and stays it.
-const kind = ref(props.entry?.type ?? 'trip')
+const kind = ref(props.entry?.type ?? (props.closes === null ? 'trip' : 'maintenance'))
 
 /**
  * The Entry as it was last read, and the token its next write is checked against - null for a new
@@ -140,6 +143,51 @@ const vendor = ref('')
 /** @type {import('vue').Ref<string[]>} */
 const vendors = ref([])
 const vendorList = useId()
+
+// The reminder a Maintenance Record closes (docs/architecture.md#reminder-engine). What the record
+// already closes, or what the banner asked for, is somebody's word; until there is one, the most
+// urgent reminder is picked when the work is its kind.
+/** @type {import('vue').Ref<import('../services/api.js').Reminder[]>} */
+const reminders = ref([])
+const closing = ref(props.entry?.closes ?? props.closes)
+const picked = ref(editing || props.closes !== null)
+const closesLabel = useId()
+// The open ones, and the one the record closes although its occurrence is over.
+const closable = computed(() => {
+	const open = openByUrgency(reminders.value)
+	const held = reminders.value.find((one) => one.uuid === closing.value)
+
+	return held === undefined || open.includes(held) ? open : [held, ...open]
+})
+
+/**
+ * @param {string} uuid - the reminder a chip stands for
+ * @param {boolean} on - whether it was tapped on or off
+ */
+function pick(uuid, on) {
+	picked.value = true
+	closing.value = on ? uuid : null
+}
+
+let listed = false
+// Read once the sheet is on a Maintenance Record. Without the list there is nothing to offer, and
+// the record saves as it would without a reminder, so a failure is not the sheet's to report.
+watch(kind, async (now) => {
+	if (now !== 'maintenance' || listed) {
+		return
+	}
+	listed = true
+	try {
+		reminders.value = await listReminders(props.vehicle.uuid)
+	} catch {
+		listed = false
+	}
+}, { immediate: true })
+watch([reminders, workType], ([listed, type]) => {
+	if (!picked.value) {
+		closing.value = closedByDefault(listed, type?.id ?? null)
+	}
+})
 
 // An Expense. No category until one is picked, for the reason a Maintenance Record has no type.
 const spent = ref('')
@@ -339,6 +387,8 @@ function work() {
 			type: workType.value?.id ?? null,
 			vendor: vendor.value.trim() || null,
 			notes: notes.value.trim() || null,
+			// An edit is a full replace, so a record sent without it closes nothing any more.
+			closes: closing.value,
 		}),
 		...omitted({
 			cost: decimal(cost, 2, t('nextfleet', 'That is not a price.')),
@@ -944,6 +994,20 @@ function requestClose() {
 					class="sheet__wide"
 					:label="t('nextfleet', 'Notes')"
 					:disabled="saving" />
+				<!-- One reminder or none: a record is one piece of work, and closes one occurrence. -->
+				<div v-if="closable.length > 0"
+					class="sheet__wide sheet__closes"
+					role="group"
+					:aria-labelledby="closesLabel">
+					<span :id="closesLabel" class="sheet__closes-label">{{ t('nextfleet', 'Closes reminder') }}</span>
+					<NcButton v-for="one in closable"
+						:key="one.uuid"
+						:pressed="closing === one.uuid"
+						:disabled="saving"
+						@update:pressed="pick(one.uuid, $event)">
+						{{ reminderTitle(one) }}
+					</NcButton>
+				</div>
 			</template>
 
 			<template v-else-if="kind === 'expense'">
@@ -1014,6 +1078,18 @@ function requestClose() {
 .sheet {
 	display: grid;
 	gap: calc(var(--default-grid-baseline) * 2);
+}
+
+.sheet__closes {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: calc(var(--default-grid-baseline) * 2);
+}
+
+.sheet__closes-label {
+	flex: 1 0 100%;
+	color: var(--color-text-maxcontrast);
 }
 
 /* One column on a phone; two once there is room, so a trip is not ten screens. */

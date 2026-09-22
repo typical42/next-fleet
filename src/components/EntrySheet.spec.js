@@ -17,7 +17,7 @@ import { flushPromises, shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ConflictError, deleteEntry, energyPrefill, expensePrefill, getVehicle, maintenancePrefill, readEntry, recordEnergy, recordExpense, recordMaintenance, recordReading, recordTrip, updateEntry } from '../services/api.js'
+import { ConflictError, deleteEntry, energyPrefill, expensePrefill, getVehicle, listReminders, maintenancePrefill, readEntry, recordEnergy, recordExpense, recordMaintenance, recordReading, recordTrip, updateEntry } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
 import EntrySheet from './EntrySheet.vue'
 
@@ -29,6 +29,7 @@ vi.mock('../services/api.js', async (original) => ({
 	energyPrefill: vi.fn(),
 	expensePrefill: vi.fn(),
 	getVehicle: vi.fn(),
+	listReminders: vi.fn(),
 	maintenancePrefill: vi.fn(),
 	readEntry: vi.fn(),
 	recordEnergy: vi.fn(),
@@ -182,6 +183,7 @@ beforeEach(() => {
 	vi.mocked(recordReading).mockResolvedValue(/** @type {any} */ ({ uuid: 'r-1', value: 148402 }))
 	vi.mocked(recordEnergy).mockResolvedValue(/** @type {any} */ ({ uuid: 'e-1', flags: [] }))
 	vi.mocked(recordMaintenance).mockResolvedValue(/** @type {any} */ ({ uuid: 'm-1' }))
+	vi.mocked(listReminders).mockResolvedValue([])
 	vi.mocked(maintenancePrefill).mockResolvedValue({ vat_rate: 1900, vendors: ['ATU Nord', 'Reifen Müller'] })
 	vi.mocked(recordExpense).mockResolvedValue(/** @type {any} */ ({ uuid: 'x-1' }))
 	vi.mocked(expensePrefill).mockResolvedValue({ vat_rate: 1900 })
@@ -742,6 +744,107 @@ describe('the entry sheet', () => {
 
 		const list = wrapper.find(`datalist#${field(wrapper, 'Vendor').attributes('list')}`)
 		expect(list.findAll('option').map((one) => one.attributes('value'))).toEqual(['ATU Nord', 'Reifen Müller'])
+	})
+
+	describe('closing a reminder', () => {
+		const OIL = { uuid: 'rem-oil', template_key: 'oil_change', title: null, mode: 'either', due_date: '2026-10-31', due_odo: 150000, estimate: null, state: 'due' }
+		const TYRES = { uuid: 'rem-tyres', template_key: 'tyre_swap', title: null, mode: 'date', due_date: '2026-10-15', due_odo: null, estimate: null, state: 'warned' }
+		const TOWBAR = { uuid: 'rem-towbar', template_key: null, title: 'Towbar', mode: 'date', due_date: '2026-06-01', due_odo: null, estimate: null, state: 'done' }
+
+		/**
+		 * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted sheet
+		 * @return {any[]} the reminder chips, in the order they are offered
+		 */
+		function chips(wrapper) {
+			return wrapper.findAll('.sheet__closes').flatMap((group) => group.findAllComponents(NcButton))
+		}
+
+		/**
+		 * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted sheet
+		 * @return {string[]} the pressed chips, by their words
+		 */
+		function pressed(wrapper) {
+			return chips(wrapper).filter((one) => one.props('pressed')).map((one) => one.text())
+		}
+
+		beforeEach(() => {
+			vi.mocked(listReminders).mockResolvedValue(/** @type {any} */ ([TOWBAR, TYRES, OIL]))
+		})
+
+		/**
+		 * The open reminders, most urgent first. Nothing is picked until the work is a kind the most
+		 * urgent one is: a guess past it closes a reminder nobody meant.
+		 */
+		it('offers the open reminders and picks the most urgent once the work is its kind', async () => {
+			const wrapper = sheet()
+
+			await choose(wrapper, 'Entry type', 'maintenance')
+			await flushPromises()
+			expect(chips(wrapper).map((one) => one.text())).toEqual(['Oil change', 'Tyre swap'])
+			expect(pressed(wrapper)).toEqual([])
+
+			await dropdown(wrapper, 'Type').vm.$emit('update:modelValue', { id: 'tyres', label: 'Tyres' })
+			expect(pressed(wrapper)).toEqual([])
+			await dropdown(wrapper, 'Type').vm.$emit('update:modelValue', { id: 'service', label: 'Service' })
+			expect(pressed(wrapper)).toEqual(['Oil change'])
+
+			await field(wrapper, 'Title').vm.$emit('update:modelValue', 'Oil change')
+			await saveButton(wrapper).vm.$emit('click')
+			await flushPromises()
+			expect(vi.mocked(recordMaintenance).mock.calls[0][1]).toMatchObject({ type: 'service', closes: 'rem-oil' })
+		})
+
+		/** A chip somebody tapped is their word, and the type no longer moves it. */
+		it('keeps the chip that was tapped, and sends none once it is tapped off', async () => {
+			const wrapper = sheet()
+			await choose(wrapper, 'Entry type', 'maintenance')
+			await flushPromises()
+
+			await chips(wrapper)[1].vm.$emit('update:pressed', true)
+			await dropdown(wrapper, 'Type').vm.$emit('update:modelValue', { id: 'service', label: 'Service' })
+			expect(pressed(wrapper)).toEqual(['Tyre swap'])
+
+			await chips(wrapper)[1].vm.$emit('update:pressed', false)
+			await field(wrapper, 'Title').vm.$emit('update:modelValue', 'Oil change')
+			await saveButton(wrapper).vm.$emit('click')
+			await flushPromises()
+			expect(vi.mocked(recordMaintenance).mock.calls[0][1]).not.toHaveProperty('closes')
+		})
+
+		/** "Done" in the due banner opens the sheet on a Maintenance Record with that reminder picked. */
+		it('opens on maintenance with the reminder it was asked to close', async () => {
+			const wrapper = shallowMount(EntrySheet, {
+				props: { vehicle: VEHICLE, entry: null, closes: 'rem-tyres' },
+				global: { renderStubDefaultSlot: true, stubs: { NcDialog: { template: '<div><slot /><slot name="actions" /></div>' } } },
+			})
+			await flushPromises()
+
+			expect(chooser(wrapper, 'Entry type').props('modelValue')).toBe('maintenance')
+			expect(pressed(wrapper)).toEqual(['Tyre swap'])
+			await dropdown(wrapper, 'Type').vm.$emit('update:modelValue', { id: 'service', label: 'Service' })
+			expect(pressed(wrapper)).toEqual(['Tyre swap'])
+		})
+
+		/**
+		 * An edit sends back the reminder the record closed - a full replace would otherwise take the
+		 * link away - and offers it even when that occurrence is over.
+		 */
+		it('keeps what the record closed when it is edited', async () => {
+			const wrapper = sheet(VEHICLE, /** @type {any} */ ({
+				type: 'maintenance',
+				occurred_at: 1780000000,
+				occurred_at_off: 120,
+				closes: 'rem-towbar',
+				maintenance: { uuid: 'm-1', updated_at: 1780000000, title: 'Towbar fitted', type: 'upgrade', vendor: null, cost: null, vat_rate: null, odo: null, second_odo: null, notes: null },
+			}))
+			await flushPromises()
+
+			expect(chips(wrapper).map((one) => one.text())).toEqual(['Towbar', 'Oil change', 'Tyre swap'])
+			expect(pressed(wrapper)).toEqual(['Towbar'])
+			await saveButton(wrapper).vm.$emit('click')
+			await flushPromises()
+			expect(vi.mocked(updateEntry).mock.calls[0][3]).toMatchObject({ closes: 'rem-towbar' })
+		})
 	})
 
 	/** The title is the one field a Maintenance Record requires, so it is asked for here. */

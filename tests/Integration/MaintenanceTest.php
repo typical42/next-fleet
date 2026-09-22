@@ -10,9 +10,11 @@ namespace OCA\NextFleet\Tests\Integration;
 
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\OdoReading;
+use OCA\NextFleet\Db\Reminder;
 use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\OdometerService;
+use OCA\NextFleet\Service\ReminderService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\IDBConnection;
 use PHPUnit\Framework\TestCase;
@@ -30,10 +32,12 @@ class MaintenanceTest extends TestCase {
 	private MaintenanceService $maintenance;
 	private OdometerService $odometer;
 	private VehicleService $vehicles;
+	private ReminderService $reminders;
 
 	protected function setUp(): void {
 		$container = (new Application())->getContainer();
 		$this->maintenance = $container->get(MaintenanceService::class);
+		$this->reminders = $container->get(ReminderService::class);
 		$this->odometer = $container->get(OdometerService::class);
 		$this->vehicles = $container->get(VehicleService::class);
 		$this->forgetTestRows();
@@ -46,7 +50,7 @@ class MaintenanceTest extends TestCase {
 	/** The rows this suite invents, gone for real - a soft delete would outlive the run. */
 	private function forgetTestRows(): void {
 		$db = \OCP\Server::get(IDBConnection::class);
-		foreach (['fleet_vehicles' => 'user_id', 'fleet_odo_readings' => 'created_by', 'fleet_maintenance' => 'created_by'] as $table => $column) {
+		foreach (['fleet_vehicles' => 'user_id', 'fleet_odo_readings' => 'created_by', 'fleet_maintenance' => 'created_by', 'fleet_reminders' => 'created_by'] as $table => $column) {
 			$qb = $db->getQueryBuilder();
 			$qb->delete($table)->where($qb->expr()->eq($column, $qb->createNamedParameter(self::OWNER)));
 			$qb->executeStatement();
@@ -227,6 +231,177 @@ class MaintenanceTest extends TestCase {
 
 		$this->expectException(StaleUpdateException::class);
 		$this->maintenance->restore(self::OWNER, $uuid, $written['uuid'], $written['updated_at']);
+	}
+
+	/**
+	 * Rule 4: the next occurrence runs from what actually happened - the record's own day and
+	 * counter - not from the due it was planned for.
+	 */
+	public function testARecordThatClosesAReminderSchedulesTheNextFromItself(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$uuid = $vehicle->getUuid();
+		$oil = $this->oilChange($uuid);
+
+		// 2026-05-28 22:26 UTC is already the 29th where the work was done.
+		$written = $this->maintenance->record(self::OWNER, $uuid, $this->work(['done_at' => 1780000000, 'done_at_off' => 240, 'odo' => 120450, 'closes' => $oil['uuid']]));
+
+		$this->assertSame($oil['uuid'], $written['closes']);
+		$next = $this->reminder($uuid, $oil['uuid']);
+		$this->assertSame('2027-05-29', $next['due_date']);
+		$this->assertSame(135450, $next['due_odo']);
+		$this->assertSame(2, $next['occurrence']);
+		$this->assertSame(Reminder::PLANNED, $next['state']);
+	}
+
+	/**
+	 * Deleting the record takes back the occurrence it closed, and undo closes it again. The
+	 * planned due is not kept, so the occurrence reopens at the day and km of the withdrawn work.
+	 */
+	public function testDeletingTheRecordReopensTheReminderAndUndoClosesItAgain(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$uuid = $vehicle->getUuid();
+		$oil = $this->oilChange($uuid);
+		$written = $this->maintenance->record(self::OWNER, $uuid, $this->work(['done_at' => 1780000000, 'odo' => 120450, 'closes' => $oil['uuid']]));
+
+		$deleted = $this->maintenance->delete(self::OWNER, $uuid, $written['uuid'], $written['updated_at']);
+
+		$reopened = $this->reminder($uuid, $oil['uuid']);
+		$this->assertSame('2026-05-28', $reopened['due_date']);
+		$this->assertSame(120450, $reopened['due_odo']);
+		$this->assertSame(1, $reopened['occurrence']);
+		$this->assertSame(Reminder::OVERDUE, $reopened['state']);
+
+		$this->maintenance->restore(self::OWNER, $uuid, $written['uuid'], $deleted['updated_at']);
+
+		$again = $this->reminder($uuid, $oil['uuid']);
+		$this->assertSame('2027-05-28', $again['due_date']);
+		$this->assertSame(135450, $again['due_odo']);
+		$this->assertSame(2, $again['occurrence']);
+	}
+
+	/**
+	 * A record whose occurrence was since moved on by something else - a dismissal here - takes
+	 * nothing back: the reminder no longer stands where the record put it.
+	 */
+	public function testDeletingARecordTheReminderMovedOnFromChangesNothing(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$uuid = $vehicle->getUuid();
+		$oil = $this->oilChange($uuid);
+		$written = $this->maintenance->record(self::OWNER, $uuid, $this->work(['done_at' => 1780000000, 'odo' => 120450, 'closes' => $oil['uuid']]));
+		$next = $this->reminder($uuid, $oil['uuid']);
+		$this->reminders->dismiss(self::OWNER, $uuid, $oil['uuid'], $next['updated_at']);
+
+		$this->maintenance->delete(self::OWNER, $uuid, $written['uuid'], $written['updated_at']);
+
+		$after = $this->reminder($uuid, $oil['uuid']);
+		$this->assertSame('2028-05-28', $after['due_date']);
+		$this->assertSame(3, $after['occurrence']);
+	}
+
+	/** An edit that moves the work moves the next occurrence with it; one that unlinks takes it back. */
+	public function testAnEditRedoesTheOccurrenceFromWhereTheWorkNowIs(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$uuid = $vehicle->getUuid();
+		$oil = $this->oilChange($uuid);
+		$written = $this->maintenance->record(self::OWNER, $uuid, $this->work(['done_at' => 1780000000, 'odo' => 120450, 'closes' => $oil['uuid']]));
+
+		$edited = $this->maintenance->update(self::OWNER, $uuid, $written['uuid'], $written['updated_at'], $this->work(['done_at' => 1780086400, 'odo' => 120600, 'closes' => $oil['uuid']]));
+
+		$next = $this->reminder($uuid, $oil['uuid']);
+		$this->assertSame('2027-05-29', $next['due_date']);
+		$this->assertSame(135600, $next['due_odo']);
+		$this->assertSame(2, $next['occurrence']);
+
+		$unlinked = $this->maintenance->update(self::OWNER, $uuid, $written['uuid'], $edited['updated_at'], $this->work(['done_at' => 1780086400, 'odo' => 120600]));
+
+		$this->assertNull($unlinked['closes']);
+		$this->assertSame(1, $this->reminder($uuid, $oil['uuid'])['occurrence']);
+	}
+
+	/** A reminder that does not recur is done, and a done one is not closed a second time. */
+	public function testAOneOffIsDoneAndClosedOnlyOnce(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$uuid = $vehicle->getUuid();
+		$once = $this->reminders->create(self::OWNER, $uuid, ['title' => 'Towbar', 'mode' => Reminder::DATE, 'due_date' => '2026-12-31']);
+
+		$written = $this->maintenance->record(self::OWNER, $uuid, $this->work(['closes' => $once['uuid']]));
+
+		$this->assertSame(Reminder::DONE, $this->reminder($uuid, $once['uuid'])['state']);
+		// Saving the record again keeps the link it has.
+		$this->maintenance->update(self::OWNER, $uuid, $written['uuid'], $written['updated_at'], $this->work(['title' => 'Towbar fitted', 'closes' => $once['uuid']]));
+		$this->assertSame(Reminder::DONE, $this->reminder($uuid, $once['uuid'])['state']);
+
+		$this->expectException(\InvalidArgumentException::class);
+		$this->maintenance->record(self::OWNER, $uuid, $this->work(['closes' => $once['uuid']]));
+	}
+
+	/**
+	 * Another record closed the reminder while this one was deleted, so its undo cannot close it
+	 * again - and comes back closing nothing, or deleting it once more would reopen the other's.
+	 */
+	public function testAnUndoThatCannotCloseAgainComesBackClosingNothing(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$uuid = $vehicle->getUuid();
+		$once = $this->reminders->create(self::OWNER, $uuid, ['title' => 'Towbar', 'mode' => Reminder::DATE, 'due_date' => '2026-12-31']);
+		$first = $this->maintenance->record(self::OWNER, $uuid, $this->work(['closes' => $once['uuid']]));
+		$deleted = $this->maintenance->delete(self::OWNER, $uuid, $first['uuid'], $first['updated_at']);
+		$this->maintenance->record(self::OWNER, $uuid, $this->work(['title' => 'Towbar fitted', 'closes' => $once['uuid']]));
+
+		$back = $this->maintenance->restore(self::OWNER, $uuid, $first['uuid'], $deleted['updated_at']);
+
+		$this->assertNull($back['closes']);
+		$this->maintenance->delete(self::OWNER, $uuid, $first['uuid'], $back['updated_at']);
+		$this->assertSame(Reminder::DONE, $this->reminder($uuid, $once['uuid'])['state']);
+	}
+
+	/**
+	 * Without a counter the next due km would be the old one, due at once; a reminder on another
+	 * vehicle is not this record's to close.
+	 *
+	 * @return iterable<string, array{bool, bool}>
+	 */
+	public static function unclosable(): iterable {
+		yield 'a km recurrence without a counter' => [false, false];
+		yield 'another vehicle' => [true, true];
+	}
+
+	#[\PHPUnit\Framework\Attributes\DataProvider('unclosable')]
+	public function testARecordThatCannotCloseTheReminderIsRefused(bool $withCounter, bool $elsewhere): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$other = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 124']);
+		$oil = $this->oilChange(($elsewhere ? $other : $vehicle)->getUuid());
+
+		try {
+			$this->maintenance->record(self::OWNER, $vehicle->getUuid(), $this->work(($withCounter ? ['odo' => 120450] : []) + ['closes' => $oil['uuid']]));
+			$this->fail('the record was saved');
+		} catch (\InvalidArgumentException) {
+		}
+
+		$this->assertSame(1, $this->reminder(($elsewhere ? $other : $vehicle)->getUuid(), $oil['uuid'])['occurrence']);
+		$this->assertSame([], $this->odometer->list(self::OWNER, $vehicle->getUuid()));
+	}
+
+	/**
+	 * An oil change due 2025-09-30 or at 125 000 km, every 12 months or 15 000 km.
+	 *
+	 * @return array<string, mixed>
+	 */
+	private function oilChange(string $vehicleUuid): array {
+		return $this->reminders->create(self::OWNER, $vehicleUuid, [
+			'template_key' => 'oil_change',
+			'due_date' => '2025-09-30',
+			'due_odo' => 125000,
+		]);
+	}
+
+	/** @return array<string, mixed> the reminder as the banner lists it */
+	private function reminder(string $vehicleUuid, string $reminderUuid): array {
+		foreach ($this->reminders->list(self::OWNER, $vehicleUuid) as $reminder) {
+			if ($reminder['uuid'] === $reminderUuid) {
+				return $reminder;
+			}
+		}
+		$this->fail('reminder ' . $reminderUuid . ' is not listed');
 	}
 
 	/**

@@ -46,7 +46,7 @@ dass das Ergebnis von einem Finanzamt, einer Prüferin oder einem Gericht anerka
 und Sätze stammen aus öffentlichen Quellen, können falsch sein und veralten. Fragen Sie Ihre eigene
 Beraterin oder Ihren Berater, bevor Sie sich darauf verlassen.
   ]]></description>
-  <version>0.0.4</version>
+  <version>0.0.5</version>
   <licence>AGPL-3.0-or-later</licence>
   <author>Johannes Kolb</author>
   <namespace>NextFleet</namespace>
@@ -67,14 +67,9 @@ Beraterin oder Ihren Berater, bevor Sie sich darauf verlassen.
   <dependencies>
     <nextcloud min-version="31" max-version="34"/>
   </dependencies>
-  <!--
-    - The reminder engine arrives in M4. An empty <background-jobs> fails the store schema,
-    - so the whole element stays commented out until the job exists:
-    -
-    -   <background-jobs>
-    -     <job>OCA\NextFleet\BackgroundJob\ReminderJob</job>
-    -   </background-jobs>
-  -->
+  <background-jobs>
+    <job>OCA\NextFleet\BackgroundJob\ReminderJob</job>
+  </background-jobs>
   <commands>
     <command>OCA\NextFleet\Command\SeedCommand</command>
   </commands>

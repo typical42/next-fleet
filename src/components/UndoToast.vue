@@ -38,11 +38,16 @@ const message = computed(() => {
 	}
 
 	// An Entry has no name of its own the way a vehicle has, and its row is gone with it.
+	const struck = store.struck
+	if (struck?.type === 'reminder') {
+		return failure.value
+			? t('nextfleet', 'The reminder could not be brought back: {reason}', { reason: failure.value })
+			: t('nextfleet', 'The reminder was deleted.')
+	}
 	if (failure.value) {
 		return t('nextfleet', 'The entry could not be brought back: {reason}', { reason: failure.value })
 	}
 	// Under Logbook Mode a trip is voided rather than deleted (docs/features.md#logbook-mode).
-	const struck = store.struck
 	return struck?.type === 'trip' && store.byUuid.get(struck.vehicle)?.logbook_mode === true
 		? t('nextfleet', 'The trip was voided.')
 		: t('nextfleet', 'The entry was deleted.')

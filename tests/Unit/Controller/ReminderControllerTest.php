@@ -62,6 +62,32 @@ class ReminderControllerTest extends TestCase {
 		$this->assertSame([['template_key' => 'hu_au']], $response->getData());
 	}
 
+	/** The fleet's list answers 200 with every reminder the session user may see. */
+	public function testTheFleetListIsTheSessionUsers(): void {
+		$this->service->expects($this->once())
+			->method('fleet')
+			->with('alice')
+			->willReturn([['vehicle' => self::UUID]]);
+
+		$response = $this->controller()->fleet();
+
+		$this->assertSame(Http::STATUS_OK, $response->getStatus());
+		$this->assertSame([['vehicle' => self::UUID]], $response->getData());
+	}
+
+	/** The templates answer 200 with what the service offers the session user on this vehicle. */
+	public function testTheTemplatesAreTheVehiclesOwn(): void {
+		$this->service->expects($this->once())
+			->method('templates')
+			->with('alice', self::UUID)
+			->willReturn([['key' => 'hu_au']]);
+
+		$response = $this->controller()->templates(self::UUID);
+
+		$this->assertSame(Http::STATUS_OK, $response->getStatus());
+		$this->assertSame([['key' => 'hu_au']], $response->getData());
+	}
+
 	/** A new reminder answers 201 with the row the server wrote. */
 	public function testAReminderComesBackAsTheServerWroteIt(): void {
 		$this->params = ['uuid' => self::UUID, 'template_key' => 'hu_au', 'due_date' => '2027-05-31'];

@@ -6,19 +6,23 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createVehicle, deleteVehicle, getVehicle, listVehicles, recordReading, recordTrip, restoreVehicle, updateVehicle } from '../services/api.js'
+import { createVehicle, deleteEntry, deleteVehicle, getVehicle, listVehicles, recordMaintenance, recordReading, recordTrip, restoreEntry, restoreVehicle, updateEntry, updateVehicle } from '../services/api.js'
 import { useVehiclesStore } from './index.js'
 
 // The network is the api client's own seam (api.spec.js); what is under test here is what the
 // store does with the two answers it can get.
 vi.mock('../services/api.js', () => ({
 	createVehicle: vi.fn(),
+	deleteEntry: vi.fn(),
 	deleteVehicle: vi.fn(),
 	getVehicle: vi.fn(),
 	listVehicles: vi.fn(),
+	recordMaintenance: vi.fn(),
 	recordReading: vi.fn(),
 	recordTrip: vi.fn(),
+	restoreEntry: vi.fn(),
 	restoreVehicle: vi.fn(),
+	updateEntry: vi.fn(),
 	updateVehicle: vi.fn(),
 }))
 
@@ -308,6 +312,32 @@ describe('vehicles store', () => {
 			await store.restore()
 
 			expect(restoreVehicle).not.toHaveBeenCalled()
+		})
+	})
+
+	describe('a maintenance record', () => {
+		/**
+		 * A record may close a reminder, and its edit, delete and undo take that back and redo it
+		 * (docs/architecture.md#reminder-engine), so whoever lists reminders reads them again. A
+		 * fill-up closes none.
+		 */
+		it('tells whoever lists reminders each time it is written', async () => {
+			const store = useVehiclesStore()
+			vi.mocked(getVehicle).mockResolvedValue(vehicle({}))
+			vi.mocked(recordMaintenance).mockResolvedValue({ uuid: 'm-1' })
+			vi.mocked(updateEntry).mockResolvedValue({ uuid: 'm-1' })
+			vi.mocked(deleteEntry).mockResolvedValue({ uuid: 'm-1', updated_at: 2 })
+			vi.mocked(restoreEntry).mockResolvedValue({ uuid: 'm-1' })
+			const entry = { uuid: 'm-1', updated_at: 1 }
+
+			await store.maintain('a', {})
+			await store.revise('a', 'maintenance', entry, {})
+			await store.strike('a', 'maintenance', entry)
+			await store.restore()
+			expect(store.reminded).toBe(4)
+
+			await store.revise('a', 'energy', entry, {})
+			expect(store.reminded).toBe(4)
 		})
 	})
 

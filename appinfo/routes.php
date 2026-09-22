@@ -69,12 +69,21 @@ return [
 		// A Reminder is not an Entry - nothing happened yet - but it is reached the same way. Its
 		// state is the engine's (docs/architecture.md#reminder-engine), so an edit cannot set it.
 		['name' => 'reminder#index', 'url' => '/api/vehicles/{uuid}/reminders', 'verb' => 'GET'],
+		// The overview's: every visible vehicle's in one read, rather than one read per vehicle.
+		['name' => 'reminder#fleet', 'url' => '/api/reminders', 'verb' => 'GET'],
 		['name' => 'reminder#create', 'url' => '/api/vehicles/{uuid}/reminders', 'verb' => 'POST'],
+		// Beside the collection rather than below it, so no reminder uuid can ever read as a word.
+		['name' => 'reminder#templates', 'url' => '/api/vehicles/{uuid}/reminder-templates', 'verb' => 'GET'],
 		['name' => 'reminder#update', 'url' => '/api/vehicles/{uuid}/reminders/{reminder}', 'verb' => 'PUT'],
 		['name' => 'reminder#delete', 'url' => '/api/vehicles/{uuid}/reminders/{reminder}', 'verb' => 'DELETE'],
 		['name' => 'reminder#restore', 'url' => '/api/vehicles/{uuid}/reminders/{reminder}/restore', 'verb' => 'POST'],
 		['name' => 'reminder#snooze', 'url' => '/api/vehicles/{uuid}/reminders/{reminder}/snooze', 'verb' => 'POST'],
 		['name' => 'reminder#dismiss', 'url' => '/api/vehicles/{uuid}/reminders/{reminder}/dismiss', 'verb' => 'POST'],
+		// Who the reminders go to. A recipient is named by their account, which is what the list
+		// holds; not `{user_id}`, the field an add sends (tests/Unit/RoutesTest.php).
+		['name' => 'recipient#index', 'url' => '/api/vehicles/{uuid}/recipients', 'verb' => 'GET'],
+		['name' => 'recipient#create', 'url' => '/api/vehicles/{uuid}/recipients', 'verb' => 'POST'],
+		['name' => 'recipient#delete', 'url' => '/api/vehicles/{uuid}/recipients/{recipient}', 'verb' => 'DELETE'],
 
 		// What happened to the vehicle, every table at once and a page at a time
 		// (docs/architecture.md#the-timeline). `odometer#index` stays where it is: the counter on

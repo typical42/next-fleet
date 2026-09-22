@@ -118,6 +118,28 @@ describe('the app shell', () => {
 		expect(usePreferencesStore().loaded).toBe(false)
 	})
 
+	/** A reminder notification links to its vehicle by `?vehicle=` (lib/Notification/Notifier.php). */
+	it('opens the vehicle the link names', async () => {
+		window.history.replaceState(null, '', '/apps/nextfleet/?vehicle=' + VEHICLE.uuid)
+		try {
+			const wrapper = shallowMount(App, {
+				global: {
+					stubs: {
+						NcContent: { template: '<div><slot /></div>' },
+						NcAppContent: { template: '<div><slot /></div>' },
+					},
+				},
+			})
+			await flushPromises()
+
+			/** @type {any} */
+			const screen = wrapper.findComponent(VehicleView)
+			expect(screen.props('vehicle')).toEqual(VEHICLE)
+		} finally {
+			window.history.replaceState(null, '', '/')
+		}
+	})
+
 	/**
 	 * A sold vehicle leaves the overview (docs/ui.md), so the screen of the one just disposed of
 	 * in the edit sheet has no entry in the list any more - and staying on it would strand the

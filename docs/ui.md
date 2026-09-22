@@ -34,8 +34,8 @@ The obvious layout gives each table a tab: Trips, Energy, Maintenance, Expenses.
 [data model](architecture.md#data-model) and answers no question a person actually asks. People ask
 "what happened with this car?" and "what did March cost?".
 
-So the vehicle has **one timeline** of everything — trips, fill-ups, maintenance, expenses,
-reminders — newest first, with filter chips above it:
+So the vehicle has **one timeline** of everything that happened — trips, fill-ups, maintenance,
+expenses — newest first, with filter chips above it:
 `All · Trips · Odometer · Energy · Maintenance · Costs`. One place to look, one place to search, and
 the tabs collapse from six to three. A chip per kind of Entry, so the odometer has one too: a
 counter somebody read is a thing that happened to the vehicle, even though the counter's own chain
@@ -51,8 +51,8 @@ entered it ([odometer rules](architecture.md#odometer-rules)).
 │ Overview        │  M-AB 1234 · VW Passat Variant          [+ Entry]  │
 │                 │  148 320 km · 6,4 l/100 km · 42,10 €/100 km        │
 │ ● M-AB 1234  ⚠  │  ┌────────────────────────────────────────────┐   │
-│ ● HH-CD 42      │  │ ⚠ HU/AU due in 3 weeks — 24.09.2026        │   │
-│ ● M-EV 7   ⛔   │  │ ● Oil change in ~2 400 km (est. Nov)        │   │
+│ ● HH-CD 42      │  │ ● Coming up · HU/AU · due 24.09.2026 [Done]│   │
+│ ● M-EV 7   ⛔   │  │ ● Planned · Oil change · ~02.11.2026 [Done]│   │
 │                 │  └────────────────────────────────────────────┘   │
 │ Reports         │                                                    │
 │ ─────────────── │  Timeline [All][Trips][Odo.][Energy][Maint.][Cost] │
@@ -76,6 +76,31 @@ place of every cost. The client names the period, because a year starts at midni
 person is; the server answers `GET …/kpis?from=&to=&net=` once for each of the two. The chosen
 period and "I reclaim VAT" (a switch on the personal settings page, off by default) are
 preferences, so the next machine opens on the same figures; `net` is the second one.
+
+The **due banner** sits between the header and the timeline and lists what is coming. A reminder
+has not happened yet, so it never becomes a timeline row. The banner shows the open reminders, most
+urgent first: overdue, due, coming up, planned, snoozed, and within a state the sooner day, a due
+date or an estimate. Each row states the reminder's state as a word beside its colour, its title,
+when it is due, and for a reminder by km the estimated day or "not enough data yet". The list states
+each reminder as it stands today (see [the reminder engine](architecture.md#reminder-engine)).
+_+ Reminder_ opens the reminder sheet: a template or an own title, due by date, by km or by
+whichever comes first, the warning points and the recurrence. A template fills in what it knows, and
+every field stays editable. A row opens the same sheet on that reminder, with snooze (a week, a
+month, or until a day), _Skip this time_, and a delete that goes with the undo toast. _Done_ beside
+a row opens the entry sheet on a Maintenance Record with that reminder picked.
+
+Where the vehicle's jurisdiction requires an inspection and no HU/AU reminder is open, the banner
+asks "When is the next HU/AU?": the month and year on the sticker. The reminder is due on that
+month's last day and recurs at the template's interval. A vehicle still waiting for its first
+inspection comes prefilled from its first registration: a car registered in March 2024 is asked
+about March 2027. The edit sheet shows that reminder's recurrence as _Inspection interval_, 12 or 24
+months, and writes a change to the reminder when the vehicle is saved. With no HU/AU reminder it
+offers _Add HU/AU reminder_ instead, which asks the same question in the sheet.
+
+The edit sheet also says who the reminders go to: _Reminders go to_, a Nextcloud account picker,
+and _Reminder mail_, the digest cadence. Owner and managers see both; anyone else sees neither,
+because the list is refused to them. A pick is written at once, since the list is its own table;
+the cadence is a column of the vehicle and is saved with it.
 
 The timeline pages: 50 rows, then more on scroll, with the month a sticky header. Five years of a
 company car is thousands of rows, and the screen people open most often is not the place to
@@ -105,13 +130,13 @@ touch. That keeps the middle free for the things you touch weekly.
 
 | Screen | Purpose | Primary action |
 |---|---|---|
-| **Overview** | All vehicles, sorted by urgency, not alphabetically. Traffic light, plate, km, next due. | Open a vehicle |
+| **Overview** | All vehicles, sorted by urgency, not alphabetically: laid-up ones last, then by the most urgent open reminder's state and day, then by plate. Traffic light (red due or overdue, amber coming up, green otherwise) with its word, plate, km, next due. | Open a vehicle |
 | **Vehicle** | Header KPIs + due banner + timeline (above) | **+ Entry** |
 | **Entry sheet** | Trip / Energy / Maintenance / Odometer / Expense — see below | Save |
-| **Vehicle sheet** | Create with four fields; edit every writable one, plus lifecycle, jurisdiction and [logbook mode](features.md#logbook-mode); delete, undoably | Save |
+| **Vehicle sheet** | Create with four fields; edit every writable one, plus lifecycle, jurisdiction, [logbook mode](features.md#logbook-mode), the inspection interval, the reminder recipients and mail cadence; delete, undoably | Save |
 | **Costs** | One year, one vehicle: stacked bars per month, table below, export button | Export |
 | **Reports** | Fahrtenbuch, mileage claim, cost, CO₂ — pick a range, get a printable page ([ADR 0005](adr/0005-no-pdf-library.md)) | Print / export |
-| **Vehicle sidebar** | Master data, jurisdiction, documents, reminders (sharing from M6) | Edit inline |
+| **Vehicle sidebar** | Master data, jurisdiction, documents (sharing from M6); reminders stay in the due banner | Edit inline |
 | **Personal settings** | The defaults a person keeps: jurisdiction first, then "I reclaim VAT". Not a screen in the app: it is the app's block on Nextcloud's own settings page, its own bundle, and it talks to the same API as everything else | Pick and it saves |
 
 **Reports** has one report so far, the Fahrtenbuch: one vehicle and one year, opened as a page in
@@ -150,9 +175,13 @@ a phone has room for one sheet at a time. It opens on the trip, which is what a 
 - **Maintenance** — title and cost; the title is the one required field. Type is left empty until
   picked, because "service" is one kind of work, not all of it. The vendor completes from this
   vehicle's history. VAT and the counters work as on a fill-up, and date, VAT and counters carry
-  over when the driver switches between the two. If a reminder is open for this vehicle, offer it
-  as one tap: "Closes: Oil change" — that is how recurrence stays correct without anyone thinking
-  about it (M4).
+  over when the driver switches between the two. Under _Closes reminder_ the vehicle's open
+  reminders are chips, most urgent first; one tap picks one, a second unpicks it. That is how
+  recurrence stays correct without anyone thinking about it
+  ([rule 4](architecture.md#reminder-engine)). Until somebody taps, the most urgent reminder is
+  picked when the type is its kind of work — oil change and brake fluid are a service, a tyre swap
+  is tyres, the HU/AU an inspection — and none otherwise. An edit opens on the reminder the record
+  closed, listed even when that occurrence is over.
 - **Odometer** — one number. The escape hatch for everything not otherwise recorded. On a vehicle
   that also counts engine hours, "Which counter" asks Kilometres or Engine hours first, and the
   number is prefilled from that counter. The timeline row states it in that counter's unit.

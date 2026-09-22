@@ -189,6 +189,66 @@ class ReminderEngineTest extends TestCase {
 		$this->assertSame(1, $reminder->getOccurrence());
 	}
 
+	/** An oil change due 2027-03-31 or at 135 000 km, every 12 months or 15 000 km. */
+	private static function oilChange(): Reminder {
+		$reminder = self::byDate('2027-03-31');
+		$reminder->setMode(Reminder::EITHER);
+		$reminder->setDueOdo(135000);
+		$reminder->setRecurMonths(12);
+		$reminder->setRecurOdo(15000);
+
+		return $reminder;
+	}
+
+	/** Withdrawing the work that moved it on puts the occurrence back at that work's day and km. */
+	public function testARetreatTakesBackTheAdvanceFromTheSameBase(): void {
+		$reminder = self::oilChange();
+		ReminderEngine::advance($reminder, '2027-08-31', 133500);
+
+		$this->assertTrue(ReminderEngine::retreat($reminder, '2027-08-31', 133500));
+		$this->assertSame('2027-08-31', $reminder->getDueDate()?->format('Y-m-d'));
+		$this->assertSame(133500, $reminder->getDueOdo());
+		$this->assertSame(1, $reminder->getOccurrence());
+	}
+
+	/**
+	 * A reminder that moved on from somewhere else - a dismissal, an edit, another record - is not
+	 * this base's to take back.
+	 */
+	public function testARetreatFromAnotherBaseChangesNothing(): void {
+		$reminder = self::oilChange();
+		ReminderEngine::advance($reminder, '2027-03-02', 133500);
+
+		$this->assertFalse(ReminderEngine::retreat($reminder, '2027-03-01', 133500));
+		$this->assertFalse(ReminderEngine::retreat($reminder, '2027-03-02', 133400));
+		$this->assertSame('2028-03-02', $reminder->getDueDate()?->format('Y-m-d'));
+		$this->assertSame(148500, $reminder->getDueOdo());
+		$this->assertSame(2, $reminder->getOccurrence());
+	}
+
+	/** Undoing the withdrawal may move it on again only while nothing else has moved it. */
+	public function testItStandsAtTheBaseARetreatLeftItAt(): void {
+		$reminder = self::oilChange();
+		ReminderEngine::advance($reminder, '2027-03-02', 133500);
+		ReminderEngine::retreat($reminder, '2027-03-02', 133500);
+
+		$this->assertTrue(ReminderEngine::standsAt($reminder, '2027-03-02', 133500));
+		$this->assertFalse(ReminderEngine::standsAt($reminder, '2027-03-03', 133500));
+		$this->assertFalse(ReminderEngine::standsAt($reminder, '2027-03-02', 133501));
+	}
+
+	/** The first occurrence was never advanced to, and one that does not recur never advances. */
+	public function testARetreatNeedsAnAdvanceToTakeBack(): void {
+		$first = self::oilChange();
+		$first->setDueDate(new \DateTime('2028-03-02'));
+		$first->setDueOdo(148500);
+		$oneOff = self::byDate('2028-03-02');
+		$oneOff->setOccurrence(2);
+
+		$this->assertFalse(ReminderEngine::retreat($first, '2027-03-02', 133500));
+		$this->assertFalse(ReminderEngine::retreat($oneOff, '2027-03-02', null));
+	}
+
 	/**
 	 * Main-chain Readings, each an ISO instant and a value.
 	 *

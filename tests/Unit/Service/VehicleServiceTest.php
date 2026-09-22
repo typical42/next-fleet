@@ -10,6 +10,7 @@ namespace OCA\NextFleet\Tests\Unit\Service;
 
 use OCA\NextFleet\Db\Audit;
 use OCA\NextFleet\Db\AuditMapper;
+use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Exception\AccessDeniedException;
@@ -92,6 +93,7 @@ class VehicleServiceTest extends TestCase {
 			$this->jurisdictions(),
 			$this->audit,
 			$this->db,
+			$this->createMock(ReminderRecipientMapper::class),
 		);
 	}
 
@@ -273,6 +275,7 @@ class VehicleServiceTest extends TestCase {
 		yield 'engine' => [['engine' => 'steam']];
 		yield 'odo_unit' => [['odo_unit' => 'miles']];
 		yield 'lifecycle' => [['lifecycle' => 'archived']];
+		yield 'reminder_mail' => [['reminder_mail' => 'hourly']];
 		yield 'energy_types' => [['energy_types' => ['petrol', 'coal']]];
 		yield 'energy_types is a set' => [['energy_types' => 'petrol']];
 	}
@@ -447,6 +450,18 @@ class VehicleServiceTest extends TestCase {
 	 * The jurisdiction lives on the vehicle, not on whoever is editing it, and a co-driver's
 	 * own default has no business overwriting it. What a request leaves out stays as it was.
 	 */
+	public function testTheMailCadenceIsWrittenAndAnEmptyOneKeepsTheRows(): void {
+		$this->mapper->method('findByUuid')->willReturn($this->stored());
+		$this->mapper->method('updateChecked')->willReturnArgument(0);
+
+		$monthly = $this->service()->update(self::OWNER, self::UUID, 1750000000, ['reminder_mail' => 'monthly']);
+		$kept = $this->service()->update(self::OWNER, self::UUID, 1750000000, ['reminder_mail' => '']);
+
+		// One row read back both times, so the second write meets the first one's cadence.
+		$this->assertSame('monthly', $monthly->getReminderMail());
+		$this->assertSame('monthly', $kept->getReminderMail());
+	}
+
 	public function testUpdateKeepsWhatTheRequestDoesNotMention(): void {
 		$this->mapper->method('findByUuid')->willReturn($this->stored());
 		$this->mapper->method('updateChecked')->willReturnArgument(0);

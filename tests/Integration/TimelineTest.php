@@ -16,6 +16,7 @@ use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\ExpenseService;
 use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\OdometerService;
+use OCA\NextFleet\Service\ReminderService;
 use OCA\NextFleet\Service\TimelineService;
 use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleService;
@@ -68,6 +69,7 @@ class TimelineTest extends TestCase {
 			'fleet_energy' => 'created_by',
 			'fleet_maintenance' => 'created_by',
 			'fleet_expenses' => 'created_by',
+			'fleet_reminders' => 'created_by',
 			'fleet_vehicles' => 'user_id',
 		];
 		foreach ($tables as $table => $column) {
@@ -330,6 +332,20 @@ class TimelineTest extends TestCase {
 
 		$energy->delete(self::AUTHOR, $this->uuid, $fill['uuid'], $fill['updated_at']);
 		$this->assertMissing(TimelineService::ENERGY, $fill['uuid']);
+	}
+
+	/** A maintenance record names the reminder it closed, for the sheet that edits it. */
+	public function testAMaintenanceRowNamesTheReminderItClosed(): void {
+		$maintenance = $this->container->get(MaintenanceService::class);
+		$oil = $this->container->get(ReminderService::class)->create(self::AUTHOR, $this->uuid, ['title' => 'Oil', 'mode' => 'date', 'due_date' => '2027-01-31']);
+		$closing = $maintenance->record(self::AUTHOR, $this->uuid, ['done_at' => 1750200000, 'done_at_off' => 120, 'title' => 'Oil change', 'closes' => $oil['uuid']]);
+		$plain = $maintenance->record(self::AUTHOR, $this->uuid, ['done_at' => 1750300000, 'done_at_off' => 120, 'title' => 'Wipers']);
+
+		$rows = $this->timeline->page(self::AUTHOR, $this->uuid, TimelineService::MAINTENANCE, null)['rows'];
+
+		$this->assertSame([null, $oil['uuid']], array_column($rows, 'closes'));
+		$this->assertSame($oil['uuid'], $this->timeline->one(self::AUTHOR, $this->uuid, TimelineService::MAINTENANCE, $closing['uuid'])['closes']);
+		$this->assertNull($this->timeline->one(self::AUTHOR, $this->uuid, TimelineService::MAINTENANCE, $plain['uuid'])['closes']);
 	}
 
 	private function assertMissing(string $type, string $uuid): void {

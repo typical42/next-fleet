@@ -26,8 +26,11 @@ import VehicleView from './views/VehicleView.vue'
 const store = useVehiclesStore()
 const preferences = usePreferencesStore()
 
-/** The vehicle the content area shows; empty means the overview (docs/ui.md). */
-const selected = ref('')
+/**
+ * The vehicle the content area shows; empty means the overview (docs/ui.md). A reminder
+ * notification opens the app on its vehicle with `?vehicle=`.
+ */
+const selected = ref(new URLSearchParams(window.location.search).get('vehicle') ?? '')
 /** Whether the content area shows the reports instead, which belong to no one vehicle. */
 const reporting = ref(false)
 const creating = ref(false)

@@ -14,9 +14,12 @@ import NcTextArea from '@nextcloud/vue/components/NcTextArea'
 import NcTextField from '@nextcloud/vue/components/NcTextField'
 import { computed, onMounted, ref, watch } from 'vue'
 
-import { ConflictError, getPreferences, getVehicle } from '../services/api.js'
+import InspectionSticker from './InspectionSticker.vue'
+import ReminderRecipients from './ReminderRecipients.vue'
+import { ConflictError, getPreferences, getVehicle, listReminders, reminderTemplates } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
 import { energyWord, formatDay, jurisdictionWord, lifecycleWord, parseDay, parseWhole } from '../utils/format.js'
+import { INSPECTION, inspectionOf, rewrite } from '../utils/reminders.js'
 
 const props = defineProps({
 	/**
@@ -51,6 +54,7 @@ const color = ref(text(props.vehicle?.color))
 const notes = ref(text(props.vehicle?.notes))
 const firstReg = ref(parseDay(props.vehicle?.first_reg))
 const disposedAt = ref(parseDay(props.vehicle?.disposed_at))
+const reminderMail = ref(text(props.vehicle?.reminder_mail))
 const counter = ref('')
 
 const saving = ref(false)
@@ -177,6 +181,39 @@ const disposing = computed(() => lifecycle.value?.id === 'disposed')
 
 const country = computed(() => jurisdictions.value.find((one) => one.id === jurisdiction.value) ?? null)
 
+/**
+ * The inspection template the vehicle's jurisdiction offers, or null where it requires none.
+ *
+ * @type {import('vue').Ref<import('../services/api.js').ReminderTemplate|null>}
+ */
+const inspection = ref(null)
+/**
+ * The open HU/AU reminder, at the token the interval is written against. Moves on when that
+ * write lands, so a retry of the vehicle does not write it twice.
+ *
+ * @type {import('vue').Ref<import('../services/api.js').Reminder|null>}
+ */
+const inspected = ref(null)
+/** Whether the sticker question is open in the sheet. */
+const adding = ref(false)
+
+/**
+ * @param {number} months - an inspection interval
+ * @return {{ id: number, label: string }} it as the dropdown offers it
+ */
+function intervalOption(months) {
+	return { id: months, label: t('nextfleet', '{months} months', { months }) }
+}
+
+// Yearly or every two years is what the law sets by weight and use, which the vehicle does not
+// carry (lib/Jurisdiction/De/InspectionScheme.php); an interval set elsewhere is kept on offer.
+const intervals = computed(() => [...new Set([12, 24, inspected.value?.recur_months ?? 12])]
+	.sort((a, b) => a - b)
+	.map(intervalOption))
+const interval = ref(null)
+// A reminder by counter alone has no interval in months to show.
+const showsInterval = computed(() => inspected.value !== null && inspected.value.mode !== 'odo')
+
 // A button says what the click does, not what went wrong: while the token is stale this click
 // overwrites somebody's change - whichever write was refused, and whether or not the last attempt
 // failed for a second reason on top.
@@ -228,6 +265,7 @@ onMounted(async () => {
 		return
 	}
 
+	readInspection()
 	try {
 		countries.value = (await getPreferences()).jurisdictions
 	} catch {
@@ -240,6 +278,50 @@ onMounted(async () => {
 		countries.value = [...countries.value, { key: own, name: own }]
 	}
 })
+
+/**
+ * Reads whether the vehicle needs an HU/AU and which reminder carries it. It answers for the
+ * vehicle as saved: a country changed in this sheet counts once it is.
+ */
+async function readInspection() {
+	try {
+		const [offered, reminders] = await Promise.all([reminderTemplates(props.vehicle.uuid), listReminders(props.vehicle.uuid)])
+		inspection.value = offered.find((one) => one.key === INSPECTION) ?? null
+		inspected.value = inspectionOf(reminders)
+		interval.value = inspected.value?.recur_months ? intervalOption(inspected.value.recur_months) : null
+	} catch {
+		// A convenience; the vehicle's own fields are what the sheet is for.
+	}
+}
+
+/** The question in the sheet wrote the reminder; its interval now belongs here. */
+function added() {
+	adding.value = false
+	readInspection()
+}
+
+/**
+ * The interval is the HU/AU reminder's recurrence, so a change is an edit of that reminder - a
+ * full replace, with the rest of it as it stands (docs/architecture.md#reminder-engine).
+ */
+async function writeInterval() {
+	const reminder = inspected.value
+	if (reminder === null || interval.value === null || interval.value.id === reminder.recur_months) {
+		return
+	}
+
+	try {
+		inspected.value = await store.revise(props.vehicle.uuid, 'reminder', reminder, { ...rewrite(reminder), recur_months: interval.value.id })
+	} catch (error) {
+		if (!(error instanceof ConflictError)) {
+			throw error
+		}
+		// Read back so the next save goes out under the current token; the interval on screen wins,
+		// as every other field of this sheet does.
+		inspected.value = inspectionOf(await listReminders(props.vehicle.uuid))
+		throw new Error(t('nextfleet', 'The HU/AU reminder was changed somewhere else while you had it open. Saving again writes this interval over that change.'))
+	}
+}
 
 /**
  * Every writable column, as the API spells it. Sent whole rather than as a diff: `apply()` writes
@@ -273,6 +355,7 @@ function fields() {
 		retention_months: retentionMonths.value,
 		color: color.value,
 		notes: notes.value,
+		reminder_mail: reminderMail.value,
 	}
 }
 
@@ -350,6 +433,7 @@ async function write() {
 		return
 	}
 
+	await writeInterval()
 	emit('saved', await store.save({ ...vehicle, ...fields() }))
 }
 
@@ -504,6 +588,30 @@ function chosen(options, id) {
 					:label="t('nextfleet', 'First registration')"
 					:disabled="saving"
 					@keydown.esc.stop="keepPicker" />
+				<!-- The interval is stored on the HU/AU reminder, so without one there is nothing to
+				     set it on yet (docs/ui.md, the due banner). -->
+				<NcSelect v-if="inspection !== null && showsInterval"
+					v-model="interval"
+					:options="intervals"
+					:input-label="t('nextfleet', 'Inspection interval')"
+					:disabled="saving"
+					:clearable="false"
+					label="label" />
+				<div v-else-if="inspection !== null && inspected === null" class="sheet__wide">
+					<InspectionSticker v-if="adding"
+						:vehicle="held"
+						:template="inspection"
+						@saved="added" />
+					<NcButton v-else :disabled="saving" @click="adding = true">
+						{{ t('nextfleet', 'Add HU/AU reminder') }}
+					</NcButton>
+				</div>
+				<!-- Shown only to whoever may edit the list; the section reads it and hides itself
+				     when refused (docs/ui.md). -->
+				<ReminderRecipients v-model:cadence="reminderMail"
+					class="sheet__wide"
+					:vehicle="props.vehicle.uuid"
+					:disabled="saving" />
 				<!-- Integers in the units the database keeps: cents, millilitres, watt-hours
 				     (docs/contributing.md). The label says which, because nothing converts yet. -->
 				<NcTextField v-model="tankMl"
