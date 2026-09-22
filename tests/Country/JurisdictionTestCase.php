@@ -13,6 +13,7 @@ use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Jurisdiction\IJurisdiction;
 use OCA\NextFleet\Jurisdiction\ILogbookRules;
 use OCA\NextFleet\Jurisdiction\LogbookReport;
+use OCA\NextFleet\Service\ExpenseService;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -159,6 +160,9 @@ abstract class JurisdictionTestCase extends TestCase {
 				$rate === null || ($rate >= 0 && $rate < 10000),
 				var_export($rate, true) . ' on ' . $day . ' is not a rate in basis points',
 			);
+		}
+		foreach ($rates->vatFreeCategories() as $category) {
+			$this->assertContains($category, ExpenseService::CATEGORIES, $category . ' is no expense category');
 		}
 	}
 

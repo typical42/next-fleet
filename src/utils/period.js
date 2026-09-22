@@ -5,6 +5,8 @@
 
 import { t } from '@nextcloud/l10n'
 
+/** @typedef {[number, number, number]} Day year, month from 0, day - as `new Date()` takes them */
+
 /** The periods the vehicle header offers, the default first (docs/ui.md). */
 export const PERIODS = ['last-12', 'this-year', 'last-year', 'month']
 
@@ -34,14 +36,17 @@ export function periodWord(period) {
  */
 export function periodOf(period, now, month = null) {
 	const year = now.getFullYear()
+	/** @type {Day} */
 	const tomorrow = [year, now.getMonth(), now.getDate() + 1]
-	/** @type {[number[], number[], number]} start, end and step in months */
-	const [start, end, step] = {
+	/** @type {Record<string, [Day, Day, number]>} start, end and step in months */
+	const yearly = {
 		'last-12': [[year - 1, now.getMonth(), now.getDate() + 1], tomorrow, 12],
 		'this-year': [[year, 0, 1], tomorrow, 12],
 		'last-year': [[year - 1, 0, 1], [year, 0, 1], 12],
-	}[period] ?? monthOf(month, now)
+	}
+	const [start, end, step] = yearly[period] ?? monthOf(month, now)
 
+	/** @type {(day: Day, back?: number) => number} */
 	const instant = ([y, m, d], back = 0) => new Date(y, m - back, d).getTime() / 1000
 
 	return {
@@ -54,7 +59,7 @@ export function periodOf(period, now, month = null) {
 /**
  * @param {string|null} month - `YYYY-MM`, or null for the month `now` is in
  * @param {Date} now - the moment the header is read
- * @return {[number[], number[], number]} its first day, the next month's, and a one-month step
+ * @return {[Day, Day, number]} its first day, the next month's, and a one-month step
  */
 function monthOf(month, now) {
 	const [year, index] = month ? [Number(month.slice(0, 4)), Number(month.slice(5, 7)) - 1] : [now.getFullYear(), now.getMonth()]

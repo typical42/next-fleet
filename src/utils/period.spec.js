@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest'
 import { periodOf } from './period.js'
 
 // Local midnights, as the person's calendar has them: the periods are theirs, not UTC's.
+/** @type {(year: number, month: number, day: number) => number} */
 const at = (year, month, day) => new Date(year, month - 1, day).getTime() / 1000
 const NOW = new Date(2026, 8, 19, 15, 30)
 

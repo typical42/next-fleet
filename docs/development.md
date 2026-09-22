@@ -11,7 +11,7 @@ time is a reminder engine you cannot test.
 | Layer | Tool | What it covers |
 |---|---|---|
 | Static | Psalm (with the `nextcloud/ocp` stubs), php-cs-fixer + `nextcloud/coding-standard`, ESLint/Stylelint (`@nextcloud/eslint-config`), TypeScript | Wrong types, private API use, style |
-| Unit | PHPUnit, mappers mocked | The logic worth trusting: odometer derivation and the observed-beats-derived rule, due-date/km evaluation, recurrence from actual completion, consumption and cost per km, mileage projection and its data floor |
+| Unit | PHPUnit, mappers mocked | The logic worth trusting: odometer derivation and the observed-beats-derived rule, due-date/km evaluation, recurrence from actual completion, consumption and cost per 100 km, mileage projection and its data floor |
 | Integration | PHPUnit inside a running Nextcloud container, real DB | Migrations, QBMapper queries, optimistic concurrency (a stale `updated_at` must 412), the access layer (owner vs. role vs. stranger) |
 | API contract | PHPUnit + Guzzle with an app password | Arrives with the OCS API, not before ([ADR 0006](adr/0006-one-api-surface-in-v1.md)). Snapshot the JSON; a breaking change must fail CI |
 | Frontend | Vitest for stores and pure components | Consumption/cost formatting, form validation |
@@ -100,10 +100,13 @@ stable components. If no single bundle spans the range, the 31 floor moves; the 
 
 **Seed data:** `occ nextfleet:seed <user>` writes a demo fleet spanning the two years before it runs
 — including the awkward rows: a flagged backwards odometer, a plug-in hybrid with both energy
-types, a vehicle counted in hours, and one nobody finished creating, which is what the "complete
-this vehicle" hint has to ask about ([ui](ui.md#details-that-decide-whether-it-feels-easy)). It
-powers E2E tests, screenshots for the app store, and manual clicking. Trips, fill-ups and a
-`missed_previous` gap arrive with the tables that hold them.
+types, a vehicle counted in hours, a truck that counts engine hours beside its kilometres, and one
+nobody finished creating, which is what the "complete this vehicle" hint has to ask about
+([ui](ui.md#details-that-decide-whether-it-feels-easy)). The last year carries costs: fill-ups with
+a partial and a `missed_previous`, the hybrid charging at home and in public, maintenance, expenses
+with a stated VAT rate and without one, and a vehicle with purchase price and
+residual, so every header figure has something to show. It powers E2E tests, screenshots for the
+app store, and manual clicking. Trips arrive with the E2E that needs them.
 
 It writes through the services a request writes through, so a fleet it cannot produce is a fleet the
 app cannot hold, and the odometer rules decide the flags rather than the fixture. Every plate starts
@@ -253,7 +256,10 @@ good. Then an axe audit of the overview, the vehicle screen and an open sheet, s
 `#nextfleet` at the WCAG 2.1 AA tags — Nextcloud's own header is outside this app's reach.
 `m2-slice.spec.js` does the same for the logbook: a trip entered as a counter and a trip entered as
 a distance, both moving the vehicle's counter, a refused one leaving the sheet open, an incomplete
-one saved and asked for the rest, and Logbook Mode switched on and off.
+one saved and asked for the rest, and Logbook Mode switched on and off. `m3-slice.spec.js` covers
+the costs: a fill-up that moves the header, a hybrid's two consumptions, a fill-up edited from its
+row and deleted and undone, the period picker, and an axe audit of the header and an open fill-up.
+It sets the period back to the default first, since the picker keeps its choice on the server.
 
 Four things about those files worth knowing before adding to them:
 
@@ -277,7 +283,7 @@ the assertion, not the missing build. It logs in through the form — Nextcloud 
 `NEXTFLEET_URL_NC34` and `NEXTFLEET_URL_NC31` override the two ports.
 
 Every vehicle the run makes wears a plate its own spec file owns — `E2E-` for the M1 slice,
-`M2-E2E-` for the M2 one — and each file deletes what it finds under its prefix before it starts.
+`M2-E2E-` and `M3-E2E-` for the next two — and each file deletes what it finds under its prefix before it starts.
 Cleaning up front rather than afterwards leaves a failed run's rows where they can be looked at, and
 still makes the next run find one vehicle rather than two. The prefixes have to stay disjoint:
 Playwright runs the files at once, and a sweep that matched another file's plates would delete a

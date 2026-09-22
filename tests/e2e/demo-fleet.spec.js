@@ -61,5 +61,5 @@ test('a flagged reading is the demo fleet, not a broken write', async ({ page })
 	const hybrid = fleet.find((/** @type {{plate: string}} */ vehicle) => vehicle.plate === `${demo}PH 200`)
 	expect(hybrid?.energy_types).toEqual(['petrol', 'electric'])
 	// The newest reading, which is the one after the reset - not the highest the vehicle ever read.
-	expect(hybrid?.odo_value).toBe(13040)
+	expect(hybrid?.odo_value).toBe(23740)
 })

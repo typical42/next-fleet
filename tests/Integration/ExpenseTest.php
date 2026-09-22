@@ -116,6 +116,19 @@ class ExpenseTest extends TestCase {
 		$this->assertSame(['vat_rate' => null], $this->expenses->prefill(self::OWNER, $generic->getUuid(), ['at' => 1750000000, 'off' => 120]));
 	}
 
+	/**
+	 * A category the jurisdiction charges no VAT on opens with no rate, since a stated rate is
+	 * never zero; the others keep the day's rate.
+	 */
+	public function testAVatFreeCategoryIsPrefilledWithNoRate(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'jurisdiction' => 'de']);
+		$moment = ['at' => 1750000000, 'off' => 120];
+
+		$this->assertSame(['vat_rate' => null], $this->expenses->prefill(self::OWNER, $vehicle->getUuid(), $moment + ['category' => 'insurance']));
+		$this->assertSame(['vat_rate' => 1900], $this->expenses->prefill(self::OWNER, $vehicle->getUuid(), $moment + ['category' => 'toll']));
+		$this->assertSame(['vat_rate' => 1900], $this->expenses->prefill(self::OWNER, $vehicle->getUuid(), $moment + ['category' => '']));
+	}
+
 	/** A moment the prefill cannot read is a client that did not send one. */
 	public function testThePrefillWantsAMoment(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);

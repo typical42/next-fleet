@@ -33,6 +33,21 @@ class PreferencesService {
 	 */
 	private const DISMISSED = 'dismissed_hints';
 
+	/**
+	 * Whether this user's cost figures are net of VAT (docs/architecture.md). A person's answer
+	 * about their own taxes, so it follows them to every vehicle rather than sitting on one.
+	 */
+	private const RECLAIM_VAT = 'reclaim_vat';
+
+	/**
+	 * The period the vehicle header last showed. Kept here rather than in the browser so the next
+	 * machine opens on the same figures.
+	 */
+	private const KPI_PERIOD = 'kpi_period';
+
+	/** What the header offers, the default first. Mirrors `PERIODS` in src/utils/period.js. */
+	private const PERIODS = ['last-12', 'this-year', 'last-year', 'month'];
+
 	public function __construct(
 		private IConfig $config,
 		private Jurisdictions $jurisdictions,
@@ -44,7 +59,7 @@ class PreferencesService {
 	 * from. One answer rather than two routes, because a value without its options is a dropdown
 	 * with nothing in it (docs/adr/0006-one-api-surface-in-v1.md).
 	 *
-	 * @return array{preferences: array{jurisdiction: string, dismissed_hints: list<string>}, jurisdictions: list<array{key: string, name: string, logbook_export: bool}>}
+	 * @return array{preferences: array{jurisdiction: string, dismissed_hints: list<string>, reclaim_vat: bool, kpi_period: string}, jurisdictions: list<array{key: string, name: string, logbook_export: bool}>}
 	 */
 	public function forUser(string $userId): array {
 		return [
@@ -59,6 +74,8 @@ class PreferencesService {
 					Jurisdictions::DEFAULT,
 				),
 				self::DISMISSED => $this->dismissed($userId),
+				self::RECLAIM_VAT => $this->config->getUserValue($userId, Application::APP_ID, self::RECLAIM_VAT, '0') === '1',
+				self::KPI_PERIOD => $this->period($userId),
 			],
 			'jurisdictions' => array_map(
 				// The name is English and reaches no catalogue here; the screen translates it
@@ -81,7 +98,7 @@ class PreferencesService {
 	 * over rather than refused: Nextcloud merges its own routing parameters into every request.
 	 *
 	 * @param array<string, mixed> $fields
-	 * @return array{preferences: array{jurisdiction: string, dismissed_hints: list<string>}, jurisdictions: list<array{key: string, name: string, logbook_export: bool}>}
+	 * @return array{preferences: array{jurisdiction: string, dismissed_hints: list<string>, reclaim_vat: bool, kpi_period: string}, jurisdictions: list<array{key: string, name: string, logbook_export: bool}>}
 	 * @throws \InvalidArgumentException if a preference is not one of the answers it may take
 	 */
 	public function write(string $userId, array $fields): array {
@@ -93,6 +110,19 @@ class PreferencesService {
 		}
 		if (array_key_exists(self::DISMISSED, $fields)) {
 			$values[self::DISMISSED] = json_encode($this->uuids($fields[self::DISMISSED]), JSON_THROW_ON_ERROR);
+		}
+		if (array_key_exists(self::RECLAIM_VAT, $fields)) {
+			// A JSON boolean and nothing looser: "no", 0 or "false" would each read as some answer.
+			if (!is_bool($fields[self::RECLAIM_VAT])) {
+				throw new \InvalidArgumentException(self::RECLAIM_VAT . ' is true or false');
+			}
+			$values[self::RECLAIM_VAT] = $fields[self::RECLAIM_VAT] ? '1' : '0';
+		}
+		if (array_key_exists(self::KPI_PERIOD, $fields)) {
+			if (!in_array($fields[self::KPI_PERIOD], self::PERIODS, true)) {
+				throw new \InvalidArgumentException(self::KPI_PERIOD . ' is one of ' . implode(', ', self::PERIODS));
+			}
+			$values[self::KPI_PERIOD] = $fields[self::KPI_PERIOD];
 		}
 
 		foreach ($values as $key => $value) {
@@ -141,6 +171,16 @@ class PreferencesService {
 		);
 
 		return is_array($stored) ? array_values(array_filter($stored, is_string(...))) : [];
+	}
+
+	/**
+	 * A period a later release no longer offers reads as the default. Unlike a jurisdiction it
+	 * writes nothing under its name, so there is nothing to be honest about.
+	 */
+	private function period(string $userId): string {
+		$stored = $this->config->getUserValue($userId, Application::APP_ID, self::KPI_PERIOD, self::PERIODS[0]);
+
+		return in_array($stored, self::PERIODS, true) ? $stored : self::PERIODS[0];
 	}
 
 	/**

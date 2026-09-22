@@ -155,7 +155,7 @@ beforeEach(() => {
 	setActivePinia(createPinia())
 	vi.resetAllMocks()
 	vi.mocked(getPreferences).mockResolvedValue({
-		preferences: { jurisdiction: 'de', dismissed_hints: [] },
+		preferences: { jurisdiction: 'de', dismissed_hints: [], reclaim_vat: false, kpi_period: 'last-12' },
 		jurisdictions: [{ key: 'de', name: 'Germany', logbook_export: true }, { key: 'generic', name: 'Generic', logbook_export: false }],
 	})
 	vi.mocked(createVehicle).mockImplementation(async (fields) => ({ ...fields, uuid: 'v-new', updated_at: 1 }))

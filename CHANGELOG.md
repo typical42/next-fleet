@@ -69,15 +69,37 @@
   flagged or derived Reading at either end, or an end without a counter states none. A plug-in
   hybrid's petrol and electricity are measured apart, and engine hours never enter the figure.
 - A rolling wall-side kWh/100 km over every charge in a period, labelled approximate because
-  charging losses are in it (`ConsumptionService::wallSide()`). Nothing shows it yet; the header
-  KPIs will.
+  charging losses are in it (`ConsumptionService::wallSide()`).
 - Cost per 100 km (or per hour) for a period, and energy-only cost beside it
   (`CostService::of()`). Net of each row's own rate for a person who reclaims VAT; a row without a
   stated rate counts gross and the figure says so. Incomplete when a fill-up has no price, a
-  period total when no distance was driven, no figures without a currency. Nothing shows it yet;
-  the header KPIs will.
+  period total when no distance was driven, no figures without a currency.
 - TCO beside it: cost per 100 km plus purchase minus residual over every kilometre the vehicle has
   run since its first Reading. Unset when either price is empty, as entered under "I reclaim VAT".
+- The vehicle header states them: odometer, consumption per energy (two for a plug-in hybrid, plus
+  the wall-side figure), cost, energy-only cost and TCO, and engine hours in the period on a vehicle
+  that counts them. A period picker offers the last 12 months, this year, last year or one month,
+  and every figure is compared with the period before. `GET /api/vehicles/{uuid}/kpis?from=&to=&net=`
+  answers one period.
+- "I reclaim VAT" on the personal settings page (off) makes the header's cost figures net. It and
+  the header's period are preferences: `reclaim_vat` and `kpi_period` on `GET|PUT /api/preferences`.
+- The "complete this vehicle" hint also asks for a currency when a vehicle has none, on every
+  vehicle, since a trailer has costs too.
+- `occ nextfleet:seed` writes a year of costs: fill-ups with a partial and a missed previous, the
+  hybrid's petrol and its charges at home and in public, maintenance, and expenses with and without
+  a stated VAT rate. It adds a truck with an hour chain (`NF-LK 700`) and a residual on the Passat.
+  The hybrid's cluster swap moved back to more than a year ago; its counter now ends at 23,740 km.
+- An insurance, vehicle tax or fine expense opens with the VAT field empty ("not stated") in
+  Germany, since none of them carries VAT; the other categories keep the day's rate. The
+  jurisdiction names the categories (`IRateProvider::vatFreeCategories()`), and the prefill takes
+  `category`. Such a row counts gross under "I reclaim VAT" and shows in the header's note on rows
+  without a rate. The seed's insurance, tax and fine rows state no rate either, instead of 0.
+- A fill-up edited from its row saves. `PUT …/energy/{energy}` looked the fill-up up by the body's
+  `energy` field, the fuel, and answered 404 on every edit; the placeholder is now `{fillUp}`, and a
+  unit test keeps placeholders apart from body fields. Delete and undo were not affected.
+- `tests/e2e/m3-slice.spec.js` drives the M3 slice on both majors: a fill-up moving the header, a
+  hybrid's two figures, an edit, a delete and its undo, the period picker, and an axe audit at
+  320 × 640 in the dark. The M1 and M2 slices find the odometer in the new header.
 
 - Overview, at the top of the navigation. It leads back from a vehicle or from Reports without a
   reload, and is marked whenever the overview is what shows.

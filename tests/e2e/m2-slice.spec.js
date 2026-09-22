@@ -47,7 +47,7 @@ test('a trip is entered as a counter or as a distance, and the vehicle follows e
 	// store read the vehicle back rather than counting for itself.
 	// The KPI, not just anywhere on the screen: the timeline below it states the counter the journey
 	// ended on as well, and what moved here is the vehicle's own.
-	await expect(page.locator('.vehicle__kpis').getByText('148,402 km')).toBeVisible()
+	await expect(page.locator('.kpis').getByText('148,402 km')).toBeVisible()
 
 	// The other half of the toggle: the driver who read no counter states the kilometres, and the
 	// Reading is counted onto the chain from the last one before the journey set off (rule 6).
@@ -56,7 +56,7 @@ test('a trip is entered as a counter or as a distance, and the vehicle follows e
 	await entry.getByRole('textbox', { name: 'Distance' }).fill(covered)
 	await entry.getByRole('button', { name: 'Save' }).click()
 	await expect(entry).toBeHidden()
-	await expect(page.locator('.vehicle__kpis').getByText('148,484 km')).toBeVisible()
+	await expect(page.locator('.kpis').getByText('148,484 km')).toBeVisible()
 
 	// A reload is what proves the server kept both, and the vehicle it kept them on is the one
 	// whose counter the two journeys moved.

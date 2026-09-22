@@ -32,7 +32,15 @@ const NEW = {
 }
 
 /** The same vehicle with every question answered. */
-const DONE = { ...NEW, uuid: 'v-done', plate: 'NF-DE 100', vin: 'X', first_reg: '2019-03-14', tank_ml: 52000 }
+const DONE = {
+	...NEW,
+	uuid: 'v-done',
+	plate: 'NF-DE 100',
+	vin: 'X',
+	first_reg: '2019-03-14',
+	tank_ml: 52000,
+	currency: 'EUR',
+}
 
 /**
  * @param {string[]} dismissed - the hints this user has already answered
@@ -103,6 +111,7 @@ describe('the complete-this-vehicle hint', () => {
 		expect(wrapper.text()).toContain('VIN')
 		expect(wrapper.text()).toContain('First registration')
 		expect(wrapper.text()).toContain('Tank size (ml)')
+		expect(wrapper.text()).toContain('Currency')
 		expect(wrapper.text()).not.toContain('NF-DE 100')
 	})
 

@@ -29,6 +29,7 @@ import { generateUrl } from '@nextcloud/router'
  * @property {string[]|null} [energy_types] - the energy it actually accepts (CONTEXT.md)
  * @property {number|null} [tank_ml] - the tank, in millilitres
  * @property {number|null} [battery_wh] - the battery, in watt-hours
+ * @property {string|null} [currency] - the code its costs are in; null leaves them unsummed
  */
 
 /**
@@ -207,9 +208,10 @@ import { generateUrl } from '@nextcloud/router'
  * surface (docs/adr/0006-one-api-surface-in-v1.md).
  *
  * @typedef {object} Settings
- * @property {{ jurisdiction: string, dismissed_hints: string[] }} preferences - this user's own
- *   choices: the country new vehicles are kept under, and the vehicles whose "complete this
- *   vehicle" hint they have answered
+ * @property {{ jurisdiction: string, dismissed_hints: string[], reclaim_vat: boolean, kpi_period: string }} preferences -
+ *   this user's own choices: the country new vehicles are kept under, the vehicles whose "complete
+ *   this vehicle" hint they have answered, whether cost figures are net of VAT, and the period the
+ *   vehicle header shows
  * @property {{ key: string, name: string, logbook_export: boolean }[]} jurisdictions - the registered
  *   countries, English, and whether each prints a logbook
  */
@@ -399,10 +401,12 @@ export async function recordExpense(uuid, expense) {
  * @param {string} uuid - the vehicle the money is spent on
  * @param {number} at - the moment the sheet is on, seconds
  * @param {number} off - the UTC offset of that moment, minutes
+ * @param {string|null} [category] - the category picked, since some carry no VAT
  * @return {Promise<{vat_rate: number|null}>} the rate on that day, as in EnergyPrefill
  */
-export async function expensePrefill(uuid, at, off) {
-	return request('GET', `/api/vehicles/${uuid}/expenses/prefill?${new URLSearchParams({ at: String(at), off: String(off) })}`)
+export async function expensePrefill(uuid, at, off, category = null) {
+	const query = new URLSearchParams({ at: String(at), off: String(off), ...(category === null ? {} : { category }) })
+	return request('GET', `/api/vehicles/${uuid}/expenses/prefill?${query}`)
 }
 
 /** Where each kind of Entry is written, below its vehicle. */

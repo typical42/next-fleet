@@ -62,32 +62,32 @@ class EnergyController extends Controller {
 	 * An edit, answered with the row as it now stands - flags included, since an edit can raise or
 	 * clear one - and the token the next write is checked against.
 	 *
-	 * @param string $energy the fill-up's uuid
+	 * @param string $fillUp the fill-up's uuid
 	 */
 	#[NoAdminRequired]
 	#[UserRateLimit(limit: 60, period: 60)]
-	public function update(string $uuid, string $energy): DataResponse {
-		return $this->checked(fn (int $token): array => $this->service->update($this->userId(), $uuid, $energy, $token, $this->request->getParams()));
+	public function update(string $uuid, string $fillUp): DataResponse {
+		return $this->checked(fn (int $token): array => $this->service->update($this->userId(), $uuid, $fillUp, $token, $this->request->getParams()));
 	}
 
 	/**
 	 * A delete, answered with the row it left so the undo toast holds the token the restore is
 	 * checked against.
 	 *
-	 * @param string $energy the fill-up's uuid
+	 * @param string $fillUp the fill-up's uuid
 	 */
 	#[NoAdminRequired]
 	#[UserRateLimit(limit: 60, period: 60)]
-	public function delete(string $uuid, string $energy): DataResponse {
-		return $this->checked(fn (int $token): array => $this->service->delete($this->userId(), $uuid, $energy, $token));
+	public function delete(string $uuid, string $fillUp): DataResponse {
+		return $this->checked(fn (int $token): array => $this->service->delete($this->userId(), $uuid, $fillUp, $token));
 	}
 
 	/**
-	 * @param string $energy the fill-up's uuid
+	 * @param string $fillUp the fill-up's uuid
 	 */
 	#[NoAdminRequired]
 	#[UserRateLimit(limit: 60, period: 60)]
-	public function restore(string $uuid, string $energy): DataResponse {
-		return $this->checked(fn (int $token): array => $this->service->restore($this->userId(), $uuid, $energy, $token));
+	public function restore(string $uuid, string $fillUp): DataResponse {
+		return $this->checked(fn (int $token): array => $this->service->restore($this->userId(), $uuid, $fillUp, $token));
 	}
 }
