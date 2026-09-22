@@ -425,8 +425,8 @@ their own, and a vehicle's first fill-up yields no consumption at all.
 - **Hybrids show both figures side by side**, driven by `energy_types`. A blended number means
   nothing to anybody.
 
-**Cost per km** = energy + maintenance + expenses in the period ÷ km driven in the period. Show it
-next to energy-only cost per km; the distance between the two is the actual story of the vehicle.
+**Cost per 100 km** = energy + maintenance + expenses in the period ÷ km driven in the period, × 100.
+Show it next to energy-only cost per 100 km; the distance between the two is the actual story of the vehicle.
 `CostService` computes both, per 100 km or per hour as consumption is, over the same distance the
 wall-side figure uses. A fill-up in the period without a price makes the figure *incomplete*. With no
 distance in the period, the cost is the period's total. Under "I reclaim VAT" each row counts net of
@@ -441,11 +441,11 @@ number that decides buy vs. lease, and none of the tools in
 
 **Nothing is summed across currencies or units.** Currency and `odo_unit` are per vehicle. A
 cross-vehicle report groups by both and shows sections — never a total, and no FX conversion, ever.
-KPI labels derive from the vehicle (`€/km`, `€/h`), and a vehicle with no distance counter shows
-cost per period instead.
+KPI labels derive from the vehicle (`€/100 km`, `€/h`), and a vehicle with no distance in the
+period shows cost as a period total instead.
 
-**CO₂** = amount × emission factor per energy type, from a versioned table in code with the source
-cited; electricity uses a configurable grid factor. Always labelled an estimate. Under the generic
+**CO₂** (M5) = amount × emission factor per energy type, from a versioned table in code with the
+source cited; electricity uses a configurable grid factor. Always labelled an estimate. Under the generic
 jurisdiction there are no factors, so the figure is unavailable rather than zero.
 
 **VAT:** store gross plus `vat_rate`, derive net — on energy, maintenance and expenses alike. A

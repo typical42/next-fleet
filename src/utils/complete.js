@@ -22,11 +22,12 @@ const CAPACITY = {
  * The order the fields are asked for in, which is the order the edit sheet shows them in
  * (src/components/VehicleSheet.vue) - so following the hint reads top to bottom.
  */
-const ORDER = ['vin', 'first_reg', 'tank_ml', 'battery_wh']
+const ORDER = ['vin', 'first_reg', 'tank_ml', 'battery_wh', 'currency']
 
 /**
- * What creating a vehicle in four fields left out (docs/ui.md): its identity, its age, and the
- * capacity of whatever it is filled with. This is the whole rule behind the "complete this
+ * What creating a vehicle in four fields left out (docs/ui.md): its identity, its age, the
+ * capacity of whatever it is filled with, and the currency its costs are in - asked of every
+ * vehicle, since a trailer has costs too. This is the whole rule behind the "complete this
  * vehicle" hint, and it is a question rather than a validation - a vehicle is perfectly usable
  * without any of it.
  *
@@ -34,7 +35,7 @@ const ORDER = ['vin', 'first_reg', 'tank_ml', 'battery_wh']
  * @return {string[]} the columns still unanswered, as the API spells them
  */
 export function missingFrom(vehicle) {
-	const asked = ['vin', 'first_reg', ...(vehicle.energy_types ?? []).map((one) => CAPACITY[one])]
+	const asked = ['vin', 'first_reg', 'currency', ...(vehicle.energy_types ?? []).map((one) => CAPACITY[one])]
 
 	return ORDER.filter((column) => asked.includes(column) && !answered(vehicle, column))
 }

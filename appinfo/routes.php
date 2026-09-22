@@ -48,10 +48,11 @@ return [
 		// stations with their last price (docs/ui.md).
 		['name' => 'energy#prefill', 'url' => '/api/vehicles/{uuid}/energy/prefill', 'verb' => 'GET'],
 		// Edit, delete and undo as a trip's, with its Readings following it - but a delete is a
-		// soft delete under Logbook Mode too, since the mode covers trips only.
-		['name' => 'energy#update', 'url' => '/api/vehicles/{uuid}/energy/{energy}', 'verb' => 'PUT'],
-		['name' => 'energy#delete', 'url' => '/api/vehicles/{uuid}/energy/{energy}', 'verb' => 'DELETE'],
-		['name' => 'energy#restore', 'url' => '/api/vehicles/{uuid}/energy/{energy}/restore', 'verb' => 'POST'],
+		// soft delete under Logbook Mode too, since the mode covers trips only. Not `{energy}`:
+		// that is a field of the body, and the body's value would win (tests/Unit/RoutesTest.php).
+		['name' => 'energy#update', 'url' => '/api/vehicles/{uuid}/energy/{fillUp}', 'verb' => 'PUT'],
+		['name' => 'energy#delete', 'url' => '/api/vehicles/{uuid}/energy/{fillUp}', 'verb' => 'DELETE'],
+		['name' => 'energy#restore', 'url' => '/api/vehicles/{uuid}/energy/{fillUp}/restore', 'verb' => 'POST'],
 		// A Maintenance Record, with the counter rules of a fill-up; its prefill is the VAT rate
 		// and the vendors this vehicle has used.
 		['name' => 'maintenance#create', 'url' => '/api/vehicles/{uuid}/maintenance', 'verb' => 'POST'],

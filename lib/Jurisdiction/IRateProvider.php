@@ -24,6 +24,14 @@ interface IRateProvider {
 	 */
 	public function vatRateAt(\DateTimeInterface $when): ?int;
 
+	/**
+	 * The expense categories (`ExpenseService::CATEGORIES`) on which no VAT is charged. Such an
+	 * expense is prefilled with no rate, "not stated", since a stored rate is never zero.
+	 *
+	 * @return list<string>
+	 */
+	public function vatFreeCategories(): array;
+
 	/** Where the VAT rate is written down. A URL, because a rate is linked and never quoted. */
 	public function vatSourceUrl(): string;
 }

@@ -24,9 +24,25 @@ export const usePreferencesStore = defineStore('preferences', () => {
 	 */
 	const loaded = ref(false)
 
+	/** Whether cost figures are net of VAT. The server's default until it answers. */
+	const reclaimVat = ref(false)
+
+	/** The period the vehicle header shows, one of `PERIODS` in src/utils/period.js. */
+	const period = ref('last-12')
+
+	/**
+	 * The period picked in this session, if any. It outranks every answer: an earlier pick's reply,
+	 * a late load, or a refusal would otherwise flip the header back.
+	 *
+	 * @type {string|null}
+	 */
+	let picked = null
+
 	/** @param {import('../services/api.js').Settings} settings - the server's answer */
 	function hold(settings) {
 		dismissed.value = settings.preferences.dismissed_hints
+		reclaimVat.value = settings.preferences.reclaim_vat
+		period.value = picked ?? settings.preferences.kpi_period
 		loaded.value = true
 	}
 
@@ -83,6 +99,22 @@ export const usePreferencesStore = defineStore('preferences', () => {
 	}
 
 	/**
+	 * Show another period, and keep it for the next session. Held before the write answers, so the
+	 * header reads once; a refusal keeps it for this session and rejects for whoever cares. Queued
+	 * behind any other write, so the one stored last is the one picked last.
+	 *
+	 * @param {string} chosen - one of `PERIODS` in src/utils/period.js
+	 * @return {Promise<void>} when it is stored
+	 */
+	function choosePeriod(chosen) {
+		picked = chosen
+		period.value = chosen
+		writing = writing.catch(() => {}).then(async () => hold(await savePreferences({ kpi_period: chosen })))
+
+		return writing
+	}
+
+	/**
 	 * @param {string} uuid - the vehicle to ask about
 	 * @return {boolean} whether this user has answered its hint
 	 */
@@ -90,5 +122,14 @@ export const usePreferencesStore = defineStore('preferences', () => {
 		return dismissed.value.includes(uuid)
 	}
 
-	return { dismiss, dismissed: computed(() => dismissed.value), isDismissed, load, loaded }
+	return {
+		choosePeriod,
+		dismiss,
+		dismissed: computed(() => dismissed.value),
+		isDismissed,
+		load,
+		loaded,
+		period: computed(() => period.value),
+		reclaimVat: computed(() => reclaimVat.value),
+	}
 })

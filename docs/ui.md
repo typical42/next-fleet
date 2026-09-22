@@ -49,7 +49,7 @@ entered it ([odometer rules](architecture.md#odometer-rules)).
 ```
 ┌─ NextFleet ──────────────────────────────────────────────────────────┐
 │ Overview        │  M-AB 1234 · VW Passat Variant          [+ Entry]  │
-│                 │  148 320 km · 6,4 l/100 km · 0,42 €/km             │
+│                 │  148 320 km · 6,4 l/100 km · 42,10 €/100 km        │
 │ ● M-AB 1234  ⚠  │  ┌────────────────────────────────────────────┐   │
 │ ● HH-CD 42      │  │ ⚠ HU/AU due in 3 weeks — 24.09.2026        │   │
 │ ● M-EV 7   ⛔   │  │ ● Oil change in ~2 400 km (est. Nov)        │   │
@@ -62,6 +62,19 @@ entered it ([odometer rules](architecture.md#odometer-rules)).
 │                 │  28.08.  🔧 Brake pads   Werkstatt Huber  312,00 € │
 └─────────────────┴────────────────────────────────────────────────────┘
 ```
+
+The header states the odometer, then the period's figures: consumption per energy (a plug-in hybrid
+gets two, and the wall-side kWh beside them), cost, energy-only cost and TCO, per 100 km or per hour
+([the maths](architecture.md#numbers-consumption-cost-emissions)). A vehicle that counts engine
+hours beside its kilometres adds the hours in the period, noting that the consumption includes fuel
+used while working. The period is picked above the figures — last 12 months by default, this year,
+last year, or one month — and each figure is compared with the period before, of the same length, as
+a signed difference rather than a colour. A figure the period before lacks gets no comparison. With
+no distance in the period the costs are period totals; without a currency the header says so in
+place of every cost. The client names the period, because a year starts at midnight where the
+person is; the server answers `GET …/kpis?from=&to=&net=` once for each of the two. The chosen
+period and "I reclaim VAT" (a switch on the personal settings page, off by default) are
+preferences, so the next machine opens on the same figures; `net` is the second one.
 
 The timeline pages: 50 rows, then more on scroll, with the month a sticky header. Five years of a
 company car is thousands of rows, and the screen people open most often is not the place to
@@ -98,7 +111,7 @@ touch. That keeps the middle free for the things you touch weekly.
 | **Costs** | One year, one vehicle: stacked bars per month, table below, export button | Export |
 | **Reports** | Fahrtenbuch, mileage claim, cost, CO₂ — pick a range, get a printable page ([ADR 0005](adr/0005-no-pdf-library.md)) | Print / export |
 | **Vehicle sidebar** | Master data, jurisdiction, documents, reminders (sharing from M6) | Edit inline |
-| **Personal settings** | The defaults a person keeps, jurisdiction first. Not a screen in the app: it is the app's block on Nextcloud's own settings page, its own bundle, and it talks to the same API as everything else | Pick and it saves |
+| **Personal settings** | The defaults a person keeps: jurisdiction first, then "I reclaim VAT". Not a screen in the app: it is the app's block on Nextcloud's own settings page, its own bundle, and it talks to the same API as everything else | Pick and it saves |
 
 **Reports** has one report so far, the Fahrtenbuch: one vehicle and one year, opened as a page in
 a tab of its own ([export](architecture.md#the-fahrtenbuch-export)). It offers only vehicles whose
@@ -143,8 +156,9 @@ a phone has room for one sheet at a time. It opens on the trip, which is what a 
   that also counts engine hours, "Which counter" asks Kilometres or Engine hours first, and the
   number is prefilled from that counter. The timeline row states it in that counter's unit.
 - **Expense** — the amount; category, VAT, notes and date beside it. Last in the chooser. No category until one is picked, as with a maintenance type. VAT works as on a
-  fill-up, and date, VAT and notes carry over from the kind the driver switched from. It asks for no
-  counter: insurance or a toll says nothing about the dashboard.
+  fill-up, except that a category the jurisdiction charges no VAT on (in Germany insurance, vehicle
+  tax and a fine) empties the prefilled rate to "not stated" and another one puts it back. A rate the driver typed stays.
+  Date, VAT and notes carry over from the kind the driver switched from. It asks for no counter: insurance or a toll says nothing about the dashboard.
 
 Rules for all four:
 
@@ -191,7 +205,8 @@ not a project.
   km, so they cost no answer; choosing a tractor or a generator switches the unit to hours, still
   changeable. VIN, first registration and the capacity of the energy the vehicle takes — a tank for
   a diesel, a battery for an electric one — arrive through a dismissible "complete this vehicle"
-  hint on the overview. A twelve-field wall on first run loses people before they have a single
+  hint on the overview. So does a currency, when the jurisdiction gave the vehicle none: without
+  it the cost figures can only say "no currency". A twelve-field wall on first run loses people before they have a single
   record. The hint asks per vehicle and the vehicle's name in it opens the screen the edit sheet is
   on. Dismissing answers for that one vehicle, and it is kept with the person's preferences rather
   than in the browser: somebody who has said "not this one" is not asked again on their laptop.
@@ -208,15 +223,15 @@ not a project.
   nothing: it takes something on rather than away.
 - **Empty states do the teaching.** Not "no entries" but the two buttons that create the first one,
   plus the QR offer. `NcEmptyContent` with a real call to action.
-- **Numbers get context.** `6,4 l/100 km` alone means nothing; `6,4 l/100 km  ▲ 0,3 vs. average`
-  means something. Every KPI shows its comparison or its trend.
+- **Numbers get context.** `6,4 l/100 km` alone means nothing; `6,4 l/100 km  +0,3 l/100 km vs. the
+  period before` means something. Every KPI shows its comparison or its trend.
 - **Status is never colour alone.** Traffic lights carry an icon and a word, for colour-blind users
   and for the print/export path.
 - **Sort by urgency.** The overview is a to-do list, not an inventory. Alphabetical order is what a
   database returns, not what anyone wants. Vehicles that are `laid_up` sink; `disposed` ones leave
   the list entirely ([data model](architecture.md#data-model)).
 - **Never sum across currencies or units.** A figure that spans vehicles is grouped and sectioned,
-  never totalled, and every KPI takes its label from the vehicle — `€/km` for a car, `€/h` for a
+  never totalled, and every KPI takes its label from the vehicle — `€/100 km` for a car, `€/h` for a
   generator ([the maths](architecture.md#numbers-consumption-cost-emissions)).
 - **One primary button per screen.** On the vehicle screen that is **+ Entry** — not "Edit
   vehicle", which people need twice a year.

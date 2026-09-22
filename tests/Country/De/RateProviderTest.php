@@ -52,6 +52,15 @@ class RateProviderTest extends TestCase {
 		$this->assertNull($this->rateOn('2006-12-31'));
 	}
 
+	/**
+	 * Insurance premiums are exempt (§4 Nr. 10 UStG) and carry Versicherungsteuer instead, vehicle
+	 * tax is a tax, and a fine is not a supply: none charges VAT. Tolls, parking and lease depend on
+	 * who levies them, so they keep the standard rate.
+	 */
+	public function testInsuranceTaxAndFinesCarryNoVat(): void {
+		$this->assertSame(['insurance', 'tax', 'fine'], (new De\RateProvider())->vatFreeCategories());
+	}
+
 	/** The statute itself, not an article about it. */
 	public function testItCitesTheStatute(): void {
 		$this->assertSame(

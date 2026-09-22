@@ -25,7 +25,7 @@ everything else waits.
 
 **High**
 
-- **v1** — Energy log with l/100 km, kWh/100 km, cost per km, cost trend.
+- **v1** — Energy log with l/100 km, kWh/100 km, cost per 100 km, cost trend.
 - **v1** — Cost dashboard and CSV export per vehicle and per year.
 - **v1** — Recurring intervals (see [reminder engine](architecture.md#reminder-engine)) with a
   template set: oil, brake fluid, HU/AU, tyre swap.

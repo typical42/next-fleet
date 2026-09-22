@@ -65,7 +65,7 @@ test('a vehicle and a reading of its counter both reach the list', async ({ page
 	await expect(entry).toBeHidden()
 	// The KPI, not just anywhere on the screen: the timeline below it states the same number on the
 	// row it wrote, and the vehicle's own counter is what this line is about.
-	await expect(page.locator('.vehicle__kpis').getByText(counter)).toBeVisible()
+	await expect(page.locator('.kpis').getByText(counter)).toBeVisible()
 
 	// A reload is what proves the server kept both: the overview is read back from it, and it is
 	// the only screen that shows a vehicle's name and its counter in one line.

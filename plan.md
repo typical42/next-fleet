@@ -53,9 +53,9 @@ directory that someone else can add by merge request ([contributing](docs/contri
 | M0 | Repo skeleton, `info.xml`, l10n scaffold (en/de/de_DE), REUSE headers, CI ([matrix](docs/development.md#testing)), dev docker ([dev environment](docs/development.md#local-dev-environment)). **Gate: one frontend bundle builds and runs against NC 31 and NC 34** | App installs and shows an empty page on both ends of the supported range |
 | M1 | One vertical slice first (migration → mapper → route → Vue), then vehicles, odometer readings, `fleet_access` and `VehicleAccess::may`, optimistic concurrency, jurisdiction defaulting, personal settings. **Three tables, not eleven** — a migration is easy to add and hard to withdraw | A vehicle can be created, its km updated, a stale write is rejected, and a foreign user is denied |
 | M2 | Trips, derived odometer, timeline, filters, gap detection, Logbook Mode with the `de` ruleset (append-only + `fleet_audit`) | Adding a trip moves the vehicle's km; a voided locked trip survives in the export; the German rules sit in `lib/Jurisdiction/De/`, not scattered through services |
-| M3 | Energy entries, maintenance records, expenses, VAT, and the [consumption and cost maths](docs/architecture.md#numbers-consumption-cost-emissions) | Per-vehicle cost per km is correct, and a plug-in hybrid shows two consumption figures |
+| M3 | Energy entries, maintenance records, expenses, VAT, and the [consumption and cost maths](docs/architecture.md#numbers-consumption-cost-emissions) | Per-vehicle cost per 100 km is correct, and a plug-in hybrid shows two consumption figures |
 | M4 | Reminder engine, TimedJob, notifications, mail digest, calendar sync | HU/AU due in 4 weeks reaches the phone |
-| M5 | Documents, dashboard widget, search, CSV export, HTML/print reports, generic jurisdiction | Feature-complete v1, app store release |
+| M5 | Documents, the Costs screen, CO₂, dashboard widget, search, CSV export, HTML/print reports, generic jurisdiction | Feature-complete v1, app store release |
 | M6+ | Sharing UI, fleet view, bookings, handover. Then the OCS API, `?since=` delta endpoint, app passwords, API docs | Multi-driver pool works; an Android client can be built against it |
 
 **M5 is v1 and it ships before M6 starts.** Maintenance records sit in M3 rather than M5 because

@@ -29,7 +29,7 @@ const SOLD = { uuid: 'v-sold', updated_at: 1, plate: 'M-AB 1', jurisdiction: 'de
 const ELSEWHERE = { uuid: 'v-gen', updated_at: 1, plate: 'XX 42', jurisdiction: 'generic', lifecycle: 'active' }
 
 const settings = {
-	preferences: { jurisdiction: 'de', dismissed_hints: [] },
+	preferences: { jurisdiction: 'de', dismissed_hints: [], reclaim_vat: false, kpi_period: 'last-12' },
 	jurisdictions: [
 		{ key: 'de', name: 'Germany', logbook_export: true },
 		{ key: 'generic', name: 'Generic', logbook_export: false },

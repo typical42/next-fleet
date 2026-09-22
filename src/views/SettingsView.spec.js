@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+import NcCheckboxRadioSwitch from '@nextcloud/vue/components/NcCheckboxRadioSwitch'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import NcSelect from '@nextcloud/vue/components/NcSelect'
 import { flushPromises, shallowMount } from '@vue/test-utils'
@@ -25,7 +26,7 @@ vi.mock('../services/api.js', () => ({
 const settings = {
 	// The whole envelope, dismissed hints included: this screen reads only the jurisdiction, but
 	// what the route answers with is one shape (lib/Service/PreferencesService.php).
-	preferences: { jurisdiction: 'de', dismissed_hints: [] },
+	preferences: { jurisdiction: 'de', dismissed_hints: [], reclaim_vat: false, kpi_period: 'last-12' },
 	jurisdictions: [{ key: 'de', name: 'Germany', logbook_export: true }, { key: 'generic', name: 'Generic', logbook_export: false }],
 }
 
@@ -54,6 +55,14 @@ function dropdown(wrapper) {
 }
 
 /**
+ * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted screen
+ * @return {any} the "I reclaim VAT" switch
+ */
+function vatSwitch(wrapper) {
+	return wrapper.findComponent(NcCheckboxRadioSwitch)
+}
+
+/**
  * What the screen is telling the user went wrong. Read off the note rather than out of the
  * rendered text: a stubbed component renders its props, not its own markup.
  *
@@ -71,7 +80,7 @@ beforeEach(() => {
 	vi.mocked(getPreferences).mockResolvedValue(settings)
 	vi.mocked(savePreferences).mockImplementation(
 		async (/** @type {Partial<import('../services/api.js').Settings['preferences']>} */ fields) =>
-			({ ...settings, preferences: { ...settings.preferences, jurisdiction: fields.jurisdiction ?? 'de' } }),
+			({ ...settings, preferences: { ...settings.preferences, ...fields } }),
 	)
 })
 
@@ -140,6 +149,30 @@ describe('settings screen', () => {
 
 		expect(dropdown(wrapper).props('modelValue').id).toBe('de')
 		expect(note(wrapper)).toBe('jurisdiction is one of de, generic')
+	})
+
+	it('shows that this user reclaims VAT, and saves a change as it is made', async () => {
+		vi.mocked(getPreferences).mockResolvedValue({ ...settings, preferences: { ...settings.preferences, reclaim_vat: true } })
+		const wrapper = await screen()
+		expect(vatSwitch(wrapper).props('modelValue')).toBe(true)
+
+		await vatSwitch(wrapper).vm.$emit('update:modelValue', false)
+		await flushPromises()
+
+		expect(savePreferences).toHaveBeenCalledWith({ reclaim_vat: false })
+		expect(vatSwitch(wrapper).props('modelValue')).toBe(false)
+	})
+
+	/** Same as the country: a refused write shows what is really stored. */
+	it('falls back to the stored VAT answer when the write is refused', async () => {
+		vi.mocked(savePreferences).mockRejectedValue(new Error('reclaim_vat is true or false'))
+		const wrapper = await screen()
+
+		await vatSwitch(wrapper).vm.$emit('update:modelValue', true)
+		await flushPromises()
+
+		expect(vatSwitch(wrapper).props('modelValue')).toBe(false)
+		expect(note(wrapper)).toBe('reclaim_vat is true or false')
 	})
 
 	/** A settings page that cannot be read says why, rather than showing an empty dropdown. */

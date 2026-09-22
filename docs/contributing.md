@@ -25,7 +25,7 @@ The interfaces stay — as ordinary internal seams, not as public API:
 | Jurisdiction profile | `IJurisdiction` — key, display name, units, currency, the defaults a new vehicle takes. Plate format and document kinds arrive with the feature that reads them | `de`, `generic` |
 | Logbook ruleset | `ILogbookRules` — required fields per trip category, lock delay, retention period, the URL the requirement is written at. What it answers, never what follows from it: the finding a missing field produces is the core's | German Fahrtenbuch ([logbook mode](features.md#logbook-mode)) |
 | Inspection regime | `IInspectionScheme` — names, cadence, first-due rule → reminder templates | HU/AU (24 months, 36 for new cars) |
-| Rates over time | `IRateProvider` — mileage allowance, VAT, emission factors, **each valid from a date**. Reached through `IJurisdiction::rates()` | German VAT (M3), 0,30 €/km, German grid factor |
+| Rates over time | `IRateProvider` — mileage allowance, VAT, emission factors, **each valid from a date**; and the expense categories that carry no VAT. Reached through `IJurisdiction::rates()` | German VAT (M3), 0,30 €/km, German grid factor |
 | Report renderer | `IReportRenderer` — range in, printable HTML out ([ADR 0005](adr/0005-no-pdf-library.md)) | Fahrtenbuch, mileage claim |
 | Importer | `IImporter` — foreign CSV in, our records out | Drivvo, Spritmonitor, LubeLogger |
 | Service templates | `IServiceTemplates` — intervals by market or manufacturer | Generic (oil, brakes, tyres) |

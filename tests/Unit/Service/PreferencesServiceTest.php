@@ -187,6 +187,57 @@ class PreferencesServiceTest extends TestCase {
 		}
 	}
 
+	/** Gross figures and the last twelve months are where everybody starts (docs/ui.md). */
+	public function testItReadsGrossAndTheLastTwelveMonthsUntilSomebodyChooses(): void {
+		$preferences = $this->service()->forUser(self::USER)['preferences'];
+
+		$this->assertFalse($preferences['reclaim_vat']);
+		$this->assertSame('last-12', $preferences['kpi_period']);
+	}
+
+	public function testItWritesThatThisUserReclaimsVatAndTakesItBack(): void {
+		$this->assertTrue($this->service()->write(self::USER, ['reclaim_vat' => true])['preferences']['reclaim_vat']);
+		$this->assertTrue($this->service()->forUser(self::USER)['preferences']['reclaim_vat']);
+
+		$this->assertFalse($this->service()->write(self::USER, ['reclaim_vat' => false])['preferences']['reclaim_vat']);
+		$this->assertFalse($this->service()->forUser(self::USER)['preferences']['reclaim_vat']);
+	}
+
+	public function testItWritesThePeriodTheHeaderShows(): void {
+		$this->service()->write(self::USER, ['kpi_period' => 'last-year']);
+
+		$this->assertSame('last-year', $this->service()->forUser(self::USER)['preferences']['kpi_period']);
+	}
+
+	/**
+	 * A period the header does not offer would leave it showing nothing selected, and a loose
+	 * boolean would be some answer nobody gave.
+	 *
+	 * @dataProvider notAPreference
+	 */
+	public function testItRefusesAnAnswerThePreferenceDoesNotTake(string $key, mixed $sent): void {
+		try {
+			$this->service()->write(self::USER, [$key => $sent]);
+			$this->fail("$key took an answer it does not offer");
+		} catch (\InvalidArgumentException) {
+			$this->assertSame([], $this->stored);
+		}
+	}
+
+	/** @return iterable<string, array{string, mixed}> */
+	public static function notAPreference(): iterable {
+		yield 'VAT as a word' => ['reclaim_vat', 'yes'];
+		yield 'VAT as a number' => ['reclaim_vat', 1];
+		yield 'a period nobody offers' => ['kpi_period', 'last-week'];
+		yield 'a period as a number' => ['kpi_period', 12];
+	}
+
+	public function testAPeriodALaterReleaseDroppedReadsAsTheDefault(): void {
+		$this->stored['kpi_period'] = 'last-week';
+
+		$this->assertSame('last-12', $this->service()->forUser(self::USER)['preferences']['kpi_period']);
+	}
+
 	/** @return iterable<string, array{mixed}> */
 	public static function notAListOfVehicles(): iterable {
 		yield 'a single uuid rather than a list' => [self::VEHICLE];

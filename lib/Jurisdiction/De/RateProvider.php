@@ -37,6 +37,15 @@ class RateProvider implements IRateProvider {
 		return $rate;
 	}
 
+	/**
+	 * Insurance is exempt (§4 Nr. 10 UStG) and pays Versicherungsteuer instead, vehicle tax is a
+	 * tax, and a fine is not a supply. Tolls, parking and lease depend on who levies them, and
+	 * keep the standard rate rather than a guess.
+	 */
+	public function vatFreeCategories(): array {
+		return ['insurance', 'tax', 'fine'];
+	}
+
 	/** §12 UStG, the statute itself. */
 	public function vatSourceUrl(): string {
 		return 'https://www.gesetze-im-internet.de/ustg_1980/__12.html';

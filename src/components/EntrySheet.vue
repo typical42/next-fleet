@@ -396,7 +396,11 @@ function stateCosts() {
  */
 async function prefill() {
 	const moment = costAt.value
-	const ask = { energy: energyPrefill, maintenance: maintenancePrefill, expense: expensePrefill }[kind.value]
+	const ask = {
+		energy: energyPrefill,
+		maintenance: maintenancePrefill,
+		expense: (uuid, at, off) => expensePrefill(uuid, at, off, spentOn.value?.id ?? null),
+	}[kind.value]
 	if (ask === undefined || !(moment instanceof Date) || Number.isNaN(moment.getTime())) {
 		return
 	}
@@ -428,7 +432,8 @@ async function prefill() {
 }
 
 let asked = 0
-watch([kind, costAt], prefill)
+// An expense's category is asked about too: some carry no VAT (IRateProvider::vatFreeCategories()).
+watch([kind, costAt, spentOn], prefill)
 
 /**
  * A station the vehicle has filled up at before prefills the price it last charged for this

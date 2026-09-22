@@ -96,7 +96,7 @@ describe('the app shell', () => {
 	 */
 	it('reads the preferences along with the fleet', async () => {
 		vi.mocked(getPreferences).mockResolvedValue({
-			preferences: { jurisdiction: 'de', dismissed_hints: [VEHICLE.uuid] },
+			preferences: { jurisdiction: 'de', dismissed_hints: [VEHICLE.uuid], reclaim_vat: false, kpi_period: 'last-12' },
 			jurisdictions: [],
 		})
 

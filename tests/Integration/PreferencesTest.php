@@ -51,6 +51,8 @@ class PreferencesTest extends TestCase {
 		foreach ([self::OWNER, self::STRANGER] as $person) {
 			$this->config->deleteUserValue($person, Application::APP_ID, 'jurisdiction');
 			$this->config->deleteUserValue($person, Application::APP_ID, 'dismissed_hints');
+			$this->config->deleteUserValue($person, Application::APP_ID, 'reclaim_vat');
+			$this->config->deleteUserValue($person, Application::APP_ID, 'kpi_period');
 		}
 
 		$db = \OCP\Server::get(IDBConnection::class);
@@ -126,6 +128,16 @@ class PreferencesTest extends TestCase {
 		$this->assertSame(Http::STATUS_OK, $saved->getStatus());
 		$this->assertSame([$vehicle], $saved->getData()['preferences']['dismissed_hints']);
 		$this->assertSame([$vehicle], $this->controller()->index()->getData()['preferences']['dismissed_hints']);
+	}
+
+	/** The JSON body's boolean survives the request and the config's strings alike. */
+	public function testVatAndThePeriodAreStillChosenForTheNextSession(): void {
+		$saved = $this->controller(['reclaim_vat' => true, 'kpi_period' => 'this-year'])->update();
+
+		$this->assertSame(Http::STATUS_OK, $saved->getStatus());
+		$read = $this->controller()->index()->getData()['preferences'];
+		$this->assertTrue($read['reclaim_vat']);
+		$this->assertSame('this-year', $read['kpi_period']);
 	}
 
 	/** The screen offers the registration list, so the list is what it may send back. */

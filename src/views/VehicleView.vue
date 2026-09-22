@@ -9,9 +9,10 @@ import { useHotKey } from '@nextcloud/vue/composables/useHotKey'
 import { ref } from 'vue'
 
 import EntrySheet from '../components/EntrySheet.vue'
+import KpiHeader from '../components/KpiHeader.vue'
 import Timeline from '../components/Timeline.vue'
 import VehicleSheet from '../components/VehicleSheet.vue'
-import { formatOdometer, nameOf, subtitleOf } from '../utils/format.js'
+import { nameOf, subtitleOf } from '../utils/format.js'
 
 defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -27,9 +28,16 @@ const editing = ref(false)
  */
 const opened = ref(null)
 
-// The timeline holds its own pages and its own chip, and neither is this screen's business - what
-// is, is that a write happened and the list is now a row behind.
+// The timeline holds its own pages and its own chip, the header its own period, and neither is
+// this screen's business - what is, is that a write happened and both are now a row behind.
 const timeline = ref(null)
+const kpis = ref(null)
+
+/** Reads the list and the figures back after a write. */
+function written() {
+	timeline.value?.reload()
+	kpis.value?.reload()
+}
 
 // `n` is the primary action of the screen in view (docs/ui.md), and the shell mounts one screen
 // at a time - so the key belongs to the screen rather than to an arbiter above it. useHotKey
@@ -60,10 +68,7 @@ useHotKey('n', () => {
 			</div>
 		</div>
 
-		<dl class="vehicle__kpis">
-			<dt>{{ t('nextfleet', 'Odometer') }}</dt>
-			<dd>{{ formatOdometer(vehicle) || t('nextfleet', 'Never read') }}</dd>
-		</dl>
+		<KpiHeader ref="kpis" :vehicle="vehicle" />
 
 		<!-- One timeline of everything that happened to this vehicle, which is the question people
 		     actually ask (docs/ui.md). -->
@@ -72,12 +77,12 @@ useHotKey('n', () => {
 		<EntrySheet v-if="entering"
 			:vehicle="vehicle"
 			@close="entering = false"
-			@saved="timeline?.reload()" />
+			@saved="written" />
 		<EntrySheet v-if="opened"
 			:vehicle="vehicle"
 			:entry="opened"
 			@close="opened = null"
-			@saved="timeline?.reload()" />
+			@saved="written" />
 		<!-- A save is done with, so the sheet goes: what it wrote is in the store this screen
 		     reads, and a sheet still open would be a second copy of the same vehicle. -->
 		<VehicleSheet v-if="editing"
@@ -107,20 +112,5 @@ useHotKey('n', () => {
 
 .vehicle__subtitle {
 	color: var(--color-text-maxcontrast);
-}
-
-.vehicle__kpis {
-	margin-top: calc(var(--default-grid-baseline) * 4);
-}
-
-.vehicle__kpis dt {
-	color: var(--color-text-maxcontrast);
-}
-
-.vehicle__kpis dd {
-	/* A description list indents its values by default, which puts the figure out of line with
-	   everything above it. */
-	margin-inline-start: 0;
-	font-size: 1.5em;
 }
 </style>

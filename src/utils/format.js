@@ -189,6 +189,7 @@ export function fieldWord(column) {
 		first_reg: t('nextfleet', 'First registration'),
 		tank_ml: t('nextfleet', 'Tank size (ml)'),
 		battery_wh: t('nextfleet', 'Battery capacity (Wh)'),
+		currency: t('nextfleet', 'Currency'),
 		// What a logbook ruleset may require of a trip (lib/Jurisdiction/ILogbookRules.php).
 		plate: t('nextfleet', 'Registration plate'),
 		started_at: t('nextfleet', 'Departure'),

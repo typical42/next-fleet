@@ -786,6 +786,31 @@ describe('the entry sheet', () => {
 		expect(wrapper.emitted('close')?.length).toBe(1)
 	})
 
+	/**
+	 * A category the jurisdiction charges no VAT on is asked about, and opens the rate empty; the
+	 * next category puts the day's rate back. A rate the person typed is theirs and stays.
+	 */
+	it('asks for the rate again when the category changes', async () => {
+		vi.mocked(expensePrefill).mockImplementation(async (uuid, at, off, category) => ({ vat_rate: category === 'insurance' ? null : 1900 }))
+		const wrapper = sheet()
+
+		await choose(wrapper, 'Entry type', 'expense')
+		await flushPromises()
+		await dropdown(wrapper, 'Category').vm.$emit('update:modelValue', { id: 'insurance', label: 'Insurance' })
+		await flushPromises()
+		expect(vi.mocked(expensePrefill).mock.lastCall?.[3]).toBe('insurance')
+		expect(field(wrapper, 'VAT rate (%)').props('modelValue')).toBe('')
+
+		await dropdown(wrapper, 'Category').vm.$emit('update:modelValue', { id: 'toll', label: 'Toll' })
+		await flushPromises()
+		expect(field(wrapper, 'VAT rate (%)').props('modelValue')).toBe('19')
+
+		await field(wrapper, 'VAT rate (%)').vm.$emit('update:modelValue', '7')
+		await dropdown(wrapper, 'Category').vm.$emit('update:modelValue', { id: 'insurance', label: 'Insurance' })
+		await flushPromises()
+		expect(field(wrapper, 'VAT rate (%)').props('modelValue')).toBe('7')
+	})
+
 	/** Everything but the amount may be left out; no category is picked for the person. */
 	it('sends only what an expense was given', async () => {
 		const wrapper = sheet()

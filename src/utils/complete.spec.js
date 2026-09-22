@@ -15,11 +15,12 @@ describe('what a vehicle is still missing', () => {
 			first_reg: '2019-03-14',
 			energy_types: ['diesel'],
 			tank_ml: 66000,
+			currency: 'EUR',
 		})).toEqual([])
 	})
 
 	it('asks for the identity and the age nobody filled in', () => {
-		expect(missingFrom({ energy_types: [] })).toEqual(['vin', 'first_reg'])
+		expect(missingFrom({ energy_types: [], currency: 'EUR' })).toEqual(['vin', 'first_reg'])
 	})
 
 	/**
@@ -28,18 +29,18 @@ describe('what a vehicle is still missing', () => {
 	 * number that does not exist (CONTEXT.md).
 	 */
 	it('asks a liquid-fuelled vehicle for its tank and never for a battery', () => {
-		expect(missingFrom({ vin: 'X', first_reg: '2019-03-14', energy_types: ['diesel'] }))
+		expect(missingFrom({ vin: 'X', first_reg: '2019-03-14', currency: 'EUR', energy_types: ['diesel'] }))
 			.toEqual(['tank_ml'])
 	})
 
 	it('asks an electric vehicle for its battery and never for a tank', () => {
-		expect(missingFrom({ vin: 'X', first_reg: '2019-03-14', energy_types: ['electric'] }))
+		expect(missingFrom({ vin: 'X', first_reg: '2019-03-14', currency: 'EUR', energy_types: ['electric'] }))
 			.toEqual(['battery_wh'])
 	})
 
 	/** A plug-in hybrid is `hybrid` / `[petrol, electric]` (CONTEXT.md) and really has both. */
 	it('asks a plug-in hybrid for both', () => {
-		expect(missingFrom({ vin: 'X', first_reg: '2019-03-14', energy_types: ['petrol', 'electric'] }))
+		expect(missingFrom({ vin: 'X', first_reg: '2019-03-14', currency: 'EUR', energy_types: ['petrol', 'electric'] }))
 			.toEqual(['tank_ml', 'battery_wh'])
 	})
 
@@ -48,7 +49,7 @@ describe('what a vehicle is still missing', () => {
 	 * implied - and a hint asking a trailer for its tank size would never be answerable.
 	 */
 	it('implies no capacity where no energy is taken', () => {
-		expect(missingFrom({ vin: 'X', first_reg: '2019-03-14', energy_types: null }))
+		expect(missingFrom({ vin: 'X', first_reg: '2019-03-14', currency: 'EUR', energy_types: null }))
 			.toEqual([])
 	})
 
@@ -57,13 +58,24 @@ describe('what a vehicle is still missing', () => {
 	 * empty string is the same fact one round trip earlier.
 	 */
 	it('reads an empty field as no answer', () => {
-		expect(missingFrom({ vin: '', first_reg: '', energy_types: ['petrol'], tank_ml: 52000 }))
+		expect(missingFrom({ vin: '', first_reg: '', energy_types: ['petrol'], tank_ml: 52000, currency: 'EUR' }))
 			.toEqual(['vin', 'first_reg'])
+	})
+
+	/**
+	 * Every vehicle can carry costs - a trailer has insurance - and without a currency its cost
+	 * figures say "no currency" (PRD), so the hint asks for one after the capacities.
+	 */
+	it('asks for a currency when the vehicle has none', () => {
+		expect(missingFrom({ vin: 'X', first_reg: '2019-03-14', energy_types: ['diesel'], currency: null }))
+			.toEqual(['tank_ml', 'currency'])
+		expect(missingFrom({ vin: 'X', first_reg: '2019-03-14', energy_types: null, currency: '' }))
+			.toEqual(['currency'])
 	})
 
 	/** Zero is an answer somebody gave. It may be wrong, but the hint is not a validator. */
 	it('takes a zero as an answer', () => {
-		expect(missingFrom({ vin: 'X', first_reg: '2019-03-14', energy_types: ['petrol'], tank_ml: 0 }))
+		expect(missingFrom({ vin: 'X', first_reg: '2019-03-14', currency: 'EUR', energy_types: ['petrol'], tank_ml: 0 }))
 			.toEqual([])
 	})
 })

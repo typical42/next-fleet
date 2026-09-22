@@ -10,9 +10,13 @@ namespace OCA\NextFleet\Tests\Unit\Command;
 
 use OCA\NextFleet\Command\SeedCommand;
 use OCA\NextFleet\Db\AuditMapper;
+use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
+use OCA\NextFleet\Service\EnergyService;
+use OCA\NextFleet\Service\ExpenseService;
+use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
@@ -39,13 +43,25 @@ class SeedCommandTest extends TestCase {
 	/** Every reading the odometer was asked to record, by vehicle uuid. @var array<string, list<array<string, int>>> */
 	private array $recorded = [];
 	private int $nextId = 1;
+	/**
+	 * Every cost Entry the command wrote, as the sheet would have posted it: the kind, the plate
+	 * and the fields.
+	 *
+	 * @var list<array{kind: string, plate: string, fields: array<string, mixed>}>
+	 */
+	private array $costs = [];
 
 	private IUserManager&MockObject $users;
 	private VehicleMapper&MockObject $mapper;
 	private OdometerService&MockObject $odometer;
+	private EnergyService&MockObject $energy;
+	private MaintenanceService&MockObject $maintenance;
+	private ExpenseService&MockObject $expenses;
 
 	protected function setUp(): void {
 		$this->written = [];
+		$this->recorded = [];
+		$this->costs = [];
 		$this->nextId = 1;
 
 		$this->users = $this->createMock(IUserManager::class);
@@ -66,6 +82,53 @@ class SeedCommandTest extends TestCase {
 		$this->mapper->method('findAllVisible')->willReturnCallback(fn (): array => $this->written);
 
 		$this->odometer = $this->createMock(OdometerService::class);
+		$this->odometer->method('record')->willReturnCallback(
+			function (string $userId, string $uuid, array $fields): OdoReading {
+				$this->recorded[$uuid][] = $fields;
+
+				return new OdoReading();
+			},
+		);
+		$this->energy = $this->createMock(EnergyService::class);
+		$this->energy->method('record')->willReturnCallback($this->cost('energy'));
+		$this->maintenance = $this->createMock(MaintenanceService::class);
+		$this->maintenance->method('record')->willReturnCallback($this->cost('maintenance'));
+		$this->expenses = $this->createMock(ExpenseService::class);
+		$this->expenses->method('record')->willReturnCallback($this->cost('expense'));
+	}
+
+	/** @return \Closure(string, string, array<string, mixed>): array<string, mixed> */
+	private function cost(string $kind): \Closure {
+		return function (string $userId, string $uuid, array $fields) use ($kind): array {
+			$this->costs[] = ['kind' => $kind, 'plate' => $this->plateOf($uuid), 'fields' => $fields];
+
+			return $fields;
+		};
+	}
+
+	private function plateOf(string $uuid): string {
+		foreach ($this->written as $vehicle) {
+			if ($vehicle->getUuid() === $uuid) {
+				return (string)$vehicle->getPlate();
+			}
+		}
+		$this->fail('a cost on a vehicle the command did not write: ' . $uuid);
+	}
+
+	/**
+	 * The cost Entries of one kind, optionally on one vehicle.
+	 *
+	 * @return list<array<string, mixed>>
+	 */
+	private function costsOf(string $kind, ?string $plate = null): array {
+		$fields = [];
+		foreach ($this->costs as $cost) {
+			if ($cost['kind'] === $kind && ($plate === null || $cost['plate'] === $plate)) {
+				$fields[] = $cost['fields'];
+			}
+		}
+
+		return $fields;
 	}
 
 	/** What the command wrote, by plate. @return array<string, Vehicle> */
@@ -108,7 +171,15 @@ class SeedCommandTest extends TestCase {
 			$this->createMock(IDBConnection::class),
 		);
 
-		return new CommandTester(new SeedCommand($this->users, $fleet, $this->odometer, $time));
+		return new CommandTester(new SeedCommand(
+			$this->users,
+			$fleet,
+			$this->odometer,
+			$this->energy,
+			$this->maintenance,
+			$this->expenses,
+			$time,
+		));
 	}
 
 	/** The name `occ` lists it under, which docs/development.md#testing names too. */
@@ -117,6 +188,9 @@ class SeedCommandTest extends TestCase {
 			$this->users,
 			$this->createMock(VehicleService::class),
 			$this->odometer,
+			$this->energy,
+			$this->maintenance,
+			$this->expenses,
 			$this->createMock(ITimeFactory::class),
 		);
 
@@ -197,7 +271,7 @@ class SeedCommandTest extends TestCase {
 
 	/**
 	 * What the hint would ask this vehicle, by the rule the overview applies (src/utils/complete.js):
-	 * its identity, its age, and the capacity of whatever it is filled with. Written out here
+	 * its identity, its age, the capacity of whatever it is filled with, and its currency. Written out here
 	 * because the rule is the frontend's and the fleet is this command's - the point of the test is
 	 * that the two agree.
 	 *
@@ -215,6 +289,7 @@ class SeedCommandTest extends TestCase {
 		foreach ($vehicle->getEnergyTypes() ?? [] as $energy) {
 			$asked[$capacity[$energy]] = $capacity[$energy] === 'tank_ml' ? $vehicle->getTankMl() : $vehicle->getBatteryWh();
 		}
+		$asked['currency'] = $vehicle->getCurrency();
 
 		return array_keys(array_filter($asked, static fn (mixed $value): bool => $value === null));
 	}
@@ -230,6 +305,107 @@ class SeedCommandTest extends TestCase {
 		$this->assertSame(['active', 'disposed', 'laid_up'], array_values(array_unique(
 			$this->sorted($lifecycles),
 		)));
+	}
+
+	/**
+	 * The fill-ups the consumption rules exist for (docs/architecture.md#numbers-consumption-cost-emissions):
+	 * a partial one that is summed into its segment, and one after a fill-up nobody recorded,
+	 * whose segment yields no number.
+	 */
+	public function testTheFillUpsHoldAPartialAndAMissedPrevious(): void {
+		$this->tester()->execute(['user' => self::OWNER]);
+		$fills = $this->costsOf('energy');
+
+		$this->assertNotEmpty(array_filter($fills, static fn (array $fill): bool => $fill['full_tank'] === false));
+		$this->assertNotEmpty(array_filter($fills, static fn (array $fill): bool => ($fill['missed_previous'] ?? false) === true));
+		foreach ($fills as $fill) {
+			// The service stores an absent flag as false; "on" is the sheet's default, not the DB's.
+			$this->assertIsBool($fill['full_tank'], 'a fill-up that does not say whether it was full');
+		}
+	}
+
+	/**
+	 * The plug-in hybrid takes both its energies, and charges at home and in public - DC among the
+	 * public ones - so its header has two figures and the wall-side one to show.
+	 */
+	public function testTheHybridFillsBothEnergiesAndChargesAtHomeAndInPublic(): void {
+		$this->tester()->execute(['user' => self::OWNER]);
+		$fills = $this->costsOf('energy', 'NF-PH 200');
+
+		$this->assertSame(['electric', 'petrol'], $this->sorted(array_values(array_unique(array_column($fills, 'energy')))));
+		$charges = array_filter($fills, static fn (array $fill): bool => $fill['energy'] === 'electric');
+		$this->assertSame(['home', 'public'], $this->sorted(array_values(array_unique(array_column($charges, 'location_kind')))));
+		$this->assertContains(true, array_column($charges, 'is_dc'));
+		// A charge whose counter nobody read is the common case at home, and the sheet says what
+		// it costs (docs/ui.md): a segment that ends on it yields no number.
+		$this->assertNotEmpty(array_filter($charges, static fn (array $fill): bool => !isset($fill['odo'])));
+	}
+
+	/** A year of them, before the moment it runs - the period the header opens on. */
+	public function testEveryCostFallsInTheYearBeforeItRuns(): void {
+		$this->tester()->execute(['user' => self::OWNER]);
+		$instants = ['energy' => 'filled_at', 'maintenance' => 'done_at', 'expense' => 'spent_at'];
+
+		$this->assertNotEmpty($this->costsOf('maintenance'));
+		$this->assertNotEmpty($this->costsOf('expense'));
+		foreach ($this->costs as $cost) {
+			$at = $cost['fields'][$instants[$cost['kind']]];
+			$this->assertGreaterThan(1767225600 - 365 * 86400, $at);
+			$this->assertLessThan(1767225600, $at);
+			$this->assertIsInt($cost['fields'][$instants[$cost['kind']] . '_off']);
+		}
+	}
+
+	/**
+	 * Both answers to "which VAT rate": one stated, and one nobody stated, which the net figures
+	 * count gross and say so. An insurance premium carries no VAT and states no rate, as the sheet
+	 * prefills it (lib/Jurisdiction/De/RateProvider.php): a stated rate is never zero.
+	 */
+	public function testTheExpensesStateARateOrLeaveItUnstated(): void {
+		$this->tester()->execute(['user' => self::OWNER]);
+		$rates = array_map(static fn (array $expense): mixed => $expense['vat_rate'] ?? null, $this->costsOf('expense'));
+		$insurance = array_filter($this->costsOf('expense'), static fn (array $expense): bool => $expense['category'] === 'insurance');
+
+		$this->assertContains(null, $rates);
+		$this->assertNotContains(0, $rates);
+		$this->assertContains(1900, $rates);
+		$this->assertNotEmpty($insurance);
+		$this->assertSame([null], array_values(array_unique(array_map(static fn (array $expense): mixed => $expense['vat_rate'] ?? null, $insurance))));
+	}
+
+	/**
+	 * A truck that also counts engine hours, with Readings on both chains and fill-ups that read
+	 * both counters (docs/architecture.md#odometer-rules, rule 4).
+	 */
+	public function testTheTruckKeepsAnHourChainBesideItsKilometres(): void {
+		$this->tester()->execute(['user' => self::OWNER]);
+		$truck = $this->fleet()['NF-LK 700'] ?? null;
+
+		$this->assertNotNull($truck, 'no truck in the demo fleet');
+		$this->assertSame('truck', $truck->getVehicleType());
+		$this->assertSame('km', $truck->getOdoUnit());
+		$this->assertSame('h', $truck->getSecondUnit());
+		$counters = array_map(
+			static fn (array $reading): string => (string)($reading['counter'] ?? 'main'),
+			$this->recorded[$truck->getUuid()] ?? [],
+		);
+		$this->assertContains('main', $counters);
+		$this->assertContains('second', $counters);
+		$this->assertNotEmpty(array_filter(
+			$this->costsOf('energy', 'NF-LK 700'),
+			static fn (array $fill): bool => isset($fill['odo'], $fill['second_odo']),
+		));
+	}
+
+	/** TCO shows only when both prices are set, so one vehicle has both. */
+	public function testOneVehicleHasAPurchasePriceAndAResidual(): void {
+		$this->tester()->execute(['user' => self::OWNER]);
+		$priced = array_filter(
+			$this->written,
+			static fn (Vehicle $vehicle): bool => $vehicle->getPurchasePrice() !== null && $vehicle->getResidualEst() !== null,
+		);
+
+		$this->assertNotEmpty($priced);
 	}
 
 	/**

@@ -9,8 +9,14 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Tests\Unit;
 
 use OCA\NextFleet\AppInfo\Application;
+use OCA\NextFleet\Service\EnergyService;
+use OCA\NextFleet\Service\ExpenseService;
+use OCA\NextFleet\Service\MaintenanceService;
+use OCA\NextFleet\Service\TripService;
+use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Http\Attribute\UserRateLimit;
 use PHPUnit\Framework\TestCase;
+use ReflectionClass;
 use ReflectionMethod;
 
 class RoutesTest extends TestCase {
@@ -62,6 +68,34 @@ class RoutesTest extends TestCase {
 				$attributes,
 				sprintf('%s %s writes and carries no #[UserRateLimit]', $route['verb'], $route['url']),
 			);
+		}
+	}
+
+	/**
+	 * A placeholder shares one namespace with the body: Nextcloud binds a controller argument from
+	 * the merged parameters, and a body field of the same name wins. `/energy/{energy}` once
+	 * looked every edited fill-up up by its fuel, "diesel", and answered 404.
+	 */
+	public function testNoPlaceholderIsNamedLikeAFieldAWriteSends(): void {
+		$fields = ['odo', 'second_odo', 'updated_at'];
+		foreach ([EnergyService::class, ExpenseService::class, MaintenanceService::class, TripService::class, VehicleService::class] as $service) {
+			$fields = [...$fields, ...array_keys((new ReflectionClass($service))->getConstant('WRITABLE'))];
+		}
+
+		$routes = require __DIR__ . '/../../appinfo/routes.php';
+		foreach ($routes['routes'] as $route) {
+			if (!in_array($route['verb'], ['POST', 'PUT'], true)) {
+				continue;
+			}
+
+			preg_match_all('/\{(\w+)\}/', $route['url'], $placeholders);
+			foreach ($placeholders[1] as $placeholder) {
+				$this->assertNotContains(
+					$placeholder,
+					$fields,
+					sprintf('%s %s names a placeholder after a field', $route['verb'], $route['url']),
+				);
+			}
 		}
 	}
 

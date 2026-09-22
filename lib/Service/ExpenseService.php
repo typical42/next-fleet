@@ -164,9 +164,11 @@ class ExpenseService {
 
 	/**
 	 * What the sheet prefills an Expense with (docs/ui.md): the VAT rate of the vehicle's
-	 * jurisdiction on the day of the expense.
+	 * jurisdiction on the day of the expense, or none for a category the jurisdiction charges no
+	 * VAT on.
 	 *
-	 * @param array<string, mixed> $fields `at` and `off`: the moment the sheet is on
+	 * @param array<string, mixed> $fields `at` and `off`: the moment the sheet is on; `category`
+	 *                                     when one is picked
 	 * @return array{vat_rate: ?int}
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not write this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
@@ -180,7 +182,9 @@ class ExpenseService {
 		if (!is_int($at) || !is_int($off)) {
 			throw new \InvalidArgumentException('at and off are the moment a prefill is for');
 		}
+		$category = Field::read('category', 'word', self::CATEGORIES, $fields['category'] ?? null);
+		$free = $this->jurisdictions->get($vehicle->getJurisdiction())->rates()?->vatFreeCategories() ?? [];
 
-		return ['vat_rate' => $this->jurisdictions->vatRateAt($vehicle->getJurisdiction(), $at, $off)];
+		return ['vat_rate' => in_array($category, $free, true) ? null : $this->jurisdictions->vatRateAt($vehicle->getJurisdiction(), $at, $off)];
 	}
 }

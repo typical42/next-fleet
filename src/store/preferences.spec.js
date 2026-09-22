@@ -18,10 +18,11 @@ vi.mock('../services/api.js', () => ({
  * The settings envelope as the server hands it over.
  *
  * @param {string[]} dismissed - the hints this user has answered
+ * @param {Partial<import('../services/api.js').Settings['preferences']>} [more] - the other choices
  * @return {import('../services/api.js').Settings} the whole state of the screen
  */
-function settings(dismissed) {
-	return { preferences: { jurisdiction: 'de', dismissed_hints: dismissed }, jurisdictions: [] }
+function settings(dismissed, more = {}) {
+	return { preferences: { jurisdiction: 'de', dismissed_hints: dismissed, reclaim_vat: false, kpi_period: 'last-12', ...more }, jurisdictions: [] }
 }
 
 describe('preferences store', () => {
@@ -117,5 +118,55 @@ describe('preferences store', () => {
 
 		await expect(store.dismiss('a')).rejects.toThrow('nope')
 		expect(store.isDismissed('a')).toBe(false)
+	})
+
+	/** The header reads before anything arrives, so the defaults are the server's own. */
+	it('reads gross over the last twelve months until told otherwise', async () => {
+		const store = usePreferencesStore()
+		expect(store.reclaimVat).toBe(false)
+		expect(store.period).toBe('last-12')
+
+		vi.mocked(getPreferences).mockResolvedValue(settings([], { reclaim_vat: true, kpi_period: 'this-year' }))
+		await store.load()
+
+		expect(store.reclaimVat).toBe(true)
+		expect(store.period).toBe('this-year')
+	})
+
+	/**
+	 * The header shows the chosen period at once: waiting for the write would read the figures
+	 * twice, and a refused write costs only the next session's default.
+	 */
+	it('holds a chosen period before it is stored, and after a refusal', async () => {
+		vi.mocked(savePreferences).mockRejectedValue(new Error('nope'))
+		const store = usePreferencesStore()
+
+		const writing = store.choosePeriod('last-year')
+		expect(store.period).toBe('last-year')
+
+		await expect(writing).rejects.toThrow('nope')
+		expect(savePreferences).toHaveBeenCalledWith({ kpi_period: 'last-year' })
+		expect(store.period).toBe('last-year')
+	})
+
+	/** Two picks in a row: the first one's answer must not flip the header back for a moment. */
+	it('keeps the latest pick while an earlier one is answered', async () => {
+		/** @type {(() => void)[]} */
+		const pending = []
+		vi.mocked(savePreferences).mockImplementation((fields) => new Promise((resolve) => {
+			pending.push(() => resolve(settings([], fields)))
+		}))
+		const store = usePreferencesStore()
+
+		store.choosePeriod('last-year')
+		const latest = store.choosePeriod('this-year')
+		await vi.waitFor(() => expect(pending).toHaveLength(1))
+		pending[0]()
+		await vi.waitFor(() => expect(pending).toHaveLength(2))
+
+		expect(store.period).toBe('this-year')
+		pending[1]()
+		await latest
+		expect(store.period).toBe('this-year')
 	})
 })

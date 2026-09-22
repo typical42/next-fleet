@@ -9,9 +9,10 @@ import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import EntrySheet from '../components/EntrySheet.vue'
+import KpiHeader from '../components/KpiHeader.vue'
 import Timeline from '../components/Timeline.vue'
 import VehicleSheet from '../components/VehicleSheet.vue'
-import { readTimeline } from '../services/api.js'
+import { readKpis, readTimeline } from '../services/api.js'
 import VehicleView from './VehicleView.vue'
 
 // The timeline is mounted for real below, so its one call out is stubbed here. What it does with
@@ -19,6 +20,7 @@ import VehicleView from './VehicleView.vue'
 vi.mock('../services/api.js', async (original) => ({
 	...await original(),
 	readTimeline: vi.fn(),
+	readKpis: vi.fn(),
 }))
 
 const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', lifecycle: 'active' }
@@ -28,12 +30,12 @@ const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', lifecy
  */
 function screen() {
 	// A stub renders no slot of its own, and a button says what it is in its slot - so the two
-	// buttons of this screen would be indistinguishable without this. The timeline is the one child
-	// left unstubbed: what this screen has to get right is that it reads again after a write, and a
-	// stub has no reading to do.
+	// buttons of this screen would be indistinguishable without this. The timeline and the header
+	// are left unstubbed: what this screen has to get right is that they read again after a write,
+	// and a stub has no reading to do.
 	return shallowMount(VehicleView, {
 		props: { vehicle: VEHICLE },
-		global: { renderStubDefaultSlot: true, stubs: { Timeline: false } },
+		global: { renderStubDefaultSlot: true, stubs: { Timeline: false, KpiHeader: false } },
 	})
 }
 
@@ -41,6 +43,7 @@ beforeEach(() => {
 	setActivePinia(createPinia())
 	vi.resetAllMocks()
 	vi.mocked(readTimeline).mockResolvedValue(/** @type {any} */ ({ rows: [], next: null }))
+	vi.mocked(readKpis).mockReturnValue(new Promise(() => {}))
 })
 
 /**
@@ -176,6 +179,21 @@ describe('the vehicle screen', () => {
 		await flushPromises()
 		expect(readTimeline).toHaveBeenCalledTimes(2)
 		expect(wrapper.findComponent(EntrySheet).exists()).toBe(false)
+	})
+
+	/** The header states the figures of the vehicle on screen, and a write moves them. */
+	it('reads the header figures back once an entry is written', async () => {
+		const wrapper = screen()
+		await flushPromises()
+		expect(/** @type {any} */ (wrapper.findComponent(KpiHeader)).props('vehicle')).toEqual(VEHICLE)
+		expect(readKpis).toHaveBeenCalledTimes(2)
+
+		press(document.body, 'n')
+		await wrapper.vm.$nextTick()
+		await wrapper.findComponent(EntrySheet).vm.$emit('saved')
+		await flushPromises()
+
+		expect(readKpis).toHaveBeenCalledTimes(4)
 	})
 
 	/** A save is done with, so the sheet goes; the screen already reads the store for the rest. */

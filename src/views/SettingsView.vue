@@ -4,6 +4,7 @@
 -->
 <script setup>
 import { t } from '@nextcloud/l10n'
+import NcCheckboxRadioSwitch from '@nextcloud/vue/components/NcCheckboxRadioSwitch'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import NcSelect from '@nextcloud/vue/components/NcSelect'
 import NcSettingsSection from '@nextcloud/vue/components/NcSettingsSection'
@@ -16,6 +17,7 @@ import { jurisdictionWord } from '../utils/format.js'
 const offered = ref([])
 /** The stored key, which is not always one of the offered ones. */
 const chosen = ref('')
+const reclaimVat = ref(false)
 const busy = ref(true)
 const failure = ref('')
 
@@ -32,6 +34,7 @@ const selected = computed(() => options.value.find((option) => option.id === cho
 function hold(settings) {
 	offered.value = settings.jurisdictions
 	chosen.value = settings.preferences.jurisdiction
+	reclaimVat.value = settings.preferences.reclaim_vat
 }
 
 onMounted(async () => {
@@ -69,6 +72,27 @@ async function choose(option) {
 		busy.value = false
 	}
 }
+
+/**
+ * Saves as it is changed, and a refusal puts the stored answer back, as for the country: a switch
+ * showing net would claim figures the header does not show.
+ *
+ * @param {boolean} reclaims - what the switch now holds
+ */
+async function reclaim(reclaims) {
+	const stored = reclaimVat.value
+	reclaimVat.value = reclaims
+	busy.value = true
+	failure.value = ''
+	try {
+		hold(await savePreferences({ reclaim_vat: reclaims }))
+	} catch (error) {
+		reclaimVat.value = stored
+		failure.value = error.message
+	} finally {
+		busy.value = false
+	}
+}
 </script>
 
 <template>
@@ -84,5 +108,21 @@ async function choose(option) {
 			:clearable="false"
 			label="label"
 			@update:model-value="choose" />
+
+		<NcCheckboxRadioSwitch :model-value="reclaimVat"
+			type="switch"
+			:disabled="busy"
+			@update:model-value="reclaim">
+			{{ t('nextfleet', 'I reclaim VAT') }}
+		</NcCheckboxRadioSwitch>
+		<p class="hint">
+			{{ t('nextfleet', 'Cost figures are shown net of VAT.') }}
+		</p>
 	</NcSettingsSection>
 </template>
+
+<style scoped>
+.hint {
+	color: var(--color-text-maxcontrast);
+}
+</style>
