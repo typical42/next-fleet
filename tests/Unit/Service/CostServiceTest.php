@@ -59,6 +59,8 @@ class CostServiceTest extends TestCase {
 			'distance' => 1000,
 			'total' => 25000,
 			'energy' => 8000,
+			'maintenance' => 12000,
+			'expenses' => [['category' => null, 'total' => 5000]],
 			'value' => 2500.0,
 			'energy_value' => 800.0,
 			'tco' => null,
@@ -184,6 +186,47 @@ class CostServiceTest extends TestCase {
 		$this->assertSame(0.0, $cost['value']);
 	}
 
+	/**
+	 * The Costs screen's table breaks the expenses out by category, in the sheet's order; one
+	 * without a category is not "other", it is unstated, and comes last.
+	 */
+	public function testExpensesAreItemisedByCategoryNetOfTheirOwnRate(): void {
+		$this->spend(5000, null);
+		$this->spend(11900, 1900, 'toll');
+		$this->spend(30000, null, 'insurance');
+		$this->spend(2380, 1900, 'toll');
+
+		$cost = $this->of($this->vehicle(), net: true);
+
+		$this->assertSame([
+			['category' => 'insurance', 'total' => 30000],
+			['category' => 'toll', 'total' => 12000],
+			['category' => null, 'total' => 5000],
+		], $cost['expenses']);
+		$this->assertSame(0, $cost['maintenance']);
+		$this->assertSame(47000, $cost['total']);
+	}
+
+	/** The column takes any word, so one the sheet does not offer still adds up to the total. */
+	public function testACategoryTheSheetDoesNotOfferIsStillItemised(): void {
+		$this->spend(5000, null);
+		$this->spend(700, null, 'ferry');
+		$this->spend(900, null, 'tax');
+
+		$this->assertSame([
+			['category' => 'tax', 'total' => 900],
+			['category' => 'ferry', 'total' => 700],
+			['category' => null, 'total' => 5000],
+		], $this->of($this->vehicle())['expenses']);
+	}
+
+	public function testAPeriodWithoutRowsItemisesNothing(): void {
+		$cost = $this->of($this->vehicle());
+
+		$this->assertNull($cost['maintenance']);
+		$this->assertNull($cost['expenses']);
+	}
+
 	public function testAnHourCountedVehicleCostsPerHour(): void {
 		$this->reading(100, 1000);
 		$this->reading(900, 1040);
@@ -288,12 +331,13 @@ class CostServiceTest extends TestCase {
 		]);
 	}
 
-	private function spend(int $amount, ?int $vatRate): void {
+	private function spend(int $amount, ?int $vatRate, ?string $category = null): void {
 		$this->expenses[] = Expense::fromRow([
 			'id' => count($this->expenses) + 1,
 			'vehicle_id' => self::VEHICLE_ID,
 			'spent_at' => 500,
 			'spent_at_off' => 120,
+			'category' => $category,
 			'amount' => $amount,
 			'vat_rate' => $vatRate,
 		]);

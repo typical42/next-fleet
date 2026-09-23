@@ -135,11 +135,19 @@ are a table and not a column. It also carries a `<name>_off` for each of its use
 
 **Nothing purges yet.** Deleting a vehicle stamps its `deleted_at` and touches no other row: its
 readings, trips, fill-ups, maintenance records, expenses, reminders, receipts, recipients and
-access grants stay as they were, so an undo brings the vehicle back whole. No route, `occ` command, job or
-user-deletion listener removes a row. The one hard delete is taking a recipient off a list
-([Who is told](#reminder-engine)), which is not a vehicle delete. A GDPR erasure
-([ADR 0008](adr/0008-erasing-a-driver-pseudonymises.md)) or opt-in retention will be the first
-purge, and must then take the vehicle's child rows with it.
+access grants stay as they were, so an undo brings the vehicle back whole. No route, `occ` command
+or job removes a row. The one hard delete is taking a recipient off a list
+([Who is told](#reminder-engine)), which is not a vehicle delete. Opt-in retention will be the
+first purge, and must then take the vehicle's child rows with it.
+
+**Deleting a Nextcloud account pseudonymises, it purges nothing**
+([ADR 0008](adr/0008-erasing-a-driver-pseudonymises.md)). `UserDeletedListener` hands the uid to
+`ErasureService`, which replaces it with one random `erased-…` pseudonym on every table, in one
+transaction: `created_by` everywhere, a vehicle's owner `user_id`, a receipt's `user_id` and a user
+grant's `grantee`. Ownership and grants are renamed too because Nextcloud lets a deleted uid be
+taken again, and the new account must inherit nothing. The account's reminder-list entries are the
+rows that go: a deleted account receives nothing. A new table that names an account says so in its
+mapper's `accountColumns()` and joins `ErasureService`'s list.
 
 **A boolean column is nullable and carries a default.** Nextcloud's schema check refuses a `NOT NULL`
 boolean outright — it is an integer of length 1 on the databases it supports — and NC 31 enforces
@@ -492,14 +500,14 @@ receipt. A vehicle that fails is logged and the round goes on.
 - Its object is the reminder. A new point replaces the recipient's old one. A point already sent
   stays up while the state moves on: an unticked due date leaves "due on" standing. The job takes
   it back when the reminder moves to where nothing is told, and so do snoozing, dismissing,
-  deleting, and a maintenance record closing the reminder or being withdrawn.
+  deleting, and a maintenance record closing the reminder or being withdrawn. Deleting the vehicle
+  takes back every one of its reminders' notifications, since the job no longer reads it; an undo
+  sends nothing, and the next round tells what is still due.
 - `laid_up` evaluates and persists but sends nothing. Back to `active`, the point it stands at has
   no receipt yet, so it sends once. `disposed` is not evaluated at all.
 - A receipt is per point and occurrence, and the schema has no more. A snooze that ends on a point
   already sent therefore sends nothing until the next point. An edit that moves the due date
   without changing the point leaves the sent text with the old date.
-- Deleting a vehicle withdraws nothing, and the job no longer reads it, so a notification already
-  sent for one of its reminders stays in the recipient's list.
 
 **The digest.** After the notifications, the job hands the round to `MailService`. Each enabled
 recipient with an address gets at most one mail a day, from 07:00 in their time zone (`core`
@@ -552,6 +560,14 @@ has no cost rather than zero — and so no TCO — since 0 would mean both "noth
 recorded", and a new vehicle would swing against months in which it did not exist. The header shows
 such a period as zero and compares nothing with it. Under "I reclaim VAT" each row counts net of
 its own rate; a row without a stated rate counts gross, and the figure says so.
+
+**The Costs screen's year** is the same figure, once for the year and once per month, from
+`GET /api/vehicles/{uuid}/costs/{year}?tz=`. The client names the zone and the server cuts the
+twelve months at its midnight. Each cost also states its maintenance total and its expenses per
+category, in the sheet's order, then any word the sheet does not offer, then the uncategorised:
+they are unstated, not "other". The
+three bands are energy, maintenance and the expenses' sum. An empty month has no cost, like any
+empty period.
 
 **TCO** adds depreciation: (purchase − estimated residual) ÷ km over the holding period. Both fields
 are optional, and an empty field hides the KPI rather than inventing it. The holding period's

@@ -58,6 +58,26 @@ class KpiControllerTest extends TestCase {
 		$this->assertSame(['hours' => null], $response->getData());
 	}
 
+	public function testTheYearAndTheZoneReachTheServiceAsAsked(): void {
+		$params = ['tz' => 'Europe/Berlin', 'net' => 'false'];
+		$this->service->expects($this->once())
+			->method('year')
+			->with('alice', self::UUID, '2025', $params)
+			->willReturn(['months' => []]);
+
+		$response = $this->controller($params)->year(self::UUID, '2025');
+
+		$this->assertSame(Http::STATUS_OK, $response->getStatus());
+		$this->assertSame(['months' => []], $response->getData());
+	}
+
+	/** @dataProvider refusals */
+	public function testTheYearRefusesAsTheHeaderDoes(\Exception $refusal, int $status): void {
+		$this->service->method('year')->willThrowException($refusal);
+
+		$this->assertSame($status, $this->controller()->year(self::UUID, '2025')->getStatus());
+	}
+
 	/** @dataProvider refusals */
 	public function testEachRefusalIsTheStatusTheScreenActsOn(\Exception $refusal, int $status): void {
 		$this->service->method('of')->willThrowException($refusal);

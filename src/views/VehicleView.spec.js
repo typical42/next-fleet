@@ -85,9 +85,18 @@ describe('the vehicle screen', () => {
 		// First in the markup as well as first in emphasis: reading, tab and wrapping order are
 		// the same order.
 		expect(wrapper.findAllComponents(NcButton).map((one) => one.text()))
-			.toEqual(['New entry', 'Edit vehicle'])
+			.toEqual(['New entry', 'Costs', 'Edit vehicle'])
 		expect(button(wrapper, 'New entry').props('variant')).toBe('primary')
 		expect(button(wrapper, 'Edit vehicle').props('variant')).not.toBe('primary')
+	})
+
+	/** The shell swaps the screen (src/App.vue); this one only asks for it. */
+	it('asks for the vehicle\'s costs', async () => {
+		const wrapper = screen()
+
+		await button(wrapper, 'Costs').vm.$emit('click')
+
+		expect(wrapper.emitted('costs')).toHaveLength(1)
 	})
 
 	it('edits the vehicle it is showing', async () => {

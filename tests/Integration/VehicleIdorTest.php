@@ -371,6 +371,7 @@ class VehicleIdorTest extends TestCase {
 			'timeline#gaps' => $this->timeline(self::STRANGER, $params)->gaps($uuid),
 			'timeline#show' => $this->timeline(self::STRANGER, $params)->show($uuid, 'trip', self::NO_SUCH_ENTRY),
 			'kpi#index' => $this->kpis(self::STRANGER, $params + ['from' => 1749900000, 'to' => 1750200000])->index($uuid),
+			'kpi#year' => $this->kpis(self::STRANGER, $params + ['tz' => 'Europe/Berlin'])->year($uuid, '2025'),
 			'report#logbook' => $this->report(self::STRANGER, $params)->logbook($uuid, '2026'),
 			'preferences#index' => $this->preferences(self::STRANGER, $params)->index(),
 			'preferences#update' => $this->preferences(self::STRANGER, $params)->update(),

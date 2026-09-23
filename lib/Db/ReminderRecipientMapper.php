@@ -51,4 +51,17 @@ class ReminderRecipientMapper extends BaseMapper {
 			->andWhere($qb->expr()->eq('user_id', $qb->createNamedParameter($userId)));
 		$qb->executeStatement();
 	}
+
+	/**
+	 * Takes one account off every vehicle's list, as deleteByUser() does for one. A deleted
+	 * account receives nothing, so an erasure removes these rather than renaming them.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	public function deleteAccount(string $userId): void {
+		$qb = $this->db->getQueryBuilder();
+		$qb->delete($this->tableName)
+			->where($qb->expr()->eq('user_id', $qb->createNamedParameter($userId)));
+		$qb->executeStatement();
+	}
 }

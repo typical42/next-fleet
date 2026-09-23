@@ -29,16 +29,30 @@ import { energyWord, formatConsumption, formatCount, formatMoney, formatOdometer
  * @return {Tile[]} the tiles, in reading order
  */
 export function tilesOf(vehicle, now, before, locale = getCanonicalLocale()) {
+	return [
+		{
+			label: t('nextfleet', 'Odometer'),
+			figure: formatOdometer(vehicle, locale) || t('nextfleet', 'Never read'),
+			change: null,
+			notes: [],
+		},
+		...(now === null ? [] : periodTilesOf(vehicle, now, before, locale)),
+	]
+}
+
+/**
+ * The header's figures that belong to the period, which is all of them but the odometer. The Costs
+ * screen states them for its year.
+ *
+ * @param {import('../services/api.js').Vehicle} vehicle - the vehicle as it was read
+ * @param {import('../services/api.js').Kpis} now - the period's figures
+ * @param {import('../services/api.js').Kpis|null} before - the period before's, null for no comparison
+ * @param {string} [locale] - defaults to the one Nextcloud resolved for this session
+ * @return {Tile[]} the tiles, in reading order
+ */
+export function periodTilesOf(vehicle, now, before, locale = getCanonicalLocale()) {
 	/** @type {Tile[]} */
-	const tiles = [{
-		label: t('nextfleet', 'Odometer'),
-		figure: formatOdometer(vehicle, locale) || t('nextfleet', 'Never read'),
-		change: null,
-		notes: [],
-	}]
-	if (now === null) {
-		return tiles
-	}
+	const tiles = []
 
 	// One per energy and never a blend: a litre and a kilowatt-hour do not add up (docs/ui.md).
 	for (const consumption of now.consumption) {

@@ -99,6 +99,9 @@ return [
 		// The header's figures for one period the client names, since where a year starts is the
 		// person's midnight, not the server's (docs/ui.md).
 		['name' => 'kpi#index', 'url' => '/api/vehicles/{uuid}/kpis', 'verb' => 'GET'],
+		// The Costs screen's: those figures for one year, and each month's cost. The client names
+		// the zone rather than twelve periods, since a month is cut at its midnight.
+		['name' => 'kpi#year', 'url' => '/api/vehicles/{uuid}/costs/{year}', 'verb' => 'GET'],
 		// A Gap is named by the trip whose claim opened it, and closing one writes a trip - so it is
 		// the trips' controller that answers (docs/features.md#logbook-mode).
 		['name' => 'trip#reconcile', 'url' => '/api/vehicles/{uuid}/gaps/{trip}/close', 'verb' => 'POST'],

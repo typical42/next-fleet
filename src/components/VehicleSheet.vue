@@ -49,7 +49,6 @@ const batteryWh = ref(text(props.vehicle?.battery_wh))
 const purchasePrice = ref(text(props.vehicle?.purchase_price))
 const residualEst = ref(text(props.vehicle?.residual_est))
 const currency = ref(text(props.vehicle?.currency))
-const retentionMonths = ref(text(props.vehicle?.retention_months))
 const color = ref(text(props.vehicle?.color))
 const notes = ref(text(props.vehicle?.notes))
 const firstReg = ref(parseDay(props.vehicle?.first_reg))
@@ -326,6 +325,7 @@ async function writeInterval() {
 /**
  * Every writable column, as the API spells it. Sent whole rather than as a diff: `apply()` writes
  * what the payload names, so a field the user emptied has to travel as an empty one to be cleared.
+ * `retention_months` is not asked: nothing purges yet (docs/legal.md). It travels as it was read.
  *
  * @return {Record<string, unknown>} the vehicle's new state
  */
@@ -352,7 +352,6 @@ function fields() {
 		jurisdiction: jurisdiction.value,
 		logbook_mode: logbookMode.value,
 		lifecycle: lifecycle.value?.id ?? '',
-		retention_months: retentionMonths.value,
 		color: color.value,
 		notes: notes.value,
 		reminder_mail: reminderMail.value,
@@ -674,10 +673,6 @@ function chosen(options, id) {
 					:label="t('nextfleet', 'Disposed on')"
 					:disabled="saving"
 					@keydown.esc.stop="keepPicker" />
-				<NcTextField v-model="retentionMonths"
-					:label="t('nextfleet', 'Retention (months)')"
-					:disabled="saving"
-					inputmode="numeric" />
 				<NcTextField v-model="color"
 					:label="t('nextfleet', 'Colour')"
 					:disabled="saving" />

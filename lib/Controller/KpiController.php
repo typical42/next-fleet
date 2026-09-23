@@ -16,7 +16,8 @@ use OCP\IRequest;
 use OCP\IUserSession;
 
 /**
- * The figures in a vehicle's header. Every rule lives in KpiService, including the access check.
+ * The figures in a vehicle's header and on its Costs screen. Every rule lives in KpiService,
+ * including the access check.
  */
 class KpiController extends Controller {
 	use EntryAnswers;
@@ -35,6 +36,17 @@ class KpiController extends Controller {
 	public function index(string $uuid): DataResponse {
 		return $this->answer(fn (): DataResponse => new DataResponse(
 			$this->service->of($this->userId(), $uuid, $this->request->getParams()),
+		));
+	}
+
+	/**
+	 * The Costs screen's year; the zone and the net preference are the query string's. Not an
+	 * `int $year`, for the reason ReportController::parseYear() gives.
+	 */
+	#[NoAdminRequired]
+	public function year(string $uuid, string $year): DataResponse {
+		return $this->answer(fn (): DataResponse => new DataResponse(
+			$this->service->year($this->userId(), $uuid, $year, $this->request->getParams()),
 		));
 	}
 }

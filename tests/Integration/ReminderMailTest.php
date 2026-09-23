@@ -72,18 +72,21 @@ class ReminderMailTest extends TestCase {
 		$this->forget();
 	}
 
-	/** The accounts and the rows this suite invents, gone for real. */
+	/**
+	 * The accounts and the rows this suite invents, gone for real. Rows first: deleting an account
+	 * pseudonymises them, and they would outlive the run.
+	 */
 	private function forget(): void {
-		$users = \OCP\Server::get(IUserManager::class);
-		foreach ([self::OWNER, self::OUTSIDER] as $uid) {
-			$users->get($uid)?->delete();
-		}
 		$db = \OCP\Server::get(IDBConnection::class);
 		$people = [self::OWNER, self::OUTSIDER];
 		foreach (['fleet_vehicles' => 'user_id', 'fleet_reminders' => 'created_by', 'fleet_reminder_recipients' => 'user_id', 'fleet_reminder_receipts' => 'user_id'] as $table => $column) {
 			$qb = $db->getQueryBuilder();
 			$qb->delete($table)->where($qb->expr()->in($column, $qb->createNamedParameter($people, $qb::PARAM_STR_ARRAY)));
 			$qb->executeStatement();
+		}
+		$users = \OCP\Server::get(IUserManager::class);
+		foreach ([self::OWNER, self::OUTSIDER] as $uid) {
+			$users->get($uid)?->delete();
 		}
 	}
 

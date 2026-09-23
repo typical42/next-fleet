@@ -4,7 +4,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { addRecipient, closeGap, ConflictError, createReminder, createVehicle, deleteEntry, deleteVehicle, dismissReminder, getPreferences, listFleetReminders, listRecipients, listReminders, listVehicles, logbookUrl, readEntry, readGaps, readKpis, readTimeline, recordReading, recordTrip, reminderTemplates, removeRecipient, restoreEntry, searchUsers, restoreVehicle, savePreferences, snoozeReminder, updateEntry, updateVehicle } from './api.js'
+import { addRecipient, closeGap, ConflictError, createReminder, createVehicle, deleteEntry, deleteVehicle, dismissReminder, getPreferences, listFleetReminders, listRecipients, listReminders, listVehicles, logbookUrl, readEntry, readGaps, readKpis, readTimeline, readYear, recordReading, recordTrip, reminderTemplates, removeRecipient, restoreEntry, searchUsers, restoreVehicle, savePreferences, snoozeReminder, updateEntry, updateVehicle } from './api.js'
 
 vi.mock('@nextcloud/router', () => ({
 	generateUrl: (/** @type {string} */ path) => `/index.php${path}`,
@@ -182,6 +182,19 @@ describe('readKpis', () => {
 
 		const [url, options] = fetch.mock.calls[0]
 		expect(url).toBe(`/index.php/apps/nextfleet/api/vehicles/${vehicle.uuid}/kpis?from=1749900000&to=1750200000&net=true`)
+		expect(options.method).toBe('GET')
+	})
+})
+
+describe('readYear', () => {
+	/** The server cuts the months at the reader's midnight, so the reader names the zone. */
+	it('asks for one year in the zone it names, and says whether VAT is reclaimed', async () => {
+		const fetch = answers(200, { year: {}, months: [] })
+
+		await readYear(vehicle.uuid, { year: '2026', tz: 'Europe/Berlin', net: false })
+
+		const [url, options] = fetch.mock.calls[0]
+		expect(url).toBe(`/index.php/apps/nextfleet/api/vehicles/${vehicle.uuid}/costs/2026?tz=Europe%2FBerlin&net=false`)
 		expect(options.method).toBe('GET')
 	})
 })

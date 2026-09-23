@@ -62,6 +62,9 @@ data, which in Germany brings the works council into it. Therefore:
 
 - Trip location fields stay free text. No GPS, no automatic tracking (already out of scope in
   [scope](../plan.md#scope)).
+- **No purge exists yet.** Nothing deletes a vehicle's rows: not a retention period, not the trash,
+  not an erasure ([data model](architecture.md#data-model)). The vehicle sheet does not ask for a
+  retention period, so it promises nothing. What follows is the design for when one is built.
 - **Retention is opt-in and off by default.** No automatic purge unless a vehicle is given a
   retention period. A logbook that quietly deletes its owner's history is a worse failure than one
   that keeps too much, and the real GDPR exposure here is driver data on shared vehicles, handled
@@ -72,7 +75,9 @@ data, which in Germany brings the works council into it. Therefore:
 - **Erasing a driver pseudonymises, it does not delete**
   ([ADR 0008](adr/0008-erasing-a-driver-pseudonymises.md)). The user id on their records is replaced
   and the records stay: they are the vehicle owner's logbook, and under Logbook Mode they carry a
-  retention duty. A co-driver leaving must not shred someone else's tax evidence.
+  retention duty. A co-driver leaving must not shred someone else's tax evidence. This is built:
+  deleting a Nextcloud account replaces its uid with one random pseudonym on every row, the
+  ownership of its vehicles and its grants included, and takes it off every reminder list.
 - Full per-user data export and per-vehicle export, wired into Nextcloud's own user-deletion hooks.
   The per-vehicle export is also what a buyer gets when a vehicle is sold — v1 transfers no
   ownership between users ([data model](architecture.md#data-model)).

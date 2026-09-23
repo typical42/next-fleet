@@ -14,6 +14,7 @@ import VehicleList from './components/VehicleList.vue'
 import { deleteVehicle, getPreferences, listVehicles } from './services/api.js'
 import { useVehiclesStore } from './store/index.js'
 import { usePreferencesStore } from './store/preferences.js'
+import CostsView from './views/CostsView.vue'
 import OverviewView from './views/OverviewView.vue'
 import ReportsView from './views/ReportsView.vue'
 import VehicleView from './views/VehicleView.vue'
@@ -184,6 +185,34 @@ describe('the app shell', () => {
 		expect(wrapper.findComponent(ReportsView).exists()).toBe(false)
 		expect(wrapper.findComponent(VehicleView).exists()).toBe(true)
 		expect(reports(wrapper).props('active')).toBe(false)
+	})
+
+	/** One vehicle's year is that vehicle's, so it opens from its screen and goes back to it. */
+	it('opens the costs of the vehicle shown, and goes back to it', async () => {
+		const wrapper = await shell()
+
+		await wrapper.findComponent(VehicleView).vm.$emit('costs')
+
+		expect(wrapper.findComponent(VehicleView).exists()).toBe(false)
+		/** @type {any} */
+		const costs = wrapper.findComponent(CostsView)
+		expect(costs.props('vehicle')).toEqual(VEHICLE)
+
+		await costs.vm.$emit('back')
+
+		expect(wrapper.findComponent(CostsView).exists()).toBe(false)
+		expect(wrapper.findComponent(VehicleView).exists()).toBe(true)
+	})
+
+	/** Another vehicle picked from the navigation opens on its own screen, not on its costs. */
+	it('leaves the costs for the vehicle picked in the navigation', async () => {
+		const wrapper = await shell()
+		await wrapper.findComponent(VehicleView).vm.$emit('costs')
+
+		await wrapper.findComponent(VehicleList).vm.$emit('select', VEHICLE.uuid)
+
+		expect(wrapper.findComponent(CostsView).exists()).toBe(false)
+		expect(wrapper.findComponent(VehicleView).exists()).toBe(true)
 	})
 
 	/**

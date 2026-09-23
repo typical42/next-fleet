@@ -10,11 +10,13 @@ namespace OCA\NextFleet\Tests\Unit\Service;
 
 use OCA\NextFleet\Db\Audit;
 use OCA\NextFleet\Db\AuditMapper;
+use OCA\NextFleet\Db\ReminderMapper;
 use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Exception\AccessDeniedException;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
+use OCA\NextFleet\Service\NotificationService;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\IConfig;
@@ -94,6 +96,8 @@ class VehicleServiceTest extends TestCase {
 			$this->audit,
 			$this->db,
 			$this->createMock(ReminderRecipientMapper::class),
+			$this->createMock(ReminderMapper::class),
+			$this->createMock(NotificationService::class),
 		);
 	}
 
