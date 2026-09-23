@@ -88,8 +88,9 @@ jobs:
 
       # --wait means installed rather than merely running only because both app services
       # carry a healthcheck that asks status.php - see tests/Unit/ComposeStackTest.php.
+      # Mailpit too: tests/e2e/m4-slice.spec.js reads the reminder digest out of it.
       - name: Start both majors
-        run: docker compose -f .docker/compose.yml up -d --wait app app31
+        run: docker compose -f .docker/compose.yml up -d --wait app app31 mail
 
       - name: Enable the app and seed the demo fleet on both majors
         run: |

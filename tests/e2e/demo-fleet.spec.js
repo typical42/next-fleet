@@ -39,7 +39,7 @@ test('the demo fleet is on screen with the rows that are awkward on purpose', as
 	// the overview has to say so in its own row, beside cars that count kilometres.
 	await expect(row(hours.plate)).toContainText(hours.made)
 	await expect(row(hours.plate)).toContainText(hours.counter)
-	await expect(row(`${demo}DE 100`)).toContainText('111,900 km')
+	await expect(row(`${demo}DE 100`)).toContainText('112,180 km')
 
 	// A trailer counts neither, so it has no counter at all - and a zero would read as one that
 	// has never moved rather than as one that is not kept.

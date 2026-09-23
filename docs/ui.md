@@ -161,7 +161,8 @@ a phone has room for one sheet at a time. It opens on the trip, which is what a 
   dashboard read, and filling it in from the vehicle would answer the question gap detection exists
   to ask. Both moments default to now; route, purpose and
   partner autocomplete from this vehicle's own history, which is what keeps six spellings of one
-  client out of the reports.
+  client out of the reports. Starting point and destination offer the same places, because where
+  one trip ended is where the next sets off.
 - **Energy** — amount and total price. Offered only on a vehicle with `energy_types`, and only
   with those, so a plug-in hybrid can log either and a diesel is never asked
   ([data model](architecture.md#data-model)). Unit price is derived from the total. The station

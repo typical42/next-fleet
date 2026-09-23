@@ -33,7 +33,7 @@ what remains is sized for one person to finish.
 ## Scope
 
 **In scope (v1 = M0–M5):** vehicles, odometer, trips, fuel and charging, maintenance records,
-expenses, due-date reminders with notification + mail, cost overview, CSV export,
+expenses, reminders by date or km with notification + mail, cost overview, CSV export,
 HTML/print reports.
 
 **Later:** shared vehicles with roles, bookings, handover protocols, import from other tools, the
@@ -54,7 +54,7 @@ directory that someone else can add by merge request ([contributing](docs/contri
 | M1 | One vertical slice first (migration → mapper → route → Vue), then vehicles, odometer readings, `fleet_access` and `VehicleAccess::may`, optimistic concurrency, jurisdiction defaulting, personal settings. **Three tables, not eleven** — a migration is easy to add and hard to withdraw | A vehicle can be created, its km updated, a stale write is rejected, and a foreign user is denied |
 | M2 | Trips, derived odometer, timeline, filters, gap detection, Logbook Mode with the `de` ruleset (append-only + `fleet_audit`) | Adding a trip moves the vehicle's km; a voided locked trip survives in the export; the German rules sit in `lib/Jurisdiction/De/`, not scattered through services |
 | M3 | Energy entries, maintenance records, expenses, VAT, and the [consumption and cost maths](docs/architecture.md#numbers-consumption-cost-emissions) | Per-vehicle cost per 100 km is correct, and a plug-in hybrid shows two consumption figures |
-| M4 | Reminder engine, TimedJob, notifications, mail digest | HU/AU due in 4 weeks reaches the phone |
+| M4 | Reminder engine, TimedJob, notifications, mail digest, recipients, HU/AU from the sticker, closing a reminder by maintenance record. No calendar (decision 16) | HU/AU due in 4 weeks reaches the phone |
 | M5 | Documents, the Costs screen, CO₂, dashboard widget, search, CSV export, HTML/print reports, generic jurisdiction | Feature-complete v1, app store release |
 | M6+ | Sharing UI, fleet view, bookings, handover. Then the OCS API, `?since=` delta endpoint, app passwords, API docs | Multi-driver pool works; an Android client can be built against it |
 
@@ -64,7 +64,7 @@ type that does not exist yet is the wrong order.
 
 ## Decisions taken
 
-Dated 2026-09-03, revised 2026-09-04. Where an ADR exists it carries the reasoning; this list is
+Dated 2026-09-03, revised 2026-09-04 and 2026-09-23. Where an ADR exists it carries the reasoning; this list is
 the index.
 
 **Shape of the product**
@@ -112,12 +112,15 @@ the index.
     reminder whose event cannot be changed or removed keeps ringing after it is done.
 17. **Dismissing a reminder skips one occurrence; deleting it ends the recurrence**
     ([reminder engine](docs/architecture.md#reminder-engine)).
-18. **File downloads are proxied through the app**
+18. **A reminder recurs from the work actually done**, not from its planned due
+    ([reminder engine](docs/architecture.md#reminder-engine), rule 4). An oil change done late
+    moves the next one late too.
+19. **File downloads are proxied through the app**
     ([Nextcloud integration](docs/architecture.md#nextcloud-integration)), and a document is
     resolved by `file_id`, never by path.
-19. **Rates are time-versioned** ([contributing](docs/contributing.md)). A report for a past year
+20. **Rates are time-versioned** ([contributing](docs/contributing.md)). A report for a past year
     uses that year's rate.
-20. **Erasing a driver pseudonymises** —
+21. **Erasing a driver pseudonymises** —
     [ADR 0008](docs/adr/0008-erasing-a-driver-pseudonymises.md). Retention is opt-in and off by
     default ([data protection](docs/legal.md)).
 
@@ -128,7 +131,13 @@ the index.
 
 ## Risks
 
-- **Mail depends on server SMTP.** Not every instance has it. Notifications must stand alone.
+- **Mail depends on server SMTP.** Not every instance has it. Notifications must stand alone, and
+  do: each channel has its own receipts, so a refused mail leaves the notification sent
+  ([reminder engine](docs/architecture.md#reminder-engine), rule 7).
+- **Reminder undo is lossy.** The schema does not keep a planned due, so withdrawing the maintenance
+  record that closed a reminder reopens it due at the record's own day and km
+  ([reminder engine](docs/architecture.md#reminder-engine)). Keeping it would take a column, and the
+  M4 migration has shipped.
 - **App store compatibility churn.** Nextcloud majors break APIs twice a year; four supported
   majors is a deliberate cost, paid at M0 and again at every release.
 - **Entry friction kills logbooks.** If adding a trip takes more than a few seconds, the data rots.

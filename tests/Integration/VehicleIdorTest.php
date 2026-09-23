@@ -320,6 +320,7 @@ class VehicleIdorTest extends TestCase {
 			'odometer#delete' => $this->odometer(self::STRANGER, $params)->delete($uuid, self::NO_SUCH_ENTRY),
 			'odometer#restore' => $this->odometer(self::STRANGER, $params)->restore($uuid, self::NO_SUCH_ENTRY),
 			'trip#create' => $this->trip(self::STRANGER, $params)->create($uuid),
+			'trip#prefill' => $this->trip(self::STRANGER, $params)->prefill($uuid),
 			// Walked against a trip that is not there: the gate is the vehicle's, so a stranger
 			// is refused before any uuid of a trip is looked up, and a 404 here would be the
 			// answer telling them so.

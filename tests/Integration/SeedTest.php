@@ -12,6 +12,7 @@ use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Command\SeedCommand;
 use OCA\NextFleet\Service\KpiService;
 use OCA\NextFleet\Service\OdometerService;
+use OCA\NextFleet\Service\ReminderService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Utility\ITimeFactory;
 use PHPUnit\Framework\TestCase;
@@ -31,6 +32,10 @@ class SeedTest extends TestCase {
 	private static array $kpis = [];
 	/** @var array<string, int> flagged Readings, by plate */
 	private static array $flagged = [];
+	/** @var array<string, list<array<string, mixed>>> the reminders as the banner reads them, by plate */
+	private static array $reminders = [];
+	/** The day the fleet was seeded on, which every due date is counted from. */
+	private static string $today = '';
 
 	public static function setUpBeforeClass(): void {
 		$container = (new Application())->getContainer();
@@ -40,7 +45,10 @@ class SeedTest extends TestCase {
 		$vehicles = $container->get(VehicleService::class);
 		$kpis = $container->get(KpiService::class);
 		$odometer = $container->get(OdometerService::class);
+		$reminders = $container->get(ReminderService::class);
 		$now = $container->get(ITimeFactory::class)->getTime();
+		// The day a due date is read against, which is the server's (docs/architecture.md#time).
+		self::$today = $container->get(ITimeFactory::class)->now()->format('Y-m-d');
 		foreach ($vehicles->list(self::USER) as $vehicle) {
 			$plate = (string)$vehicle->getPlate();
 			if (!str_starts_with($plate, 'NF-')) {
@@ -51,6 +59,7 @@ class SeedTest extends TestCase {
 				$odometer->list(self::USER, $vehicle->getUuid()),
 				static fn ($reading): bool => $reading->getFlagged(),
 			));
+			self::$reminders[$plate] = $reminders->list(self::USER, $vehicle->getUuid());
 		}
 	}
 
@@ -109,6 +118,60 @@ class SeedTest extends TestCase {
 
 	public function testTheTruckStatesTheHoursItRan(): void {
 		$this->assertSame(248, self::$kpis['NF-LK 700']['hours']);
+	}
+
+	/**
+	 * The inspection the due banner and the job have something to say about: three weeks out, so
+	 * it is a month past its first warning point and the demo shows an amber reminder.
+	 */
+	public function testAnInspectionIsDueInAboutThreeWeeks(): void {
+		$inspection = $this->reminder('NF-PH 200', 'hu_au');
+
+		$this->assertSame('date', $inspection['mode']);
+		$this->assertGreaterThan(self::$today, $inspection['due_date']);
+		$this->assertLessThanOrEqual($this->dayIn(28), $inspection['due_date']);
+		$this->assertGreaterThanOrEqual($this->dayIn(14), $inspection['due_date']);
+		$this->assertSame('warned', $inspection['state']);
+	}
+
+	/**
+	 * By kilometres, past its lead and with a pace behind it, so the banner has both a warned
+	 * reminder and an estimated date rather than "not enough data yet".
+	 */
+	public function testTheOilChangeIsByKilometresAndEstimatesADate(): void {
+		$oil = $this->reminder('NF-DE 100', 'oil_change');
+
+		$this->assertSame('odo', $oil['mode']);
+		$this->assertNull($oil['due_date']);
+		$this->assertSame(15000, $oil['recur_odo']);
+		$this->assertSame('warned', $oil['state']);
+		$this->assertNotNull($oil['estimate'], 'the Passat has no pace to estimate the oil change from');
+		$this->assertGreaterThan(self::$today, $oil['estimate']);
+	}
+
+	/**
+	 * A truck is inspected twice as often as a car (lib/Jurisdiction/De/InspectionScheme.php), and
+	 * the interval is the scheme's: the fleet states the due date and nothing else.
+	 */
+	public function testTheTruckIsInspectedEveryTwelveMonths(): void {
+		$this->assertSame(12, $this->reminder('NF-LK 700', 'hu_au')['recur_months']);
+		$this->assertSame(24, $this->reminder('NF-PH 200', 'hu_au')['recur_months']);
+		// Far enough out to be the green one in the overview's traffic light.
+		$this->assertSame('planned', $this->reminder('NF-LK 700', 'hu_au')['state']);
+	}
+
+	/** @return array<string, mixed> */
+	private function reminder(string $plate, string $key): array {
+		foreach (self::$reminders[$plate] ?? [] as $reminder) {
+			if ($reminder['template_key'] === $key) {
+				return $reminder;
+			}
+		}
+		$this->fail('the demo fleet has no ' . $key . ' on ' . $plate);
+	}
+
+	private function dayIn(int $days): string {
+		return (new \DateTimeImmutable(self::$today))->modify('+' . $days . ' day')->format('Y-m-d');
 	}
 
 	/** @return list<string> */

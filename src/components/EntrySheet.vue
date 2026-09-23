@@ -16,7 +16,7 @@ import NcTextArea from '@nextcloud/vue/components/NcTextArea'
 import NcTextField from '@nextcloud/vue/components/NcTextField'
 import { computed, ref, useId, watch } from 'vue'
 
-import { ConflictError, energyPrefill, expensePrefill, listReminders, maintenancePrefill, readEntry } from '../services/api.js'
+import { ConflictError, energyPrefill, expensePrefill, listReminders, maintenancePrefill, readEntry, tripPrefill } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
 import { CATEGORIES, EXPENSE_CATEGORIES, MAINTENANCE_TYPES, categoryWord, energyWord, expenseWord, formatDecimal, maintenanceWord, parseDecimal, parseWhole } from '../utils/format.js'
 import { closedByDefault, openByUrgency, reminderTitle } from '../utils/reminders.js'
@@ -92,6 +92,11 @@ const fromLabel = ref('')
 const toLabel = ref('')
 const purpose = ref('')
 const partner = ref('')
+/** @type {import('vue').Ref<import('../services/api.js').TripPrefill>} */
+const tripWords = ref({ places: [], purposes: [], partners: [] })
+const placeList = useId()
+const purposeList = useId()
+const partnerList = useId()
 
 // What the costs share, kept across a switch between them: the moment, now because each is logged
 // where it happens; the VAT rate the jurisdiction states for it; and, for a fill-up and a
@@ -183,6 +188,22 @@ watch(kind, async (now) => {
 		listed = false
 	}
 }, { immediate: true })
+
+let worded = false
+// Read once the sheet is on a trip, as the reminders are on a record: without them the fields are
+// plain text fields, so a failure is not the sheet's to report either.
+watch(kind, async (now) => {
+	if (now !== 'trip' || worded) {
+		return
+	}
+	worded = true
+	try {
+		tripWords.value = await tripPrefill(props.vehicle.uuid)
+	} catch {
+		worded = false
+	}
+}, { immediate: true })
+
 watch([reminders, workType], ([listed, type]) => {
 	if (!picked.value) {
 		closing.value = closedByDefault(listed, type?.id ?? null)
@@ -855,17 +876,31 @@ function requestClose() {
 					label="label" />
 				<NcTextField v-model="purpose"
 					:label="t('nextfleet', 'Purpose')"
-					:disabled="saving" />
+					:disabled="saving"
+					:list="purposeList" />
+				<datalist :id="purposeList">
+					<option v-for="word in tripWords.purposes" :key="word" :value="word" />
+				</datalist>
+				<!-- Both ends of the route share one list: where a trip ended is where the next sets off. -->
 				<NcTextField v-model="fromLabel"
 					:label="t('nextfleet', 'Starting point')"
-					:disabled="saving" />
+					:disabled="saving"
+					:list="placeList" />
 				<NcTextField v-model="toLabel"
 					:label="t('nextfleet', 'Destination')"
-					:disabled="saving" />
+					:disabled="saving"
+					:list="placeList" />
+				<datalist :id="placeList">
+					<option v-for="place in tripWords.places" :key="place" :value="place" />
+				</datalist>
 				<NcTextField v-model="partner"
 					class="sheet__wide"
 					:label="t('nextfleet', 'Business partner')"
-					:disabled="saving" />
+					:disabled="saving"
+					:list="partnerList" />
+				<datalist :id="partnerList">
+					<option v-for="word in tripWords.partners" :key="word" :value="word" />
+				</datalist>
 			</template>
 
 			<template v-else-if="kind === 'energy'">

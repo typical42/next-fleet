@@ -106,6 +106,29 @@ class TripControllerTest extends TestCase {
 		];
 	}
 
+	/** The prefill answers 200 with the words the service found, and is refused like a write. */
+	public function testThePrefillIsWhatTheServiceStates(): void {
+		$words = ['places' => ['Office'], 'purposes' => ['Client visit'], 'partners' => []];
+		$this->service->expects($this->once())
+			->method('prefill')
+			->with('alice', self::UUID)
+			->willReturn($words);
+
+		$response = $this->controller()->prefill(self::UUID);
+
+		$this->assertSame(Http::STATUS_OK, $response->getStatus());
+		$this->assertSame($words, $response->getData());
+	}
+
+	/**
+	 * @dataProvider refusals
+	 */
+	public function testARefusedPrefillAnswersWithItsOwnStatus(\Throwable $thrown, int $status): void {
+		$this->service->method('prefill')->willThrowException($thrown);
+
+		$this->assertSame($status, $this->controller()->prefill(self::UUID)->getStatus());
+	}
+
 	/**
 	 * A void answers with the row it left behind, so the toast that offers the undo holds the
 	 * token the next write is checked against (docs/architecture.md#concurrency). A DELETE carries

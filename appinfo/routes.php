@@ -34,6 +34,8 @@ return [
 		// A Trip is reached the same way, and writes the one Reading it left on the counter
 		// (docs/architecture.md#odometer-rules).
 		['name' => 'trip#create', 'url' => '/api/vehicles/{uuid}/trips', 'verb' => 'POST'],
+		// What the sheet completes route, purpose and partner from (docs/ui.md).
+		['name' => 'trip#prefill', 'url' => '/api/vehicles/{uuid}/trips/prefill', 'verb' => 'GET'],
 		['name' => 'trip#update', 'url' => '/api/vehicles/{uuid}/trips/{trip}', 'verb' => 'PUT'],
 		// A delete voids under Logbook Mode (docs/features.md#logbook-mode), and undo is its own
 		// verb and path for the reason a vehicle's is: it is not a write to the trip, it is a

@@ -37,8 +37,9 @@ test('a trip is entered as a counter or as a distance, and the vehicle follows e
 	await expect(entry.getByRole('textbox', { name: 'Start counter' })).toHaveValue('')
 	await entry.getByRole('textbox', { name: 'Start counter' }).fill(String(starting))
 	await entry.getByRole('textbox', { name: 'End counter' }).fill(ended)
-	await entry.getByRole('textbox', { name: 'Purpose' }).fill('Kundentermin')
-	await entry.getByRole('textbox', { name: 'Destination' }).fill('Augsburg')
+	// A combobox, not a textbox: each offers this vehicle's earlier words (docs/ui.md).
+	await entry.getByRole('combobox', { name: 'Purpose' }).fill('Kundentermin')
+	await entry.getByRole('combobox', { name: 'Destination' }).fill('Augsburg')
 	await entry.getByRole('button', { name: 'Save' }).click()
 	await expect(entry).toBeHidden()
 
@@ -84,7 +85,7 @@ test('the timeline lists both kinds of entry, and the chips narrow it to one', a
 	await page.getByRole('button', { name: 'New entry' }).click()
 	const entry = page.getByRole('dialog', { name: 'New entry' })
 	await entry.getByRole('textbox', { name: 'End counter' }).fill(ended)
-	await entry.getByRole('textbox', { name: 'Destination' }).fill('Augsburg')
+	await entry.getByRole('combobox', { name: 'Destination' }).fill('Augsburg')
 	await entry.getByRole('button', { name: 'Save' }).click()
 	await expect(entry).toBeHidden()
 
@@ -117,13 +118,13 @@ test('a trip the server refuses leaves the sheet open with every value in it', a
 
 	await page.getByRole('button', { name: 'New entry' }).click()
 	const entry = page.getByRole('dialog', { name: 'New entry' })
-	await entry.getByRole('textbox', { name: 'Purpose' }).fill('Kundentermin')
+	await entry.getByRole('combobox', { name: 'Purpose' }).fill('Kundentermin')
 	// Neither a counter nor a distance: the journey leaves the counter with nothing to say, which
 	// is the one thing about a trip the server refuses outright (lib/Service/TripService.php).
 	await entry.getByRole('button', { name: 'Save' }).click()
 
 	await expect(entry).toBeVisible()
-	await expect(entry.getByRole('textbox', { name: 'Purpose' })).toHaveValue('Kundentermin')
+	await expect(entry.getByRole('combobox', { name: 'Purpose' })).toHaveValue('Kundentermin')
 	await expect(entry.getByRole('button', { name: 'Try again' })).toBeVisible()
 })
 
@@ -142,7 +143,7 @@ test('a business trip missing what the logbook requires is saved and asks for th
 	await page.getByRole('button', { name: 'New entry' }).click()
 	const entry = page.getByRole('dialog', { name: 'New entry' })
 	await entry.getByRole('textbox', { name: 'End counter' }).fill(ended)
-	await entry.getByRole('textbox', { name: 'Destination' }).fill('Augsburg')
+	await entry.getByRole('combobox', { name: 'Destination' }).fill('Augsburg')
 	await entry.getByRole('button', { name: 'Save' }).click()
 	await expect(entry).toBeHidden()
 
