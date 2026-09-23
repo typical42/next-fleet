@@ -12,9 +12,9 @@ namespace OCA\NextFleet\Jurisdiction;
  * What one country answers about a vehicle registered in it: how it is named, and what a vehicle
  * created under it takes for the fields the create sheet does not ask for (docs/ui.md).
  *
- * Internal seam, not a public API - see docs/contributing.md. Plate format and document kinds
- * arrive with the feature that reads them; a profile that cannot answer says so rather than
- * guessing, and every caller has to tolerate that.
+ * Internal seam, not a public API - see docs/contributing.md. Plate format arrives with the feature
+ * that reads it; a profile that cannot answer says so rather than guessing, and every caller has
+ * to tolerate that.
  */
 interface IJurisdiction {
 	/**
@@ -57,6 +57,12 @@ interface IJurisdiction {
 	 * (docs/contributing.md).
 	 */
 	public function logbookRenderer(): ?IReportRenderer;
+
+	/**
+	 * How a mileage claim under this jurisdiction prints, or null where there is none. A claim also
+	 * needs `rates()`: a page with no rate to value a trip at is not offered.
+	 */
+	public function claimRenderer(): ?IClaimRenderer;
 
 	/**
 	 * The rates this jurisdiction sets, or null where it states none - the generic profile's

@@ -10,10 +10,13 @@ namespace OCA\NextFleet\Tests\Unit\Service;
 
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Jurisdiction\Generic;
+use OCA\NextFleet\Jurisdiction\IClaimRenderer;
 use OCA\NextFleet\Jurisdiction\IJurisdiction;
+use OCA\NextFleet\Jurisdiction\IRateProvider;
 use OCA\NextFleet\Jurisdiction\IReportRenderer;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCA\NextFleet\Service\PreferencesService;
+use OCA\NextFleet\Tests\Stub\RegisteredProfiles;
 use OCP\IConfig;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
@@ -62,13 +65,7 @@ class PreferencesServiceTest extends TestCase {
 	 * question only the list can answer, and a stubbed one would prove nothing.
 	 */
 	private function service(): PreferencesService {
-		$container = $this->createMock(ContainerInterface::class);
-		$container->method('get')->willReturnCallback(
-			/** @param class-string $id */
-			static fn (string $id): object => new $id(),
-		);
-
-		return new PreferencesService($this->config, new Jurisdictions($container));
+		return new PreferencesService($this->config, RegisteredProfiles::jurisdictions());
 	}
 
 	/**
@@ -86,8 +83,8 @@ class PreferencesServiceTest extends TestCase {
 
 	/**
 	 * The Reports screen offers the Fahrtenbuch only for a vehicle whose country prints one, and the
-	 * profile is what knows that. The doubles invert what the two real profiles answer, so the flag
-	 * cannot come from the key.
+	 * profile is what knows that. The doubles take Germany's away, which no real profile does, so the
+	 * flag cannot come from the key.
 	 */
 	public function testItSaysWhichJurisdictionsPrintALogbook(): void {
 		$container = $this->createMock(ContainerInterface::class);
@@ -103,6 +100,27 @@ class PreferencesServiceTest extends TestCase {
 		$jurisdictions = (new PreferencesService($this->config, new Jurisdictions($container)))->forUser(self::USER)['jurisdictions'];
 
 		$this->assertSame(['de' => false, 'generic' => true], array_column($jurisdictions, 'logbook_export', 'key'));
+	}
+
+	/**
+	 * A mileage claim is offered where the country prints one and states a rate to value a trip
+	 * at; either alone would open a 404.
+	 */
+	public function testItSaysWhichJurisdictionsPrintAMileageClaim(): void {
+		$profiles = [];
+		foreach (['both' => [true, true], 'no rates' => [true, false], 'no page' => [false, true]] as $key => [$page, $rates]) {
+			$profile = $this->createMock(IJurisdiction::class);
+			$profile->method('key')->willReturn($key);
+			$profile->method('claimRenderer')->willReturn($page ? $this->createMock(IClaimRenderer::class) : null);
+			$profile->method('rates')->willReturn($rates ? $this->createMock(IRateProvider::class) : null);
+			$profiles[] = $profile;
+		}
+		$jurisdictions = $this->createMock(Jurisdictions::class);
+		$jurisdictions->method('all')->willReturn($profiles);
+
+		$answers = (new PreferencesService($this->config, $jurisdictions))->forUser(self::USER)['jurisdictions'];
+
+		$this->assertSame(['both' => true, 'no rates' => false, 'no page' => false], array_column($answers, 'mileage_claim', 'key'));
 	}
 
 	/** A user who has never opened the screen already has the answer a vehicle would take. */
@@ -230,6 +248,36 @@ class PreferencesServiceTest extends TestCase {
 		yield 'VAT as a number' => ['reclaim_vat', 1];
 		yield 'a period nobody offers' => ['kpi_period', 'last-week'];
 		yield 'a period as a number' => ['kpi_period', 12];
+		yield 'a grid factor as a word' => ['grid_factor', '120'];
+		yield 'a grid factor with a fraction' => ['grid_factor', 120.5];
+		yield 'a grid factor below nothing' => ['grid_factor', -1];
+		yield 'a grid factor no grid has' => ['grid_factor', 5001];
+	}
+
+	/**
+	 * The electricity a person charges is theirs to state: a green tariff is not the country's
+	 * average. No answer is the country's figure, and the screen shows it beside the field.
+	 */
+	public function testItWritesThisUsersGridFactorAndClearsIt(): void {
+		$this->assertNull($this->service()->forUser(self::USER)['preferences']['grid_factor']);
+
+		$this->service()->write(self::USER, ['grid_factor' => 120]);
+		$this->assertSame(120, $this->service()->forUser(self::USER)['preferences']['grid_factor']);
+
+		// Zero is a stated answer - a tariff from nothing but wind - and not a cleared one.
+		$this->service()->write(self::USER, ['grid_factor' => 0]);
+		$this->assertSame(0, $this->service()->forUser(self::USER)['preferences']['grid_factor']);
+
+		$this->service()->write(self::USER, ['grid_factor' => null]);
+		$this->assertNull($this->service()->forUser(self::USER)['preferences']['grid_factor']);
+	}
+
+	/** Each country's average travels with it, so the screen can say what an empty field means. */
+	public function testEachJurisdictionStatesItsGridAverage(): void {
+		$grids = array_column($this->service()->forUser(self::USER)['jurisdictions'], 'grid_factor', 'key');
+
+		$this->assertSame(363, $grids['de']['grams'] ?? null);
+		$this->assertNull($grids['generic']);
 	}
 
 	public function testAPeriodALaterReleaseDroppedReadsAsTheDefault(): void {

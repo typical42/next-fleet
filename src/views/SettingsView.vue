@@ -8,10 +8,11 @@ import NcCheckboxRadioSwitch from '@nextcloud/vue/components/NcCheckboxRadioSwit
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import NcSelect from '@nextcloud/vue/components/NcSelect'
 import NcSettingsSection from '@nextcloud/vue/components/NcSettingsSection'
+import NcTextField from '@nextcloud/vue/components/NcTextField'
 import { computed, onMounted, ref } from 'vue'
 
 import { getPreferences, savePreferences } from '../services/api.js'
-import { jurisdictionWord } from '../utils/format.js'
+import { jurisdictionWord, parseWhole } from '../utils/format.js'
 
 /** The registered countries, as the server named them. @type {import('vue').Ref<{ key: string, name: string }[]>} */
 const offered = ref([])
@@ -30,11 +31,47 @@ const options = computed(() => offered.value.map(({ key, name }) => ({
 // dropdown cannot show what it is not offering, and the vehicle would still be written under it.
 const selected = computed(() => options.value.find((option) => option.id === chosen.value) ?? null)
 
+const grid = ref('')
+/**
+ * The figure the server holds, which the field goes back to on a refusal. Not reactive: nothing
+ * is drawn from it.
+ */
+const stored = { gridFactor: /** @type {number|null} */ (null) }
+const gridUnreadable = ref(false)
+
+// An empty field is read at each vehicle's own country, not at the default chosen above, so
+// every country's average is named.
+const gridHelp = computed(() => {
+	if (gridUnreadable.value) {
+		return t('nextfleet', 'Whole grams per kWh, or empty')
+	}
+	const averages = offered.value
+		.filter(({ grid_factor: average }) => average !== null)
+		.map(({ key, name, grid_factor: average }) => t('nextfleet', '{country} {grams} g/kWh in {year}', {
+			country: { value: jurisdictionWord(key, name), escape: false },
+			grams: average.grams,
+			year: average.year,
+		}))
+		.join('; ')
+
+	return averages === ''
+		? t('nextfleet', 'Empty: no country states an average')
+		: t('nextfleet', 'Empty for the average of the country each vehicle is kept under: {averages}', { averages: { value: averages, escape: false } })
+})
+
+/** Shows what the server holds. */
+function showGrid() {
+	grid.value = stored.gridFactor === null ? '' : String(stored.gridFactor)
+}
+
 /** @param {import('../services/api.js').Settings} settings - the server's answer */
 function hold(settings) {
 	offered.value = settings.jurisdictions
 	chosen.value = settings.preferences.jurisdiction
 	reclaimVat.value = settings.preferences.reclaim_vat
+	stored.gridFactor = settings.preferences.grid_factor
+	showGrid()
+	gridUnreadable.value = false
 }
 
 onMounted(async () => {
@@ -93,6 +130,31 @@ async function reclaim(reclaims) {
 		busy.value = false
 	}
 }
+
+/**
+ * Saves when the field is left rather than on every keystroke. An empty field clears the figure;
+ * one it cannot read saves nothing, since a typo is not a cleared setting. A refusal puts the
+ * stored figure back, as for the country.
+ */
+async function saveGrid() {
+	const typed = grid.value.trim()
+	const grams = typed === '' ? null : parseWhole(typed)
+	gridUnreadable.value = typed !== '' && grams === null
+	if (gridUnreadable.value || grams === stored.gridFactor) {
+		return
+	}
+
+	busy.value = true
+	failure.value = ''
+	try {
+		hold(await savePreferences({ grid_factor: grams }))
+	} catch (error) {
+		showGrid()
+		failure.value = error.message
+	} finally {
+		busy.value = false
+	}
+}
 </script>
 
 <template>
@@ -118,6 +180,14 @@ async function reclaim(reclaims) {
 		<p class="hint">
 			{{ t('nextfleet', 'Cost figures are shown net of VAT.') }}
 		</p>
+
+		<NcTextField v-model="grid"
+			:label="t('nextfleet', 'Grid factor for charging, g CO₂/kWh')"
+			:helper-text="gridHelp"
+			:error="gridUnreadable"
+			:disabled="busy"
+			inputmode="numeric"
+			@change="saveGrid" />
 	</NcSettingsSection>
 </template>
 

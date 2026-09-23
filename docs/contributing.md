@@ -22,11 +22,11 @@ The interfaces stay — as ordinary internal seams, not as public API:
 
 | Seam | Interface | First implementation |
 |---|---|---|
-| Jurisdiction profile | `IJurisdiction` — key, display name, units, currency, the defaults a new vehicle takes. Plate format and document kinds arrive with the feature that reads them | `de`, `generic` |
+| Jurisdiction profile | `IJurisdiction` — key, display name, units, currency, the defaults a new vehicle takes. Plate format arrives with the feature that reads it. Document kinds are not here: registration, insurance, manual, receipt and photo are papers every country has (`Document::KINDS`) | `de`, `generic` |
 | Logbook ruleset | `ILogbookRules` — required fields per trip category, lock delay, retention period, the URL the requirement is written at. What it answers, never what follows from it: the finding a missing field produces is the core's | German Fahrtenbuch ([logbook mode](features.md#logbook-mode)) |
 | Inspection regime | `IInspectionScheme` — the inspection as a reminder template, its cadence and first-due rule by vehicle type. Reached through `IJurisdiction::inspectionScheme()` | HU/AU (24 months, 12 for trucks and tractors, 36 for new cars) |
-| Rates over time | `IRateProvider` — mileage allowance, VAT, emission factors, **each valid from a date**; and the expense categories that carry no VAT. Reached through `IJurisdiction::rates()` | German VAT (M3), 0,30 €/km, German grid factor |
-| Report renderer | `IReportRenderer` — range in, printable HTML out ([ADR 0005](adr/0005-no-pdf-library.md)) | Fahrtenbuch, mileage claim |
+| Rates over time | `IRateProvider` — mileage allowance, VAT, emission factors, **each valid from a date**; and the expense categories that carry no VAT. Reached through `IJurisdiction::rates()` | German VAT (M3), 0,30 €/km by car, German grid factor |
+| Report renderer | `IReportRenderer` and `IClaimRenderer` — what the core read in, printable HTML out ([ADR 0005](adr/0005-no-pdf-library.md)) | Fahrtenbuch, mileage claim, the generic plain logbook |
 | Importer | `IImporter` — foreign CSV in, our records out | Drivvo, Spritmonitor, LubeLogger |
 | Service templates | `IServiceTemplates` — intervals by market or manufacturer. No law sets them, so no jurisdiction hands them out | Generic (oil, brake fluid, tyres) |
 
@@ -44,7 +44,8 @@ in M1, the logbook ruleset in M2, the VAT rate in M3 — and the classes waiting
 jurisdiction and never the class.
 
 **The generic profile is the other one.** Metric units, no currency, no logbook ruleset, no inspection
-scheme, no rates. A vehicle under it states its own currency — an instance-wide one would be a
+scheme, no rates — but a plain logbook, in the reader's language, because a trip listing needs no
+country's law. A vehicle under it states its own currency — an instance-wide one would be a
 single number for a fleet that crosses borders. It is what an install in a country nobody has
 written gets, and it is why a report needing a rate must be *unavailable* rather than zero. Every
 seam has to tolerate a jurisdiction that answers "I don't know" — the generic profile is the test
@@ -57,7 +58,9 @@ that it does.
   workaround.
 - **Rates are time-versioned, always.** A 2024 mileage claim must use the 2024 rate, not today's.
   `IRateProvider::vatRateAt(DateTimeInterface $when)` and its siblings, never a constant. Same for VAT and emission
-  factors. This is the detail that quietly invalidates reports when it is skipped.
+  factors. This is the detail that quietly invalidates reports when it is skipped. The one exception
+  is the grid average (`gridFactor()`): it is published years late, so it is the newest figure with
+  its year shown, and a person can replace it with their own.
 - **Store canonical, display local.** Kilometres, millilitres, cents, UTC in the database — always,
   including for a UK vehicle. Conversion happens at the edges.
 - **Jurisdiction is per vehicle**, not per instance: a fleet crosses borders, and a leased car

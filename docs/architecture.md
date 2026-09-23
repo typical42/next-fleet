@@ -368,6 +368,71 @@ are printed as UTC and labelled so. The trips are sorted into the year by their 
 period is stated when it overlaps the year widened by the furthest offsets, fourteen hours east and
 twelve west: exactly the instants some trip of the year could set off at.
 
+**Under `generic` it is a plain listing** (`Generic\LogbookRenderer`): date, time, route, purpose,
+counters, distance and category per trip, the year's distance per category above the table,
+voided trips listed and marked. Distance is in the vehicle's unit, kilometres or hours. Trips with no
+distance stated are counted aloud and left out of the split; a category with only such trips reads
+"Not stated", not 0. No period section, no missing fields, no late changes: without a
+ruleset nothing is missing and nothing is late. No authority names its language, so it prints in the
+reader's, dates and times in their locale; the profile takes `IL10N` for it.
+
+### The mileage claim
+
+`GET /apps/nextfleet/vehicles/{uuid}/mileage/{year}` is a page like the Fahrtenbuch, and served like
+it: no request token, rate-limited, logged by ids, the same policy. The Reports screen offers it
+where `mileage_claim` is set on the vehicle's jurisdiction and the vehicle counts kilometres.
+
+**The core values, the country prints.** `MileageClaimExport` takes the year's business trips by
+their local date, voided ones left out, and hands a `MileageClaim` to the jurisdiction's
+`IClaimRenderer`. Each line is the trip's kilometres (`Trip::kilometres()`, the figure the
+Fahrtenbuch prints) times `IRateProvider::mileageRateAt()` for the vehicle type on the trip's local
+day, in tenths of a cent, rounded half up to the cent. A trip with no rate for its day or no
+kilometres prints "not stated" and stays out of the total, which is null when no line has an
+amount. There is no claim (404) where the jurisdiction has no rates or no renderer, or the vehicle
+counts hours. **Commutes are not on it**: they are a different deduction under different rules,
+and a sum mixing them would be wrong where nobody could see it.
+
+### CSV export
+
+`GET /apps/nextfleet/vehicles/{uuid}/csv/{year}/{table}` answers one file to save, `table` being
+`trips`, `energy`, `maintenance` or `expenses`. The Costs screen's *Export* menu links the year on
+screen. It sits beside the logbook for the logbook's reasons: a link, no request token, rate-limited
+and logged by ids, and the VIEW check a single row takes. An unknown table is a 404.
+
+**A row is in the year its own offset puts it in** (`LocalYear`), as a trip is in the Fahrtenbuch, so no zone is
+asked for. The Costs screen cuts its months in the reader's zone instead; the two disagree only
+about a row entered in another zone near New Year. A voided trip is in the file with `voided` 1. A
+deleted row of the other tables is not, since only a trip is voided rather than deleted.
+
+**The figures are the integers stored**, under the field's own name: cents, millilitres or watt-hours
+(`amount` by `energy`), tenths of a cent for `unit_price`, basis points for `vat_rate`, the counter
+in `odo_unit`. A money column has `currency` beside it. An instant is its local wall clock
+(`started`, `YYYY-MM-DD HH:MM`) plus its offset in minutes (`started_offset_min`). Booleans are 1
+and 0, an unstated value an empty cell. So nothing depends on the reader's decimal separator.
+
+**The file is for a spreadsheet** (`Csv`): UTF-8 with a BOM, `,`, CRLF, a cell quoted when it holds a
+separator, quote or line break. A string starting with `=`, `+`, `-`, `@`, tab or CR gets a leading
+`'` ([security](security.md)). Only strings are defused: a number is ours, and a negative amount
+stays a number.
+
+### Documents
+
+`GET`, `POST /api/vehicles/{uuid}/documents` and `DELETE …/documents/{document}` list, attach and
+detach a vehicle's papers (`DocumentService`). Listing takes VIEW, the writes EDIT and the vehicle's
+hold. Each answers with the list as it now stands, so there is no token: nothing edits a document.
+
+**Attaching takes a `file_id` from Nextcloud's file picker**, with a `kind` and optionally a
+`linked_type` (`energy`, `maintenance`, `expense`) plus `linked_uuid`. There is no upload path. The
+file must be one the attacher can read in their own Files, or it is a 404: the download serves it to
+everyone who may view the vehicle, so this is where the file's own access is checked
+([security](security.md)). A link to an entry of another vehicle is a 404 too. The same file on the
+same entry twice is one document. Detaching soft-deletes the row and leaves the file alone.
+
+**A listed document carries** `uuid`, `kind`, `file_id`, `name`, `mime`, `linked_type` and
+`linked_uuid`. The name is looked up by id wherever the file lives now, in whoever's Files hold it,
+so a move is followed. A deleted file, trash bin included, lists with `name` and `mime` null: the
+row stays, and the screen says the file is gone.
+
 ## Nextcloud integration
 
 | Concern | Mechanism |
@@ -380,8 +445,8 @@ twelve west: exactly the instants some trip of the year could set off at.
 | Talk (optional) | Post due items into a fleet room, only when the Talk app is present. M6+, cheap, and very much the reason someone runs Nextcloud. |
 | Activity stream | `OCA\Activity` provider — optional, after v1. |
 | Dashboard | `OCP\Dashboard\IAPIWidgetV2`: "next due" list. |
-| Unified search | `OCP\Search\IProvider`: find a vehicle by plate. |
-| Settings | Personal settings (default jurisdiction). The mail cadence is per vehicle. |
+| Unified search | `OCP\Search\IProvider`: find a vehicle by plate (separators ignored), manufacturer or model, among the ones `VehicleService::list` gives the searcher, disposed ones left out. Vehicles only: searching trip purposes or notes would take the access check somewhere nobody tests it. |
+| Settings | Personal settings (default jurisdiction, "I reclaim VAT", grid factor). The mail cadence is per vehicle. |
 | CLI | `occ nextfleet:import`, `occ nextfleet:report` for scripting and imports. |
 
 **No calendar.** Public `OCP` on NC 31–34 can create a calendar event but cannot update or delete
@@ -563,7 +628,8 @@ its own rate; a row without a stated rate counts gross, and the figure says so.
 
 **The Costs screen's year** is the same figure, once for the year and once per month, from
 `GET /api/vehicles/{uuid}/costs/{year}?tz=`. The client names the zone and the server cuts the
-twelve months at its midnight. Each cost also states its maintenance total and its expenses per
+twelve months at its midnight. Old IANA aliases count, since browsers still report some zones by
+them (`Asia/Calcutta`). Each cost also states its maintenance total and its expenses per
 category, in the sheet's order, then any word the sheet does not offer, then the uncategorised:
 they are unstated, not "other". The
 three bands are energy, maintenance and the expenses' sum. An empty month has no cost, like any
@@ -581,9 +647,15 @@ cross-vehicle report groups by both and shows sections — never a total, and no
 KPI labels derive from the vehicle (`€/100 km`, `€/h`), and a vehicle with no distance in the
 period shows cost as a period total instead.
 
-**CO₂** (M5) = amount × emission factor per energy type, from a versioned table in code with the
-source cited; electricity uses a configurable grid factor. Always labelled an estimate. Under the generic
-jurisdiction there are no factors, so the figure is unavailable rather than zero.
+**CO₂** = amount × emission factor per energy type, from a versioned table in code with the
+source cited (`IRateProvider::emissionFactorAt()`), read on the fill-up's own day. Electricity uses
+a grid factor instead: the person's own from the personal settings, or the country's newest average
+with its year and source (`gridFactor()`). One figure, not a table, because a grid average is
+published years late. The personal figure is the reader's, so two people sharing a car can see
+two estimates. A fill-up without a factor is left out and the figure says so; CNG has none,
+since it is entered in litres of gas at no stated pressure. `EmissionService` computes it, once
+per year, for the Costs screen. Always labelled an estimate. Under the generic jurisdiction there
+are no factors, so the figure is unavailable rather than zero.
 
 **VAT:** store gross plus `vat_rate`, derive net — on energy, maintenance and expenses alike. A
 freelancer's largest reclaimable VAT is a workshop invoice, not a tank of diesel.

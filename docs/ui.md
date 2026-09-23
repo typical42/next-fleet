@@ -137,7 +137,7 @@ touch. That keeps the middle free for the things you touch weekly.
 | **Costs** | One year, one vehicle: stacked bars per month, table below, export button | Export |
 | **Reports** | Fahrtenbuch, mileage claim, cost, CO₂ — pick a range, get a printable page ([ADR 0005](adr/0005-no-pdf-library.md)) | Print / export |
 | **Vehicle sidebar** | Master data, jurisdiction, documents (sharing from M6); reminders stay in the due banner | Edit inline |
-| **Personal settings** | The defaults a person keeps: jurisdiction first, then "I reclaim VAT". Not a screen in the app: it is the app's block on Nextcloud's own settings page, its own bundle, and it talks to the same API as everything else | Pick and it saves |
+| **Personal settings** | The defaults a person keeps: jurisdiction first, then "I reclaim VAT", then the grid factor for charging (empty for the country's average, which it names). Not a screen in the app: it is the app's block on Nextcloud's own settings page, its own bundle, and it talks to the same API as everything else | Pick and it saves |
 
 **Reports** has one report so far, the Fahrtenbuch: one vehicle and one year, opened as a page in
 a tab of its own ([export](architecture.md#the-fahrtenbuch-export)). It offers only vehicles whose
@@ -310,7 +310,8 @@ but shipping only `de` would give company users "du". Ship both, worded differen
 - **HU/AU has no English equivalent.** Label it "Technical inspection (HU/AU)". Never "TÜV"
   ([licensing](legal.md)).
 - **Formats follow the locale, not the language:** `1.234,5 km`, `12,34 €`, `03.09.2026` in German.
-  Use `IL10N::l()` and `Intl.NumberFormat` — no hand-rolled formatting anywhere.
+  Use `IL10N::l()` and `Intl.NumberFormat` — no hand-rolled formatting anywhere. `IL10N` formats
+  no numbers, so a PHP page in the reader's locale prints them ungrouped (the generic logbook).
 - **A document for an authority is in that authority's language, whoever prints it.** The Fahrtenbuch
   is German, dates, numbers and words alike, because the language of proceedings at a German tax
   office is German (§ 87 AO). Its words and formats are the country's layout

@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Tests\Integration;
 
 use OCA\NextFleet\AppInfo\Application;
+use OCA\NextFleet\Controller\DocumentController;
 use OCA\NextFleet\Controller\EnergyController;
 use OCA\NextFleet\Controller\ExpenseController;
 use OCA\NextFleet\Controller\KpiController;
@@ -24,11 +25,14 @@ use OCA\NextFleet\Controller\VehicleController;
 use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\Vehicle;
+use OCA\NextFleet\Service\DocumentService;
 use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\ExpenseService;
+use OCA\NextFleet\Service\ExportService;
 use OCA\NextFleet\Service\KpiService;
 use OCA\NextFleet\Service\LogbookExport;
 use OCA\NextFleet\Service\MaintenanceService;
+use OCA\NextFleet\Service\MileageClaimExport;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\PreferencesService;
 use OCA\NextFleet\Service\RecipientService;
@@ -76,9 +80,12 @@ class VehicleIdorTest extends TestCase {
 	private ExpenseService $spending;
 	private ReminderService $reminders;
 	private RecipientService $recipients;
+	private DocumentService $papers;
 	private TimelineService $history;
 	private KpiService $figures;
 	private LogbookExport $logbook;
+	private MileageClaimExport $claim;
+	private ExportService $csv;
 	private PreferencesService $settings;
 	private AccessMapper $grants;
 	private Vehicle $vehicle;
@@ -93,9 +100,12 @@ class VehicleIdorTest extends TestCase {
 		$this->spending = $container->get(ExpenseService::class);
 		$this->reminders = $container->get(ReminderService::class);
 		$this->recipients = $container->get(RecipientService::class);
+		$this->papers = $container->get(DocumentService::class);
 		$this->history = $container->get(TimelineService::class);
 		$this->figures = $container->get(KpiService::class);
 		$this->logbook = $container->get(LogbookExport::class);
+		$this->claim = $container->get(MileageClaimExport::class);
+		$this->csv = $container->get(ExportService::class);
 		$this->settings = $container->get(PreferencesService::class);
 		$this->grants = $container->get(AccessMapper::class);
 
@@ -204,6 +214,15 @@ class VehicleIdorTest extends TestCase {
 	}
 
 	/**
+	 * And for the vehicle's papers.
+	 *
+	 * @param array<string, mixed> $params
+	 */
+	private function document(string $userId, array $params): DocumentController {
+		return new DocumentController(Application::APP_ID, $this->request($params), $this->papers, $this->session($userId));
+	}
+
+	/**
 	 * And again, for the one read that shows everything at once.
 	 *
 	 * @param array<string, mixed> $params
@@ -227,7 +246,7 @@ class VehicleIdorTest extends TestCase {
 	 * @param array<string, mixed> $params
 	 */
 	private function report(string $userId, array $params): ReportController {
-		return new ReportController(Application::APP_ID, $this->request($params), $this->logbook, $this->session($userId));
+		return new ReportController(Application::APP_ID, $this->request($params), $this->logbook, $this->claim, $this->csv, $this->session($userId));
 	}
 
 	/**
@@ -367,12 +386,19 @@ class VehicleIdorTest extends TestCase {
 			// A real account, so the refusal cannot be the unknown user's 400.
 			'recipient#create' => $this->recipient(self::STRANGER, $params + ['user_id' => 'admin'])->create($uuid),
 			'recipient#delete' => $this->recipient(self::STRANGER, $params)->delete($uuid, self::OWNER),
+			'document#index' => $this->document(self::STRANGER, $params)->index($uuid),
+			// A file id that is surely there, so the refusal cannot be the missing file's 404.
+			'document#create' => $this->document(self::STRANGER, $params + ['file_id' => 1, 'kind' => 'receipt'])->create($uuid),
+			// Walked against a document that is not there, for the reason the trip's are.
+			'document#delete' => $this->document(self::STRANGER, $params)->delete($uuid, self::NO_SUCH_ENTRY),
 			'timeline#index' => $this->timeline(self::STRANGER, $params)->index($uuid),
 			'timeline#gaps' => $this->timeline(self::STRANGER, $params)->gaps($uuid),
 			'timeline#show' => $this->timeline(self::STRANGER, $params)->show($uuid, 'trip', self::NO_SUCH_ENTRY),
 			'kpi#index' => $this->kpis(self::STRANGER, $params + ['from' => 1749900000, 'to' => 1750200000])->index($uuid),
 			'kpi#year' => $this->kpis(self::STRANGER, $params + ['tz' => 'Europe/Berlin'])->year($uuid, '2025'),
 			'report#logbook' => $this->report(self::STRANGER, $params)->logbook($uuid, '2026'),
+			'report#mileage' => $this->report(self::STRANGER, $params)->mileage($uuid, '2026'),
+			'report#csv' => $this->report(self::STRANGER, $params)->csv($uuid, '2026', 'trips'),
 			'preferences#index' => $this->preferences(self::STRANGER, $params)->index(),
 			'preferences#update' => $this->preferences(self::STRANGER, $params)->update(),
 			default => $this->fail($route . ' is a route the IDOR sweep has never been through'),
@@ -395,6 +421,7 @@ class VehicleIdorTest extends TestCase {
 		$this->assertNull($untouched->getOdoValue());
 		$this->assertSame([], $this->reminders->list(self::OWNER, $uuid));
 		$this->assertSame([self::OWNER], array_column($this->recipients->list(self::OWNER, $uuid), 'user_id'));
+		$this->assertSame([], $this->papers->list(self::OWNER, $uuid));
 	}
 
 	/**

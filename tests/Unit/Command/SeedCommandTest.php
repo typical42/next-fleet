@@ -24,13 +24,13 @@ use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\ReminderService;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
+use OCA\NextFleet\Tests\Stub\RegisteredProfiles;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\IConfig;
 use OCP\IDBConnection;
 use OCP\IUserManager;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
-use Psr\Container\ContainerInterface;
 use Symfony\Component\Console\Tester\CommandTester;
 
 /**
@@ -172,18 +172,13 @@ class SeedCommandTest extends TestCase {
 		// The real service and the real registration list, because what this command is worth is
 		// that the fleet it invents passes the validation every other write passes - and takes
 		// the same country defaults.
-		$container = $this->createMock(ContainerInterface::class);
-		$container->method('get')->willReturnCallback(
-			/** @param class-string $id */
-			static fn (string $id): object => new $id(),
-		);
 		// The seeded fleet is created, never updated, so nothing here reaches the audit trail or
 		// the transaction an update is written in.
 		$fleet = new VehicleService(
 			$this->mapper,
 			$access,
 			$config,
-			new Jurisdictions($container),
+			RegisteredProfiles::jurisdictions(),
 			$this->createMock(AuditMapper::class),
 			$this->createMock(IDBConnection::class),
 			$this->createMock(ReminderRecipientMapper::class),

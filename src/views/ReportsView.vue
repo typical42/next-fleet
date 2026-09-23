@@ -11,7 +11,7 @@ import NcSelect from '@nextcloud/vue/components/NcSelect'
 import NcTextField from '@nextcloud/vue/components/NcTextField'
 import { computed, onMounted, ref } from 'vue'
 
-import { getPreferences, logbookUrl } from '../services/api.js'
+import { getPreferences, logbookUrl, mileageClaimUrl } from '../services/api.js'
 import { nameOf } from '../utils/format.js'
 
 const props = defineProps({
@@ -26,13 +26,31 @@ const props = defineProps({
 
 /** The keys of the countries that print a logbook. @type {import('vue').Ref<string[]>} */
 const printing = ref([])
+/** The keys of the countries that print a mileage claim. @type {import('vue').Ref<string[]>} */
+const claiming = ref([])
 const loaded = ref(false)
 const failure = ref('')
 
-// A vehicle whose country has no renderer would open a 404, so it is not offered.
+/**
+ * Whether the vehicle's country prints a logbook, and whether a claim: each route answers 404
+ * where there is none, and the claim also for a vehicle not counting kilometres, which no
+ * kilometre rate values.
+ *
+ * @param {import('../services/api.js').Vehicle} vehicle - one of the fleet
+ * @return {{ logbook: boolean, claim: boolean }} which pages it has
+ */
+function pagesOf(vehicle) {
+	const country = vehicle.jurisdiction ?? ''
+	return {
+		logbook: printing.value.includes(country),
+		claim: claiming.value.includes(country) && vehicle.odo_unit === 'km',
+	}
+}
+
+// A vehicle with neither page would open only 404s, so it is not offered.
 const options = computed(() => props.vehicles
-	.filter((vehicle) => printing.value.includes(vehicle.jurisdiction ?? ''))
-	.map((vehicle) => ({ id: vehicle.uuid, label: nameOf(vehicle) })))
+	.map((vehicle) => ({ id: vehicle.uuid, label: nameOf(vehicle), ...pagesOf(vehicle) }))
+	.filter((one) => one.logbook || one.claim))
 
 /** The uuid chosen; until somebody chooses, the first vehicle on offer is. */
 const chosen = ref('')
@@ -44,14 +62,18 @@ const year = ref(String(new Date().getFullYear()))
 // The route answers anything but four digits with a 400.
 const valid = computed(() => /^\d{4}$/.test(year.value.trim()))
 
-const href = computed(() => selected.value && valid.value
+const logbookHref = computed(() => selected.value && valid.value
 	? logbookUrl(selected.value.id, year.value.trim())
+	: undefined)
+const claimHref = computed(() => selected.value && valid.value
+	? mileageClaimUrl(selected.value.id, year.value.trim())
 	: undefined)
 
 onMounted(async () => {
 	try {
 		const settings = await getPreferences()
 		printing.value = settings.jurisdictions.filter((one) => one.logbook_export).map((one) => one.key)
+		claiming.value = settings.jurisdictions.filter((one) => one.mileage_claim).map((one) => one.key)
 		loaded.value = true
 	} catch (error) {
 		failure.value = error.message
@@ -66,10 +88,10 @@ onMounted(async () => {
 		<template v-else-if="loaded">
 			<NcEmptyContent v-if="options.length === 0"
 				:name="t('nextfleet', 'No logbook to print')"
-				:description="t('nextfleet', 'A logbook prints for vehicles kept under a country that sets out how one reads. The country is chosen in the edit sheet of each vehicle.')" />
+				:description="t('nextfleet', 'The logbook of each vehicle prints here, once there is a vehicle.')" />
 			<section v-else class="reports__logbook">
 				<h3>{{ t('nextfleet', 'Logbook') }}</h3>
-				<p>{{ t('nextfleet', 'The trips of one vehicle in one year, as its country asks for them, on a page your browser prints.') }}</p>
+				<p>{{ t('nextfleet', 'The trips of one vehicle in one year, on a page your browser prints.') }}</p>
 				<NcSelect :model-value="selected"
 					:options="options"
 					:input-label="t('nextfleet', 'Vehicle')"
@@ -81,14 +103,28 @@ onMounted(async () => {
 					inputmode="numeric"
 					:error="!valid"
 					:helper-text="valid ? '' : t('nextfleet', 'A year is four digits')" />
-				<!-- A link to the page in a tab of its own, not a request: the export is a page the
-				     browser prints, and the app stays where it was. -->
-				<NcButton :href="href"
-					:disabled="href === undefined"
-					target="_blank"
-					variant="primary">
-					{{ t('nextfleet', 'Open logbook') }}
-				</NcButton>
+				<!-- Links to pages in a tab of their own, not requests: each is a page the browser
+				     prints, and the app stays where it was. -->
+				<div class="reports__actions">
+					<NcButton v-if="selected?.logbook"
+						class="reports__open-logbook"
+						:href="logbookHref"
+						:disabled="logbookHref === undefined"
+						target="_blank"
+						variant="primary">
+						{{ t('nextfleet', 'Open logbook') }}
+					</NcButton>
+					<NcButton v-if="selected?.claim"
+						class="reports__open-claim"
+						:href="claimHref"
+						:disabled="claimHref === undefined"
+						target="_blank">
+						{{ t('nextfleet', 'Open mileage claim') }}
+					</NcButton>
+				</div>
+				<p v-if="selected?.claim" class="reports__hint">
+					{{ t('nextfleet', 'The mileage claim values the business trips at the rate set by the country the vehicle is kept under. Commutes are not on it.') }}
+				</p>
 			</section>
 		</template>
 	</div>
@@ -110,5 +146,15 @@ onMounted(async () => {
 .reports__logbook > :deep(.select),
 .reports__logbook > :deep(.input-field) {
 	width: 100%;
+}
+
+.reports__actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: calc(var(--default-grid-baseline) * 2);
+}
+
+.reports__hint {
+	color: var(--color-text-maxcontrast);
 }
 </style>

@@ -11,6 +11,7 @@ namespace OCA\NextFleet\Tests\Country\Generic;
 use OCA\NextFleet\Jurisdiction\Generic;
 use OCA\NextFleet\Jurisdiction\IJurisdiction;
 use OCA\NextFleet\Tests\Country\JurisdictionTestCase;
+use OCA\NextFleet\Tests\Stub\Untranslated;
 
 /**
  * The profile that answers "I don't know" about currency. It takes the same kit as every other
@@ -18,7 +19,12 @@ use OCA\NextFleet\Tests\Country\JurisdictionTestCase;
  */
 class ProfileTest extends JurisdictionTestCase {
 	public static function profile(): IJurisdiction {
-		return new Generic\Profile();
+		return new Generic\Profile(new Untranslated());
+	}
+
+	/** A plain trip listing (docs/features.md#logbook-mode): no logbook is required, but one prints. */
+	public function testItPrintsAPlainLogbook(): void {
+		$this->assertInstanceOf(Generic\LogbookRenderer::class, static::profile()->logbookRenderer());
 	}
 
 	/**

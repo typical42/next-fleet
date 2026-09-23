@@ -197,7 +197,19 @@ import { generateOcsUrl, generateUrl } from '@nextcloud/router'
  *
  * @typedef {object} CostYear
  * @property {Kpis} year - the year's figures
+ * @property {Co2|null} co2 - the year's CO₂; null where the vehicle's country states no factors
  * @property {{month: number, from: number, to: number, cost: Cost}[]} months - January first
+ */
+
+/**
+ * A period's CO₂ estimate (lib/Service/EmissionService.php).
+ *
+ * @typedef {object} Co2
+ * @property {number|null} grams - null when nothing was burnt
+ * @property {boolean} unstated - a fill-up had no factor and is left out
+ * @property {string} source - where the fuel factors are written down
+ * @property {{grams: number, year: number|null, source: string|null}|null} grid - the factor the
+ *   charges were read at, null without a charge; the reader's own has no year and no source
  */
 
 /**
@@ -271,12 +283,12 @@ import { generateOcsUrl, generateUrl } from '@nextcloud/router'
  * surface (docs/adr/0006-one-api-surface-in-v1.md).
  *
  * @typedef {object} Settings
- * @property {{ jurisdiction: string, dismissed_hints: string[], reclaim_vat: boolean, kpi_period: string }} preferences -
+ * @property {{ jurisdiction: string, dismissed_hints: string[], reclaim_vat: boolean, kpi_period: string, grid_factor: number|null }} preferences -
  *   this user's own choices: the country new vehicles are kept under, the vehicles whose "complete
- *   this vehicle" hint they have answered, whether cost figures are net of VAT, and the period the
- *   vehicle header shows
- * @property {{ key: string, name: string, logbook_export: boolean }[]} jurisdictions - the registered
- *   countries, English, and whether each prints a logbook
+ *   this vehicle" hint they have answered, whether cost figures are net of VAT, the period the
+ *   vehicle header shows, and their electricity's grams of CO₂ per kWh (null for the country's)
+ * @property {{ key: string, name: string, logbook_export: boolean, mileage_claim: boolean, grid_factor: {grams: number, year: number, source: string}|null }[]} jurisdictions -
+ *   the registered countries, English, whether each prints a logbook and a mileage claim, and its grid average
  */
 
 /**
@@ -781,6 +793,31 @@ export async function closeGap(uuid, gap) {
  */
 export function logbookUrl(uuid, year) {
 	return generateUrl(`/apps/nextfleet/vehicles/${uuid}/logbook/${year}`)
+}
+
+/**
+ * Where one vehicle's mileage claim for one year is printed; an address for the reason logbookUrl()
+ * gives (docs/architecture.md#the-mileage-claim).
+ *
+ * @param {string} uuid - the vehicle whose business trips to value
+ * @param {string} year - the year as four digits
+ * @return {string} the page's address
+ */
+export function mileageClaimUrl(uuid, year) {
+	return generateUrl(`/apps/nextfleet/vehicles/${uuid}/mileage/${year}`)
+}
+
+/**
+ * Where one table of one vehicle's year is saved as CSV; an address for the reason logbookUrl()
+ * gives (docs/architecture.md#csv-export).
+ *
+ * @param {string} uuid - the vehicle whose rows to export
+ * @param {string} year - the year as four digits
+ * @param {'trips'|'energy'|'maintenance'|'expenses'} table - which file
+ * @return {string} the file's address
+ */
+export function csvUrl(uuid, year, table) {
+	return generateUrl(`/apps/nextfleet/vehicles/${uuid}/csv/${year}/${table}`)
 }
 
 /**

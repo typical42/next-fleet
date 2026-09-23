@@ -19,11 +19,11 @@ use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCA\NextFleet\Service\NotificationService;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
+use OCA\NextFleet\Tests\Stub\RegisteredProfiles;
 use OCP\IConfig;
 use OCP\IDBConnection;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
-use Psr\Container\ContainerInterface;
 
 /**
  * The rules a vehicle is written under: who owns it, who reaches it, what a request may and may
@@ -106,13 +106,7 @@ class VehicleServiceTest extends TestCase {
 	 * profile a vehicle is written under, and a stubbed profile would prove it against nothing.
 	 */
 	private function jurisdictions(): Jurisdictions {
-		$container = $this->createMock(ContainerInterface::class);
-		$container->method('get')->willReturnCallback(
-			/** @param class-string $id */
-			static fn (string $id): object => new $id(),
-		);
-
-		return new Jurisdictions($container);
+		return RegisteredProfiles::jurisdictions();
 	}
 
 	/** A vehicle as a read hands it over: clean, with its own identity and dating. */

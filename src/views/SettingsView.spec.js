@@ -6,6 +6,7 @@
 import NcCheckboxRadioSwitch from '@nextcloud/vue/components/NcCheckboxRadioSwitch'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import NcSelect from '@nextcloud/vue/components/NcSelect'
+import NcTextField from '@nextcloud/vue/components/NcTextField'
 import { flushPromises, shallowMount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -26,8 +27,11 @@ vi.mock('../services/api.js', () => ({
 const settings = {
 	// The whole envelope, dismissed hints included: this screen reads only the jurisdiction, but
 	// what the route answers with is one shape (lib/Service/PreferencesService.php).
-	preferences: { jurisdiction: 'de', dismissed_hints: [], reclaim_vat: false, kpi_period: 'last-12' },
-	jurisdictions: [{ key: 'de', name: 'Germany', logbook_export: true }, { key: 'generic', name: 'Generic', logbook_export: false }],
+	preferences: { jurisdiction: 'de', dismissed_hints: [], reclaim_vat: false, kpi_period: 'last-12', grid_factor: null },
+	jurisdictions: [
+		{ key: 'de', name: 'Germany', logbook_export: true, mileage_claim: true, grid_factor: { grams: 363, year: 2024, source: 'https://example.org/grid' } },
+		{ key: 'generic', name: 'Generic', logbook_export: false, mileage_claim: false, grid_factor: null },
+	],
 }
 
 /**
@@ -60,6 +64,14 @@ function dropdown(wrapper) {
  */
 function vatSwitch(wrapper) {
 	return wrapper.findComponent(NcCheckboxRadioSwitch)
+}
+
+/**
+ * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted screen
+ * @return {any} the grid factor field
+ */
+function gridField(wrapper) {
+	return wrapper.findComponent(NcTextField)
 }
 
 /**
@@ -173,6 +185,52 @@ describe('settings screen', () => {
 
 		expect(vatSwitch(wrapper).props('modelValue')).toBe(false)
 		expect(note(wrapper)).toBe('reclaim_vat is true or false')
+	})
+
+	/** Empty means the country's average, and the screen says what that is. */
+	it('shows this user\'s grid factor, and the country average an empty field stands for', async () => {
+		vi.mocked(getPreferences).mockResolvedValue({ ...settings, preferences: { ...settings.preferences, grid_factor: 120 } })
+		const wrapper = await screen()
+
+		expect(gridField(wrapper).props('modelValue')).toBe('120')
+		expect(gridField(wrapper).props('helperText')).toBe('Empty for the average of the country each vehicle is kept under: Germany 363 g/kWh in 2024')
+	})
+
+	/**
+	 * An empty field is read per vehicle, at the vehicle's country and not at this user's default:
+	 * a generic default says nothing about the German car they share.
+	 */
+	it('names every country\'s average, whichever this user defaults to', async () => {
+		vi.mocked(getPreferences).mockResolvedValue({ ...settings, preferences: { ...settings.preferences, jurisdiction: 'generic' } })
+		const wrapper = await screen()
+
+		expect(gridField(wrapper).props('helperText')).toBe('Empty for the average of the country each vehicle is kept under: Germany 363 g/kWh in 2024')
+	})
+
+	it('saves the grid factor when the field is left, and clears it when emptied', async () => {
+		const wrapper = await screen()
+
+		await gridField(wrapper).vm.$emit('update:modelValue', '95')
+		await gridField(wrapper).vm.$emit('change')
+		await flushPromises()
+		expect(savePreferences).toHaveBeenLastCalledWith({ grid_factor: 95 })
+
+		await gridField(wrapper).vm.$emit('update:modelValue', ' ')
+		await gridField(wrapper).vm.$emit('change')
+		await flushPromises()
+		expect(savePreferences).toHaveBeenLastCalledWith({ grid_factor: null })
+	})
+
+	/** A figure the field cannot read is a question, not a cleared setting. */
+	it('saves nothing for a grid factor it cannot read, and says so', async () => {
+		const wrapper = await screen()
+
+		await gridField(wrapper).vm.$emit('update:modelValue', '12,5')
+		await gridField(wrapper).vm.$emit('change')
+		await flushPromises()
+
+		expect(savePreferences).not.toHaveBeenCalled()
+		expect(gridField(wrapper).props('error')).toBe(true)
 	})
 
 	/** A settings page that cannot be read says why, rather than showing an empty dropdown. */

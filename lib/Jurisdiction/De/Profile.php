@@ -8,6 +8,7 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Jurisdiction\De;
 
+use OCA\NextFleet\Jurisdiction\IClaimRenderer;
 use OCA\NextFleet\Jurisdiction\IInspectionScheme;
 use OCA\NextFleet\Jurisdiction\IJurisdiction;
 use OCA\NextFleet\Jurisdiction\ILogbookRules;
@@ -44,6 +45,11 @@ class Profile implements IJurisdiction {
 	/** Built here for the reason the ruleset is. */
 	public function logbookRenderer(): ?IReportRenderer {
 		return new FahrtenbuchRenderer();
+	}
+
+	/** Built here for the reason the ruleset is. */
+	public function claimRenderer(): ?IClaimRenderer {
+		return new MileageClaimRenderer();
 	}
 
 	/** Built here for the reason the ruleset is: the table is its own constants. */

@@ -33,7 +33,10 @@ The app holds a movement profile: where someone was, when, and why. Treat it acc
   That is the trade the PRD asks for, and it costs nothing: a v4 uuid is not guessed, it is leaked —
   and whoever leaked it also leaked the answer.
 - **File downloads are proxied** ([Nextcloud integration](architecture.md#nextcloud-integration)).
-  The app's ACL decides, not the file's.
+  The app's ACL decides, not the file's. That makes attaching the gate on the file side: a
+  `file_id` is taken only if it is a file in the attacher's own Files
+  ([documents](architecture.md#documents)). Otherwise any id on the instance would open somebody
+  else's Files to everyone who may view one vehicle.
 
 ### Hostile content
 
