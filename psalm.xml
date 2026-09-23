@@ -30,9 +30,11 @@
   <!--
     - script() and style() come from Nextcloud's legacy template layer, which is not part of
     - OCP and not in vendor. Templates are analysed, so their one server-provided global has
-    - to be declared somewhere; the test stub is the same declaration.
+    - to be declared somewhere; the test stub is the same declaration. IRootFolder extends a
+    - private OC\ interface, declared the same way.
   -->
   <stubs>
     <file name="tests/Stub/template_functions.php"/>
+    <file name="tests/Stub/oc_hooks_emitter.php"/>
   </stubs>
 </psalm>

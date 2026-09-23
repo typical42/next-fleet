@@ -19,6 +19,7 @@ use OCA\NextFleet\Db\Vehicle;
  * @psalm-import-type Period from ConsumptionService
  * @psalm-import-type Rolling from ConsumptionService
  * @psalm-import-type Cost from CostService
+ * @psalm-import-type Co2 from EmissionService
  * @psalm-type Figures = array{consumption: list<Period>, wall_side: ?Rolling, cost: Cost, hours: ?int}
  */
 class KpiService {
@@ -26,6 +27,8 @@ class KpiService {
 		private VehicleService $fleet,
 		private ConsumptionService $consumption,
 		private CostService $cost,
+		private EmissionService $emissions,
+		private PreferencesService $preferences,
 	) {
 	}
 
@@ -55,11 +58,12 @@ class KpiService {
 	 * The Costs screen's year: the header's figures for all of it, and each month's cost. The
 	 * months are cut at midnight in the zone the client names, for the reason `of()` takes its
 	 * period from the client. A month with no rows has the null cost `CostService` gives any empty
-	 * period.
+	 * period. The year's CO₂ is read at the reader's own grid factor: whoever looks at a shared
+	 * car states the tariff they know.
 	 *
 	 * @param string $year four digits, as the route carries it
 	 * @param array<string, mixed> $fields `tz`, an IANA zone; `net` as for `of()`
-	 * @return array{year: Figures, months: list<array{month: int, from: int, to: int, cost: Cost}>}
+	 * @return array{year: Figures, co2: ?Co2, months: list<array{month: int, from: int, to: int, cost: Cost}>}
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not see this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \InvalidArgumentException if the year or the zone is not one
@@ -90,6 +94,7 @@ class KpiService {
 
 		return [
 			'year' => $this->figures($vehicle, $starts[0], $starts[12], $net),
+			'co2' => $this->emissions->of($vehicle, $starts[0], $starts[12], $this->preferences->gridFactor($userId)),
 			'months' => $months,
 		];
 	}
@@ -114,9 +119,13 @@ class KpiService {
 		return Field::read('net', 'flag', null, $fields['net'] ?? null) === true;
 	}
 
-	/** @throws \InvalidArgumentException unless it names an IANA zone */
+	/**
+	 * The backward-compatible names count too: browsers still report some zones by them.
+	 *
+	 * @throws \InvalidArgumentException unless it names an IANA zone
+	 */
 	private static function zone(mixed $name): \DateTimeZone {
-		if (!is_string($name) || !in_array($name, \DateTimeZone::listIdentifiers(), true)) {
+		if (!is_string($name) || !in_array($name, \DateTimeZone::listIdentifiers(\DateTimeZone::ALL_WITH_BC), true)) {
 			throw new \InvalidArgumentException('tz is the zone the months are cut in');
 		}
 

@@ -4,7 +4,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { addRecipient, closeGap, ConflictError, createReminder, createVehicle, deleteEntry, deleteVehicle, dismissReminder, getPreferences, listFleetReminders, listRecipients, listReminders, listVehicles, logbookUrl, readEntry, readGaps, readKpis, readTimeline, readYear, recordReading, recordTrip, reminderTemplates, removeRecipient, restoreEntry, searchUsers, restoreVehicle, savePreferences, snoozeReminder, updateEntry, updateVehicle } from './api.js'
+import { addRecipient, closeGap, ConflictError, createReminder, createVehicle, csvUrl, deleteEntry, deleteVehicle, dismissReminder, getPreferences, listFleetReminders, listRecipients, listReminders, listVehicles, logbookUrl, mileageClaimUrl, readEntry, readGaps, readKpis, readTimeline, readYear, recordReading, recordTrip, reminderTemplates, removeRecipient, restoreEntry, searchUsers, restoreVehicle, savePreferences, snoozeReminder, updateEntry, updateVehicle } from './api.js'
 
 vi.mock('@nextcloud/router', () => ({
 	generateUrl: (/** @type {string} */ path) => `/index.php${path}`,
@@ -355,6 +355,20 @@ describe('logbookUrl', () => {
 	 */
 	it('names one vehicle and one year outside the api', () => {
 		expect(logbookUrl(vehicle.uuid, '2025')).toBe(`/index.php/apps/nextfleet/vehicles/${vehicle.uuid}/logbook/2025`)
+	})
+})
+
+describe('mileageClaimUrl', () => {
+	/** A page the browser opens, beside the logbook for the same reason. */
+	it('names one vehicle and one year outside the api', () => {
+		expect(mileageClaimUrl(vehicle.uuid, '2025')).toBe(`/index.php/apps/nextfleet/vehicles/${vehicle.uuid}/mileage/2025`)
+	})
+})
+
+describe('csvUrl', () => {
+	/** A file the browser saves, beside the logbook for the same reason. */
+	it('names one vehicle, one year and one table outside the api', () => {
+		expect(csvUrl(vehicle.uuid, '2025', 'trips')).toBe(`/index.php/apps/nextfleet/vehicles/${vehicle.uuid}/csv/2025/trips`)
 	})
 })
 

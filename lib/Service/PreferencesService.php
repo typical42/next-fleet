@@ -17,6 +17,9 @@ use OCP\IConfig;
  * One user's own choices, as the personal settings screen reads and writes them. Nothing here is
  * per instance: a jurisdiction belongs to a person and to the vehicles they create afterwards,
  * never to the server (CONTEXT.md).
+ *
+ * @psalm-import-type GridAverage from \OCA\NextFleet\Jurisdiction\IRateProvider
+ * @psalm-type Settings = array{preferences: array{jurisdiction: string, dismissed_hints: list<string>, reclaim_vat: bool, kpi_period: string, grid_factor: ?int}, jurisdictions: list<array{key: string, name: string, logbook_export: bool, mileage_claim: bool, grid_factor: ?GridAverage}>}
  */
 class PreferencesService {
 	/**
@@ -45,6 +48,16 @@ class PreferencesService {
 	 */
 	private const KPI_PERIOD = 'kpi_period';
 
+	/**
+	 * Grams of CO₂ per kWh of the electricity this person charges, or unset for their vehicle's
+	 * country average (`IRateProvider::gridFactor()`). A person's own, because the tariff is:
+	 * a green one is not the country's mix.
+	 */
+	private const GRID_FACTOR = 'grid_factor';
+
+	/** Above the dirtiest lignite plant, so a figure past it is a typo rather than a grid. */
+	private const GRID_MAX = 2000;
+
 	/** What the header offers, the default first. Mirrors `PERIODS` in src/utils/period.js. */
 	private const PERIODS = ['last-12', 'this-year', 'last-year', 'month'];
 
@@ -59,7 +72,7 @@ class PreferencesService {
 	 * from. One answer rather than two routes, because a value without its options is a dropdown
 	 * with nothing in it (docs/adr/0006-one-api-surface-in-v1.md).
 	 *
-	 * @return array{preferences: array{jurisdiction: string, dismissed_hints: list<string>, reclaim_vat: bool, kpi_period: string}, jurisdictions: list<array{key: string, name: string, logbook_export: bool}>}
+	 * @return Settings
 	 */
 	public function forUser(string $userId): array {
 		return [
@@ -76,16 +89,21 @@ class PreferencesService {
 				self::DISMISSED => $this->dismissed($userId),
 				self::RECLAIM_VAT => $this->config->getUserValue($userId, Application::APP_ID, self::RECLAIM_VAT, '0') === '1',
 				self::KPI_PERIOD => $this->period($userId),
+				self::GRID_FACTOR => $this->gridFactor($userId),
 			],
 			'jurisdictions' => array_map(
 				// The name is English and reaches no catalogue here; the screen translates it
 				// (docs/ui.md#languages) and falls back to this for a country it has no word for.
-				// Whether a country prints a logbook travels with it, so the Reports screen offers
-				// the export only where the route would not answer 404.
+				// Whether a country prints a logbook or a mileage claim travels with it, so the
+				// Reports screen offers each only where its route would not answer 404. Its grid
+				// average travels too, so the settings screen can say what an empty grid factor
+				// means.
 				static fn (IJurisdiction $profile): array => [
 					'key' => $profile->key(),
 					'name' => $profile->displayName(),
 					'logbook_export' => $profile->logbookRenderer() !== null,
+					'mileage_claim' => $profile->claimRenderer() !== null && $profile->rates() !== null,
+					'grid_factor' => $profile->rates()?->gridFactor(),
 				],
 				$this->jurisdictions->all(),
 			),
@@ -98,7 +116,7 @@ class PreferencesService {
 	 * over rather than refused: Nextcloud merges its own routing parameters into every request.
 	 *
 	 * @param array<string, mixed> $fields
-	 * @return array{preferences: array{jurisdiction: string, dismissed_hints: list<string>, reclaim_vat: bool, kpi_period: string}, jurisdictions: list<array{key: string, name: string, logbook_export: bool}>}
+	 * @return Settings
 	 * @throws \InvalidArgumentException if a preference is not one of the answers it may take
 	 */
 	public function write(string $userId, array $fields): array {
@@ -123,6 +141,14 @@ class PreferencesService {
 				throw new \InvalidArgumentException(self::KPI_PERIOD . ' is one of ' . implode(', ', self::PERIODS));
 			}
 			$values[self::KPI_PERIOD] = $fields[self::KPI_PERIOD];
+		}
+		if (array_key_exists(self::GRID_FACTOR, $fields)) {
+			// Null clears it, and 0 is an answer: a tariff from nothing but wind.
+			$grams = $fields[self::GRID_FACTOR];
+			if ($grams !== null && (!is_int($grams) || $grams < 0 || $grams > self::GRID_MAX)) {
+				throw new \InvalidArgumentException(self::GRID_FACTOR . ' is whole grams per kWh from 0 to ' . self::GRID_MAX . ', or null');
+			}
+			$values[self::GRID_FACTOR] = $grams === null ? '' : (string)$grams;
 		}
 
 		foreach ($values as $key => $value) {
@@ -171,6 +197,16 @@ class PreferencesService {
 		);
 
 		return is_array($stored) ? array_values(array_filter($stored, is_string(...))) : [];
+	}
+
+	/**
+	 * This user's grid factor, or null for their vehicle's country average. Stored as `''` when
+	 * cleared, since a config value is a string; anything not a whole number reads as unset.
+	 */
+	public function gridFactor(string $userId): ?int {
+		$stored = $this->config->getUserValue($userId, Application::APP_ID, self::GRID_FACTOR, '');
+
+		return preg_match('/^\d+$/', $stored) === 1 ? (int)$stored : null;
 	}
 
 	/**

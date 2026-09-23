@@ -87,6 +87,12 @@ return [
 		['name' => 'recipient#create', 'url' => '/api/vehicles/{uuid}/recipients', 'verb' => 'POST'],
 		['name' => 'recipient#delete', 'url' => '/api/vehicles/{uuid}/recipients/{recipient}', 'verb' => 'DELETE'],
 
+		// A vehicle's papers. Attaching names a file the user picked in Files, so there is no upload;
+		// not `{file_id}`, the field an attach sends (tests/Unit/RoutesTest.php).
+		['name' => 'document#index', 'url' => '/api/vehicles/{uuid}/documents', 'verb' => 'GET'],
+		['name' => 'document#create', 'url' => '/api/vehicles/{uuid}/documents', 'verb' => 'POST'],
+		['name' => 'document#delete', 'url' => '/api/vehicles/{uuid}/documents/{document}', 'verb' => 'DELETE'],
+
 		// What happened to the vehicle, every table at once and a page at a time
 		// (docs/architecture.md#the-timeline). `odometer#index` stays where it is: the counter on
 		// its own is a different question from the vehicle's history.
@@ -109,6 +115,9 @@ return [
 		// A page the browser prints, not an answer the app reads, so it sits outside `/api`
 		// (docs/adr/0005-no-pdf-library.md).
 		['name' => 'report#logbook', 'url' => '/vehicles/{uuid}/logbook/{year}', 'verb' => 'GET'],
+		['name' => 'report#mileage', 'url' => '/vehicles/{uuid}/mileage/{year}', 'verb' => 'GET'],
+		// A file the browser saves, beside the page for the same reason: a link, not a read.
+		['name' => 'report#csv', 'url' => '/vehicles/{uuid}/csv/{year}/{table}', 'verb' => 'GET'],
 
 		// The session user's own settings - no identity in the URL, because there is only ever
 		// one set of them to reach (lib/Service/PreferencesService.php).

@@ -26,7 +26,7 @@ vi.mock('../services/api.js', async (original) => ({
  * @return {import('../services/api.js').Settings} what the preferences route answers
  */
 function settings(chosen) {
-	return { preferences: { jurisdiction: 'de', dismissed_hints: [], reclaim_vat: false, kpi_period: 'last-12', ...chosen }, jurisdictions: [] }
+	return { preferences: { jurisdiction: 'de', dismissed_hints: [], reclaim_vat: false, kpi_period: 'last-12', grid_factor: null, ...chosen }, jurisdictions: [] }
 }
 
 const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, odo_value: 48210, odo_unit: 'km', second_unit: null, currency: 'EUR', energy_types: ['diesel'] }

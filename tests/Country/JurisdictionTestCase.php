@@ -15,6 +15,7 @@ use OCA\NextFleet\Jurisdiction\Generic\ServiceTemplates;
 use OCA\NextFleet\Jurisdiction\IJurisdiction;
 use OCA\NextFleet\Jurisdiction\ILogbookRules;
 use OCA\NextFleet\Jurisdiction\LogbookReport;
+use OCA\NextFleet\Jurisdiction\MileageClaim;
 use OCA\NextFleet\Jurisdiction\ReminderTemplate;
 use OCA\NextFleet\Service\ExpenseService;
 use OCA\NextFleet\Service\VehicleService;
@@ -197,6 +198,26 @@ abstract class JurisdictionTestCase extends TestCase {
 		foreach ($rates->vatFreeCategories() as $category) {
 			$this->assertContains($category, ExpenseService::CATEGORIES, $category . ' is no expense category');
 		}
+
+		// Grams per litre, or null for "not stated"; electricity is the grid's, never a fuel's.
+		$this->assertMatchesRegularExpression('#^https://\S+$#', $rates->emissionSourceUrl(), 'the emission source is not a URL');
+		foreach (VehicleService::ENERGIES as $energy) {
+			$factor = $rates->emissionFactorAt($energy, new \DateTimeImmutable('2026-01-01T12:00:00Z'));
+			$this->assertTrue($factor === null || $factor > 0, $energy . ' burns at no factor');
+		}
+		$this->assertNull($rates->emissionFactorAt('electric', new \DateTimeImmutable('2026-01-01T12:00:00Z')));
+		// Tenths of a cent per kilometre, or null for a type the country pays nothing stated for.
+		$this->assertMatchesRegularExpression('#^https://\S+$#', $rates->mileageSourceUrl(), 'the mileage source is not a URL');
+		foreach (VehicleService::VEHICLE_TYPES as $type) {
+			$rate = $rates->mileageRateAt($type, new \DateTimeImmutable('2026-01-01T12:00:00Z'));
+			$this->assertTrue($rate === null || $rate > 0, $type . ' is paid no rate');
+		}
+		$grid = $rates->gridFactor();
+		if ($grid !== null) {
+			$this->assertGreaterThanOrEqual(0, $grid['grams']);
+			$this->assertMatchesRegularExpression('/^\d{4}$/', (string)$grid['year']);
+			$this->assertMatchesRegularExpression('#^https://\S+$#', $grid['source'], 'the grid source is not a URL');
+		}
 	}
 
 	/**
@@ -264,6 +285,50 @@ abstract class JurisdictionTestCase extends TestCase {
 			'https://example.org/"><script>alert(3)</script>',
 		));
 
+		$this->assertPrintsSafely($html);
+	}
+
+	/**
+	 * A mileage claim is held to what a logbook is, and is printed only where the country also
+	 * states a rate to value a trip at.
+	 */
+	public function testItsMileageClaimPrintsWhatPeopleWroteAsTextAndLoadsNothing(): void {
+		$renderer = static::profile()->claimRenderer();
+		if ($renderer === null) {
+			$this->assertNull($renderer, 'a country without a claim prints none');
+			return;
+		}
+		$this->assertNotNull(static::profile()->rates(), 'a claim with no rate to value a trip at');
+
+		$hostile = '"><b onmouseover="alert(1)">x</b><script>alert(2)</script>';
+		$vehicle = Vehicle::fromRow(['id' => 7, 'plate' => $hostile, 'model' => $hostile, 'jurisdiction' => static::profile()->key()]);
+		$trip = Trip::fromRow([
+			'id' => 1,
+			'uuid' => '0195e2f1-0000-4000-8000-000000000011',
+			'vehicle_id' => 7,
+			'started_at' => 1767261600,
+			'ended_at' => 1767265200,
+			'distance' => 120,
+			'from_label' => $hostile,
+			'to_label' => $hostile,
+			'purpose' => $hostile,
+			'partner' => $hostile,
+			'category' => Trip::BUSINESS,
+		]);
+		$html = $renderer->render(new MileageClaim(
+			$vehicle,
+			2026,
+			[['trip' => $trip, 'kilometres' => 120, 'rate' => 300, 'amount' => 3600], ['trip' => $trip, 'kilometres' => null, 'rate' => null, 'amount' => null]],
+			3600,
+			120,
+			'https://example.org/"><script>alert(3)</script>',
+		));
+
+		$this->assertPrintsSafely($html);
+	}
+
+	/** Nothing in `$html` that runs, and nothing it would load. */
+	private function assertPrintsSafely(string $html): void {
 		$this->assertStringStartsWith('<!doctype html>', strtolower($html));
 		$this->assertStringNotContainsStringIgnoringCase('<script', $html);
 		$this->assertStringNotContainsStringIgnoringCase('<b onmouseover', $html);

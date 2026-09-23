@@ -22,7 +22,7 @@ vi.mock('../services/api.js', () => ({
  * @return {import('../services/api.js').Settings} the whole state of the screen
  */
 function settings(dismissed, more = {}) {
-	return { preferences: { jurisdiction: 'de', dismissed_hints: dismissed, reclaim_vat: false, kpi_period: 'last-12', ...more }, jurisdictions: [] }
+	return { preferences: { jurisdiction: 'de', dismissed_hints: dismissed, reclaim_vat: false, kpi_period: 'last-12', grid_factor: null, ...more }, jurisdictions: [] }
 }
 
 describe('preferences store', () => {

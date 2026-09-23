@@ -4,15 +4,17 @@
 -->
 <script setup>
 import { t } from '@nextcloud/l10n'
+import NcActionButton from '@nextcloud/vue/components/NcActionButton'
+import NcActions from '@nextcloud/vue/components/NcActions'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcEmptyContent from '@nextcloud/vue/components/NcEmptyContent'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import { computed, onMounted, ref, watch } from 'vue'
 
 import KpiTile from '../components/KpiTile.vue'
-import { readYear } from '../services/api.js'
+import { csvUrl, readYear } from '../services/api.js'
 import { usePreferencesStore } from '../store/preferences.js'
-import { BANDS, bandWord, barsOf, tableOf } from '../utils/costs.js'
+import { BANDS, bandWord, barsOf, co2Of, tableOf } from '../utils/costs.js'
 import { formatMoney, nameOf } from '../utils/format.js'
 import { periodTilesOf } from '../utils/kpis.js'
 
@@ -29,6 +31,31 @@ const preferences = usePreferencesStore()
 const thisYear = new Date().getFullYear()
 const year = ref(thisYear)
 
+/**
+ * The export menu's files, in the order the vehicle screen's sheets are.
+ *
+ * @type {{ table: 'trips'|'energy'|'maintenance'|'expenses', label: string }[]}
+ */
+const files = [
+	{ table: 'trips', label: t('nextfleet', 'Trips') },
+	{ table: 'energy', label: t('nextfleet', 'Fill-ups') },
+	{ table: 'maintenance', label: t('nextfleet', 'Maintenance') },
+	{ table: 'expenses', label: t('nextfleet', 'Expenses') },
+]
+
+/**
+ * Saves one file of the year on screen. Buttons rather than links: a menu of NcActionLinks alone
+ * is typed "navigation" and renders `role="false"` on every item, which axe refuses.
+ *
+ * @param {'trips'|'energy'|'maintenance'|'expenses'} table - which file
+ */
+function save(table) {
+	const link = document.createElement('a')
+	link.href = csvUrl(props.vehicle.uuid, String(year.value), table)
+	link.download = ''
+	link.click()
+}
+
 /** @type {import('vue').Ref<import('../services/api.js').CostYear|null>} */
 const answer = ref(null)
 const failure = ref('')
@@ -39,6 +66,7 @@ const tiles = computed(() => answer.value ? periodTilesOf(props.vehicle, answer.
 const bars = computed(() => answer.value ? barsOf(answer.value) : [])
 const table = computed(() => answer.value ? tableOf(answer.value) : null)
 const priced = computed(() => answer.value?.year.cost.currency !== null)
+const co2 = computed(() => answer.value ? co2Of(answer.value.co2) : null)
 
 /** What each bar says on hover; the table is where the figures are read. */
 const titles = computed(() => answer.value && table.value
@@ -79,9 +107,17 @@ async function reload() {
 	<div class="costs">
 		<div class="costs__header">
 			<h2>{{ t('nextfleet', 'Costs of {vehicle}', { vehicle: { value: nameOf(vehicle), escape: false } }) }}</h2>
-			<NcButton @click="$emit('back')">
-				{{ t('nextfleet', 'Back to the vehicle') }}
-			</NcButton>
+			<div class="costs__actions">
+				<!-- The year on screen, whatever is in it: an empty file is still the answer. -->
+				<NcActions :menu-name="t('nextfleet', 'Export')" :force-name="true">
+					<NcActionButton v-for="file in files" :key="file.table" @click="save(file.table)">
+						{{ file.label }}
+					</NcActionButton>
+				</NcActions>
+				<NcButton @click="$emit('back')">
+					{{ t('nextfleet', 'Back to the vehicle') }}
+				</NcButton>
+			</div>
 		</div>
 
 		<div class="costs__year">
@@ -174,6 +210,24 @@ async function reload() {
 				</table>
 			</div>
 		</template>
+
+		<!-- Outside the priced branch: kilograms need no currency. -->
+		<section v-if="answer && co2" class="costs__co2" aria-labelledby="costs-co2">
+			<h3 id="costs-co2">
+				{{ t('nextfleet', 'CO₂ (estimate)') }}
+			</h3>
+			<p class="costs__co2-figure">
+				{{ co2.figure }}
+			</p>
+			<p v-for="note in co2.notes" :key="note" class="costs__co2-note">
+				{{ note }}
+			</p>
+			<ul v-if="co2.sources.length > 0" class="costs__co2-sources">
+				<li v-for="source in co2.sources" :key="source.href">
+					<a :href="source.href" target="_blank" rel="noreferrer noopener">{{ source.label }} ↗</a>
+				</li>
+			</ul>
+		</section>
 	</div>
 </template>
 
@@ -190,11 +244,45 @@ async function reload() {
 	gap: calc(var(--default-grid-baseline) * 2);
 }
 
+.costs__actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: calc(var(--default-grid-baseline) * 2);
+}
+
 .costs__year {
 	display: flex;
 	align-items: center;
 	gap: calc(var(--default-grid-baseline) * 2);
 	margin-block: calc(var(--default-grid-baseline) * 2);
+}
+
+.costs__co2 {
+	margin-top: calc(var(--default-grid-baseline) * 6);
+}
+
+.costs__co2 h3 {
+	margin-top: 0;
+}
+
+.costs__co2-figure {
+	font-size: 1.5em;
+	font-variant-numeric: tabular-nums;
+}
+
+.costs__co2-note {
+	color: var(--color-text-maxcontrast);
+}
+
+.costs__co2-sources {
+	display: flex;
+	flex-wrap: wrap;
+	gap: calc(var(--default-grid-baseline) * 4);
+	margin-top: calc(var(--default-grid-baseline) * 2);
+}
+
+.costs__co2-sources a {
+	text-decoration: underline;
 }
 
 .costs__year-number {

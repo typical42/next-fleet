@@ -12,8 +12,8 @@ use OCA\NextFleet\Jurisdiction\De;
 use OCA\NextFleet\Jurisdiction\Generic;
 use OCA\NextFleet\Jurisdiction\IJurisdiction;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
+use OCA\NextFleet\Tests\Stub\RegisteredProfiles;
 use PHPUnit\Framework\TestCase;
-use Psr\Container\ContainerInterface;
 
 /**
  * The registration list docs/contributing.md#still-one-directory-per-country promises: one place
@@ -22,18 +22,11 @@ use Psr\Container\ContainerInterface;
  */
 class JurisdictionsTest extends TestCase {
 	/**
-	 * A container as the app's own is: it builds what it is asked for. Profiles take no
-	 * dependencies today, which is why the seam resolves through a container rather than
-	 * `new` - the first one that does needs no caller to change.
+	 * A container as the app's own is: it builds what it is asked for. The generic profile takes
+	 * the reader's `IL10N`, which is why the seam resolves through a container rather than `new`.
 	 */
 	private function jurisdictions(): Jurisdictions {
-		$container = $this->createMock(ContainerInterface::class);
-		$container->method('get')->willReturnCallback(
-			/** @param class-string $id */
-			static fn (string $id): object => new $id(),
-		);
-
-		return new Jurisdictions($container);
+		return RegisteredProfiles::jurisdictions();
 	}
 
 	public function testAKnownKeyResolvesToItsProfile(): void {

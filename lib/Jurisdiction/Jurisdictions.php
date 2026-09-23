@@ -61,9 +61,17 @@ class Jurisdictions {
 	 * a day, and the day is the person's, not UTC's (docs/architecture.md#time).
 	 */
 	public function vatRateAt(string $key, int $at, int $off): ?int {
+		return $this->get($key)->rates()?->vatRateAt(self::localTime($at, $off));
+	}
+
+	/**
+	 * A moment at the offset it was entered at, in minutes: what a rate table is asked with, since
+	 * a rate changes on a day and the day is the person's (docs/architecture.md#time).
+	 */
+	public static function localTime(int $at, int $off): \DateTimeImmutable {
 		$zone = sprintf('%s%02d:%02d', $off < 0 ? '-' : '+', intdiv(abs($off), 60), abs($off) % 60);
 
-		return $this->get($key)->rates()?->vatRateAt((new \DateTimeImmutable('@' . $at))->setTimezone(new \DateTimeZone($zone)));
+		return (new \DateTimeImmutable('@' . $at))->setTimezone(new \DateTimeZone($zone));
 	}
 
 	/**

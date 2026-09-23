@@ -2,13 +2,46 @@
 
 ## Unreleased
 
+- A vehicle's papers, server side. `GET`/`POST /api/vehicles/{uuid}/documents` lists and attaches
+  them, `DELETE …/documents/{document}` detaches one. Attaching takes a file you picked in Files,
+  optionally linked to a fill-up, maintenance record or expense of the same vehicle; it must be a
+  file you can read. Anyone who may view the vehicle sees the list, whoever owns the file. There is
+  no screen for it yet.
+
+- Nextcloud's unified search finds a vehicle by plate, manufacturer or model, and opens its screen.
+  A plate matches without its spaces and hyphens, so `bxy123` finds `B-XY 123`. It finds only the
+  vehicles you may view, and none you disposed of. Trips, notes and other entries are not searched.
+
+- A plain logbook for a vehicle under `generic`. *Open logbook* on the Reports screen prints its
+  trips for a year: date, time, route, purpose, counters, distance and category, the year's
+  distance per category, voided trips marked. It states no country's requirements and prints in your
+  language.
+
+- The mileage claim. *Open mileage claim* on the Reports screen prints one vehicle's business
+  trips for a year, each at the statutory rate of its day: in Germany 0,30 € per km by car, van
+  or truck since 2014, citing §9 EStG. Commutes and voided trips are not on it. A trip the rate
+  table does not cover says "nicht angegeben" and stays out of the sum. Under `generic`, or for a
+  vehicle counting hours, there is no claim. The page is at
+  `GET /apps/nextfleet/vehicles/{uuid}/mileage/{year}`.
+
+- CSV export. The Costs screen's *Export* menu saves the year on screen as four files: trips,
+  fill-ups, maintenance and expenses. `GET /apps/nextfleet/vehicles/{uuid}/csv/{year}/{table}`
+  answers each one. Voided trips are in the file, marked, and a cell that would run as a formula
+  starts with `'`. The format is in `docs/architecture.md#csv-export`.
+
+- A CO₂ estimate on the Costs screen: the year's fill-ups times their emission factor, linked to
+  its source. Electricity uses a grid factor, the German average (363 g/kWh, 2024) unless the
+  personal settings state your own. A fuel with no factor (CNG, entered in litres) is left out and
+  the screen says so. Under `generic` there is no estimate. The year's answer carries it as `co2`.
+
 - The Costs screen, opened by *Costs* on a vehicle's screen. One year at a time: the year's figures
   including TCO, a bar per month stacked in energy, maintenance and expenses, and a table beneath
   with the expenses by category. A month with no rows reads "No entries", not zero. Depreciation
-  stays in the TCO and out of the bars. The export button is not there yet.
+  stays in the TCO and out of the bars.
 
 - A year of costs for the Costs screen. `GET /api/vehicles/{uuid}/costs/{year}?tz=&net=` answers
-  the header's figures for the year and each month's cost, the months cut at midnight in `tz`. A
+  the header's figures for the year and each month's cost, the months cut at midnight in `tz`, old
+  IANA aliases such as `Asia/Calcutta` included. A
   cost now also states its maintenance total and its expenses by category, the header's included.
   A month with no rows has no cost rather than zero.
 

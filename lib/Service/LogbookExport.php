@@ -26,14 +26,6 @@ use Psr\Log\LoggerInterface;
  * @psalm-import-type LateChange from LogbookReport
  */
 class LogbookExport {
-	/**
-	 * How far a local calendar year reaches past its UTC bounds: an offset runs from twelve hours
-	 * west to fourteen east (`TripService`). The trips are then sorted into years by their own local
-	 * date; a period is not, so these must be exact rather than roomy.
-	 */
-	private const EAST = 14 * 3600;
-	private const WEST = 12 * 3600;
-
 	public function __construct(
 		private VehicleService $fleet,
 		private TripMapper $trips,
@@ -68,9 +60,7 @@ class LogbookExport {
 			'year' => $year,
 		]);
 
-		// Every UTC instant some trip of the local year can set off at.
-		$start = gmmktime(0, 0, 0, 1, 1, $year) - self::EAST;
-		$end = gmmktime(0, 0, 0, 1, 1, $year + 1) + self::WEST;
+		[$start, $end] = LocalYear::window($year);
 		$periods = $this->periods($vehicle, $start, $end);
 
 		return $renderer->render(new LogbookReport(
@@ -99,7 +89,7 @@ class LogbookExport {
 	private function lines(Vehicle $vehicle, int $year, int $start, int $end, array $periods): array {
 		$trips = array_values(array_filter(
 			$this->trips->findAnyStartedBetween((int)$vehicle->getId(), $start, $end),
-			static fn (Trip $trip): bool => (int)gmdate('Y', $trip->getStartedAt() + $trip->getStartedAtOff() * 60) === $year,
+			static fn (Trip $trip): bool => LocalYear::holds($year, $trip->getStartedAt(), $trip->getStartedAtOff()),
 		));
 		$late = $this->lateChanges($trips);
 

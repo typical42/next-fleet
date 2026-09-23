@@ -8,11 +8,13 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Jurisdiction\Generic;
 
+use OCA\NextFleet\Jurisdiction\IClaimRenderer;
 use OCA\NextFleet\Jurisdiction\IInspectionScheme;
 use OCA\NextFleet\Jurisdiction\IJurisdiction;
 use OCA\NextFleet\Jurisdiction\ILogbookRules;
 use OCA\NextFleet\Jurisdiction\IRateProvider;
 use OCA\NextFleet\Jurisdiction\IReportRenderer;
+use OCP\IL10N;
 
 /**
  * What an install in a country nobody has written gets: metric units and no currency, so a
@@ -20,6 +22,12 @@ use OCA\NextFleet\Jurisdiction\IReportRenderer;
  * caller meets a jurisdiction that answers "I don't know" here first.
  */
 class Profile implements IJurisdiction {
+	/** The reader's language, which the plain logbook prints in (`LogbookRenderer`). */
+	public function __construct(
+		private IL10N $l,
+	) {
+	}
+
 	public function key(): string {
 		return 'generic';
 	}
@@ -41,8 +49,13 @@ class Profile implements IJurisdiction {
 		return null;
 	}
 
-	/** The generic report is M5's (plan.md). Until then there is no export, not an empty one. */
+	/** A plain trip listing, with no country's requirements laid over it. */
 	public function logbookRenderer(): ?IReportRenderer {
+		return new LogbookRenderer($this->l);
+	}
+
+	/** There is no rate to value a trip at (`rates()`), so there is no claim to print. */
+	public function claimRenderer(): ?IClaimRenderer {
 		return null;
 	}
 

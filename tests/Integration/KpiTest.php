@@ -14,6 +14,7 @@ use OCA\NextFleet\Service\ExpenseService;
 use OCA\NextFleet\Service\KpiService;
 use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\VehicleService;
+use OCP\IConfig;
 use OCP\IDBConnection;
 use PHPUnit\Framework\TestCase;
 
@@ -31,6 +32,7 @@ class KpiTest extends TestCase {
 	private MaintenanceService $maintenance;
 	private KpiService $kpis;
 	private VehicleService $vehicles;
+	private IConfig $config;
 
 	protected function setUp(): void {
 		$container = (new Application())->getContainer();
@@ -39,6 +41,7 @@ class KpiTest extends TestCase {
 		$this->maintenance = $container->get(MaintenanceService::class);
 		$this->kpis = $container->get(KpiService::class);
 		$this->vehicles = $container->get(VehicleService::class);
+		$this->config = $container->get(IConfig::class);
 		$this->forgetTestRows();
 	}
 
@@ -55,6 +58,7 @@ class KpiTest extends TestCase {
 			$qb->delete($table)->where($qb->expr()->eq($column, $qb->createNamedParameter(self::OWNER)));
 			$qb->executeStatement();
 		}
+		$this->config->deleteUserValue(self::OWNER, Application::APP_ID, 'grid_factor');
 	}
 
 	/**
@@ -137,6 +141,74 @@ class KpiTest extends TestCase {
 
 		$this->expectException(\InvalidArgumentException::class);
 		$this->kpis->year(self::OWNER, $uuid, $year, ['tz' => $zone]);
+	}
+
+	/**
+	 * Chrome still reports some zones by their old names, which PHP's default identifier list leaves
+	 * out; refusing them would leave the reader with no costs in any year.
+	 */
+	public function testAYearTakesTheZoneNamesABrowserStillReports(): void {
+		$uuid = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123'])->getUuid();
+
+		$year = $this->kpis->year(self::OWNER, $uuid, '2025', ['tz' => 'Asia/Calcutta']);
+
+		$this->assertSame(1735669800, $year['months'][0]['from'], 'midnight in India, UTC+5:30');
+	}
+
+	/**
+	 * CO₂ is what was burnt times its factor, and electricity at the grid's. A fuel the table does
+	 * not state leaves the figure rather than adding a zero, and says so.
+	 */
+	public function testAYearStatesItsCo2FromWhatWasBurnt(): void {
+		$uuid = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'jurisdiction' => 'de', 'engine' => 'hybrid', 'energy_types' => ['diesel', 'electric', 'cng']])->getUuid();
+		$this->energy->record(self::OWNER, $uuid, ['filled_at' => 1740000000, 'filled_at_off' => 60, 'energy' => 'diesel', 'amount' => 40000]);
+		$this->energy->record(self::OWNER, $uuid, ['filled_at' => 1741000000, 'filled_at_off' => 60, 'energy' => 'electric', 'amount' => 10000]);
+
+		$co2 = $this->kpis->year(self::OWNER, $uuid, '2025', ['tz' => 'Europe/Berlin'])['co2'];
+
+		// 40 l × 2650 g/l, and 10 kWh × 363 g/kWh.
+		$this->assertSame(106000 + 3630, $co2['grams'] ?? null);
+		$this->assertFalse($co2['unstated']);
+		$this->assertStringStartsWith('https://', $co2['source']);
+		$this->assertSame(363, $co2['grid']['grams'] ?? null);
+		$this->assertSame(2024, $co2['grid']['year'] ?? null);
+
+		$this->energy->record(self::OWNER, $uuid, ['filled_at' => 1742000000, 'filled_at_off' => 60, 'energy' => 'cng', 'amount' => 30000]);
+		$co2 = $this->kpis->year(self::OWNER, $uuid, '2025', ['tz' => 'Europe/Berlin'])['co2'];
+
+		$this->assertSame(106000 + 3630, $co2['grams'] ?? null);
+		$this->assertTrue($co2['unstated']);
+	}
+
+	/** A person's own grid factor replaces the country's, and cites no source of its own. */
+	public function testAPersonsGridFactorReplacesTheCountrys(): void {
+		$this->config->setUserValue(self::OWNER, Application::APP_ID, 'grid_factor', '120');
+		$uuid = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'jurisdiction' => 'de', 'energy_types' => ['electric']])->getUuid();
+		$this->energy->record(self::OWNER, $uuid, ['filled_at' => 1741000000, 'filled_at_off' => 60, 'energy' => 'electric', 'amount' => 10000]);
+
+		$co2 = $this->kpis->year(self::OWNER, $uuid, '2025', ['tz' => 'Europe/Berlin'])['co2'];
+
+		$this->assertSame(1200, $co2['grams'] ?? null);
+		$this->assertSame(['grams' => 120, 'year' => null, 'source' => null], $co2['grid'] ?? null);
+	}
+
+	/** A year with nothing burnt has no figure, and one with no charge names no grid. */
+	public function testAYearWithNothingBurntStatesNoCo2(): void {
+		$uuid = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'jurisdiction' => 'de'])->getUuid();
+
+		$co2 = $this->kpis->year(self::OWNER, $uuid, '2025', ['tz' => 'Europe/Berlin'])['co2'];
+
+		$this->assertNotNull($co2, 'Germany states factors, so the estimate is available');
+		$this->assertNull($co2['grams']);
+		$this->assertNull($co2['grid']);
+	}
+
+	/** A country with no factors has no estimate at all, not a zero (docs/architecture.md). */
+	public function testUnderGenericCo2IsUnavailable(): void {
+		$uuid = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'jurisdiction' => 'generic', 'energy_types' => ['diesel']])->getUuid();
+		$this->energy->record(self::OWNER, $uuid, ['filled_at' => 1740000000, 'filled_at_off' => 60, 'energy' => 'diesel', 'amount' => 40000]);
+
+		$this->assertNull($this->kpis->year(self::OWNER, $uuid, '2025', ['tz' => 'Europe/Berlin'])['co2']);
 	}
 
 	/** @return iterable<string, array{string, string}> */

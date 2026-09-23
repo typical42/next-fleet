@@ -97,6 +97,22 @@ class Trip extends BaseEntity implements \JsonSerializable {
 	}
 
 	/**
+	 * The kilometres the trip accounts for on paper: what the driver stated, or the difference
+	 * between the two counters they read. Null where neither says it - a figure worked out from the
+	 * odometer chain would be a guess printed as a record.
+	 */
+	public function kilometres(): ?int {
+		if ($this->distance !== null) {
+			return $this->distance;
+		}
+		if ($this->startOdo !== null && $this->endOdo !== null) {
+			return $this->endOdo - $this->startOdo;
+		}
+
+		return null;
+	}
+
+	/**
 	 * The wire form is the column names, as it is for a vehicle and a reading. `reconciled` goes
 	 * out as a real boolean: the timeline marks a Reconciliation Trip as one.
 	 *

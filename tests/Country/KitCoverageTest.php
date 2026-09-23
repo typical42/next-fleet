@@ -9,8 +9,8 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Tests\Country;
 
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
+use OCA\NextFleet\Tests\Stub\RegisteredProfiles;
 use PHPUnit\Framework\TestCase;
-use Psr\Container\ContainerInterface;
 
 /**
  * What makes the kit a promise rather than a directory: a profile registered in `Jurisdictions`
@@ -58,14 +58,7 @@ class KitCoverageTest extends TestCase {
 		return $cases;
 	}
 
-	/** The app's container builds what it is asked for; profiles ask it for nothing yet. */
 	private function jurisdictions(): Jurisdictions {
-		$container = $this->createMock(ContainerInterface::class);
-		$container->method('get')->willReturnCallback(
-			/** @param class-string $id */
-			static fn (string $id): object => new $id(),
-		);
-
-		return new Jurisdictions($container);
+		return RegisteredProfiles::jurisdictions();
 	}
 }

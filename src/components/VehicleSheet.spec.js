@@ -160,8 +160,8 @@ beforeEach(() => {
 	setActivePinia(createPinia())
 	vi.resetAllMocks()
 	vi.mocked(getPreferences).mockResolvedValue({
-		preferences: { jurisdiction: 'de', dismissed_hints: [], reclaim_vat: false, kpi_period: 'last-12' },
-		jurisdictions: [{ key: 'de', name: 'Germany', logbook_export: true }, { key: 'generic', name: 'Generic', logbook_export: false }],
+		preferences: { jurisdiction: 'de', dismissed_hints: [], reclaim_vat: false, kpi_period: 'last-12', grid_factor: null },
+		jurisdictions: [{ key: 'de', name: 'Germany', logbook_export: true, mileage_claim: true, grid_factor: null }, { key: 'generic', name: 'Generic', logbook_export: false, mileage_claim: false, grid_factor: null }],
 	})
 	// No inspection unless a case asks for one (the HU/AU cases below).
 	vi.mocked(reminderTemplates).mockResolvedValue([])

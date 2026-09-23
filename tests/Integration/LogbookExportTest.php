@@ -15,6 +15,7 @@ use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\IDBConnection;
+use OCP\IL10N;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -139,6 +140,30 @@ class LogbookExportTest extends TestCase {
 		$this->assertStringContainsString('bis zum', $periods[0]);
 
 		$this->assertStringStartsWith('https://', (string)$page->evaluate('string(//footer//a/@href)'));
+	}
+
+	/**
+	 * A country nobody has written prints a plain listing (the generic profile), built by the app's
+	 * container with the reader's `IL10N`. Nextcloud's formatter has to read the trip's own offset:
+	 * half past midnight on New Year's Day in Berlin is 23:30 UTC the day before.
+	 */
+	public function testAGenericVehiclePrintsAPlainLogbookOnItsOwnWallClock(): void {
+		$uuid = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 133', 'jurisdiction' => 'generic', 'currency' => 'EUR'])->getUuid();
+		$this->trip($uuid, gmmktime(23, 30, 0, 12, 31, $this->year - 1), ['start_odo' => 120000, 'end_odo' => 120450, 'purpose' => 'New Year']);
+
+		[$lines, $page] = $this->printed($uuid, $this->year);
+
+		$l = (new Application())->getContainer()->get(IL10N::class);
+		$local = new \DateTime(sprintf('%d-01-01T00:30:00+01:00', $this->year));
+		$this->assertCount(1, $lines);
+		$this->assertStringContainsString('New Year', $lines[0]);
+		$this->assertStringStartsWith(
+			// The row's text runs its cells together, whitespace collapsed as `printed()` does: the
+			// date, then the time the trip set off.
+			preg_replace('/\s+/u', ' ', $l->l('date', $local, ['width' => 'medium']) . $l->l('time', $local, ['width' => 'short']) . '–'),
+			$lines[0],
+		);
+		$this->assertSame(0.0, $page->evaluate('count(//section[@id="modus"])'), 'no country, so no Logbook Mode section');
 	}
 
 	/**

@@ -3,7 +3,6 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-import NcButton from '@nextcloud/vue/components/NcButton'
 import NcEmptyContent from '@nextcloud/vue/components/NcEmptyContent'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import NcSelect from '@nextcloud/vue/components/NcSelect'
@@ -24,15 +23,16 @@ vi.mock('@nextcloud/router', () => ({
 	generateUrl: (/** @type {string} */ path) => `/index.php${path}`,
 }))
 
-const GERMAN = { uuid: 'v-de', updated_at: 1, plate: 'B-XY 123', jurisdiction: 'de', lifecycle: 'active' }
-const SOLD = { uuid: 'v-sold', updated_at: 1, plate: 'M-AB 1', jurisdiction: 'de', lifecycle: 'disposed' }
-const ELSEWHERE = { uuid: 'v-gen', updated_at: 1, plate: 'XX 42', jurisdiction: 'generic', lifecycle: 'active' }
+const GERMAN = { uuid: 'v-de', updated_at: 1, plate: 'B-XY 123', jurisdiction: 'de', lifecycle: 'active', odo_unit: 'km' }
+const SOLD = { uuid: 'v-sold', updated_at: 1, plate: 'M-AB 1', jurisdiction: 'de', lifecycle: 'disposed', odo_unit: 'km' }
+const HOURS = { uuid: 'v-hours', updated_at: 1, plate: 'GEN 1', jurisdiction: 'de', lifecycle: 'active', odo_unit: 'h' }
+const ELSEWHERE = { uuid: 'v-gen', updated_at: 1, plate: 'XX 42', jurisdiction: 'generic', lifecycle: 'active', odo_unit: 'km' }
 
 const settings = {
-	preferences: { jurisdiction: 'de', dismissed_hints: [], reclaim_vat: false, kpi_period: 'last-12' },
+	preferences: { jurisdiction: 'de', dismissed_hints: [], reclaim_vat: false, kpi_period: 'last-12', grid_factor: null },
 	jurisdictions: [
-		{ key: 'de', name: 'Germany', logbook_export: true },
-		{ key: 'generic', name: 'Generic', logbook_export: false },
+		{ key: 'de', name: 'Germany', logbook_export: true, mileage_claim: true, grid_factor: null },
+		{ key: 'generic', name: 'Generic', logbook_export: false, mileage_claim: false, grid_factor: null },
 	],
 }
 
@@ -70,7 +70,15 @@ function field(wrapper) {
  * @return {any} the button that opens the logbook
  */
 function link(wrapper) {
-	return wrapper.findComponent(NcButton)
+	return wrapper.findComponent('.reports__open-logbook')
+}
+
+/**
+ * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted screen
+ * @return {any} the button that opens the mileage claim
+ */
+function claim(wrapper) {
+	return wrapper.findComponent('.reports__open-claim')
 }
 
 beforeEach(() => {
@@ -159,6 +167,51 @@ describe('reports screen', () => {
 		await field(wrapper).vm.$emit('update:modelValue', year)
 
 		expect(link(wrapper).props('disabled')).toBe(true)
+		expect(claim(wrapper).props('disabled')).toBe(true)
 		expect(field(wrapper).props('error')).toBe(true)
+	})
+
+	/** Same vehicle, same year, the other page: business trips at the country's rate. */
+	it('links to the mileage claim of the vehicle and year chosen', async () => {
+		const wrapper = await screen()
+
+		await field(wrapper).vm.$emit('update:modelValue', '2024')
+
+		expect(claim(wrapper).props('href')).toBe('/index.php/apps/nextfleet/vehicles/v-de/mileage/2024')
+		expect(claim(wrapper).props('target')).toBe('_blank')
+	})
+
+	/**
+	 * The claim route answers 404 where the country states no rate, and for a vehicle counting
+	 * hours, which no kilometre rate values; neither is offered one.
+	 */
+	it('offers no mileage claim where the route has none', async () => {
+		vi.mocked(getPreferences).mockResolvedValue({
+			...settings,
+			jurisdictions: [{ ...settings.jurisdictions[0], mileage_claim: false }, settings.jurisdictions[1]],
+		})
+		const noRate = await screen()
+		expect(link(noRate).exists()).toBe(true)
+		expect(claim(noRate).exists()).toBe(false)
+
+		vi.mocked(getPreferences).mockResolvedValue(settings)
+		const hours = await screen([HOURS])
+		expect(link(hours).exists()).toBe(true)
+		expect(claim(hours).exists()).toBe(false)
+	})
+
+	/** A country could print a claim and no logbook; its vehicles are offered all the same. */
+	it('offers a vehicle whose country prints only a claim', async () => {
+		vi.useFakeTimers({ toFake: ['Date'] })
+		vi.setSystemTime(new Date('2026-09-17T10:00:00Z'))
+		vi.mocked(getPreferences).mockResolvedValue({
+			...settings,
+			jurisdictions: [{ ...settings.jurisdictions[0], logbook_export: false }, settings.jurisdictions[1]],
+		})
+
+		const wrapper = await screen([GERMAN])
+
+		expect(link(wrapper).exists()).toBe(false)
+		expect(claim(wrapper).props('href')).toBe('/index.php/apps/nextfleet/vehicles/v-de/mileage/2026')
 	})
 })

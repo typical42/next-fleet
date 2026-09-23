@@ -145,7 +145,7 @@ class FahrtenbuchRenderer implements IReportRenderer {
 			['', gmdate('H:i', $started) . '–' . ($sameDay ? '' : gmdate('d.m.Y ', $ended)) . gmdate('H:i', $ended)],
 			['number', $this->count($trip->getStartOdo())],
 			['number', $this->count($trip->getEndOdo())],
-			['number', $this->count($this->kilometres($trip))],
+			['number', $this->count($trip->kilometres())],
 			['', $this->text($trip->getFromLabel())],
 			['', $this->text($trip->getToLabel())],
 			['', $this->text($trip->getPurpose())],
@@ -164,22 +164,6 @@ class FahrtenbuchRenderer implements IReportRenderer {
 		}
 
 		return $html . '</tr>';
-	}
-
-	/**
-	 * The kilometres the line accounts for: what the driver stated, or the difference between the
-	 * two counters they read. Nothing where neither says it - a figure worked out from the odometer
-	 * chain is the core's, and it did not hand one over.
-	 */
-	private function kilometres(Trip $trip): ?int {
-		if ($trip->getDistance() !== null) {
-			return $trip->getDistance();
-		}
-		if ($trip->getStartOdo() !== null && $trip->getEndOdo() !== null) {
-			return $trip->getEndOdo() - $trip->getStartOdo();
-		}
-
-		return null;
 	}
 
 	/**

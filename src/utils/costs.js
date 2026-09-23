@@ -107,6 +107,54 @@ export function tableOf(answer, locale = getCanonicalLocale()) {
 }
 
 /**
+ * @typedef {object} Co2Text
+ * @property {string} figure - the kilograms, or why there are none
+ * @property {string[]} notes - what the figure rests on
+ * @property {{label: string, href: string}[]} sources - linked, never quoted
+ */
+
+/**
+ * The year's CO₂ as the Costs screen states it: always an estimate, with each factor's year and
+ * source. Null from the server is "unavailable", which is not a zero.
+ *
+ * @param {import('../services/api.js').Co2|null} co2 - the year's, as the route answers it
+ * @param {string} [locale] - defaults to the one Nextcloud resolved for this session
+ * @return {Co2Text} what the screen says
+ */
+export function co2Of(co2, locale = getCanonicalLocale()) {
+	if (co2 === null) {
+		return {
+			figure: t('nextfleet', 'Unavailable'),
+			notes: [t('nextfleet', 'The country this vehicle is kept under states no emission factors')],
+			sources: [],
+		}
+	}
+
+	const kilograms = new Intl.NumberFormat(locale, { style: 'unit', unit: 'kilogram', maximumFractionDigits: 0 })
+	const notes = [t('nextfleet', 'An estimate: what was tanked or charged, times its emission factor')]
+	const sources = [{ label: t('nextfleet', 'Fuel factors'), href: co2.source }]
+	const { grid } = co2
+	if (grid !== null && grid.year !== null && grid.source !== null) {
+		notes.push(t('nextfleet', 'Electricity at {grams} g/kWh, the average of {year}', { grams: grid.grams, year: grid.year }))
+		sources.push({ label: t('nextfleet', 'Grid factor {year}', { year: grid.year }), href: grid.source })
+	} else if (grid !== null) {
+		notes.push(t('nextfleet', 'Electricity at {grams} g/kWh, your own figure from the settings', { grams: grid.grams }))
+	}
+	if (co2.unstated) {
+		notes.push(t('nextfleet', 'Leaves out fill-ups of an energy with no emission factor'))
+	}
+
+	// No grams with something left out means fill-ups without a factor, not a year without any.
+	const none = co2.unstated ? t('nextfleet', 'Not stated') : t('nextfleet', 'No fill-ups')
+
+	return {
+		figure: co2.grams === null ? none : `≈ ${kilograms.format(co2.grams / 1000)}`,
+		notes,
+		sources,
+	}
+}
+
+/**
  * @param {Band} band - a band of the bars
  * @return {string} its word
  */

@@ -288,6 +288,34 @@ abstract class BaseMapper extends QBMapper {
 		}
 	}
 
+	/**
+	 * The uuids of some of one vehicle's rows, by id, deleted rows included: a row that points at
+	 * another by id still names it on the wire by uuid, and an undo brings a deleted one back.
+	 *
+	 * @param list<int> $ids
+	 * @return array<int, string>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function uuidsById(int $vehicleId, array $ids): array {
+		if ($ids === []) {
+			return [];
+		}
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('id', 'uuid')
+			->from($this->tableName)
+			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->in('id', $qb->createNamedParameter($ids, IQueryBuilder::PARAM_INT_ARRAY)));
+
+		$uuids = [];
+		$result = $qb->executeQuery();
+		while (($row = $result->fetch()) !== false) {
+			$uuids[(int)$row['id']] = (string)$row['uuid'];
+		}
+		$result->closeCursor();
+
+		return $uuids;
+	}
+
 	private function byUuid(string $uuid): IQueryBuilder {
 		$qb = $this->db->getQueryBuilder();
 		$qb->select('*')

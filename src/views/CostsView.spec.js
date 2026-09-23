@@ -37,6 +37,7 @@ function answer(year = {}) {
 
 	return {
 		year: { consumption: [], wall_side: null, cost: cost({ total: 12000, energy: 9000, maintenance: 3000, value: 1200, energy_value: 900, tco: 3500, ...year }), hours: null },
+		co2: { grams: 109630, unstated: false, source: 'https://example.org/fuels', grid: null },
 		months: Array.from({ length: 12 }, (_, i) => ({ month: i + 1, from: 0, to: 0, cost: i === 2 ? march : EMPTY })),
 	}
 }
@@ -116,6 +117,33 @@ describe('the Costs screen', () => {
 		expect(wrapper.findAll('.tile dt').map((one) => one.text())).toEqual(['Cost', 'Energy cost', 'TCO'])
 	})
 
+	/** A spreadsheet's year is the one on screen, one file per table (docs/architecture.md#csv-export). */
+	it('offers the year on screen as four CSV files', async () => {
+		const wrapper = await screen()
+		await button(wrapper, 'Previous year').trigger('click')
+		await flushPromises()
+
+		/** @type {string[]} */
+		const saved = []
+		const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(/** @this {HTMLAnchorElement} */ function() {
+			saved.push(this.download === '' ? this.getAttribute('href') ?? '' : 'not a download')
+		})
+
+		await button(wrapper, 'Export').trigger('click')
+		await flushPromises()
+		const items = [...document.body.querySelectorAll('[role="menuitem"]')]
+		expect(items.map((one) => one.textContent?.trim())).toEqual(['Trips', 'Fill-ups', 'Maintenance', 'Expenses'])
+		for (const item of items) {
+			item.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+		}
+
+		// The address itself is csvUrl()'s (api.spec.js); jsdom has no webroot to put before it.
+		expect(saved.map((href) => href.replace(/^.*\/apps\//, '/apps/'))).toEqual(['trips', 'energy', 'maintenance', 'expenses']
+			.map((table) => `/apps/nextfleet/vehicles/v-1/csv/2025/${table}`))
+		click.mockRestore()
+		wrapper.unmount()
+	})
+
 	it('steps to the year before, and not past this one', async () => {
 		const wrapper = await screen()
 		expect(button(wrapper, 'Next year').attributes('disabled')).toBeDefined()
@@ -135,6 +163,18 @@ describe('the Costs screen', () => {
 
 		expect(wrapper.findComponent(NcEmptyContent).exists()).toBe(true)
 		expect(wrapper.find('table').exists()).toBe(false)
+		// CO₂ needs no currency.
+		expect(wrapper.find('.costs__co2').text()).toContain('≈ 110 kg')
+	})
+
+	it('states the year\'s CO₂ as an estimate and links its source', async () => {
+		const wrapper = await screen()
+		const co2 = wrapper.find('.costs__co2')
+
+		expect(co2.find('h3').text()).toBe('CO₂ (estimate)')
+		expect(co2.text()).toContain('≈ 110 kg')
+		expect(co2.text()).toContain('An estimate: what was tanked or charged, times its emission factor')
+		expect(co2.find('a').attributes()).toMatchObject({ href: 'https://example.org/fuels', rel: 'noreferrer noopener', target: '_blank' })
 	})
 
 	it('says when the year could not be read', async () => {
