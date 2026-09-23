@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { tilesOf } from './kpis.js'
+import { periodTilesOf, tilesOf } from './kpis.js'
 
 const CAR = { uuid: 'v-1', updated_at: 1700000000, odo_value: 48210, odo_unit: 'km', second_unit: null, currency: 'EUR', energy_types: ['diesel'] }
 
@@ -14,7 +14,7 @@ const CAR = { uuid: 'v-1', updated_at: 1700000000, odo_value: 48210, odo_unit: '
  * @return {import('../services/api.js').Cost} the cost part of an answer
  */
 function cost(cost = {}) {
-	return { currency: 'EUR', net: false, per: 'km', distance: 1000, total: 20000, energy: 12000, value: 2000, energy_value: 1200, tco: null, incomplete: false, unstated: false, ...cost }
+	return { currency: 'EUR', net: false, per: 'km', distance: 1000, total: 20000, energy: 12000, maintenance: 0, expenses: [], value: 2000, energy_value: 1200, tco: null, incomplete: false, unstated: false, ...cost }
 }
 
 /**
@@ -164,6 +164,13 @@ describe('the header tiles', () => {
 			'Incomplete: a fill-up in the period has no price',
 			'Rows without a VAT rate count gross',
 		])
+	})
+
+	/** The Costs screen states a year's figures, and the counter belongs to no period. */
+	it('states the period\'s figures without the odometer', () => {
+		const tiles = periodTilesOf(CAR, kpis({ consumption: [DIESEL], cost: cost({ tco: 3500 }) }), null, 'en')
+
+		expect(tiles.map((one) => one.label)).toEqual(['Diesel consumption', 'Cost', 'Energy cost', 'TCO'])
 	})
 
 	it('shows the TCO only when there is one', () => {

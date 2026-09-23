@@ -22,6 +22,13 @@ class VehicleMapper extends BaseMapper {
 	}
 
 	/**
+	 * The owner too: Nextcloud lets a deleted uid be taken again, and ownership is this column.
+	 */
+	protected function accountColumns(): array {
+		return ['user_id', 'created_by'];
+	}
+
+	/**
 	 * Writes the odometer cache and nothing else. `odo_value` is recomputed from the Readings
 	 * (docs/architecture.md#odometer-rules), so it is not what a client edited and must not move
 	 * the row's concurrency token: a recompute that did would refuse every sheet that happened

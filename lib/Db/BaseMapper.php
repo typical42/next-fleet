@@ -261,6 +261,33 @@ abstract class BaseMapper extends QBMapper {
 		return $qb;
 	}
 
+	/**
+	 * The columns that name an account, which an erasure rewrites. Every table has `created_by`;
+	 * a table with an account column of its own adds it.
+	 *
+	 * @return list<string>
+	 */
+	protected function accountColumns(): array {
+		return ['created_by'];
+	}
+
+	/**
+	 * Replaces an account's uid with a pseudonym wherever this table names it, deleted rows
+	 * included (docs/adr/0008-erasing-a-driver-pseudonymises.md). `updated_at` stays: nobody
+	 * edited the row, and a moved token would refuse every open client's next save.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	public function pseudonymise(string $uid, string $pseudonym): void {
+		foreach ($this->accountColumns() as $column) {
+			$qb = $this->db->getQueryBuilder();
+			$qb->update($this->tableName)
+				->set($column, $qb->createNamedParameter($pseudonym))
+				->where($qb->expr()->eq($column, $qb->createNamedParameter($uid)));
+			$qb->executeStatement();
+		}
+	}
+
 	private function byUuid(string $uuid): IQueryBuilder {
 		$qb = $this->db->getQueryBuilder();
 		$qb->select('*')
@@ -271,8 +298,8 @@ abstract class BaseMapper extends QBMapper {
 	}
 
 	/**
-	 * Deleting is stamping `deleted_at`: the row stays for the trash and for an erasure to
-	 * purge, and the write is checked like any other.
+	 * Deleting is stamping `deleted_at`: the row stays for the trash and for a retention period
+	 * to purge, and the write is checked like any other.
 	 *
 	 * @param T $entity
 	 * @param int $expectedUpdatedAt the `updated_at` the client read

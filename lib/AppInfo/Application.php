@@ -10,11 +10,13 @@ namespace OCA\NextFleet\AppInfo;
 
 use OCA\NextFleet\Jurisdiction\Generic\ServiceTemplates;
 use OCA\NextFleet\Jurisdiction\IServiceTemplates;
+use OCA\NextFleet\Listener\UserDeletedListener;
 use OCA\NextFleet\Notification\Notifier;
 use OCP\AppFramework\App;
 use OCP\AppFramework\Bootstrap\IBootContext;
 use OCP\AppFramework\Bootstrap\IBootstrap;
 use OCP\AppFramework\Bootstrap\IRegistrationContext;
+use OCP\User\Events\UserDeletedEvent;
 
 class Application extends App implements IBootstrap {
 	public const APP_ID = 'nextfleet';
@@ -31,6 +33,7 @@ class Application extends App implements IBootstrap {
 	public function register(IRegistrationContext $context): void {
 		$context->registerServiceAlias(IServiceTemplates::class, ServiceTemplates::class);
 		$context->registerNotifierService(Notifier::class);
+		$context->registerEventListener(UserDeletedEvent::class, UserDeletedListener::class);
 	}
 
 	public function boot(IBootContext $context): void {

@@ -123,8 +123,8 @@ trait SchemaExpectations {
 
 		$this->assertSame(
 			[
-				'fleet_access', 'fleet_audit', 'fleet_energy', 'fleet_expenses', 'fleet_maintenance',
-				'fleet_odo_readings', 'fleet_reminder_receipts', 'fleet_reminder_recipients',
+				'fleet_access', 'fleet_audit', 'fleet_documents', 'fleet_energy', 'fleet_expenses',
+				'fleet_maintenance', 'fleet_odo_readings', 'fleet_reminder_receipts', 'fleet_reminder_recipients',
 				'fleet_reminders', 'fleet_trips', 'fleet_vehicles',
 			],
 			$tables,
@@ -312,6 +312,18 @@ trait SchemaExpectations {
 		]);
 	}
 
+	public function testDocumentsHoldsTheDataModelsColumnsAndNoOthers(): void {
+		$this->assertTable('fleet_documents', [
+			'vehicle_id' => 'bigint, not null',
+			// Nextcloud's own file id, which survives a move; no path is stored.
+			'file_id' => 'bigint, not null',
+			'kind' => 'string(16), not null',
+			// The entry the paper belongs to, if any: energy, maintenance or expense.
+			'linked_type' => 'string(16), null',
+			'linked_id' => 'bigint, null',
+		]);
+	}
+
 	public function testAuditHoldsTheDataModelsColumnsAndNoOthers(): void {
 		$this->assertTable('fleet_audit', [
 			// Which table the row is about, and which row in it. No foreign key: the audit
@@ -397,6 +409,13 @@ trait SchemaExpectations {
 			'fleet_rcp_uuid_uniq' => 'unique(uuid)',
 			'fleet_rcp_veh_user_uniq' => 'unique(vehicle_id, user_id)',
 		], $this->indexes('fleet_reminder_recipients'));
+
+		// A vehicle's papers, and the paperclip on an entry's timeline row.
+		$this->assertSame([
+			'fleet_doc_linked_idx' => 'index(linked_type, linked_id)',
+			'fleet_doc_uuid_uniq' => 'unique(uuid)',
+			'fleet_doc_veh_idx' => 'index(vehicle_id)',
+		], $this->indexes('fleet_documents'));
 	}
 
 	/**

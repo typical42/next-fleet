@@ -144,6 +144,14 @@ a tab of its own ([export](architecture.md#the-fahrtenbuch-export)). It offers o
 country prints a logbook, because any other opens a 404. Sold vehicles are offered too: their
 logbook is still kept after they leave the fleet.
 
+**Costs** opens from *Costs* on the vehicle screen and goes back there; picking any vehicle in the
+navigation leaves it. The year steps back one at a time and not past the current one. The bars are
+hand-drawn SVG in three bands — energy, maintenance, expenses — because six are unreadable at
+320 px; the table beneath breaks the expenses out by category and carries every figure, so the
+drawing is hidden from screen readers. A month with no rows says so rather than showing zero.
+Depreciation stays out of the bars: it is an estimate spread over the holding period, not a
+month's spending, and it lives in the TCO tile.
+
 The **Settings** entry in the sketch above is a link into that page, not a seventh screen. A
 preference belongs to the person, so it lives where a person looks for their preferences.
 

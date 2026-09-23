@@ -69,18 +69,21 @@ class ReminderJobTest extends TestCase {
 		$this->forget();
 	}
 
-	/** The accounts and the rows this suite invents, gone for real. */
+	/**
+	 * The accounts and the rows this suite invents, gone for real. Rows first: deleting an account
+	 * pseudonymises them, and they would outlive the run.
+	 */
 	private function forget(): void {
-		$users = \OCP\Server::get(IUserManager::class);
-		foreach ([self::OWNER, self::OUTSIDER] as $uid) {
-			$users->get($uid)?->delete();
-		}
 		$db = \OCP\Server::get(IDBConnection::class);
 		$people = [self::OWNER, self::OUTSIDER];
 		foreach (['fleet_vehicles' => 'user_id', 'fleet_reminders' => 'created_by', 'fleet_reminder_recipients' => 'user_id', 'fleet_reminder_receipts' => 'user_id', 'fleet_odo_readings' => 'created_by', 'fleet_maintenance' => 'created_by'] as $table => $column) {
 			$qb = $db->getQueryBuilder();
 			$qb->delete($table)->where($qb->expr()->in($column, $qb->createNamedParameter($people, $qb::PARAM_STR_ARRAY)));
 			$qb->executeStatement();
+		}
+		$users = \OCP\Server::get(IUserManager::class);
+		foreach ([self::OWNER, self::OUTSIDER] as $uid) {
+			$users->get($uid)?->delete();
 		}
 	}
 
@@ -200,6 +203,24 @@ class ReminderJobTest extends TestCase {
 		$this->assertSame([], $this->notifications(self::OWNER));
 	}
 
+	/**
+	 * The job skips a deleted vehicle, so nothing else would ever take its notifications back.
+	 * Counted in the store, not read over OCS: the notifier drops one whose vehicle is gone as the
+	 * list is read, which hides the leftover from a phone but not from the push or the table.
+	 */
+	public function testDeletingTheVehicleTakesItsNotificationsBack(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$this->reminders->create(self::OWNER, $vehicle->getUuid(), ['template_key' => 'hu_au', 'due_date' => '2031-05-31']);
+		$this->runAt('2031-05-03');
+		$reminder = $this->stored($vehicle->getId());
+		$this->assertSame(1, $this->sent($reminder));
+		$vehicle = $this->vehicles->find(self::OWNER, $vehicle->getUuid());
+
+		$this->vehicles->delete(self::OWNER, $vehicle->getUuid(), $vehicle->getUpdatedAt());
+
+		$this->assertSame(0, $this->sent($reminder));
+	}
+
 	/** Withdrawn work takes its occurrence back, and with it what that occurrence sent. */
 	public function testDeletingTheClosingRecordTakesTheNextOccurrencesNotificationBack(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
@@ -247,6 +268,15 @@ class ReminderJobTest extends TestCase {
 
 	private function stored(int $vehicleId): Reminder {
 		return \OCP\Server::get(ReminderMapper::class)->findByVehicle($vehicleId)[0];
+	}
+
+	/** How many notifications the store holds for this reminder, to anyone. */
+	private function sent(Reminder $reminder): int {
+		$manager = \OCP\Server::get(\OCP\Notification\IManager::class);
+		$notification = $manager->createNotification();
+		$notification->setApp(Application::APP_ID)->setObject(NotificationService::OBJECT, (string)$reminder->getId());
+
+		return $manager->getCount($notification);
 	}
 
 	/**

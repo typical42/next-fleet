@@ -23,6 +23,23 @@ class AccessMapper extends BaseMapper {
 	}
 
 	/**
+	 * A grant to the account as well, for the reason VehicleMapper gives. Only a user grant: a
+	 * group may carry the same name and is not the one being erased.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	public function pseudonymise(string $uid, string $pseudonym): void {
+		parent::pseudonymise($uid, $pseudonym);
+
+		$qb = $this->db->getQueryBuilder();
+		$qb->update($this->tableName)
+			->set('grantee', $qb->createNamedParameter($pseudonym))
+			->where($qb->expr()->eq('grantee', $qb->createNamedParameter($uid)))
+			->andWhere($qb->expr()->eq('grantee_type', $qb->createNamedParameter(Access::USER)));
+		$qb->executeStatement();
+	}
+
+	/**
 	 * What one user holds on one vehicle, their groups' grants included. More than one row can
 	 * come back - a user granted in person and again through a group - and the widest of them
 	 * decides (VehicleAccess).

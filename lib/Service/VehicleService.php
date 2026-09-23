@@ -11,6 +11,7 @@ namespace OCA\NextFleet\Service;
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\Audit;
 use OCA\NextFleet\Db\AuditMapper;
+use OCA\NextFleet\Db\ReminderMapper;
 use OCA\NextFleet\Db\ReminderRecipient;
 use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\Vehicle;
@@ -110,6 +111,8 @@ class VehicleService {
 		private AuditMapper $audit,
 		private IDBConnection $db,
 		private ReminderRecipientMapper $recipients,
+		private ReminderMapper $reminders,
+		private NotificationService $notifications,
 	) {
 	}
 
@@ -246,6 +249,11 @@ class VehicleService {
 	}
 
 	/**
+	 * Takes back what the vehicle's reminders have sent: the job no longer reads a deleted
+	 * vehicle, so nothing else ever would. After the delete stands, the reason
+	 * NotificationService::sweep() gives. A restore sends nothing back; the next round tells
+	 * whatever is still due.
+	 *
 	 * @param int $expectedUpdatedAt the `updated_at` the client read
 	 * @throws DoesNotExistException
 	 * @throws AccessDeniedException if the user may not delete this vehicle
@@ -253,10 +261,15 @@ class VehicleService {
 	 * @throws \OCP\DB\Exception
 	 */
 	public function delete(string $userId, string $uuid, int $expectedUpdatedAt): Vehicle {
-		return $this->mapper->softDelete(
+		$deleted = $this->mapper->softDelete(
 			$this->reach($userId, VehicleAccess::DELETE, $uuid),
 			$expectedUpdatedAt,
 		);
+		foreach ($this->reminders->findByVehicle((int)$deleted->getId()) as $reminder) {
+			$this->notifications->withdraw($reminder);
+		}
+
+		return $deleted;
 	}
 
 	/**

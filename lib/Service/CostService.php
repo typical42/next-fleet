@@ -16,7 +16,8 @@ use OCA\NextFleet\Db\Vehicle;
 /**
  * What a vehicle cost in a period (docs/architecture.md#numbers-consumption-cost-emissions).
  *
- * @psalm-type Cost = array{currency: ?string, net: bool, per: ?string, distance: ?int, total: ?int, energy: ?int, value: ?float, energy_value: ?float, tco: ?float, incomplete: bool, unstated: bool}
+ * @psalm-type Itemised = array{category: ?string, total: int}
+ * @psalm-type Cost = array{currency: ?string, net: bool, per: ?string, distance: ?int, total: ?int, energy: ?int, maintenance: ?int, expenses: ?list<Itemised>, value: ?float, energy_value: ?float, tco: ?float, incomplete: bool, unstated: bool}
  */
 class CostService {
 	public function __construct(
@@ -52,15 +53,18 @@ class CostService {
 			$incomplete = $incomplete || $fill->getTotal() === null;
 			$energy += $count($fill->getTotal(), $fill->getVatRate());
 		}
-		$total = $energy;
+		$maintenance = 0;
 		$records = $this->maintenance->findBetween($vehicleId, $from, $to);
 		foreach ($records as $record) {
-			$total += $count($record->getCost(), $record->getVatRate());
+			$maintenance += $count($record->getCost(), $record->getVatRate());
 		}
+		$byCategory = [];
 		$expenses = $this->expenses->findBetween($vehicleId, $from, $to);
 		foreach ($expenses as $expense) {
-			$total += $count($expense->getAmount(), $expense->getVatRate());
+			$key = $expense->getCategory() ?? '';
+			$byCategory[$key] = ($byCategory[$key] ?? 0) + $count($expense->getAmount(), $expense->getVatRate());
 		}
+		$total = $energy + $maintenance + array_sum($byCategory);
 		$distance = $this->consumption->distance($vehicle, $from, $to);
 		$per = ConsumptionService::per($vehicle);
 		// Money without a currency is a number nobody can read, and a period with no rows has no
@@ -76,6 +80,8 @@ class CostService {
 			'distance' => $distance,
 			'total' => $priced ? $total : null,
 			'energy' => $priced ? $energy : null,
+			'maintenance' => $priced ? $maintenance : null,
+			'expenses' => $priced ? self::itemised($byCategory) : null,
 			'value' => $value,
 			'energy_value' => $priced ? self::value($energy, $distance, $per) : null,
 			'tco' => $value === null ? null : $this->tco($vehicle, $value, $per),
@@ -100,6 +106,28 @@ class CostService {
 		$held = $this->consumption->distance($vehicle, PHP_INT_MIN, PHP_INT_MAX);
 
 		return $held === null ? null : $value + (float)self::value($purchase - $residual, $held, $per);
+	}
+
+	/**
+	 * In the sheet's order, then any word it does not offer, then the uncategorised: they are not
+	 * "other", they are unstated.
+	 *
+	 * @param array<string, int> $byCategory '' for no category
+	 * @return list<Itemised>
+	 */
+	private static function itemised(array $byCategory): array {
+		$order = array_unique([...ExpenseService::CATEGORIES, ...array_map('strval', array_keys($byCategory))]);
+		$items = [];
+		foreach ($order as $category) {
+			if (isset($byCategory[$category]) && $category !== '') {
+				$items[] = ['category' => $category, 'total' => $byCategory[$category]];
+			}
+		}
+		if (isset($byCategory[''])) {
+			$items[] = ['category' => null, 'total' => $byCategory['']];
+		}
+
+		return $items;
 	}
 
 	/** Cents per 100 km or per hour; none without a distance, when the period total stands alone. */

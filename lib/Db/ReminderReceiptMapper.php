@@ -21,6 +21,10 @@ class ReminderReceiptMapper extends BaseMapper {
 		parent::__construct($db, $time, $random, 'fleet_reminder_receipts', ReminderReceipt::class);
 	}
 
+	protected function accountColumns(): array {
+		return ['user_id', 'created_by'];
+	}
+
 	/**
 	 * Writes the receipt unless there is one: whether this point of this occurrence is still to be
 	 * sent to that user on that channel. The caller holds the vehicle, so two overlapping runs

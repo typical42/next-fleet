@@ -271,6 +271,20 @@ describe('the vehicle sheet, editing', () => {
 	 * the user emptied has to travel as an empty one to be cleared. The token travels with it -
 	 * this is the write docs/architecture.md#concurrency checks.
 	 */
+	/**
+	 * Nothing purges yet, so the sheet does not ask for a period it would promise to purge after
+	 * (docs/legal.md). A period already stored goes back as it was read.
+	 */
+	it('does not offer the retention period and keeps the stored one', async () => {
+		const wrapper = await sheet(VEHICLE)
+
+		expect(field(wrapper, 'Retention (months)')).toBeUndefined()
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ retention_months: 120 }))
+	})
+
 	it('writes every writable column back under the token it read', async () => {
 		const wrapper = await sheet(VEHICLE)
 
@@ -300,7 +314,6 @@ describe('the vehicle sheet, editing', () => {
 			jurisdiction: 'de',
 			logbook_mode: false,
 			lifecycle: 'active',
-			retention_months: '120',
 			color: '',
 			notes: 'two rows of seats',
 		}))

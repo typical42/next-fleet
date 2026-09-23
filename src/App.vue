@@ -19,6 +19,7 @@ import VehicleList from './components/VehicleList.vue'
 import VehicleSheet from './components/VehicleSheet.vue'
 import { useVehiclesStore } from './store/index.js'
 import { usePreferencesStore } from './store/preferences.js'
+import CostsView from './views/CostsView.vue'
 import OverviewView from './views/OverviewView.vue'
 import ReportsView from './views/ReportsView.vue'
 import VehicleView from './views/VehicleView.vue'
@@ -33,6 +34,8 @@ const preferences = usePreferencesStore()
 const selected = ref(new URLSearchParams(window.location.search).get('vehicle') ?? '')
 /** Whether the content area shows the reports instead, which belong to no one vehicle. */
 const reporting = ref(false)
+/** Whether the selected vehicle's costs show instead of its screen; picking any vehicle ends it. */
+const costing = ref(false)
 const creating = ref(false)
 const failure = ref('')
 
@@ -79,6 +82,7 @@ function open(created) {
  */
 function show(uuid) {
 	reporting.value = false
+	costing.value = false
 	selected.value = uuid
 }
 
@@ -126,7 +130,8 @@ function report() {
 			<!-- The whole fleet rather than the visible one: a sold vehicle's logbook is still kept
 			     (docs/features.md#logbook-mode). -->
 			<ReportsView v-else-if="reporting" :vehicles="store.list" />
-			<VehicleView v-else-if="vehicle" :vehicle="vehicle" />
+			<CostsView v-else-if="vehicle && costing" :vehicle="vehicle" @back="costing = false" />
+			<VehicleView v-else-if="vehicle" :vehicle="vehicle" @costs="costing = true" />
 			<OverviewView v-else
 				:vehicles="store.visible"
 				@new="creating = true"

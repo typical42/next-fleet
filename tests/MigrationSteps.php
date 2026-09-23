@@ -13,6 +13,7 @@ use OCA\NextFleet\Migration\Version000001Date20260101000000;
 use OCA\NextFleet\Migration\Version000002Date20260909000000;
 use OCA\NextFleet\Migration\Version000003Date20260919000000;
 use OCA\NextFleet\Migration\Version000004Date20260922000000;
+use OCA\NextFleet\Migration\Version000005Date20260923000000;
 use OCP\IDBConnection;
 use OCP\Migration\SimpleMigrationStep;
 
@@ -34,6 +35,7 @@ final class MigrationSteps {
 			new Version000002Date20260909000000(),
 			new Version000003Date20260919000000(),
 			new Version000004Date20260922000000($db, $recipients),
+			new Version000005Date20260923000000(),
 		];
 	}
 
@@ -47,7 +49,7 @@ final class MigrationSteps {
 		return [
 			'fleet_vehicles', 'fleet_odo_readings', 'fleet_access', 'fleet_trips', 'fleet_audit',
 			'fleet_energy', 'fleet_maintenance', 'fleet_expenses', 'fleet_reminders',
-			'fleet_reminder_receipts', 'fleet_reminder_recipients',
+			'fleet_reminder_receipts', 'fleet_reminder_recipients', 'fleet_documents',
 		];
 	}
 }

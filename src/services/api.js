@@ -170,6 +170,9 @@ import { generateOcsUrl, generateUrl } from '@nextcloud/router'
  * @property {number|null} distance - how far the main counter moved in the period
  * @property {number|null} total - every cost in the period
  * @property {number|null} energy - the fill-ups' share of it
+ * @property {number|null} maintenance - the maintenance records' share of it
+ * @property {{category: string|null, total: number}[]|null} expenses - the expenses' share, per
+ *   category in the sheet's order, then any word it does not offer, then the uncategorised
  * @property {number|null} value - total per 100 km or per hour; null without a distance
  * @property {number|null} energy_value - energy per 100 km or per hour
  * @property {number|null} tco - value plus depreciation; null unless purchase and residual are set
@@ -186,6 +189,15 @@ import { generateOcsUrl, generateUrl } from '@nextcloud/router'
  *   rolling electric figure, counted at the charger
  * @property {Cost} cost - what it cost
  * @property {number|null} hours - how far the second counter moved; null on a vehicle without one
+ */
+
+/**
+ * One vehicle's year for the Costs screen: the header's figures for the whole year, and each month's
+ * cost, cut at the reader's midnight.
+ *
+ * @typedef {object} CostYear
+ * @property {Kpis} year - the year's figures
+ * @property {{month: number, from: number, to: number, cost: Cost}[]} months - January first
  */
 
 /**
@@ -711,6 +723,23 @@ export async function readKpis(uuid, { from, to, net }) {
 	const query = new URLSearchParams({ from: String(from), to: String(to), net: String(net) })
 
 	return request('GET', `/api/vehicles/${uuid}/kpis?${query}`)
+}
+
+/**
+ * One vehicle's year for the Costs screen (lib/Service/KpiService.php). The reader names the zone
+ * and the server cuts the months at its midnight (docs/architecture.md#numbers-consumption-cost-emissions).
+ *
+ * @param {string} uuid - the vehicle whose year to read
+ * @param {object} asked - what to read
+ * @param {string} asked.year - four digits, which is what the route takes
+ * @param {string} asked.tz - the reader's IANA zone
+ * @param {boolean} asked.net - whether the person reclaims VAT
+ * @return {Promise<CostYear>} the year
+ */
+export async function readYear(uuid, { year, tz, net }) {
+	const query = new URLSearchParams({ tz, net: String(net) })
+
+	return request('GET', `/api/vehicles/${uuid}/costs/${year}?${query}`)
 }
 
 /**

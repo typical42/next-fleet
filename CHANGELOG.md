@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- The Costs screen, opened by *Costs* on a vehicle's screen. One year at a time: the year's figures
+  including TCO, a bar per month stacked in energy, maintenance and expenses, and a table beneath
+  with the expenses by category. A month with no rows reads "No entries", not zero. Depreciation
+  stays in the TCO and out of the bars. The export button is not there yet.
+
+- A year of costs for the Costs screen. `GET /api/vehicles/{uuid}/costs/{year}?tz=&net=` answers
+  the header's figures for the year and each month's cost, the months cut at midnight in `tz`. A
+  cost now also states its maintenance total and its expenses by category, the header's included.
+  A month with no rows has no cost rather than zero.
+
+- Deleting a Nextcloud account pseudonymises its rows and deletes none (ADR 0008). Every row
+  that names it, as author, owner, grantee or notified user, carries one random `erased-…`
+  pseudonym instead, so a new account under the same uid inherits nothing. Its reminder-list
+  entries go. The vehicle sheet no longer asks for a retention period, since nothing purges yet;
+  `docs/legal.md` says so.
+
+- `fleet_documents`, M5's one migration: a vehicle's papers by Nextcloud file id, with a kind and
+  an optional link to one fill-up, maintenance record or expense. No route reads it yet. The app is
+  now 0.0.6, so `occ upgrade` creates the table.
+
+- Deleting a vehicle takes back the notifications its reminders sent. Before, one stayed in the
+  store for good, since the job no longer reads a deleted vehicle. An undo sends nothing back.
+
 - The M4 slice end to end. `tests/e2e/m4-slice.spec.js` enters a HU/AU from the sticker, adds a
   German recipient and a daily mail in the vehicle sheet, and runs the job twice at a moved clock.
   The recipient then has one notification and one digest. Next, an oil change is closed from the
@@ -15,8 +38,7 @@
   `GET /api/vehicles/{uuid}/trips/prefill` answers them. Voided trips are not offered.
 
 - Deleting a vehicle is a soft delete and nothing more; no code path purges a vehicle's rows yet.
-  `docs/architecture.md` says so. A notification already sent for a deleted vehicle's reminder
-  stays up.
+  `docs/architecture.md` says so.
 
 - The demo fleet has reminders. `occ nextfleet:seed` adds an HU/AU three weeks out on the hybrid,
   an oil change by kilometres on the Passat — inside its lead, with a pace behind it, so the banner

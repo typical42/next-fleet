@@ -41,7 +41,7 @@ function answer(value) {
 	return {
 		consumption: [],
 		wall_side: null,
-		cost: { currency: 'EUR', net: false, per: 'km', distance: 1000, total: value * 10, energy: 0, value, energy_value: 0, tco: null, incomplete: false, unstated: false },
+		cost: { currency: 'EUR', net: false, per: 'km', distance: 1000, total: value * 10, energy: 0, maintenance: 0, expenses: [], value, energy_value: 0, tco: null, incomplete: false, unstated: false },
 		hours: null,
 	}
 }

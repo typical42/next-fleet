@@ -20,6 +20,8 @@ defineProps({
 	vehicle: { type: Object, required: true },
 })
 
+defineEmits(['costs'])
+
 const entering = ref(false)
 const editing = ref(false)
 /**
@@ -68,6 +70,10 @@ useHotKey('n', () => {
 			<div class="vehicle__actions">
 				<NcButton variant="primary" @click="entering = true">
 					{{ t('nextfleet', 'New entry') }}
+				</NcButton>
+				<!-- The shell swaps the screen (src/App.vue). -->
+				<NcButton @click="$emit('costs')">
+					{{ t('nextfleet', 'Costs') }}
 				</NcButton>
 				<NcButton @click="editing = true">
 					{{ t('nextfleet', 'Edit vehicle') }}
