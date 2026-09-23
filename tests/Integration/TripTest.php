@@ -311,6 +311,29 @@ class TripTest extends TestCase {
 	}
 
 	/**
+	 * What the sheet completes route, purpose and partner from: this vehicle's own trips, each word
+	 * once and the latest first. A starting point and a destination are one list, because where a
+	 * trip ended is where the next one sets off. A voided trip and another vehicle's are not asked.
+	 */
+	public function testThePrefillOffersThisVehiclesTripWordsLatestFirst(): void {
+		$mine = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 130']);
+		$other = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 131']);
+		$uuid = $mine->getUuid();
+		$this->record($uuid, 1750000000, ['end_odo' => 120000, 'from_label' => 'Office', 'to_label' => 'Müller GmbH', 'purpose' => 'Client visit', 'partner' => 'Müller GmbH']);
+		$this->record($uuid, 1750100000, ['end_odo' => 120100, 'from_label' => 'Müller GmbH', 'to_label' => 'Office']);
+		$this->record($uuid, 1750200000, ['end_odo' => 120200, 'to_label' => 'Depot', 'purpose' => 'Delivery']);
+		$voided = $this->record($uuid, 1750300000, ['end_odo' => 120300, 'to_label' => 'Nowhere', 'purpose' => 'Mistake', 'partner' => 'Nobody']);
+		$this->service->delete(self::AUTHOR, $uuid, $voided->getUuid(), $voided->getUpdatedAt());
+		$this->record($other->getUuid(), 1750400000, ['end_odo' => 5000, 'to_label' => 'Elsewhere', 'purpose' => 'Theirs', 'partner' => 'Theirs']);
+
+		$this->assertSame([
+			'places' => ['Depot', 'Office', 'Müller GmbH'],
+			'purposes' => ['Delivery', 'Client visit'],
+			'partners' => ['Müller GmbH'],
+		], $this->service->prefill(self::AUTHOR, $uuid));
+	}
+
+	/**
 	 * Undo, against the real statements: both rows come back on the token the void answered with,
 	 * and the vehicle is where the journey left it.
 	 */

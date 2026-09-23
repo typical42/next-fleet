@@ -133,6 +133,14 @@ field that is not in the schema is a field nobody maintains. That rule is why no
 are a table and not a column. It also carries a `<name>_off` for each of its user-facing instants
 ([Time](#time)); the table above spells those out only for the tables that exist.
 
+**Nothing purges yet.** Deleting a vehicle stamps its `deleted_at` and touches no other row: its
+readings, trips, fill-ups, maintenance records, expenses, reminders, receipts, recipients and
+access grants stay as they were, so an undo brings the vehicle back whole. No route, `occ` command, job or
+user-deletion listener removes a row. The one hard delete is taking a recipient off a list
+([Who is told](#reminder-engine)), which is not a vehicle delete. A GDPR erasure
+([ADR 0008](adr/0008-erasing-a-driver-pseudonymises.md)) or opt-in retention will be the first
+purge, and must then take the vehicle's child rows with it.
+
 **A boolean column is nullable and carries a default.** Nextcloud's schema check refuses a `NOT NULL`
 boolean outright — it is an integer of length 1 on the databases it supports — and NC 31 enforces
 that where NC 34 no longer does. The default is what a flag nobody touched means.
@@ -374,7 +382,8 @@ reminders write none.
 
 ## Reminder engine
 
-One rule set, used by HU/AU, oil change, insurance renewal, tyre swap, licence check.
+One rule set, used by the templates — HU/AU, oil change, brake fluid, tyre swap — and by a reminder
+with its own title, such as an insurance renewal or a licence check.
 
 1. A reminder is due by date, by odometer, or by whichever comes first.
 2. A date reminder warns at its ticked warning points — a month before, at the start of the month
@@ -489,6 +498,8 @@ receipt. A vehicle that fails is logged and the round goes on.
 - A receipt is per point and occurrence, and the schema has no more. A snooze that ends on a point
   already sent therefore sends nothing until the next point. An edit that moves the due date
   without changing the point leaves the sent text with the old date.
+- Deleting a vehicle withdraws nothing, and the job no longer reads it, so a notification already
+  sent for one of its reminders stays in the recipient's list.
 
 **The digest.** After the notifications, the job hands the round to `MailService`. Each enabled
 recipient with an address gets at most one mail a day, from 07:00 in their time zone (`core`
@@ -501,7 +512,7 @@ points are the ones the notification tells, and the lines say what it says, with
 transaction, so a refused mail rolls them back: the notification has its own receipt and stays,
 and the next run tries again. A day counts as mailed by its newest `mail` receipt up to now.
 
-The same prediction warns on leasing mileage overrun.
+The same prediction will warn on leasing mileage overrun (M5).
 
 ## Numbers: consumption, cost, emissions
 

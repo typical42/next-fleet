@@ -112,6 +112,26 @@ recurrence and lead, never a due date. Service templates are the same everywhere
 is the Jurisdiction's.
 _Avoid_: Preset, rule
 
+**Occurrence**:
+One round of a recurring Reminder. Closing or dismissing it moves the same Reminder to the next;
+deleting the Reminder ends them all.
+
+**Warning Point**:
+A moment a date Reminder tells its Recipients: a month before, at the start of the month it is due,
+on the due date. Overdue always tells; an odometer Reminder has one point, `due_odo − lead_odo`.
+_Avoid_: Lead days, alert
+
+**Recipient**:
+An account on a vehicle's list of whom its Reminders tell. Being on it grants no Vehicle Access.
+_Avoid_: Subscriber, watcher
+
+**Digest**:
+The one mail a Recipient gets on a day, covering every vehicle on their list with news.
+
+**Notification Receipt**:
+The row saying a Warning Point was sent to one Recipient on one channel (`app` or `mail`). Table
+`fleet_reminder_receipts`. Not a purchase receipt, which is a Document.
+
 ### Access
 
 **Vehicle Access**:

@@ -21,7 +21,7 @@
     "screenshots:docker": "docker run --rm --init --network host -u $(id -u):$(id -g) -e HOME=/tmp -e NEXTFLEET_URL_NC34 -v \"$PWD\":/w -w /w mcr.microsoft.com/playwright:v1.63.0-noble node tools/screenshots.mjs",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "test:e2e:docker": "docker run --rm --init --network host -u $(id -u):$(id -g) -e HOME=/tmp -e CI -e NEXTFLEET_URL_NC31 -e NEXTFLEET_URL_NC34 -v \"$PWD\":/w -w /w mcr.microsoft.com/playwright:v1.63.0-noble npx playwright test",
+    "test:e2e:docker": "docker run --rm --init --network host -u $(id -u):$(id -g) -e HOME=/tmp -e CI -e NEXTFLEET_URL_NC31 -e NEXTFLEET_URL_NC34 -e NEXTFLEET_MAILPIT --group-add $(stat -c %g /var/run/docker.sock) -v /var/run/docker.sock:/var/run/docker.sock -v \"$PWD\":/w -w /w mcr.microsoft.com/playwright:v1.63.0-noble npx playwright test",
     "test:watch": "vitest",
     "watch": "vite build --mode development --watch"
   },

@@ -13,6 +13,7 @@ use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\ExpenseService;
 use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\OdometerService;
+use OCA\NextFleet\Service\ReminderService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\IUserManager;
@@ -29,7 +30,7 @@ use Symfony\Component\Console\Output\OutputInterface;
  * fleet the app cannot hold - and the odometer rules decide the flags here as they do anywhere
  * else.
  *
- * @psalm-type Seeded = array{vehicle: array<string, mixed>, disposed?: int, readings: list<array<string, int|string>>, energy?: list<array<string, mixed>>, maintenance?: list<array<string, mixed>>, expenses?: list<array<string, mixed>>}
+ * @psalm-type Seeded = array{vehicle: array<string, mixed>, disposed?: int, readings: list<array<string, int|string>>, energy?: list<array<string, mixed>>, maintenance?: list<array<string, mixed>>, expenses?: list<array<string, mixed>>, reminders?: list<array<string, mixed>>}
  */
 class SeedCommand extends Command {
 	/**
@@ -50,6 +51,9 @@ class SeedCommand extends Command {
 	 * only flags are the ones the comments promise - a seeded fill-up that broke a chain would
 	 * teach the screenshots the wrong thing.
 	 *
+	 * A reminder is days or months ahead instead, since what a reminder is worth is that it has
+	 * not fallen due yet. Its interval is the template's, never written down here.
+	 *
 	 * @var list<Seeded>
 	 */
 	private const FLEET = [
@@ -68,10 +72,14 @@ class SeedCommand extends Command {
 				'purchase_price' => 2850000,
 				'residual_est' => 2200000,
 				'currency' => 'EUR',
+				'jurisdiction' => self::HOME_COUNTRY,
 				'lifecycle' => 'active',
 			],
-			// The last reading is below the one derived before it, so the derived row is the
-			// one in question and the number somebody read stands (rule 6).
+			// A reading below the one derived before it, so the derived row is the one in question
+			// and the number somebody read stands (rule 6). The last three fall inside the 45 days
+			// before the run and span more than 30, which is the pace the oil change below is
+			// estimated from (rule 5) - and still is 45 days later, when the first of them leaves
+			// the 90-day window and the two left are 25 days apart.
 			'readings' => [
 				['days' => 730, 'value' => 84210],
 				['days' => 640, 'value' => 88900],
@@ -81,7 +89,9 @@ class SeedCommand extends Command {
 				['days' => 270, 'distance' => 3900],
 				['days' => 180, 'value' => 108400],
 				['days' => 90, 'distance' => 4100],
+				['days' => 45, 'value' => 111600],
 				['days' => 30, 'value' => 111900],
+				['days' => 5, 'value' => 112180],
 			],
 			// One partial, summed into the segment it falls in, and one after a fill-up nobody
 			// recorded, whose segment yields no number (docs/architecture.md#numbers-consumption-cost-emissions).
@@ -113,6 +123,12 @@ class SeedCommand extends Command {
 				['days' => 140, 'category' => 'toll', 'amount' => 1150, 'notes' => 'Brenner motorway'],
 				['days' => 60, 'category' => 'fine', 'amount' => 3000, 'notes' => '11 km/h too fast'],
 			],
+			// 720 km ahead of the newest Reading, so it stands inside the template's lead: the
+			// banner shows it warned, with the day the pace above reaches it, and the maintenance
+			// sheet has an open reminder to close.
+			'reminders' => [
+				['template_key' => 'oil_change', 'mode' => 'odo', 'due_odo' => 112900],
+			],
 		],
 		[
 			'vehicle' => [
@@ -129,6 +145,7 @@ class SeedCommand extends Command {
 				'odo_unit' => 'km',
 				'purchase_price' => 4990000,
 				'currency' => 'EUR',
+				'jurisdiction' => self::HOME_COUNTRY,
 				'lifecycle' => 'active',
 				'notes' => 'Cluster replaced under warranty; the counter starts over.',
 			],
@@ -179,6 +196,14 @@ class SeedCommand extends Command {
 				['days' => 320, 'category' => 'insurance', 'amount' => 92000],
 				['days' => 110, 'category' => 'parking', 'amount' => 2400, 'notes' => 'Airport, three days'],
 			],
+			// The sticker question answered, three weeks out: a month past its first warning
+			// point, so the banner is amber and the job has a notification to send. Not a month's
+			// end, which is what a sticker names: the demo has to stand three weeks out whichever
+			// day it is seeded on, and a due date the sheet writes - or a recurrence counts from
+			// a maintenance record - falls on any day anyway.
+			'reminders' => [
+				['template_key' => 'hu_au', 'due_in_days' => 21],
+			],
 		],
 		[
 			'vehicle' => [
@@ -193,6 +218,7 @@ class SeedCommand extends Command {
 				'vin' => 'WFFG313V0H1000300',
 				'odo_unit' => 'h',
 				'currency' => 'EUR',
+				'jurisdiction' => self::HOME_COUNTRY,
 				'lifecycle' => 'active',
 			],
 			// Engine hours, not kilometres: no column is named after a unit it might not hold
@@ -228,6 +254,7 @@ class SeedCommand extends Command {
 				'odo_unit' => 'km',
 				'first_reg' => '2015-04-20',
 				'vin' => 'W09HA752513F00400',
+				'jurisdiction' => self::HOME_COUNTRY,
 				'lifecycle' => 'laid_up',
 				'notes' => 'Off the road for the winter.',
 			],
@@ -254,6 +281,7 @@ class SeedCommand extends Command {
 				'odo_unit' => 'km',
 				'purchase_price' => 190000,
 				'currency' => 'EUR',
+				'jurisdiction' => self::HOME_COUNTRY,
 				'lifecycle' => 'disposed',
 				'notes' => 'Sold; kept for the retention period.',
 			],
@@ -277,6 +305,7 @@ class SeedCommand extends Command {
 				'engine' => 'petrol',
 				'energy_types' => ['petrol'],
 				'odo_unit' => 'km',
+				'jurisdiction' => self::HOME_COUNTRY,
 				'lifecycle' => 'active',
 			],
 			'readings' => [
@@ -299,6 +328,7 @@ class SeedCommand extends Command {
 				'odo_unit' => 'km',
 				'second_unit' => 'h',
 				'currency' => 'EUR',
+				'jurisdiction' => self::HOME_COUNTRY,
 				'lifecycle' => 'active',
 			],
 			'readings' => [
@@ -326,6 +356,11 @@ class SeedCommand extends Command {
 				['days' => 335, 'category' => 'insurance', 'amount' => 245000],
 				['days' => 275, 'category' => 'toll', 'amount' => 38450, 'notes' => 'Truck toll, one quarter'],
 			],
+			// A truck is inspected every 12 months where a car has 24, which the scheme decides
+			// and this reminder carries: the interval is a vehicle's, not a country's constant.
+			'reminders' => [
+				['template_key' => 'hu_au', 'due_in_months' => 5],
+			],
 		],
 	];
 
@@ -343,6 +378,13 @@ class SeedCommand extends Command {
 	 */
 	private const HOME = 'Europe/Berlin';
 
+	/**
+	 * And every vehicle says so rather than taking the seeding account's own setting: the plates,
+	 * the VAT rates and the HU/AU the reminders name are one country's, and a profile with no
+	 * inspection scheme offers no `hu_au` to write.
+	 */
+	private const HOME_COUNTRY = 'de';
+
 	public function __construct(
 		private IUserManager $users,
 		private VehicleService $fleet,
@@ -350,6 +392,7 @@ class SeedCommand extends Command {
 		private EnergyService $energy,
 		private MaintenanceService $maintenance,
 		private ExpenseService $expenses,
+		private ReminderService $reminders,
 		private ITimeFactory $time,
 	) {
 		parent::__construct();
@@ -376,6 +419,7 @@ class SeedCommand extends Command {
 
 		$readings = 0;
 		$costs = 0;
+		$reminders = 0;
 		foreach (self::FLEET as $entry) {
 			$vehicle = $this->fleet->create($userId, $this->fields($entry));
 			$uuid = $vehicle->getUuid();
@@ -394,17 +438,24 @@ class SeedCommand extends Command {
 			foreach ($entry['expenses'] ?? [] as $row) {
 				$this->expenses->record($userId, $uuid, $this->dated($row, 'spent_at'));
 			}
+			// Last, so a reminder by kilometres is planned against the counter as it now reads.
+			foreach ($entry['reminders'] ?? [] as $row) {
+				$this->reminders->create($userId, $uuid, $this->planned($row));
+			}
 			$written = count($entry['energy'] ?? []) + count($entry['maintenance'] ?? []) + count($entry['expenses'] ?? []);
+			$due = count($entry['reminders'] ?? []);
 			$readings += count($entry['readings']);
 			$costs += $written;
-			$output->writeln($this->describe($vehicle, count($entry['readings']), $written));
+			$reminders += $due;
+			$output->writeln($this->describe($vehicle, count($entry['readings']), $written, $due));
 		}
 
 		$output->writeln(sprintf(
-			'Seeded %d vehicles, %d readings and %d costs for %s.',
+			'Seeded %d vehicles, %d readings, %d costs and %d reminders for %s.',
 			count(self::FLEET),
 			$readings,
 			$costs,
+			$reminders,
 			$userId,
 		));
 
@@ -464,6 +515,40 @@ class SeedCommand extends Command {
 		];
 	}
 
+	/**
+	 * One reminder as the sheet would send it: what the fleet states is when it is due, counted
+	 * from the moment the command runs - in days, or to the end of the month a sticker would
+	 * name (docs/ui.md).
+	 *
+	 * @param array<string, mixed> $row with `due_in_days` or `due_in_months`, or a due counter
+	 * @return array<string, mixed>
+	 */
+	private function planned(array $row): array {
+		$days = $row['due_in_days'] ?? null;
+		$months = $row['due_in_months'] ?? null;
+		unset($row['due_in_days'], $row['due_in_months']);
+
+		if ($days !== null) {
+			return $row + ['due_date' => $this->dayOf($this->instant(-(int)$days))];
+		}
+		if ($months !== null) {
+			return $row + ['due_date' => $this->monthEnd((int)$months)];
+		}
+
+		return $row;
+	}
+
+	/** The last day of the month that many months after this one, where a HU/AU falls due. */
+	private function monthEnd(int $monthsAhead): string {
+		$now = $this->berlin($this->time->getTime());
+		// setDate carries a month past December into the next year, and `t` is the length of
+		// whichever month the first lands in.
+		$first = $now->setDate((int)$now->format('Y'), (int)$now->format('n') + $monthsAhead, 1);
+
+		return $first->setDate((int)$first->format('Y'), (int)$first->format('n'), (int)$first->format('t'))
+			->format('Y-m-d');
+	}
+
 	private function instant(int $daysAgo): int {
 		return $this->time->getTime() - $daysAgo * self::DAY;
 	}
@@ -481,13 +566,14 @@ class SeedCommand extends Command {
 		return (new \DateTimeImmutable('@' . $instant))->setTimezone(new \DateTimeZone(self::HOME));
 	}
 
-	private function describe(Vehicle $vehicle, int $readings, int $costs): string {
+	private function describe(Vehicle $vehicle, int $readings, int $costs, int $reminders): string {
 		return sprintf(
-			'  %-12s %-28s %2d reading(s) %2d cost(s)',
+			'  %-12s %-28s %2d reading(s) %2d cost(s) %d reminder(s)',
 			(string)$vehicle->getPlate(),
 			trim($vehicle->getManufacturer() . ' ' . $vehicle->getModel()),
 			$readings,
 			$costs,
+			$reminders,
 		);
 	}
 }

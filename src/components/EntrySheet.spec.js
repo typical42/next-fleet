@@ -17,7 +17,7 @@ import { flushPromises, shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ConflictError, deleteEntry, energyPrefill, expensePrefill, getVehicle, listReminders, maintenancePrefill, readEntry, recordEnergy, recordExpense, recordMaintenance, recordReading, recordTrip, updateEntry } from '../services/api.js'
+import { ConflictError, deleteEntry, energyPrefill, expensePrefill, getVehicle, listReminders, maintenancePrefill, readEntry, recordEnergy, recordExpense, recordMaintenance, recordReading, recordTrip, tripPrefill, updateEntry } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
 import EntrySheet from './EntrySheet.vue'
 
@@ -37,6 +37,7 @@ vi.mock('../services/api.js', async (original) => ({
 	recordMaintenance: vi.fn(),
 	recordReading: vi.fn(),
 	recordTrip: vi.fn(),
+	tripPrefill: vi.fn(),
 	updateEntry: vi.fn(),
 }))
 
@@ -184,6 +185,7 @@ beforeEach(() => {
 	vi.mocked(recordEnergy).mockResolvedValue(/** @type {any} */ ({ uuid: 'e-1', flags: [] }))
 	vi.mocked(recordMaintenance).mockResolvedValue(/** @type {any} */ ({ uuid: 'm-1' }))
 	vi.mocked(listReminders).mockResolvedValue([])
+	vi.mocked(tripPrefill).mockResolvedValue({ places: ['Office', 'Müller GmbH'], purposes: ['Client visit'], partners: ['Müller GmbH'] })
 	vi.mocked(maintenancePrefill).mockResolvedValue({ vat_rate: 1900, vendors: ['ATU Nord', 'Reifen Müller'] })
 	vi.mocked(recordExpense).mockResolvedValue(/** @type {any} */ ({ uuid: 'x-1' }))
 	vi.mocked(expensePrefill).mockResolvedValue({ vat_rate: 1900 })
@@ -290,6 +292,35 @@ describe('the entry sheet', () => {
 		expect(dropdown(wrapper, 'Category').props('modelValue').id).toBe('business')
 		expect(moment(wrapper, 'Departure').props('modelValue')).toBeInstanceOf(Date)
 		expect(moment(wrapper, 'Arrival').props('modelValue')).toBeInstanceOf(Date)
+	})
+
+	/**
+	 * Route, purpose and partner complete from this vehicle's own trips, which is what keeps six
+	 * spellings of one client out of the reports (docs/ui.md). Both ends of the route offer the
+	 * same places.
+	 */
+	it('offers the places, purposes and partners of this vehicle\'s trips', async () => {
+		const wrapper = sheet()
+		await flushPromises()
+
+		/** @param {string} label - the field whose completions are read */
+		const offered = (label) => wrapper.find(`datalist#${field(wrapper, label).attributes('list')}`)
+			.findAll('option').map((one) => one.attributes('value'))
+		expect(vi.mocked(tripPrefill)).toHaveBeenCalledWith('v-1')
+		expect(offered('Starting point')).toEqual(['Office', 'Müller GmbH'])
+		expect(offered('Destination')).toEqual(['Office', 'Müller GmbH'])
+		expect(offered('Purpose')).toEqual(['Client visit'])
+		expect(offered('Business partner')).toEqual(['Müller GmbH'])
+	})
+
+	/** A prefill that fails leaves the fields as they were before it was asked for: plain. */
+	it('still takes a trip when its completions cannot be read', async () => {
+		vi.mocked(tripPrefill).mockRejectedValue(new Error('offline'))
+		const wrapper = sheet()
+		await flushPromises()
+
+		expect(wrapper.findAll('datalist option')).toHaveLength(0)
+		expect(field(wrapper, 'Purpose').props('modelValue')).toBe('')
 	})
 
 	/**

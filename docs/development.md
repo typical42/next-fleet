@@ -105,11 +105,15 @@ nobody finished creating, which is what the "complete this vehicle" hint has to 
 ([ui](ui.md#details-that-decide-whether-it-feels-easy)). The last year carries costs: fill-ups with
 a partial and a `missed_previous`, the hybrid charging at home and in public, maintenance, expenses
 with a stated VAT rate and without one, and a vehicle with purchase price and
-residual, so every header figure has something to show. It powers E2E tests, screenshots for the
-app store, and manual clicking. Trips arrive with the E2E that needs them.
+residual, so every header figure has something to show. Three reminders look the other way: an
+HU/AU three weeks out, an oil change by kilometres with the Readings an estimated date needs, and
+a truck the scheme inspects every 12 months. It powers E2E tests, screenshots for the app store,
+and manual clicking. Trips arrive with the E2E that needs them.
 
 It writes through the services a request writes through, so a fleet it cannot produce is a fleet the
-app cannot hold, and the odometer rules decide the flags rather than the fixture. Every plate starts
+app cannot hold, and the odometer rules decide the flags rather than the fixture. Every vehicle
+states `de`, whatever the account seeding it has chosen: the plates, the VAT rates and the HU/AU are
+one country's, and a profile without an inspection scheme has no HU/AU to write. Every plate starts
 `NF-`, which keeps the demo out of the way of the E2E's `E2E-`; a re-run retires the rows it is
 about to write again, and leaves anything else parked next to them alone.
 
@@ -260,6 +264,19 @@ one saved and asked for the rest, and Logbook Mode switched on and off. `m3-slic
 the costs: a fill-up that moves the header, a hybrid's two consumptions, a fill-up edited from its
 row and deleted and undone, the period picker, and an axe audit of the header and an open fill-up.
 It sets the period back to the default first, since the picker keeps its choice on the server.
+`m4-slice.spec.js` covers reminders: a HU/AU entered from the sticker, a recipient and a daily
+cadence set in the vehicle sheet, then the job run twice at a moved clock. It checks the one
+notification the recipient reads over OCS and the one digest in Mailpit, both in German. Then an
+oil change is closed from the banner, the next one shows, and the overview reorders.
+
+**The job at a moved clock.** The server's clock cannot move, so `tests/e2e/job.php` runs
+`ReminderJob` once with a stopped `ITimeFactory` at the instant it is given. `server.js` runs it
+inside the project's container through the Docker Engine API on `/var/run/docker.sock`. It does not
+use the docker CLI, because Playwright's image has none; `test:e2e:docker` mounts the socket. The
+run sweeps every vehicle on the instance, so the demo fleet gets receipts dated in the future.
+Reseed afterwards. Each run creates a fresh `m4e2e-` account as the recipient, so no earlier digest
+blocks today's mail, and deletes the previous run's account first. Mailpit must be up
+(`NEXTFLEET_MAILPIT` overrides `http://localhost:8025`).
 
 Four things about those files worth knowing before adding to them:
 
@@ -283,7 +300,7 @@ the assertion, not the missing build. It logs in through the form — Nextcloud 
 `NEXTFLEET_URL_NC34` and `NEXTFLEET_URL_NC31` override the two ports.
 
 Every vehicle the run makes wears a plate its own spec file owns — `E2E-` for the M1 slice,
-`M2-E2E-` and `M3-E2E-` for the next two — and each file deletes what it finds under its prefix before it starts.
+`M2-E2E-`, `M3-E2E-` and `M4-E2E-` for the next three — and each file deletes what it finds under its prefix before it starts.
 Cleaning up front rather than afterwards leaves a failed run's rows where they can be looked at, and
 still makes the next run find one vehicle rather than two. The prefixes have to stay disjoint:
 Playwright runs the files at once, and a sweep that matched another file's plates would delete a

@@ -19,6 +19,7 @@ use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\ExpenseService;
 use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\OdometerService;
+use OCA\NextFleet\Service\ReminderService;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Utility\ITimeFactory;
@@ -43,6 +44,8 @@ class SeedCommandTest extends TestCase {
 	private array $live = [];
 	/** Every reading the odometer was asked to record, by vehicle uuid. @var array<string, list<array<string, int>>> */
 	private array $recorded = [];
+	/** Every reminder the command planned, by vehicle uuid. @var array<string, list<array<string, mixed>>> */
+	private array $planned = [];
 	private int $nextId = 1;
 	/**
 	 * Every cost Entry the command wrote, as the sheet would have posted it: the kind, the plate
@@ -58,10 +61,12 @@ class SeedCommandTest extends TestCase {
 	private EnergyService&MockObject $energy;
 	private MaintenanceService&MockObject $maintenance;
 	private ExpenseService&MockObject $expenses;
+	private ReminderService&MockObject $reminders;
 
 	protected function setUp(): void {
 		$this->written = [];
 		$this->recorded = [];
+		$this->planned = [];
 		$this->costs = [];
 		$this->nextId = 1;
 
@@ -96,6 +101,14 @@ class SeedCommandTest extends TestCase {
 		$this->maintenance->method('record')->willReturnCallback($this->cost('maintenance'));
 		$this->expenses = $this->createMock(ExpenseService::class);
 		$this->expenses->method('record')->willReturnCallback($this->cost('expense'));
+		$this->reminders = $this->createMock(ReminderService::class);
+		$this->reminders->method('create')->willReturnCallback(
+			function (string $userId, string $uuid, array $fields): array {
+				$this->planned[$uuid][] = $fields;
+
+				return $fields;
+			},
+		);
 	}
 
 	/** @return \Closure(string, string, array<string, mixed>): array<string, mixed> */
@@ -142,9 +155,10 @@ class SeedCommandTest extends TestCase {
 		return $byPlate;
 	}
 
-	private function tester(): CommandTester {
+	/** @param string $setting the jurisdiction the seeding account has chosen for itself */
+	private function tester(string $setting = Jurisdictions::DEFAULT): CommandTester {
 		$config = $this->createMock(IConfig::class);
-		$config->method('getUserValue')->willReturnArgument(3);
+		$config->method('getUserValue')->willReturn($setting);
 
 		$access = $this->createMock(VehicleAccess::class);
 		$access->method('may')->willReturn(true);
@@ -180,6 +194,7 @@ class SeedCommandTest extends TestCase {
 			$this->energy,
 			$this->maintenance,
 			$this->expenses,
+			$this->reminders,
 			$time,
 		));
 	}
@@ -193,6 +208,7 @@ class SeedCommandTest extends TestCase {
 			$this->energy,
 			$this->maintenance,
 			$this->expenses,
+			$this->reminders,
 			$this->createMock(ITimeFactory::class),
 		);
 
@@ -397,6 +413,108 @@ class SeedCommandTest extends TestCase {
 			$this->costsOf('energy', 'NF-LK 700'),
 			static fn (array $fill): bool => isset($fill['odo'], $fill['second_odo']),
 		));
+	}
+
+	/**
+	 * The demo fleet is German (plan.md), whoever seeds it: its plates, its VAT rates and the
+	 * HU/AU its reminders name all belong to one country. A profile without an inspection scheme
+	 * offers no `hu_au` at all, so an account that had set another one would break the run
+	 * halfway through.
+	 */
+	public function testTheFleetIsGermanWhateverTheAccountSeedingItHasChosen(): void {
+		$tester = $this->tester('generic');
+
+		$this->assertSame(0, $tester->execute(['user' => self::OWNER]), $tester->getDisplay());
+		foreach ($this->written as $vehicle) {
+			$this->assertSame('de', $vehicle->getJurisdiction(), (string)$vehicle->getPlate());
+		}
+	}
+
+	/**
+	 * A due date the fleet definition cannot hold either: a demo whose inspection fell due two
+	 * years ago teaches nothing. The clock here reads 2026-01-01, so three weeks out is the 22nd,
+	 * and a sticker names a month's end (docs/ui.md).
+	 */
+	public function testTheInspectionsAreDueThreeWeeksAndFiveMonthsOut(): void {
+		$this->tester()->execute(['user' => self::OWNER]);
+
+		$this->assertSame('2026-01-22', $this->plannedOn('NF-PH 200', 'hu_au')['due_date']);
+		$this->assertSame('2026-06-30', $this->plannedOn('NF-LK 700', 'hu_au')['due_date']);
+	}
+
+	/**
+	 * The interval each reminder recurs at is the template's, so the fleet states none of them: a
+	 * demo that wrote 24 months down would go on saying 24 when the country changed its mind.
+	 */
+	public function testAReminderStatesWhenItIsDueAndLeavesTheIntervalToItsTemplate(): void {
+		$this->tester()->execute(['user' => self::OWNER]);
+
+		foreach ($this->planned as $reminders) {
+			foreach ($reminders as $reminder) {
+				$this->assertArrayNotHasKey('recur_months', $reminder);
+				$this->assertArrayNotHasKey('recur_odo', $reminder);
+				$this->assertArrayNotHasKey('lead_odo', $reminder);
+				$this->assertArrayNotHasKey('title', $reminder, 'a template titles itself');
+			}
+		}
+	}
+
+	/**
+	 * The oil change the banner estimates a date for: by kilometres, and still ahead of the
+	 * counter, since an estimate is the day a pace reaches a km that is not reached yet.
+	 */
+	public function testTheOilChangeIsDueByKilometresAheadOfTheNewestReading(): void {
+		$this->tester()->execute(['user' => self::OWNER]);
+		$oil = $this->plannedOn('NF-DE 100', 'oil_change');
+
+		$this->assertSame('odo', $oil['mode']);
+		$this->assertArrayNotHasKey('due_date', $oil);
+		$this->assertGreaterThan(max(array_column($this->readOn('NF-DE 100'), 'value')), $oil['due_odo']);
+	}
+
+	/**
+	 * The pace that estimate needs (docs/architecture.md#reminder-engine, rule 5): two Readings
+	 * somebody took, 30 days apart, inside the 90 days before the day it is read on. Inside the
+	 * last 45 here, so the demo still estimates six weeks after it was seeded - the fleet is
+	 * written once and clicked through for as long as it stands.
+	 */
+	public function testTheVehicleWithTheOilChangeKeepsAPaceForWeeksAfterTheRun(): void {
+		$this->tester()->execute(['user' => self::OWNER]);
+		$recent = array_column(array_filter(
+			$this->readOn('NF-DE 100'),
+			static fn (array $reading): bool => $reading['read_at'] >= 1767225600 - 45 * 86400,
+		), 'read_at');
+
+		$this->assertGreaterThanOrEqual(2, count($recent));
+		$this->assertGreaterThanOrEqual(30 * 86400, max($recent) - min($recent));
+	}
+
+	/**
+	 * The Readings on that vehicle somebody read off a counter: a derived one states a distance
+	 * and is the row a later reading puts in question (rule 6), so no pace counts on it.
+	 *
+	 * @return array<int, array<string, int>>
+	 */
+	private function readOn(string $plate): array {
+		return array_filter(
+			$this->recorded[$this->fleet()[$plate]->getUuid()] ?? [],
+			static fn (array $reading): bool => isset($reading['value']) && !isset($reading['counter']),
+		);
+	}
+
+	/**
+	 * What the command asked ReminderService to write on that vehicle.
+	 *
+	 * @return array<string, mixed>
+	 */
+	private function plannedOn(string $plate, string $key): array {
+		$uuid = $this->fleet()[$plate]->getUuid();
+		foreach ($this->planned[$uuid] ?? [] as $reminder) {
+			if (($reminder['template_key'] ?? null) === $key) {
+				return $reminder;
+			}
+		}
+		$this->fail('the demo fleet plans no ' . $key . ' on ' . $plate);
 	}
 
 	/** TCO shows only when both prices are set, so one vehicle has both. */

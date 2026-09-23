@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- The M4 slice end to end. `tests/e2e/m4-slice.spec.js` enters a HU/AU from the sticker, adds a
+  German recipient and a daily mail in the vehicle sheet, and runs the job twice at a moved clock.
+  The recipient then has one notification and one digest. Next, an oil change is closed from the
+  banner, the next one shows, and the overview reorders. `tests/e2e/job.php` runs the job at a given
+  instant, inside the container, through the Docker socket, which `test:e2e:docker` now mounts. CI
+  starts Mailpit for it. `plan.md` gains decision 18 (recurrence from the work done) and the lossy
+  undo as a risk; `CONTEXT.md` gains the reminder terms.
+
+- Trip autocomplete. The entry sheet completes a trip's starting point, destination, purpose and
+  partner from this vehicle's own trips, latest first; both ends of the route share one list.
+  `GET /api/vehicles/{uuid}/trips/prefill` answers them. Voided trips are not offered.
+
+- Deleting a vehicle is a soft delete and nothing more; no code path purges a vehicle's rows yet.
+  `docs/architecture.md` says so. A notification already sent for a deleted vehicle's reminder
+  stays up.
+
+- The demo fleet has reminders. `occ nextfleet:seed` adds an HU/AU three weeks out on the hybrid,
+  an oil change by kilometres on the Passat — inside its lead, with a pace behind it, so the banner
+  shows an estimated date — and an HU/AU on the truck, which the German scheme recurs every 12
+  months rather than 24. Each states only when it is due; the interval is its template's. The demo
+  vehicles now state Germany as their jurisdiction instead of taking the seeding account's setting,
+  since a profile without an inspection scheme has no HU/AU to write.
+
 - The overview by urgency. Each vehicle shows a traffic light with its word, its km and its most
   urgent open reminder; the most urgent vehicle comes first, then by plate, laid-up ones last.
   `GET /api/reminders` lists the reminders of every vehicle the user may see in one read.

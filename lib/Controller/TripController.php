@@ -48,6 +48,12 @@ class TripController extends Controller {
 		);
 	}
 
+	/** What the sheet completes route, purpose and partner from: this vehicle's own trips. */
+	#[NoAdminRequired]
+	public function prefill(string $uuid): DataResponse {
+		return $this->answer(fn (): array => $this->service->prefill($this->userId(), $uuid));
+	}
+
 	/**
 	 * An edit, allowed whenever it arrives: under Logbook Mode its audit row says whether it came
 	 * after the ruleset's lock delay (docs/features.md#logbook-mode), and the answer is the row as
@@ -127,7 +133,7 @@ class TripController extends Controller {
 	 * The two answers every route here shares: the trip a client asked for, or the reason it is
 	 * not getting one.
 	 *
-	 * @param callable():Trip $work
+	 * @param callable():(Trip|array<string, list<string>>) $work
 	 */
 	private function answer(callable $work, int $status = Http::STATUS_OK): DataResponse {
 		try {

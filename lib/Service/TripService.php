@@ -77,6 +77,12 @@ class TripService {
 	/** What an audit row does not restate: it carries its own author, instant and identity. */
 	private const BOOKKEEPING = ['uuid', 'created_at', 'updated_at', 'deleted_at', 'created_by'];
 
+	/**
+	 * How far back prefill() looks: a year of a vehicle driven a few times a day. Larger than the
+	 * station's, because a logbook has more trips than fill-ups by that factor.
+	 */
+	private const TRIP_HISTORY = 1000;
+
 	public function __construct(
 		private TripMapper $trips,
 		private AuditMapper $audit,
@@ -126,6 +132,43 @@ class TripService {
 
 			return $written;
 		}, $this->db);
+	}
+
+	/**
+	 * What the sheet's trip fields complete from (docs/ui.md): the places, purposes and partners of
+	 * this vehicle's own trips, each once and the latest first. Starting points and destinations are
+	 * one list, because where a trip ended is where the next one sets off. Asked with EDIT, as the
+	 * trip it fills in is.
+	 *
+	 * @return array{places: list<string>, purposes: list<string>, partners: list<string>}
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not write this vehicle
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException
+	 * @throws \OCP\DB\Exception
+	 */
+	public function prefill(string $userId, string $vehicleUuid): array {
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
+
+		$places = $purposes = $partners = [];
+		foreach ($this->trips->findLatestDescribed((int)$vehicle->getId(), self::TRIP_HISTORY) as $trip) {
+			// The destination first: it is the later of the two places on the same trip.
+			array_push($places, $trip->getToLabel(), $trip->getFromLabel());
+			$purposes[] = $trip->getPurpose();
+			$partners[] = $trip->getPartner();
+		}
+
+		return [
+			'places' => self::distinct($places),
+			'purposes' => self::distinct($purposes),
+			'partners' => self::distinct($partners),
+		];
+	}
+
+	/**
+	 * @param list<?string> $words
+	 * @return list<string> each word once, in the order first given, without the empty ones
+	 */
+	private static function distinct(array $words): array {
+		return array_values(array_unique(array_filter($words, static fn (?string $word): bool => $word !== null)));
 	}
 
 	/**

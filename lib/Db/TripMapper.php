@@ -45,6 +45,34 @@ class TripMapper extends BaseMapper {
 	}
 
 	/**
+	 * One vehicle's trips that name a place, a purpose or a partner, the latest first - the history
+	 * the sheet's trip fields complete from (docs/ui.md). Bounded for the reason
+	 * EnergyMapper::findLatestAtStations() gives. Voided trips are not in it: a word on a trip
+	 * nobody claims is not one to offer again.
+	 *
+	 * @return list<Trip>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findLatestDescribed(int $vehicleId, int $limit): array {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->tableName)
+			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->isNull('deleted_at'))
+			->andWhere($qb->expr()->orX(
+				$qb->expr()->isNotNull('from_label'),
+				$qb->expr()->isNotNull('to_label'),
+				$qb->expr()->isNotNull('purpose'),
+				$qb->expr()->isNotNull('partner'),
+			))
+			->orderBy('started_at', 'DESC')
+			->addOrderBy('id', 'DESC')
+			->setMaxResults($limit);
+
+		return $this->findEntities($qb);
+	}
+
+	/**
 	 * The trips of one vehicle that set off in `[from, to)`, oldest first as findAllForVehicle()
 	 * orders them - voided ones included. This is the Fahrtenbuch export's own question
 	 * (docs/features.md#logbook-mode): a voided trip is listed there, as voided.

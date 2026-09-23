@@ -372,6 +372,23 @@ export async function recordTrip(uuid, trip) {
 }
 
 /**
+ * What the entry sheet completes a trip's route, purpose and partner from (docs/ui.md).
+ *
+ * @param {string} uuid - the vehicle the trip is for
+ * @return {Promise<TripPrefill>} the words of this vehicle's own trips
+ */
+export async function tripPrefill(uuid) {
+	return request('GET', `/api/vehicles/${uuid}/trips/prefill`)
+}
+
+/**
+ * @typedef {object} TripPrefill
+ * @property {string[]} places - starting points and destinations in one list, each once, latest first
+ * @property {string[]} purposes - as places
+ * @property {string[]} partners - as places
+ */
+
+/**
  * Record one fill-up or charging session, and a Reading per counter it carries
  * (docs/architecture.md#odometer-rules). Written only, like a trip, so it carries no token.
  *
