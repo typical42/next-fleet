@@ -213,6 +213,19 @@ import { generateOcsUrl, generateUrl } from '@nextcloud/router'
  */
 
 /**
+ * A paper on a vehicle: a file in somebody's Files, referenced by id (docs/architecture.md#documents).
+ *
+ * @typedef {object} Document
+ * @property {string} uuid - identity
+ * @property {'registration'|'insurance'|'manual'|'receipt'|'photo'} kind - what it is
+ * @property {number} file_id - the file in Files
+ * @property {string|null} name - the file's name now; null once it is deleted
+ * @property {string|null} mime - its type; null once it is deleted
+ * @property {'energy'|'maintenance'|'expense'|null} linked_type - the kind of entry it belongs to
+ * @property {string|null} linked_uuid - that entry; null when it belongs to the vehicle itself
+ */
+
+/**
  * Something coming due on a vehicle (docs/architecture.md#reminder-engine). Not an Entry: nothing
  * has happened yet.
  *
@@ -297,6 +310,13 @@ import { generateOcsUrl, generateUrl } from '@nextcloud/router'
  * from every other failure: the values are fine, the version is not.
  */
 export class ConflictError extends Error {}
+
+/**
+ * Something the request named is not there for this user. Its own class because the server's
+ * message names only the vehicle, and attaching a document means something else by it
+ * (src/components/VehicleDocuments.vue).
+ */
+export class NotFoundError extends Error {}
 
 /**
  * Every vehicle the session may see - their own and the ones granted to them
@@ -821,6 +841,64 @@ export function csvUrl(uuid, year, table) {
 }
 
 /**
+ * One vehicle's papers (docs/architecture.md#documents).
+ *
+ * @param {string} uuid - the vehicle
+ * @return {Promise<Document[]>} the list
+ */
+export async function listDocuments(uuid) {
+	return request('GET', `/api/vehicles/${uuid}/documents`)
+}
+
+/**
+ * Attach a file the person picked in Files. No token: nothing edits a document.
+ *
+ * @param {string} uuid - the vehicle
+ * @param {{file_id: number, kind: string, linked_type?: string, linked_uuid?: string}} fields - the
+ *   file, what it is, and the entry it belongs to or neither
+ * @return {Promise<Document[]>} the list as it now stands
+ */
+export async function attachDocument(uuid, fields) {
+	return request('POST', `/api/vehicles/${uuid}/documents`, fields)
+}
+
+/**
+ * Take a paper off the vehicle; the file stays in Files.
+ *
+ * @param {string} uuid - the vehicle
+ * @param {string} document - the paper's uuid
+ * @return {Promise<Document[]>} the list as it now stands
+ */
+export async function detachDocument(uuid, document) {
+	return request('DELETE', `/api/vehicles/${uuid}/documents/${document}`)
+}
+
+/**
+ * Where one paper is saved from; an address for the reason logbookUrl() gives. Served by us, so a
+ * driver reaches the owner's file without a share.
+ *
+ * @param {string} uuid - the vehicle
+ * @param {string} document - the paper's uuid
+ * @return {string} the file's address
+ */
+export function documentUrl(uuid, document) {
+	return generateUrl(`/apps/nextfleet/vehicles/${uuid}/documents/${document}`)
+}
+
+/**
+ * What the QR sticker carries: the app opened on the vehicle with the entry sheet up (docs/ui.md,
+ * "The QR shortcut"). Absolute, because a phone's camera has no page to resolve it against. It
+ * names the vehicle and nothing else; opening it still takes a session (docs/security.md).
+ *
+ * @param {string} uuid - the vehicle
+ * @return {string} the address
+ */
+export function stickerUrl(uuid) {
+	const query = new URLSearchParams({ vehicle: uuid, entry: 'new' })
+	return new URL(`${generateUrl('/apps/nextfleet/')}?${query}`, window.location.href).href
+}
+
+/**
  * This user's settings. No identity in the URL: a session reaches its own and no others
  * (docs/security.md).
  *
@@ -868,6 +946,9 @@ async function request(method, path, body) {
 	// the body claims, not the one the status suggests.
 	if (response.status === 412 && answer?.conflict === true) {
 		throw new ConflictError(answer.message)
+	}
+	if (response.status === 404) {
+		throw new NotFoundError(answer?.message ?? 'Not found')
 	}
 
 	throw new Error(answer?.message ?? `The server answered ${response.status}`)

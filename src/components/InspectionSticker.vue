@@ -82,6 +82,7 @@ async function save() {
 				:clearable="false"
 				label="label" />
 			<NcTextField v-model="year"
+				class="sticker__year"
 				:label="t('nextfleet', 'Year')"
 				:disabled="saving"
 				inputmode="numeric"
@@ -108,5 +109,10 @@ async function save() {
 	flex-wrap: wrap;
 	align-items: end;
 	gap: calc(var(--default-grid-baseline) * 2);
+}
+
+/* NcTextField takes the whole row by default, which pushes four digits onto a line of their own. */
+.sticker__year {
+	flex: 0 0 8em;
 }
 </style>

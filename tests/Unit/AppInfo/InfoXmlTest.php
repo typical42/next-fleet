@@ -62,6 +62,49 @@ class InfoXmlTest extends TestCase {
 	}
 
 	/**
+	 * `occ upgrade` reads the version from info.xml alone, the bundle and its licence notices
+	 * from package.json, and the store shows the CHANGELOG section of the same name. A release
+	 * with one of them behind ships a changelog for a version nobody installs.
+	 */
+	public function testTheVersionIsTheSameEverywhere(): void {
+		$info = simplexml_load_file(self::ROOT . '/appinfo/info.xml');
+		$this->assertNotFalse($info);
+		$version = (string)$info->version;
+
+		$lock = json_decode((string)file_get_contents(self::ROOT . '/package-lock.json'), true);
+		$this->assertIsArray($lock);
+
+		$this->assertSame($version, $this->manifestOf('/package.json')['version'] ?? null);
+		$this->assertSame($version, $lock['version'] ?? null);
+		$this->assertSame($version, $lock['packages']['']['version'] ?? null);
+		$this->assertMatchesRegularExpression(
+			'/^## ' . preg_quote($version, '/') . ' — \d{4}-\d{2}-\d{2}$/m',
+			(string)file_get_contents(self::ROOT . '/CHANGELOG.md'),
+		);
+	}
+
+	/**
+	 * The store fetches each screenshot from `main` by URL, so one named here and never taken
+	 * is a broken image on the listing, and nothing on our side fails.
+	 */
+	public function testEveryScreenshotItNamesIsInTheRepository(): void {
+		$info = simplexml_load_file(self::ROOT . '/appinfo/info.xml');
+		$this->assertNotFalse($info);
+
+		$prefix = 'https://raw.githubusercontent.com/typical42/next-fleet/main/';
+		$urls = [];
+		foreach ($info->screenshot as $screenshot) {
+			$urls[] = trim((string)$screenshot);
+			$urls[] = (string)$screenshot['small-thumbnail'];
+		}
+
+		foreach (array_filter($urls) as $url) {
+			$this->assertStringStartsWith($prefix, $url);
+			$this->assertFileExists(self::ROOT . '/' . substr($url, strlen($prefix)));
+		}
+	}
+
+	/**
 	 * `occ` learns a command from this file and from nowhere else, so a command class that is
 	 * not listed here is a command nobody can run - and the class is loadable, so nothing tells
 	 * anyone it exists.
@@ -143,9 +186,14 @@ class InfoXmlTest extends TestCase {
 	}
 
 	private function licenceOf(string $path): string {
+		return (string)($this->manifestOf($path)['license'] ?? '');
+	}
+
+	/** @return array<array-key, mixed> */
+	private function manifestOf(string $path): array {
 		$manifest = json_decode((string)file_get_contents(self::ROOT . $path), true);
 		$this->assertIsArray($manifest, $path . ' is not readable JSON');
 
-		return (string)($manifest['license'] ?? '');
+		return $manifest;
 	}
 }

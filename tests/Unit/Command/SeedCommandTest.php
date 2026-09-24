@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Tests\Unit\Command;
 
 use OCA\NextFleet\Command\SeedCommand;
+use OCA\NextFleet\Command\SeedPapers;
 use OCA\NextFleet\Db\AuditMapper;
 use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Db\ReminderMapper;
@@ -16,12 +17,14 @@ use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
+use OCA\NextFleet\Service\DocumentService;
 use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\ExpenseService;
 use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\NotificationService;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\ReminderService;
+use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
 use OCA\NextFleet\Tests\Stub\RegisteredProfiles;
@@ -118,7 +121,8 @@ class SeedCommandTest extends TestCase {
 		return function (string $userId, string $uuid, array $fields) use ($kind): array {
 			$this->costs[] = ['kind' => $kind, 'plate' => $this->plateOf($uuid), 'fields' => $fields];
 
-			return $fields;
+			// A paper links to a maintenance record by the uuid its write answered.
+			return $fields + ['uuid' => '0195e2f1-0000-4000-8000-' . str_pad((string)count($this->costs), 12, '0', STR_PAD_LEFT)];
 		};
 	}
 
@@ -194,6 +198,10 @@ class SeedCommandTest extends TestCase {
 			$this->maintenance,
 			$this->expenses,
 			$this->reminders,
+			$this->createMock(TripService::class),
+			$this->createMock(DocumentService::class),
+			// SeedTest reads the trips and the papers back for real.
+			$this->createMock(SeedPapers::class),
 			$time,
 		));
 	}
@@ -208,6 +216,9 @@ class SeedCommandTest extends TestCase {
 			$this->maintenance,
 			$this->expenses,
 			$this->reminders,
+			$this->createMock(TripService::class),
+			$this->createMock(DocumentService::class),
+			$this->createMock(SeedPapers::class),
 			$this->createMock(ITimeFactory::class),
 		);
 

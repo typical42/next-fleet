@@ -31,10 +31,14 @@ defineProps({
 	color: var(--color-text-maxcontrast);
 }
 
+/* Nextcloud's core sets `dt` and `dd` inline-block with padding, so a label sits beside its figure
+   when both fit and floats above it when they do not. A tile is a label over a figure. */
+.tile dt,
 .tile dd {
-	/* A description list indents its values by default, which puts the figure out of line with
-	   its label. */
+	display: block;
 	margin-inline-start: 0;
+	padding: 0;
+	text-align: start;
 }
 
 .tile__figure {

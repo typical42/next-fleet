@@ -423,15 +423,32 @@ hold. Each answers with the list as it now stands, so there is no token: nothing
 
 **Attaching takes a `file_id` from Nextcloud's file picker**, with a `kind` and optionally a
 `linked_type` (`energy`, `maintenance`, `expense`) plus `linked_uuid`. There is no upload path. The
-file must be one the attacher can read in their own Files, or it is a 404: the download serves it to
-everyone who may view the vehicle, so this is where the file's own access is checked
-([security](security.md)). A link to an entry of another vehicle is a 404 too. The same file on the
-same entry twice is one document. Detaching soft-deletes the row and leaves the file alone.
+file must be one the attacher owns and can read in their own Files, or it is a 404: the download
+serves it to everyone who may view the vehicle, so this is where the file's own access is checked
+([security](security.md)). A file shared with the attacher is refused, since the download would
+outlive a revoked share and ignore a view-only one. So is a file in a group folder, which no account
+owns. A link to an entry of another vehicle is a 404 too. The same file on the same entry twice is
+one document, and its first `kind` stands: nothing edits a document, so a new kind means detaching
+and attaching again. Detaching soft-deletes the row and leaves the file alone.
 
 **A listed document carries** `uuid`, `kind`, `file_id`, `name`, `mime`, `linked_type` and
 `linked_uuid`. The name is looked up by id wherever the file lives now, in whoever's Files hold it,
 so a move is followed. A deleted file, trash bin included, lists with `name` and `mime` null: the
 row stays, and the screen says the file is gone.
+
+**The download** is `GET /vehicles/{uuid}/documents/{document}`, outside `/api` beside the CSV
+because it is a link. It takes VIEW, so a driver gets the owner's file without a share. A deleted
+file is a 404. The file always goes out as an attachment, with `nosniff` and a CSP that runs
+nothing ([security](security.md#hostile-content)). The file is found through the accounts the
+mount cache says hold it, not `IRootFolder::getById`: in a web request that searches only the
+signed-in account's mounts, and a driver's include none of the owner's.
+
+**The screen** is a *Documents* section on the vehicle screen (`VehicleDocuments.vue`), the only
+place a paper is added. It reads the list once and hands it to the timeline, which puts a paperclip
+on the row of each linked entry. A paper is not a timeline row of its own: a registration has no
+date to sort by. The entry a paper may belong to is offered from the newest page of fill-ups,
+maintenance records and expenses; an older one cannot be linked from the screen yet. A 404 on attach
+is shown as "not a file of your own", which is what it nearly always means.
 
 ## Nextcloud integration
 
@@ -444,7 +461,7 @@ row stays, and the screen says the file is gone.
 | …but served by us | Downloads go **through our controller**, so access follows the vehicle's access grant, not the file's. Otherwise a receipt on a shared car is invisible to the other driver unless the owner shares their folder. A `file_id` survives a move but not a delete — handle the missing node instead of 500ing. |
 | Talk (optional) | Post due items into a fleet room, only when the Talk app is present. M6+, cheap, and very much the reason someone runs Nextcloud. |
 | Activity stream | `OCA\Activity` provider — optional, after v1. |
-| Dashboard | `OCP\Dashboard\IAPIWidgetV2`: "next due" list. |
+| Dashboard | `OCP\Dashboard\IAPIWidgetV2` over `ReminderService::due()`: the overview's reminder read (`fleet()`), open ones only, in the overview's urgency order, sorted in PHP because the widget has no browser code. It runs no query of its own. |
 | Unified search | `OCP\Search\IProvider`: find a vehicle by plate (separators ignored), manufacturer or model, among the ones `VehicleService::list` gives the searcher, disposed ones left out. Vehicles only: searching trip purposes or notes would take the access check somewhere nobody tests it. |
 | Settings | Personal settings (default jurisdiction, "I reclaim VAT", grid factor). The mail cadence is per vehicle. |
 | CLI | `occ nextfleet:import`, `occ nextfleet:report` for scripting and imports. |
@@ -585,7 +602,8 @@ points are the ones the notification tells, and the lines say what it says, with
 transaction, so a refused mail rolls them back: the notification has its own receipt and stays,
 and the next run tries again. A day counts as mailed by its newest `mail` receipt up to now.
 
-The same prediction will warn on leasing mileage overrun (M5).
+The same prediction could warn on a leasing mileage overrun. That is M6+: it needs the contract's
+end date and mileage cap, two columns no milestone has added.
 
 ## Numbers: consumption, cost, emissions
 

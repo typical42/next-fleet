@@ -1,2 +1,4 @@
 /js/
 /vendor/
+# tools/package.sh stages a copy of the bundle here.
+/build/

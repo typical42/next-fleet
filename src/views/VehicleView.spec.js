@@ -11,7 +11,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import EntrySheet from '../components/EntrySheet.vue'
 import KpiHeader from '../components/KpiHeader.vue'
 import Timeline from '../components/Timeline.vue'
+import VehicleDocuments from '../components/VehicleDocuments.vue'
 import VehicleSheet from '../components/VehicleSheet.vue'
+import VehicleSticker from '../components/VehicleSticker.vue'
 import { readKpis, readTimeline } from '../services/api.js'
 import VehicleView from './VehicleView.vue'
 
@@ -26,15 +28,16 @@ vi.mock('../services/api.js', async (original) => ({
 const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', lifecycle: 'active' }
 
 /**
+ * @param {object} [more] - props beyond the vehicle
  * @return {import('@vue/test-utils').VueWrapper} the screen, mounted on one vehicle
  */
-function screen() {
+function screen(more = {}) {
 	// A stub renders no slot of its own, and a button says what it is in its slot - so the two
 	// buttons of this screen would be indistinguishable without this. The timeline and the header
 	// are left unstubbed: what this screen has to get right is that they read again after a write,
 	// and a stub has no reading to do.
 	return shallowMount(VehicleView, {
-		props: { vehicle: VEHICLE },
+		props: { vehicle: VEHICLE, ...more },
 		global: { renderStubDefaultSlot: true, stubs: { Timeline: false, KpiHeader: false } },
 	})
 }
@@ -122,6 +125,16 @@ describe('the vehicle screen', () => {
 
 		expect(wrapper.findComponent(EntrySheet).exists()).toBe(true)
 		expect(sheet(wrapper).exists()).toBe(false)
+	})
+
+	it('offers the QR sticker of the vehicle it is on', () => {
+		expect(/** @type {any} */ (screen().findComponent(VehicleSticker)).props('vehicle')).toEqual(VEHICLE)
+	})
+
+	/** The QR sticker's link lands here (docs/ui.md, "The QR shortcut"). */
+	it('opens with the entry sheet up when the sticker asked for it', () => {
+		expect(screen({ enter: true }).findComponent(EntrySheet).exists()).toBe(true)
+		expect(screen().findComponent(EntrySheet).exists()).toBe(false)
 	})
 
 	/**
@@ -213,5 +226,15 @@ describe('the vehicle screen', () => {
 		await sheet(wrapper).vm.$emit('saved', VEHICLE)
 
 		expect(sheet(wrapper).exists()).toBe(false)
+	})
+
+	/** The section reads the papers once, and the timeline carries the linked ones as paperclips. */
+	it('hands the timeline the papers the documents section listed', async () => {
+		const wrapper = screen()
+		const papers = [{ uuid: 'd-1', kind: 'receipt', linked_type: 'energy', linked_uuid: 'e-1' }]
+
+		await wrapper.findComponent(VehicleDocuments).vm.$emit('listed', papers)
+
+		expect(/** @type {any} */ (wrapper.findComponent(Timeline)).props('papers')).toEqual(papers)
 	})
 })

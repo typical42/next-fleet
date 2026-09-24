@@ -21,7 +21,7 @@ class ReminderWords {
 	 * @throws \UnexpectedValueException for a point this app does not send
 	 */
 	public static function line(IL10N $l, string $point, array $p): string {
-		$title = $p['title'] ?? self::templateTitle($l, (string)$p['template_key']);
+		$title = self::title($l, $p);
 		$date = $p['due_date'] === null ? '' : (string)$l->l('date', new \DateTime($p['due_date']), ['width' => 'medium']);
 		$km = (string)$p['due_odo'];
 
@@ -35,15 +35,20 @@ class ReminderWords {
 		};
 	}
 
-	/** The words src/utils/reminders.js templateWord() shows for the same keys. */
-	private static function templateTitle(IL10N $l, string $key): string {
-		return match ($key) {
+	/**
+	 * What src/utils/reminders.js reminderTitle() calls the same reminder: a typed title is the
+	 * user's, a template's translates.
+	 *
+	 * @param array{template_key: ?string, title: ?string, ...} $p
+	 */
+	public static function title(IL10N $l, array $p): string {
+		return $p['title'] ?? match ((string)$p['template_key']) {
 			'oil_change' => $l->t('Oil change'),
 			'brake_fluid' => $l->t('Brake fluid'),
 			'tyre_swap' => $l->t('Tyre swap'),
 			// "HU/AU" has no English equivalent, and never "TÜV" (docs/ui.md#languages).
 			'hu_au' => $l->t('Technical inspection (HU/AU)'),
-			default => $key,
+			default => (string)$p['template_key'],
 		};
 	}
 }

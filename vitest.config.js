@@ -21,6 +21,7 @@ export default defineConfig({
 		// @nextcloud/vue ships its components with their stylesheets imported, and Node
 		// cannot load a `.css` file. Vite can, so the library is transformed rather than
 		// left to the runtime — the price of mounting a component that uses one.
-		server: { deps: { inline: [/@nextcloud\/vue/] } },
+		// @nextcloud/dialogs imports those components too.
+		server: { deps: { inline: [/@nextcloud\/vue/, /@nextcloud\/dialogs/] } },
 	},
 })

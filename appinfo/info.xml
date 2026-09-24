@@ -16,10 +16,16 @@ service and inspection dates, and a trip log.
 
 - **Odometer that adds up.** Readings are kept as history, not as a running total. Enter a distance
   and NextFleet derives the reading; enter what the dashboard actually says and that wins.
-- **Costs and consumption** in cents, litres and watt-hours — never rounded floats.
-- **Reminders** for inspection, service and insurance, by date or by distance.
-- **Trip log** with the fields a German Fahrtenbuch needs, exportable as CSV.
-- **Share a vehicle** with the people who drive it, without giving them your whole account.
+- **Costs and consumption** in cents, litres and watt-hours — never rounded floats. A year per
+  vehicle as monthly bars and a table, with the total cost of ownership and a CO₂ estimate. Every
+  table exports as CSV.
+- **Reminders** for HU/AU, service or anything you name, by date or by distance, as notifications,
+  a mail digest and a dashboard widget.
+- **Trip log** with the fields a German Fahrtenbuch needs, and the mileage claim for business
+  trips, both printed from the browser. Other countries get a plain logbook.
+- **Papers from Files.** Attach the registration or a workshop invoice to the vehicle, or to the
+  entry it belongs to. Everyone who may see the vehicle can open it.
+- **A QR sticker** for the glovebox opens the entry sheet on that vehicle.
 
 Your data stays on your server. No tracking, no GPS, no cloud service in between.
 
@@ -35,9 +41,16 @@ und Strom, Kosten, Wartungs- und Untersuchungstermine sowie ein Fahrtenbuch.
   Summe. Wer eine Strecke einträgt, bekommt einen abgeleiteten Stand; ein abgelesener Stand hat
   Vorrang.
 - **Kosten und Verbrauch** in Cent, Millilitern und Wattstunden — keine gerundeten Fließkommazahlen.
-- **Erinnerungen** an HU/AU, Wartung und Versicherung, nach Datum oder nach Strecke.
-- **Fahrtenbuch** mit den Feldern, die es in Deutschland braucht, als CSV exportierbar.
-- **Fahrzeuge teilen** mit denen, die sie fahren, ohne Zugriff auf Ihr ganzes Konto.
+  Ein Jahr je Fahrzeug als Monatsbalken und Tabelle, mit den Gesamtbetriebskosten und einer
+  CO₂-Schätzung. Jede Tabelle lässt sich als CSV exportieren.
+- **Erinnerungen** an HU/AU, Wartung oder was Sie selbst benennen, nach Datum oder nach Strecke,
+  als Benachrichtigung, Mail-Zusammenfassung und Dashboard-Widget.
+- **Fahrtenbuch** mit den Feldern, die es in Deutschland braucht, und die Aufstellung der
+  Dienstfahrten für die Kilometerpauschale, beide aus dem Browser gedruckt. Andere Länder bekommen
+  ein schlichtes Fahrtenbuch.
+- **Unterlagen aus Dateien.** Fahrzeugschein oder Werkstattrechnung hängen am Fahrzeug oder am
+  Eintrag, zu dem sie gehören. Alle, die das Fahrzeug sehen dürfen, können sie öffnen.
+- **Ein QR-Aufkleber** fürs Handschuhfach öffnet die Eingabe für genau dieses Fahrzeug.
 
 Die Daten bleiben auf Ihrem Server. Kein Tracking, kein GPS, kein Dienst dazwischen.
 
@@ -46,7 +59,7 @@ dass das Ergebnis von einem Finanzamt, einer Prüferin oder einem Gericht anerka
 und Sätze stammen aus öffentlichen Quellen, können falsch sein und veralten. Fragen Sie Ihre eigene
 Beraterin oder Ihren Berater, bevor Sie sich darauf verlassen.
   ]]></description>
-  <version>0.0.6</version>
+  <version>0.2.0</version>
   <licence>AGPL-3.0-or-later</licence>
   <author>Johannes Kolb</author>
   <namespace>NextFleet</namespace>
@@ -64,6 +77,8 @@ Beraterin oder Ihren Berater, bevor Sie sich darauf verlassen.
   </screenshot>
   <screenshot>https://raw.githubusercontent.com/typical42/next-fleet/main/design/screenshots/vehicle.png</screenshot>
   <screenshot>https://raw.githubusercontent.com/typical42/next-fleet/main/design/screenshots/entry-sheet.png</screenshot>
+  <screenshot>https://raw.githubusercontent.com/typical42/next-fleet/main/design/screenshots/costs.png</screenshot>
+  <screenshot>https://raw.githubusercontent.com/typical42/next-fleet/main/design/screenshots/reports.png</screenshot>
   <dependencies>
     <nextcloud min-version="31" max-version="34"/>
   </dependencies>

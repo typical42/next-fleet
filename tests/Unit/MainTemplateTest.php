@@ -54,16 +54,12 @@ class MainTemplateTest extends TestCase {
 	}
 
 	/**
-	 * The build extracts @nextcloud/vue's stylesheet beside the bundle rather than into it, so a
-	 * page that asks only for the script renders the shell unstyled — which no test that reads
-	 * the DOM would notice.
+	 * The entry imports the app dynamically, so its stylesheets load with that import and the
+	 * build writes no entry stylesheet. Asking for one would be a 404 on every page.
 	 */
-	public function testTheTemplateAsksForTheBundlesStylesheet(): void {
+	public function testTheTemplateAsksForNoStylesheetTheBuildDoesNotWrite(): void {
 		$this->render();
 
-		$this->assertSame(
-			[Application::APP_ID . '/' . Application::APP_ID . '-main'],
-			RecordedTemplateScripts::$styled,
-		);
+		$this->assertSame([], RecordedTemplateScripts::$styled);
 	}
 }

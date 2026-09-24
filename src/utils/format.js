@@ -154,6 +154,55 @@ export function energyWord(code) {
 }
 
 /**
+ * What a timeline row is called. A journey is the route it took, which is what a driver recognises
+ * it by; a journey nobody labelled is what it was driven for, and one that is neither is still a
+ * journey.
+ *
+ * @param {import('../services/api.js').Entry} entry - the row
+ * @return {string} its name
+ */
+export function entryName(entry) {
+	if (entry.energy !== undefined) {
+		return energyWord(entry.energy.energy)
+	}
+	if (entry.maintenance !== undefined) {
+		return entry.maintenance.title
+	}
+	if (entry.expense !== undefined) {
+		return entry.expense.category ? expenseWord(entry.expense.category) : t('nextfleet', 'Expense')
+	}
+	if (entry.trip === undefined) {
+		return t('nextfleet', 'Counter reading')
+	}
+
+	const route = [entry.trip.from_label, entry.trip.to_label].filter(Boolean)
+
+	return route.join(' → ') || entry.trip.purpose || t('nextfleet', 'Trip')
+}
+
+/** What a Document can be (CONTEXT.md), in the order its section lists them. */
+export const DOCUMENT_KINDS = ['registration', 'insurance', 'manual', 'receipt', 'photo']
+
+/**
+ * A document kind is a code in the database and a word on screen (docs/ui.md#languages).
+ *
+ * @param {string} kind - one of DOCUMENT_KINDS
+ * @return {string} the word for it, or the code where there is none
+ */
+export function documentKindWord(kind) {
+	/** @type {Record<string, string>} */
+	const words = {
+		registration: t('nextfleet', 'Registration'),
+		insurance: t('nextfleet', 'Insurance policy'),
+		manual: t('nextfleet', 'Manual'),
+		receipt: t('nextfleet', 'Receipt'),
+		photo: t('nextfleet', 'Photo'),
+	}
+
+	return words[kind] ?? kind
+}
+
+/**
  * A country is a code in the config and a word on screen (docs/ui.md#languages). The words live
  * here rather than in lib/Jurisdiction/, because the catalogues are the frontend's, and they are
  * looked up on call because the catalogue is registered by the page and not by this module.

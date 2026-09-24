@@ -10,7 +10,11 @@ namespace OCA\NextFleet\Tests\Integration;
 
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Command\SeedCommand;
+use OCA\NextFleet\Db\Trip;
+use OCA\NextFleet\Db\TripMapper;
+use OCA\NextFleet\Service\DocumentService;
 use OCA\NextFleet\Service\KpiService;
+use OCA\NextFleet\Service\MileageClaimExport;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\ReminderService;
 use OCA\NextFleet\Service\VehicleService;
@@ -158,6 +162,65 @@ class SeedTest extends TestCase {
 		$this->assertSame(24, $this->reminder('NF-PH 200', 'hu_au')['recur_months']);
 		// Far enough out to be the green one in the overview's traffic light.
 		$this->assertSame('planned', $this->reminder('NF-LK 700', 'hu_au')['state']);
+	}
+
+	/**
+	 * The Costs screen charts a month: over the year before the run, no 30-day stretch of the
+	 * Passat's is empty, so whichever months the seeding date puts on screen have bars.
+	 */
+	public function testThePassatHasACostInEveryMonthOfItsYear(): void {
+		$container = (new Application())->getContainer();
+		$kpis = $container->get(KpiService::class);
+		$now = $container->get(ITimeFactory::class)->getTime();
+		$uuid = $this->uuid('NF-DE 100');
+
+		for ($month = 0; $month < 12; $month++) {
+			$to = $now + 1 - $month * 30 * 86400;
+			$cost = $kpis->of(self::USER, $uuid, ['from' => $to - 30 * 86400, 'to' => $to, 'net' => 'false'])['cost'];
+			$this->assertNotNull($cost['total'], 'nothing to chart ' . $month . ' months back');
+		}
+	}
+
+	/** The Fahrzeugschein on the vehicle screen, and the HU/AU's invoice behind its paperclip. */
+	public function testThePassatCarriesItsPapers(): void {
+		$papers = (new Application())->getContainer()->get(DocumentService::class)->list(self::USER, $this->uuid('NF-DE 100'));
+
+		$this->assertSame(['registration', 'receipt'], array_column($papers, 'kind'));
+		$this->assertNotContains(null, array_column($papers, 'name'), 'a seeded paper whose file is gone');
+		$this->assertNull($papers[0]['linked_type']);
+		$this->assertSame('maintenance', $papers[1]['linked_type']);
+	}
+
+	/**
+	 * A business trip the mileage claim values at the statutory 0,30 €/km (De\RateProvider), and a
+	 * private one it leaves out.
+	 */
+	public function testTheMileageClaimValuesTheBusinessTrip(): void {
+		$container = (new Application())->getContainer();
+		$trips = $container->get(TripMapper::class)->findAnyStartedBetween(
+			(int)$container->get(VehicleService::class)->reach(self::USER, 'view', $this->uuid('NF-DE 100'))->getId(),
+			0,
+			PHP_INT_MAX,
+		);
+		$this->assertSame(['business', 'private'], array_map(static fn (Trip $trip): string => (string)$trip->getCategory(), $trips));
+		$business = $trips[0];
+		$year = (int)(new \DateTimeImmutable('@' . ($business->getStartedAt() + 60 * $business->getStartedAtOff())))->format('Y');
+
+		$page = (string)$container->get(MileageClaimExport::class)->year(self::USER, $this->uuid('NF-DE 100'), $year);
+
+		$this->assertStringContainsString('Kundentermin', $page);
+		$this->assertStringNotContainsString('Einkauf', $page);
+		// 90 km at 0,30 €.
+		$this->assertStringContainsString('27,00', $page);
+	}
+
+	private function uuid(string $plate): string {
+		foreach ((new Application())->getContainer()->get(VehicleService::class)->list(self::USER) as $vehicle) {
+			if ($vehicle->getPlate() === $plate) {
+				return $vehicle->getUuid();
+			}
+		}
+		$this->fail('the demo fleet has no ' . $plate);
 	}
 
 	/** @return array<string, mixed> */

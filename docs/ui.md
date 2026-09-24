@@ -55,11 +55,17 @@ entered it ([odometer rules](architecture.md#odometer-rules)).
 │ ● M-EV 7   ⛔   │  │ ● Planned · Oil change · ~02.11.2026 [Done]│   │
 │                 │  └────────────────────────────────────────────┘   │
 │ Reports         │                                                    │
-│ ─────────────── │  Timeline [All][Trips][Odo.][Energy][Maint.][Cost] │
-│ Settings        │  ───────────────────────────────────────────────   │
+│ ─────────────── │  Documents [Add document]                          │
+│ Settings        │  REGISTRATION                                      │
+│                 │  Fahrzeugschein.pdf                        Remove  │
+│                 │  RECEIPT                                           │
+│                 │  Huber.pdf  Belongs to a maintenance rec.  Remove  │
+│                 │                                                    │
+│                 │  Timeline [All][Trips][Odo.][Energy][Maint.][Cost] │
+│                 │  ───────────────────────────────────────────────   │
 │                 │  03.09.  ⛽ Energy    48,2 l   82,10 €   6,1 l/100 │
 │                 │  02.09.  🚗 Munich → Augsburg   82 km   business   │
-│                 │  28.08.  🔧 Brake pads   Werkstatt Huber  312,00 € │
+│                 │  28.08.  🔧 Brake pads 📎 Werkstatt Huber 312,00 € │
 └─────────────────┴────────────────────────────────────────────────────┘
 ```
 
@@ -123,25 +129,30 @@ vehicle does not take, more than it holds — and whether it was partial or miss
 A fill-up that closes a full-to-full segment also states that segment's consumption, the one figure
 on a row that is worked out rather than given.
 
-The right sidebar holds the vehicle's own data and documents — the things you set once and rarely
-touch. That keeps the middle free for the things you touch weekly.
+The right sidebar holds the vehicle's own data — the things you set once and rarely touch. That
+keeps the middle free for the things you touch weekly. The documents sit in a section of their own
+between the due banner and the timeline instead: listed by kind, each one a link, with *Add
+document* opening Nextcloud's file picker. A document linked to an entry shows as a paperclip on
+that entry's row. It is never a row of its own, since a registration has no date to sort by
+([documents](architecture.md#documents)).
 
 ### Screens
 
 | Screen | Purpose | Primary action |
 |---|---|---|
 | **Overview** | All vehicles, sorted by urgency, not alphabetically: laid-up ones last, then by the most urgent open reminder's state and day, then by plate. Traffic light (red due or overdue, amber coming up, green otherwise) with its word, plate, km, next due. | Open a vehicle |
-| **Vehicle** | Header KPIs + due banner + timeline (above) | **+ Entry** |
+| **Vehicle** | Header KPIs + due banner + documents + timeline (above) | **+ Entry** |
 | **Entry sheet** | Trip / Energy / Maintenance / Odometer / Expense — see below | Save |
 | **Vehicle sheet** | Create with four fields; edit every writable one, plus lifecycle, jurisdiction, [logbook mode](features.md#logbook-mode), the inspection interval, the reminder recipients and mail cadence; delete, undoably | Save |
-| **Costs** | One year, one vehicle: stacked bars per month, table below, export button | Export |
-| **Reports** | Fahrtenbuch, mileage claim, cost, CO₂ — pick a range, get a printable page ([ADR 0005](adr/0005-no-pdf-library.md)) | Print / export |
-| **Vehicle sidebar** | Master data, jurisdiction, documents (sharing from M6); reminders stay in the due banner | Edit inline |
+| **Costs** | One year, one vehicle: stacked bars per month, table below, the CO₂ estimate, export button | Export |
+| **Reports** | Fahrtenbuch and mileage claim — pick a vehicle and a year, get a printable page ([ADR 0005](adr/0005-no-pdf-library.md)). Costs and CO₂ are not reports: they live on the Costs screen and in its CSV | Print |
+| **Vehicle sidebar** | Master data, jurisdiction (sharing from M6); reminders stay in the due banner, documents in their section | Edit inline |
 | **Personal settings** | The defaults a person keeps: jurisdiction first, then "I reclaim VAT", then the grid factor for charging (empty for the country's average, which it names). Not a screen in the app: it is the app's block on Nextcloud's own settings page, its own bundle, and it talks to the same API as everything else | Pick and it saves |
 
-**Reports** has one report so far, the Fahrtenbuch: one vehicle and one year, opened as a page in
-a tab of its own ([export](architecture.md#the-fahrtenbuch-export)). It offers only vehicles whose
-country prints a logbook, because any other opens a 404. Sold vehicles are offered too: their
+**Reports** has two, each one vehicle and one year, opened as a page in a tab of its own: the
+logbook ([export](architecture.md#the-fahrtenbuch-export)), a Fahrtenbuch in Germany and a plain one
+under `generic`, and the [mileage claim](architecture.md#the-mileage-claim). Each button shows only
+where its country prints it, because any other opens a 404. Sold vehicles are offered too: their
 logbook is still kept after they leave the fleet.
 
 **Costs** opens from *Costs* on the vehicle screen and goes back there; picking any vehicle in the
@@ -237,6 +248,13 @@ A printed code in the glovebox opens the entry sheet with the vehicle already ch
 the only step that has nothing to do with the data — picking the car — and it is a page of code,
 not a project.
 
+*QR sticker* on the vehicle screen opens it in a dialog, black on white in both themes, with the
+vehicle's name beneath. *Print* prints the sticker alone, about 5 cm wide. The code carries
+`…/apps/nextfleet/?vehicle=<uuid>&entry=new`; the app drops `entry` from the address once it has
+opened the sheet, so a reload does not open a second one. The code is drawn in the browser as an
+SVG path by `uqr` (MIT), so no PHP dependency comes with it. What the code must not carry is in
+[security](security.md#things-that-are-visible-in-the-real-world).
+
 ### Details that decide whether it feels easy
 
 - **Ask for four fields, not twelve.** Creating a vehicle needs plate, make/model, engine and
@@ -261,7 +279,8 @@ not a project.
   and the question stands between it and the save, which is when anything happens. Switching on asks
   nothing: it takes something on rather than away.
 - **Empty states do the teaching.** Not "no entries" but the two buttons that create the first one,
-  plus the QR offer. `NcEmptyContent` with a real call to action.
+  `NcEmptyContent` with a real call to action. The QR sticker is offered in the vehicle header,
+  not yet in an empty state.
 - **Numbers get context.** `6,4 l/100 km` alone means nothing; `6,4 l/100 km  +0,3 l/100 km vs. the
   period before` means something. Every KPI shows its comparison or its trend.
 - **Status is never colour alone.** Traffic lights carry an icon and a word, for colour-blind users
@@ -276,7 +295,8 @@ not a project.
   vehicle", which people need twice a year.
 - **Keyboard:** `n` starts the primary action of the screen in view — a new entry on a vehicle, a
   new vehicle on the overview. `Esc` closes the sheet — except in a date field, where it belongs to
-  the picker the browser opened. `/` focuses search once search exists (M5).
+  the picker the browser opened. The app has no search field of its own: a vehicle is found
+  through Nextcloud's unified search and its shortcut ([integration](architecture.md#nextcloud-integration)).
 - **Dark mode and 320 px width are acceptance criteria**, not afterthoughts; the timeline is rows,
   not cards, so it survives both.
 
