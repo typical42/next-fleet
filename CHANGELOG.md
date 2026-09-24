@@ -1,12 +1,48 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — 2026-09-24
+
+The first release for the app store: v1 by scope, 0.x because it is new
+([plan](plan.md#milestones)).
+
+- The store listing names what shipped and no longer promises sharing, which has no screen before
+  M6. Its screenshots add the Costs and Reports screens.
+- `tools/package.sh` builds the store tarball, `build/artifacts/nextfleet-<version>.tar.gz`, from a
+  fresh bundle and the app's own files only.
+
+- At 320 px the entry sheet and the timeline's filter chips no longer run off the right edge: the
+  entry types and chips wrap onto a second line. The vehicle screen's buttons move under its name
+  instead of squeezing it. A header figure now sits under its label on every width. The HU/AU
+  question's year field is a year wide.
+
+- `occ nextfleet:seed` fills the Passat's year of costs to the current month, gives it a business
+  trip and a private one, and puts its Fahrzeugschein and HU/AU invoice in the seeding account's
+  Files under `Fleet demo/`, attached to the vehicle. A re-run overwrites the two files.
+
+- A dashboard widget, *Vehicle reminders*: the open reminders of every vehicle you may
+  view, most urgent first, each with its traffic-light colour and its state as a word. An item opens
+  its vehicle.
+
+- A QR sticker per vehicle. *QR sticker* on the vehicle screen shows a code to print for the
+  glovebox. Scanning it opens the app on that vehicle with the entry sheet up, after a login if the
+  phone has no session. The code carries the address `…/apps/nextfleet/?vehicle=<uuid>&entry=new`
+  and nothing else.
 
 - A vehicle's papers, server side. `GET`/`POST /api/vehicles/{uuid}/documents` lists and attaches
   them, `DELETE …/documents/{document}` detaches one. Attaching takes a file you picked in Files,
   optionally linked to a fill-up, maintenance record or expense of the same vehicle; it must be a
-  file you can read. Anyone who may view the vehicle sees the list, whoever owns the file. There is
-  no screen for it yet.
+  file in your own Files, not one shared with you. Anyone who may view the vehicle sees the list
+  and downloads the file from `GET /apps/nextfleet/vehicles/{uuid}/documents/{document}`, whoever
+  owns it. A file deleted in Files is a 404.
+
+- The vehicle screen has a *Documents* section: the papers by kind, each a link to save it, and
+  *Add document*, which opens Nextcloud's file picker and asks what the file is and, optionally,
+  which fill-up, maintenance record or expense it belongs to. A linked paper shows as a paperclip
+  on its entry's timeline row and opens from there. A file deleted in Files says so instead of
+  linking nowhere.
+
+- Fixed on NC 31: the first lazily loaded part of the app (the file picker) mounted a second copy
+  of the app and dropped you back on the overview.
 
 - Nextcloud's unified search finds a vehicle by plate, manufacturer or model, and opens its screen.
   A plate matches without its spaces and hyphens, so `bxy123` finds `B-XY 123`. It finds only the

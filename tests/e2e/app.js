@@ -62,6 +62,35 @@ export function api(page, call) {
 }
 
 /**
+ * Nextcloud's OCS API from inside the signed-in page, as the admin.
+ *
+ * @param {import('@playwright/test').Page} page - a page on a signed-in Nextcloud
+ * @param {string} method - the HTTP verb
+ * @param {string} path - below /ocs/v2.php
+ * @param {object} [body] - sent as JSON
+ * @return {Promise<any>} `ocs.data`
+ */
+export function ocs(page, method, path, body) {
+	return page.evaluate(async ({ method, path, body }) => {
+		const response = await fetch(`/ocs/v2.php${path}`, {
+			method,
+			headers: {
+				Accept: 'application/json',
+				'Content-Type': 'application/json',
+				'OCS-APIRequest': 'true',
+				requesttoken: document.head.dataset.requesttoken ?? '',
+			},
+			body: body === undefined ? undefined : JSON.stringify(body),
+		})
+		if (!response.ok) {
+			throw new Error(`${method} ${path} answered ${response.status}`)
+		}
+
+		return (await response.json()).ocs.data
+	}, { method, path, body })
+}
+
+/**
  * A vehicle's row on the overview. The navigation lists the same vehicles and Nextcloud's chrome
  * has landmarks of its own, so the row is the one in the app's own content area - and in the
  * fleet's own list, because the hint above it lists vehicles as well.
@@ -133,6 +162,31 @@ export async function audit(page, screen, within = ['#nextfleet']) {
 	expect(audited.violations.map((violation) =>
 		`${screen}: ${violation.id} — ${violation.help} — ${violation.nodes.map((node) => node.target.join(' ')).join(', ')}`))
 		.toEqual([])
+}
+
+/**
+ * Fails when something the app draws is wider than the box it sits in. Axe does not look at layout,
+ * and a sheet clips what spills past its edge rather than scrolling the page - so a checkbox cut
+ * off at 320 px passes every audit. A truncation the stylesheet asks for is not a spill, and
+ * neither is a region that scrolls sideways on purpose.
+ *
+ * @param {import('@playwright/test').Page} page - the page as it stands
+ * @param {string} screen - what it is showing, so a failure names it
+ * @param {string[]} [scrolls] - selectors of the regions that are meant to scroll sideways
+ */
+export async function fits(page, screen, scrolls = []) {
+	const spills = await page.evaluate((scrolls) => {
+		const boxes = [document.documentElement, ...document.querySelectorAll('#nextfleet *, #nextfleet-settings *, [role="dialog"] *')]
+		return boxes.filter((box) => {
+			const style = getComputedStyle(box)
+			return box.scrollWidth > box.clientWidth + 1
+				&& (box === document.documentElement || style.overflowX !== 'visible')
+				&& style.textOverflow !== 'ellipsis'
+				&& !scrolls.some((selector) => box.matches(selector))
+		}).map((box) => `${box.tagName.toLowerCase()}.${[...box.classList].join('.')} is ${box.scrollWidth} wide in ${box.clientWidth}`)
+	}, scrolls)
+
+	expect(spills, screen).toEqual([])
 }
 
 /**

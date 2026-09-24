@@ -1112,7 +1112,15 @@ function requestClose() {
 <style scoped>
 .sheet {
 	display: grid;
+	/* Not `auto`: that column grows to the widest row, and the sheet then clips its right edge. */
+	grid-template-columns: minmax(0, 1fr);
 	gap: calc(var(--default-grid-baseline) * 2);
+}
+
+/* Five entry types are wider than a phone, and NcRadioGroup's row does not wrap
+   (src/components/Timeline.vue). */
+.sheet :deep([class*='ncFormBox_row']) {
+	flex-wrap: wrap;
 }
 
 .sheet__closes {
@@ -1130,7 +1138,7 @@ function requestClose() {
 /* One column on a phone; two once there is room, so a trip is not ten screens. */
 @media (min-width: 480px) {
 	.sheet--roomy {
-		grid-template-columns: 1fr 1fr;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
 
 	.sheet--roomy .sheet__wide {

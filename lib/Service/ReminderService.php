@@ -29,6 +29,12 @@ use OCP\IDBConnection;
 class ReminderService {
 	use TTransactional;
 
+	/**
+	 * The states a reminder is still open in, most urgent first. A snooze silences it, so it sinks
+	 * below one merely planned.
+	 */
+	private const URGENCY = [Reminder::OVERDUE => 0, Reminder::DUE => 1, Reminder::WARNED => 2, Reminder::PLANNED => 3, Reminder::SNOOZED => 4];
+
 	public function __construct(
 		private ReminderMapper $reminders,
 		private VehicleService $fleet,
@@ -64,13 +70,49 @@ class ReminderService {
 	 * @throws \OCP\DB\Exception
 	 */
 	public function fleet(string $userId): array {
+		return array_map(
+			static fn (array $one): array => ['vehicle' => $one['vehicle']->getUuid()] + $one['reminder'],
+			$this->fleetBeside($userId),
+		);
+	}
+
+	/**
+	 * The dashboard's read: `fleet()`'s open reminders, most urgent first, each beside its vehicle.
+	 * The overview sorts the same rows in the browser; this is that order (src/utils/reminders.js
+	 * `openByUrgency`) for a reader with no browser code: by state, then by the sooner of the due
+	 * date and the estimate, a reminder with neither last in its state.
+	 *
+	 * @return list<array{vehicle: Vehicle, reminder: array<string, mixed>}>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function due(string $userId): array {
+		$open = array_values(array_filter(
+			$this->fleetBeside($userId),
+			static fn (array $one): bool => isset(self::URGENCY[$one['reminder']['state']]),
+		));
+		// A plain day sorts as a string; no day sorts after every day.
+		$soonest = static fn (array $reminder): string => min(array_filter(
+			[$reminder['due_date'], $reminder['estimate'], '9999-12-31'],
+			is_string(...),
+		));
+		usort($open, static fn (array $a, array $b): int => self::URGENCY[$a['reminder']['state']] <=> self::URGENCY[$b['reminder']['state']]
+			?: $soonest($a['reminder']) <=> $soonest($b['reminder']));
+
+		return $open;
+	}
+
+	/**
+	 * @return list<array{vehicle: Vehicle, reminder: array<string, mixed>}>
+	 * @throws \OCP\DB\Exception
+	 */
+	private function fleetBeside(string $userId): array {
 		$rows = [];
 		foreach ($this->fleet->list($userId) as $vehicle) {
 			if ($vehicle->getLifecycle() === Vehicle::DISPOSED) {
 				continue;
 			}
 			foreach ($this->listed($vehicle) as $row) {
-				$rows[] = ['vehicle' => $vehicle->getUuid()] + $row;
+				$rows[] = ['vehicle' => $vehicle, 'reminder' => $row];
 			}
 		}
 

@@ -5,7 +5,7 @@
 
 import { expect, test } from '@playwright/test'
 
-import { add, api, appPage, login, open, removeVehicles } from './app.js'
+import { add, api, appPage, login, ocs, open, removeVehicles } from './app.js'
 import { runJobAt } from './server.js'
 
 // Disjoint from every other file's prefix, as a substring too (tests/e2e/m2-slice.spec.js says why).
@@ -15,35 +15,6 @@ const people = 'm4e2e-'
 const mailpit = process.env.NEXTFLEET_MAILPIT ?? 'http://localhost:8025'
 
 const DAY = 86400_000
-
-/**
- * Nextcloud's OCS API from inside the signed-in page, as the admin.
- *
- * @param {import('@playwright/test').Page} page - a page on a signed-in Nextcloud
- * @param {string} method - the HTTP verb
- * @param {string} path - below /ocs/v2.php
- * @param {object} [body] - sent as JSON
- * @return {Promise<any>} `ocs.data`
- */
-function ocs(page, method, path, body) {
-	return page.evaluate(async ({ method, path, body }) => {
-		const response = await fetch(`/ocs/v2.php${path}`, {
-			method,
-			headers: {
-				Accept: 'application/json',
-				'Content-Type': 'application/json',
-				'OCS-APIRequest': 'true',
-				requesttoken: document.head.dataset.requesttoken ?? '',
-			},
-			body: body === undefined ? undefined : JSON.stringify(body),
-		})
-		if (!response.ok) {
-			throw new Error(`${method} ${path} answered ${response.status}`)
-		}
-
-		return (await response.json()).ocs.data
-	}, { method, path, body })
-}
 
 /**
  * @param {Date} day - any moment in it

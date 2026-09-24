@@ -55,8 +55,11 @@ directory that someone else can add by merge request ([contributing](docs/contri
 | M2 | Trips, derived odometer, timeline, filters, gap detection, Logbook Mode with the `de` ruleset (append-only + `fleet_audit`) | Adding a trip moves the vehicle's km; a voided locked trip survives in the export; the German rules sit in `lib/Jurisdiction/De/`, not scattered through services |
 | M3 | Energy entries, maintenance records, expenses, VAT, and the [consumption and cost maths](docs/architecture.md#numbers-consumption-cost-emissions) | Per-vehicle cost per 100 km is correct, and a plug-in hybrid shows two consumption figures |
 | M4 | Reminder engine, TimedJob, notifications, mail digest, recipients, HU/AU from the sticker, closing a reminder by maintenance record. No calendar (decision 16) | HU/AU due in 4 weeks reaches the phone |
-| M5 | Documents, the Costs screen, CO₂, dashboard widget, search, CSV export, HTML/print reports, generic jurisdiction | Feature-complete v1, app store release |
+| M5 | Documents, the Costs screen with a CO₂ estimate, CSV export, the mileage claim, a plain logbook for the generic jurisdiction, dashboard widget, search, QR sticker | Feature-complete v1, app store release as 0.2.0 |
 | M6+ | Sharing UI, fleet view, bookings, handover. Then the OCS API, `?since=` delta endpoint, app passwords, API docs | Multi-driver pool works; an Android client can be built against it |
+
+**v1 ships as 0.2.0.** M5 is v1 by scope; the version tracks maturity, and a first release has none
+yet, so it stays on the 0.x line.
 
 **M5 is v1 and it ships before M6 starts.** Maintenance records sit in M3 rather than M5 because
 they write odometer readings and close reminders — building the reminder engine against a record
@@ -71,7 +74,8 @@ the index.
 
 1. **A freelancer, not a fleet** — [ADR 0004](docs/adr/0004-freelancers-not-fleets.md).
 2. **Nextcloud 31–34.** Covers older installs; we pay for it with Vue compatibility shims and with
-   the M0 gate above, which is where that price becomes visible.
+   the M0 gate above, which is where that price becomes visible. `@nextcloud/vue` 9 spans the
+   range, so the 31 floor held.
 3. **Logbook Mode in v1 (M2).** Immutability is a property of the data model — an audit trail added
    later cannot reconstruct history that was never recorded.
 4. **No plugin system; jurisdictions arrive as merge requests**
@@ -124,11 +128,6 @@ the index.
     [ADR 0008](docs/adr/0008-erasing-a-driver-pseudonymises.md). Retention is opt-in and off by
     default ([data protection](docs/legal.md)).
 
-## Still open
-
-1. **Which `@nextcloud/vue` major spans NC 31 to 34?** The M0 gate answers it. If none does, the
-   31 floor is what moves — not the UI.
-
 ## Risks
 
 - **Mail depends on server SMTP.** Not every instance has it. Notifications must stand alone, and
@@ -142,7 +141,7 @@ the index.
   majors is a deliberate cost, paid at M0 and again at every release.
 - **Entry friction kills logbooks.** If adding a trip takes more than a few seconds, the data rots.
   Treat the [entry sheet](docs/ui.md#the-entry-sheet-in-detail) as a feature, not polish — and the
-  QR sticker ([backlog](docs/features.md#feature-backlog)) as its cheapest fix.
+  QR sticker ([ui](docs/ui.md#the-qr-shortcut)) as its cheapest fix.
 - **Retroactive entries are the norm, not the exception.** People log trips days later. Every figure
   must be date-ordered and recomputable from the records; nothing may be incremented in place
   ([data model](docs/architecture.md#data-model)).

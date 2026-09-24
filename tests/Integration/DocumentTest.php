@@ -28,7 +28,7 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * A vehicle's papers: attached from Files by `file_id`, listed and detached
- * (docs/architecture.md#nextcloud-integration). The accounts are real, because a document is a
+ * (docs/architecture.md#documents). The accounts are real, because a document is a
  * file somebody's Files holds.
  *
  * It writes to the instance it runs against (docs/development.md#testing).
@@ -142,23 +142,23 @@ class DocumentTest extends TestCase {
 	 * share and ignore a view-only one.
 	 */
 	public function testAFileSharedWithTheAttacherIsNotFound(): void {
-		$vehicle = $this->vehicle(self::OWNER);
+		$vehicle = $this->vehicle(self::SHAREE);
 		$theirs = \OCP\Server::get(IRootFolder::class)->getUserFolder(self::OTHER)->getFirstNodeById($this->file(self::OTHER, 'Shared.pdf'));
 		$shares = \OCP\Server::get(IShareManager::class);
 		$share = $shares->newShare()
 			->setNode($theirs)
 			->setShareType(IShare::TYPE_USER)
-			->setSharedWith(self::OWNER)
+			->setSharedWith(self::SHAREE)
 			->setSharedBy(self::OTHER)
 			->setShareOwner(self::OTHER)
 			->setPermissions(Constants::PERMISSION_READ);
 		$share = $shares->createShare($share);
-		$shares->acceptShare($share, self::OWNER);
-		$seen = \OCP\Server::get(IRootFolder::class)->getUserFolder(self::OWNER)->getFirstNodeById($theirs->getId());
-		$this->assertNotNull($seen, 'the share did not reach the owner\'s Files, so this test proves nothing');
+		$shares->acceptShare($share, self::SHAREE);
+		$seen = \OCP\Server::get(IRootFolder::class)->getUserFolder(self::SHAREE)->getFirstNodeById($theirs->getId());
+		$this->assertNotNull($seen, 'the share did not reach the sharee\'s Files, so this test proves nothing');
 
 		$this->expectException(DoesNotExistException::class);
-		$this->documents->attach(self::OWNER, $vehicle->getUuid(), ['file_id' => $theirs->getId(), 'kind' => 'receipt']);
+		$this->documents->attach(self::SHAREE, $vehicle->getUuid(), ['file_id' => $theirs->getId(), 'kind' => 'receipt']);
 	}
 
 	/** A folder is not a document, and a download could not serve one. */
@@ -230,13 +230,13 @@ class DocumentTest extends TestCase {
 	/** Access follows the vehicle, not the file: a driver sees papers in the owner's Files. */
 	public function testADriverReadsTheListButNeitherAttachesNorDetaches(): void {
 		$vehicle = $this->vehicle(self::OWNER);
-		$this->grant($vehicle, self::VIEWER, 'driver');
+		$this->grant($vehicle, self::DRIVER, 'driver');
 		$uuid = $this->documents->attach(self::OWNER, $vehicle->getUuid(), ['file_id' => $this->file(self::OWNER, 'Police.pdf'), 'kind' => 'insurance'])[0]['uuid'];
 
-		$this->assertSame(['Police.pdf'], array_column($this->documents->list(self::VIEWER, $vehicle->getUuid()), 'name'));
+		$this->assertSame(['Police.pdf'], array_column($this->documents->list(self::DRIVER, $vehicle->getUuid()), 'name'));
 		foreach ([
-			fn () => $this->documents->attach(self::VIEWER, $vehicle->getUuid(), ['file_id' => 1, 'kind' => 'manual']),
-			fn () => $this->documents->detach(self::VIEWER, $vehicle->getUuid(), $uuid),
+			fn () => $this->documents->attach(self::DRIVER, $vehicle->getUuid(), ['file_id' => 1, 'kind' => 'manual']),
+			fn () => $this->documents->detach(self::DRIVER, $vehicle->getUuid(), $uuid),
 		] as $call) {
 			try {
 				$call();
@@ -286,6 +286,64 @@ class DocumentTest extends TestCase {
 		$this->assertCount(1, $listed);
 		$this->assertNull($listed[0]['name']);
 		$this->assertNull($listed[0]['mime']);
+	}
+
+	/**
+	 * Done when: a paper is there for everyone with access to the vehicle, whoever owns the file.
+	 * The driver has no Files of their own, so nothing but the vehicle's grant can be serving it.
+	 */
+	public function testADriverDownloadsAPaperFromTheOwnersFiles(): void {
+		$vehicle = $this->vehicle(self::OWNER);
+		$this->grant($vehicle, self::DRIVER, 'driver');
+		$uuid = $this->documents->attach(self::OWNER, $vehicle->getUuid(), ['file_id' => $this->file(self::OWNER, 'Police.pdf'), 'kind' => 'insurance'])[0]['uuid'];
+
+		$file = $this->documents->download(self::DRIVER, $vehicle->getUuid(), $uuid);
+
+		$this->assertSame('Police.pdf', $file->getName());
+		$this->assertSame('%PDF-1.4 test', $file->getContent());
+	}
+
+	/** Whoever has no grant on the vehicle gets nothing, however real the paper's uuid. */
+	public function testAStrangerDoesNotDownloadARealPaper(): void {
+		$vehicle = $this->vehicle(self::OWNER);
+		$uuid = $this->documents->attach(self::OWNER, $vehicle->getUuid(), ['file_id' => $this->file(self::OWNER, 'Police.pdf'), 'kind' => 'insurance'])[0]['uuid'];
+
+		$this->expectException(AccessDeniedException::class);
+		$this->documents->download(self::OTHER, $vehicle->getUuid(), $uuid);
+	}
+
+	/** A `file_id` survives a delete in no usable form: the trash bin keeps it, and we do not serve from there. */
+	public function testAPaperWhoseFileWasDeletedIsNotFound(): void {
+		$vehicle = $this->vehicle(self::OWNER);
+		$fileId = $this->file(self::OWNER, 'Foto.jpg');
+		$uuid = $this->documents->attach(self::OWNER, $vehicle->getUuid(), ['file_id' => $fileId, 'kind' => 'photo'])[0]['uuid'];
+		\OCP\Server::get(IRootFolder::class)->getUserFolder(self::OWNER)->getFirstNodeById($fileId)?->delete();
+
+		$this->expectException(DoesNotExistException::class);
+		$this->documents->download(self::OWNER, $vehicle->getUuid(), $uuid);
+	}
+
+	/**
+	 * A paper uuid names a row on the vehicle the route names. Otherwise one vehicle of their own
+	 * would open every other vehicle's papers to whoever learnt a uuid.
+	 */
+	public function testAnotherVehiclesPaperIsNotDownloadedThroughMine(): void {
+		$mine = $this->vehicle(self::OWNER);
+		$theirs = $this->vehicle(self::OTHER);
+		$uuid = $this->documents->attach(self::OTHER, $theirs->getUuid(), ['file_id' => $this->file(self::OTHER, 'Schein.pdf'), 'kind' => 'registration'])[0]['uuid'];
+
+		$this->expectException(DoesNotExistException::class);
+		$this->documents->download(self::OWNER, $mine->getUuid(), $uuid);
+	}
+
+	/** A detached paper is off the vehicle, even though its file is still in Files. */
+	public function testADetachedPaperIsNotFound(): void {
+		$vehicle = $this->vehicle(self::OWNER);
+		$uuid = $this->documents->attach(self::OWNER, $vehicle->getUuid(), ['file_id' => $this->file(self::OWNER, 'Handbuch.pdf'), 'kind' => 'manual'])[0]['uuid'];
+		$this->documents->detach(self::OWNER, $vehicle->getUuid(), $uuid);
+
+		$this->expectException(DoesNotExistException::class);
+		$this->documents->download(self::OWNER, $vehicle->getUuid(), $uuid);
 	}
 
 	/** Picking the same file twice for the same place is one paper. */

@@ -4,7 +4,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { addRecipient, closeGap, ConflictError, createReminder, createVehicle, csvUrl, deleteEntry, deleteVehicle, dismissReminder, getPreferences, listFleetReminders, listRecipients, listReminders, listVehicles, logbookUrl, mileageClaimUrl, readEntry, readGaps, readKpis, readTimeline, readYear, recordReading, recordTrip, reminderTemplates, removeRecipient, restoreEntry, searchUsers, restoreVehicle, savePreferences, snoozeReminder, updateEntry, updateVehicle } from './api.js'
+import { addRecipient, attachDocument, closeGap, ConflictError, createReminder, createVehicle, csvUrl, deleteEntry, deleteVehicle, detachDocument, dismissReminder, documentUrl, getPreferences, listDocuments, listFleetReminders, listRecipients, listReminders, listVehicles, logbookUrl, mileageClaimUrl, NotFoundError, readEntry, readGaps, readKpis, readTimeline, readYear, recordReading, recordTrip, reminderTemplates, removeRecipient, restoreEntry, searchUsers, restoreVehicle, savePreferences, snoozeReminder, stickerUrl, updateEntry, updateVehicle } from './api.js'
 
 vi.mock('@nextcloud/router', () => ({
 	generateUrl: (/** @type {string} */ path) => `/index.php${path}`,
@@ -369,6 +369,52 @@ describe('csvUrl', () => {
 	/** A file the browser saves, beside the logbook for the same reason. */
 	it('names one vehicle, one year and one table outside the api', () => {
 		expect(csvUrl(vehicle.uuid, '2025', 'trips')).toBe(`/index.php/apps/nextfleet/vehicles/${vehicle.uuid}/csv/2025/trips`)
+	})
+})
+
+describe('the documents', () => {
+	const base = `/index.php/apps/nextfleet/api/vehicles/${vehicle.uuid}/documents`
+
+	/** Each write answers with the list as it now stands, so there is no token to send. */
+	it('lists, attaches and detaches under the vehicle', async () => {
+		const fetch = answers(200, [])
+
+		await listDocuments(vehicle.uuid)
+		await attachDocument(vehicle.uuid, { file_id: 42, kind: 'receipt', linked_type: 'maintenance', linked_uuid: 'm-1' })
+		await detachDocument(vehicle.uuid, 'd-1')
+
+		expect(fetch.mock.calls[0][0]).toBe(base)
+		expect(fetch.mock.calls[0][1].method).toBe('GET')
+		expect(fetch.mock.calls[1][0]).toBe(base)
+		expect(fetch.mock.calls[1][1].method).toBe('POST')
+		expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ file_id: 42, kind: 'receipt', linked_type: 'maintenance', linked_uuid: 'm-1' })
+		expect(fetch.mock.calls[2][0]).toBe(`${base}/d-1`)
+		expect(fetch.mock.calls[2][1].method).toBe('DELETE')
+	})
+
+	/**
+	 * A 404 on attach is the file not being the person's own (docs/architecture.md#documents),
+	 * which the section says in its own words; the server's message names only the vehicle.
+	 */
+	it('tells a refusal for something not there apart from the rest', async () => {
+		answers(404, { message: 'No such vehicle' })
+
+		const failure = await attachDocument(vehicle.uuid, { file_id: 42, kind: 'receipt' }).catch((error) => error)
+
+		expect(failure).toBeInstanceOf(NotFoundError)
+		expect(failure.message).toBe('No such vehicle')
+	})
+
+	/** A link the browser follows, outside the api beside the CSV. */
+	it('downloads one paper outside the api', () => {
+		expect(documentUrl(vehicle.uuid, 'd-1')).toBe(`/index.php/apps/nextfleet/vehicles/${vehicle.uuid}/documents/d-1`)
+	})
+})
+
+describe('stickerUrl', () => {
+	/** A phone's camera opens it with nothing to resolve it against, so it names the server. */
+	it('is an absolute address that opens the entry sheet on the vehicle', () => {
+		expect(stickerUrl(vehicle.uuid)).toBe(`${window.location.origin}/index.php/apps/nextfleet/?vehicle=${vehicle.uuid}&entry=new`)
 	})
 })
 

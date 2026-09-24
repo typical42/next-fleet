@@ -33,8 +33,9 @@ is picked up as a declaration and rejected. Fence such a line between `REUSE-Ign
 `REUSE-IgnoreEnd` comments.
 
 The frontend bundle is a combined work with its MIT dependencies, and `@nextcloud/vite-config`
-emits `js/nextfleet-main.mjs.license` listing each one — so `LICENSE.third-party` is only needed for
-code we vendor by hand.
+emits a `.license` file beside each output listing each one. The app's code and its dependencies
+sit in `js/boot-*.chunk.mjs.license`, since the entry is only a loader
+([development](development.md)). So `LICENSE.third-party` is only needed for code we vendor by hand.
 
 **Can another vehicle-logbook project sue us?** Not for the feature set. Copyright protects code,
 not ideas or functionality — the EU Software Directive excludes the ideas and principles underlying

@@ -20,13 +20,13 @@ is not the reason anyone would switch.
 
 ## Feature backlog
 
-Ranked by value per effort. **v1** marks what M0–M5 ships ([milestones](../plan.md#milestones));
-everything else waits.
+Ranked by value per effort. **v1** marks what M0–M5 shipped as 0.2.0
+([milestones](../plan.md#milestones)); everything else waits.
 
 **High**
 
 - **v1** — Energy log with l/100 km, kWh/100 km, cost per 100 km, cost trend.
-- **v1** — Cost dashboard and CSV export per vehicle and per year.
+- **v1** — The Costs screen and CSV export per vehicle and per year, with a CO₂ estimate.
 - **v1** — Recurring intervals (see [reminder engine](architecture.md#reminder-engine)) with a
   template set: oil, brake fluid, HU/AU, tyre swap.
 - **v1** — Documents: Fahrzeugschein, insurance policy, manual, receipts — linked Nextcloud files.
@@ -39,9 +39,11 @@ everything else waits.
 - **v1** — **QR sticker per vehicle.** A printed code for the glovebox; scanning opens the quick-add
   form for *that* car. It removes the one step that makes people skip logging — picking the vehicle.
   Best adoption-per-line-of-code in the list.
-- **Mileage expense report.** Business trips × the statutory rate → a Reisekosten claim. For
-  freelancers this is the whole reason to keep a logbook, so it ships in v1 wherever the
-  jurisdiction supplies a rate; under the generic profile it is unavailable rather than zero.
+- **v1** — **Mileage claim.** Business trips × the statutory rate → a Reisekosten claim. For
+  freelancers this is the whole reason to keep a logbook, so it ships wherever the jurisdiction
+  supplies a rate; under the generic profile it is unavailable rather than zero.
+- **v1** — A plain logbook under the generic jurisdiction, unified search for a vehicle, and a
+  dashboard widget of what is due.
 - **Receipt inbox.** The Nextcloud mobile app already auto-uploads photos. Watch `/Fleet/Inbox`,
   show unassigned images, attach in two taps. Reuses Files instead of building an uploader, and
   needs no OCR.

@@ -17,3 +17,4 @@ fleet's `NF-` survives all of them, so they share an instance.
 `app.js` holds what more than one file needs: signing in, the app's API from inside the page, and
 the few locators every file reaches for. `server.js` and `job.php` run the reminder job at a moved
 clock inside the container ([development](../../docs/development.md#local-dev-environment)).
+`grant.php` gives an account a role on a vehicle the same way, since no route does until M6.

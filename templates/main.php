@@ -12,8 +12,7 @@ use OCA\NextFleet\AppInfo\Application;
 // OCP call behind script() reaches into the server container and would put the controller
 // out of reach of a unit test.
 script(Application::APP_ID, Application::APP_ID . '-main');
-// @nextcloud/vue ships its own stylesheet, which the build extracts beside the bundle rather
-// than into it, so the page has to ask for both.
-style(Application::APP_ID, Application::APP_ID . '-main');
+// No style(): the entry only imports the app (src/main.js says why), and the stylesheets
+// come with that import, so the build writes no `nextfleet-main.css` to ask for.
 ?>
 <div id="nextfleet"></div>

@@ -3,11 +3,14 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
+import { mdiPaperclip } from '@mdi/js'
 import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
+import NcIconSvgWrapper from '@nextcloud/vue/components/NcIconSvgWrapper'
 import { computed } from 'vue'
 
-import { categoryWord, energyWord, expenseWord, fieldWords, formatConsumption, formatCount, formatEnergyAmount, formatMoney, isoInstant, maintenanceWord, shortDate } from '../utils/format.js'
+import { documentUrl } from '../services/api.js'
+import { categoryWord, entryName, fieldWords, formatConsumption, formatCount, formatEnergyAmount, formatMoney, isoInstant, maintenanceWord, shortDate } from '../utils/format.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Entry>} */
@@ -21,6 +24,13 @@ const props = defineProps({
 	 * @type {import('vue').PropType<import('../services/api.js').Gap|null>}
 	 */
 	gap: { type: Object, default: null },
+	/**
+	 * The documents linked to this entry. They are added in the vehicle's documents section, never
+	 * here; the row only opens them.
+	 *
+	 * @type {import('vue').PropType<import('../services/api.js').Document[]>}
+	 */
+	papers: { type: Array, default: () => [] },
 })
 
 // `open` is the row itself, tapped: the Entry is edited in the sheet it was entered in (docs/ui.md).
@@ -46,28 +56,7 @@ const FLAG_WORDS = {
 // clock is on (docs/architecture.md#time).
 const day = computed(() => shortDate(props.entry.occurred_at, props.entry.occurred_at_off))
 
-/**
- * What the row is called. A journey is the route it took, which is what a driver recognises it by;
- * a journey nobody labelled is what it was driven for, and one that is neither is still a journey.
- */
-const name = computed(() => {
-	if (energy.value !== undefined) {
-		return energyWord(energy.value.energy)
-	}
-	if (maintenance.value !== undefined) {
-		return maintenance.value.title
-	}
-	if (expense.value !== undefined) {
-		return expense.value.category ? expenseWord(expense.value.category) : t('nextfleet', 'Expense')
-	}
-	if (trip.value === undefined) {
-		return t('nextfleet', 'Counter reading')
-	}
-
-	const route = [trip.value.from_label, trip.value.to_label].filter(Boolean)
-
-	return route.join(' → ') || trip.value.purpose || t('nextfleet', 'Trip')
-})
+const name = computed(() => entryName(props.entry))
 
 /**
  * The one figure the row states, and it is one the person gave. A trip's is the kilometres or the
@@ -170,6 +159,17 @@ const missingWords = computed(() => (props.vehicle.logbook_mode === true ? field
 				<span>{{ t('nextfleet', 'Still missing: {fields}', { fields: { value: missingWords, escape: false } }) }}</span>
 			</template>
 		</span>
+		<span v-if="papers.length > 0" class="row__papers">
+			<template v-for="paper in papers" :key="paper.uuid">
+				<a v-if="paper.name !== null"
+					:href="documentUrl(vehicle.uuid, paper.uuid)"
+					:aria-label="t('nextfleet', 'Open {name}', { name: { value: paper.name, escape: false } })"
+					:title="paper.name">
+					<NcIconSvgWrapper :path="mdiPaperclip" :size="20" />
+				</a>
+				<span v-else class="row__flag">{{ t('nextfleet', 'The file is gone from Files') }}</span>
+			</template>
+		</span>
 		<!-- Offered on the trip that opened the Gap, because a Gap is closed one at a time (CONTEXT.md). -->
 		<span v-if="unaccounted" class="row__gap">
 			<span class="row__flag">
@@ -254,6 +254,33 @@ const missingWords = computed(() => (props.vehicle.logbook_mode === true ? field
 
 .row__flag {
 	color: var(--color-warning-text);
+}
+
+.row__papers {
+	/* Above the stretched row target, as the Gap's button is. */
+	position: relative;
+	z-index: 1;
+	grid-column: 2 / -1;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: calc(var(--default-grid-baseline) * 2);
+	font-size: 0.9em;
+}
+
+.row__papers a {
+	display: inline-flex;
+	/* A finger's worth of target around a small icon (docs/ui.md). */
+	min-width: var(--default-clickable-area);
+	min-height: var(--default-clickable-area);
+	align-items: center;
+	justify-content: center;
+	border-radius: var(--border-radius-element, var(--border-radius-large));
+}
+
+.row__papers a:hover,
+.row__papers a:focus-visible {
+	background-color: var(--color-background-hover);
 }
 
 .row__gap {

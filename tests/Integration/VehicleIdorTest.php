@@ -387,10 +387,12 @@ class VehicleIdorTest extends TestCase {
 			'recipient#create' => $this->recipient(self::STRANGER, $params + ['user_id' => 'admin'])->create($uuid),
 			'recipient#delete' => $this->recipient(self::STRANGER, $params)->delete($uuid, self::OWNER),
 			'document#index' => $this->document(self::STRANGER, $params)->index($uuid),
-			// A file id that is surely there, so the refusal cannot be the missing file's 404.
+			// The access check runs before the file is looked up, so this is the 403 whatever file 1 is.
 			'document#create' => $this->document(self::STRANGER, $params + ['file_id' => 1, 'kind' => 'receipt'])->create($uuid),
 			// Walked against a document that is not there, for the reason the trip's are.
 			'document#delete' => $this->document(self::STRANGER, $params)->delete($uuid, self::NO_SUCH_ENTRY),
+			// The same; DocumentTest walks a stranger against a real paper.
+			'document#download' => $this->document(self::STRANGER, $params)->download($uuid, self::NO_SUCH_ENTRY),
 			'timeline#index' => $this->timeline(self::STRANGER, $params)->index($uuid),
 			'timeline#gaps' => $this->timeline(self::STRANGER, $params)->gaps($uuid),
 			'timeline#show' => $this->timeline(self::STRANGER, $params)->show($uuid, 'trip', self::NO_SUCH_ENTRY),

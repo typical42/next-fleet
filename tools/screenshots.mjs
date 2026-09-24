@@ -70,6 +70,20 @@ await page.waitForFunction(() => [...document.querySelectorAll('[role="dialog"]'
 await shoot(page, 'entry-sheet')
 await page.keyboard.press('Escape')
 
+// The Passat's year of costs, which the seed fills to the current month. The table answers
+// after the chart's frame is up, so wait on a cell.
+await page.getByRole('button', { name: 'Costs', exact: true }).click()
+await page.getByRole('region', { name: 'Costs by month' }).getByRole('cell').first().waitFor()
+await shoot(page, 'costs')
+
+// Reports on the Passat, where both a Fahrtenbuch and a mileage claim print.
+await page.locator('.app-navigation').getByRole('link', { name: 'Reports' }).click()
+const reports = page.locator('#nextfleet').getByRole('main')
+await reports.getByRole('combobox', { name: 'Vehicle' }).click()
+await page.getByRole('option').filter({ hasText: 'NF-DE 100' }).click()
+await reports.getByRole('link', { name: 'Open mileage claim' }).waitFor()
+await shoot(page, 'reports')
+
 // The thumbnail is the overview again at listing size, not a scaled copy: the store puts it
 // beside the title, where a shrunk 1280px shot is unreadable.
 await page.setViewportSize(thumbnail)

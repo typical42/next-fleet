@@ -9,11 +9,13 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Command;
 
 use OCA\NextFleet\Db\Vehicle;
+use OCA\NextFleet\Service\DocumentService;
 use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\ExpenseService;
 use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\ReminderService;
+use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\IUserManager;
@@ -30,7 +32,8 @@ use Symfony\Component\Console\Output\OutputInterface;
  * fleet the app cannot hold - and the odometer rules decide the flags here as they do anywhere
  * else.
  *
- * @psalm-type Seeded = array{vehicle: array<string, mixed>, disposed?: int, readings: list<array<string, int|string>>, energy?: list<array<string, mixed>>, maintenance?: list<array<string, mixed>>, expenses?: list<array<string, mixed>>, reminders?: list<array<string, mixed>>}
+ * @psalm-type Paper = array{kind: string, name: string, says: string, belongs_to?: string}
+ * @psalm-type Seeded = array{vehicle: array<string, mixed>, disposed?: int, readings: list<array<string, int|string>>, energy?: list<array<string, mixed>>, maintenance?: list<array<string, mixed>>, expenses?: list<array<string, mixed>>, trips?: list<array<string, mixed>>, papers?: list<Paper>, reminders?: list<array<string, mixed>>}
  */
 class SeedCommand extends Command {
 	/**
@@ -108,6 +111,8 @@ class SeedCommand extends Command {
 				['days' => 150, 'odo' => 109400, 'amount' => 52200, 'total' => 8770, 'station' => 'Aral Hauptstraße'],
 				['days' => 125, 'odo' => 110300, 'amount' => 53900, 'total' => 9163, 'station' => 'Shell Ringstraße'],
 				['days' => 100, 'odo' => 111100, 'amount' => 46400, 'total' => 7888, 'station' => 'Aral Hauptstraße'],
+				// The newest month has a bar too (SeedTest, the Costs screen).
+				['days' => 20, 'odo' => 112050, 'amount' => 57000, 'total' => 9690, 'station' => 'Aral Hauptstraße'],
 			],
 			'maintenance' => [
 				['days' => 240, 'type' => 'service', 'title' => 'Oil change and inspection', 'vendor' => 'Autohaus Becker', 'cost' => 38950, 'vat_rate' => 1900, 'odo' => 106100],
@@ -122,6 +127,19 @@ class SeedCommand extends Command {
 				['days' => 200, 'category' => 'parking', 'amount' => 1850, 'vat_rate' => 1900],
 				['days' => 140, 'category' => 'toll', 'amount' => 1150, 'notes' => 'Brenner motorway'],
 				['days' => 60, 'category' => 'fine', 'amount' => 3000, 'notes' => '11 km/h too fast'],
+			],
+			// One business trip for the mileage claim to value and one private trip it leaves out.
+			// The first sets off where the fill-up left the counter and the second where the first
+			// ended, so the logbook shows no Gap (lib/Service/Gaps.php).
+			'trips' => [
+				['days' => 12, 'minutes' => 75, 'start_odo' => 112050, 'end_odo' => 112140, 'category' => 'business', 'from_label' => 'Stuttgart, Büro', 'to_label' => 'Pforzheim, Müller Maschinenbau', 'purpose' => 'Kundentermin', 'partner' => 'Müller Maschinenbau GmbH'],
+				['days' => 8, 'minutes' => 30, 'start_odo' => 112140, 'end_odo' => 112165, 'category' => 'private', 'from_label' => 'Stuttgart, Büro', 'to_label' => 'Stuttgart, Wochenmarkt', 'purpose' => 'Einkauf'],
+			],
+			// Files in the seeding account's own Files, as the picker would have found them.
+			// `belongs_to` names a maintenance record by title, so its row has a paperclip.
+			'papers' => [
+				['kind' => 'registration', 'name' => 'Fahrzeugschein NF-DE 100.svg', 'says' => 'Zulassungsbescheinigung Teil I'],
+				['kind' => 'receipt', 'name' => 'Rechnung HU-AU NF-DE 100.svg', 'says' => 'Rechnung HU/AU', 'belongs_to' => 'HU/AU'],
 			],
 			// 720 km ahead of the newest Reading, so it stands inside the template's lead: the
 			// banner shows it warned, with the day the pace above reaches it, and the maintenance
@@ -393,6 +411,9 @@ class SeedCommand extends Command {
 		private MaintenanceService $maintenance,
 		private ExpenseService $expenses,
 		private ReminderService $reminders,
+		private TripService $trips,
+		private DocumentService $documents,
+		private SeedPapers $papers,
 		private ITimeFactory $time,
 	) {
 		parent::__construct();
@@ -419,6 +440,8 @@ class SeedCommand extends Command {
 
 		$readings = 0;
 		$costs = 0;
+		$trips = 0;
+		$papers = 0;
 		$reminders = 0;
 		foreach (self::FLEET as $entry) {
 			$vehicle = $this->fleet->create($userId, $this->fields($entry));
@@ -432,11 +455,26 @@ class SeedCommand extends Command {
 			foreach ($entry['energy'] ?? [] as $row) {
 				$this->energy->record($userId, $uuid, $this->dated($row, 'filled_at') + $fill);
 			}
+			/** @var array<string, string> $maintained uuid by title, for the papers below */
+			$maintained = [];
 			foreach ($entry['maintenance'] ?? [] as $row) {
-				$this->maintenance->record($userId, $uuid, $this->dated($row, 'done_at'));
+				$maintained[$row['title']] = (string)$this->maintenance->record($userId, $uuid, $this->dated($row, 'done_at'))['uuid'];
 			}
 			foreach ($entry['expenses'] ?? [] as $row) {
 				$this->expenses->record($userId, $uuid, $this->dated($row, 'spent_at'));
+			}
+			// After the cost rows, so a trip's Reading lands in a chain the fill-ups already hold.
+			foreach ($entry['trips'] ?? [] as $row) {
+				$this->trips->record($userId, $uuid, $this->driven($row));
+			}
+			foreach ($entry['papers'] ?? [] as $paper) {
+				$link = isset($paper['belongs_to'])
+					? ['linked_type' => 'maintenance', 'linked_uuid' => $maintained[$paper['belongs_to']]]
+					: [];
+				$this->documents->attach($userId, $uuid, $link + [
+					'file_id' => $this->papers->write($userId, $paper['name'], $paper['says']),
+					'kind' => $paper['kind'],
+				]);
 			}
 			// Last, so a reminder by kilometres is planned against the counter as it now reads.
 			foreach ($entry['reminders'] ?? [] as $row) {
@@ -446,15 +484,19 @@ class SeedCommand extends Command {
 			$due = count($entry['reminders'] ?? []);
 			$readings += count($entry['readings']);
 			$costs += $written;
+			$trips += count($entry['trips'] ?? []);
+			$papers += count($entry['papers'] ?? []);
 			$reminders += $due;
 			$output->writeln($this->describe($vehicle, count($entry['readings']), $written, $due));
 		}
 
 		$output->writeln(sprintf(
-			'Seeded %d vehicles, %d readings, %d costs and %d reminders for %s.',
+			'Seeded %d vehicles, %d readings, %d costs, %d trips, %d papers and %d reminders for %s.',
 			count(self::FLEET),
 			$readings,
 			$costs,
+			$trips,
+			$papers,
 			$reminders,
 			$userId,
 		));
@@ -513,6 +555,22 @@ class SeedCommand extends Command {
 			$column => $at,
 			$column . '_off' => $this->offsetAt($at),
 		];
+	}
+
+	/**
+	 * One trip as the sheet would send it: its days back are when it set off, and it ends the
+	 * stated minutes later.
+	 *
+	 * @param array<string, mixed> $row with `days` and `minutes`
+	 * @return array<string, mixed>
+	 */
+	private function driven(array $row): array {
+		$minutes = (int)$row['minutes'];
+		unset($row['minutes']);
+		$trip = $this->dated($row, 'started_at');
+		$end = (int)$trip['started_at'] + $minutes * 60;
+
+		return $trip + ['ended_at' => $end, 'ended_at_off' => $this->offsetAt($end)];
 	}
 
 	/**

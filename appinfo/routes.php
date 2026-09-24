@@ -118,6 +118,8 @@ return [
 		['name' => 'report#mileage', 'url' => '/vehicles/{uuid}/mileage/{year}', 'verb' => 'GET'],
 		// A file the browser saves, beside the page for the same reason: a link, not a read.
 		['name' => 'report#csv', 'url' => '/vehicles/{uuid}/csv/{year}/{table}', 'verb' => 'GET'],
+		// A paper's file, served by us so access follows the vehicle (docs/architecture.md#documents).
+		['name' => 'document#download', 'url' => '/vehicles/{uuid}/documents/{document}', 'verb' => 'GET'],
 
 		// The session user's own settings - no identity in the URL, because there is only ever
 		// one set of them to reach (lib/Service/PreferencesService.php).

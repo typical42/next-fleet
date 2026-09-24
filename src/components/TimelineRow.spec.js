@@ -296,3 +296,31 @@ describe('a timeline row', () => {
 		expect(wrapper.text()).toContain('12 h')
 	})
 })
+
+describe('the papers on a row', () => {
+	const invoice = { uuid: 'd-1', kind: 'receipt', file_id: 42, name: 'invoice.pdf', mime: 'application/pdf', linked_type: 'maintenance', linked_uuid: 'c-1' }
+	const work = cost('maintenance', { title: 'Inspection', cost: 18000 })
+
+	/** A linked document opens from its entry's row, through our download and not the file's share. */
+	it('opens each paper linked to the entry from a paperclip', async () => {
+		const wrapper = mount(TimelineRow, { props: { entry: work, vehicle: VEHICLE, papers: [invoice] } })
+
+		const clip = wrapper.get('.row__papers a')
+		expect(clip.attributes('href')).toContain('/apps/nextfleet/vehicles/v-1/documents/d-1')
+		expect(clip.attributes('aria-label')).toBe('Open invoice.pdf')
+		await clip.trigger('click')
+		expect(wrapper.emitted('open')).toBeUndefined()
+	})
+
+	/** A deleted file has no link to follow, and the row says so rather than offering a dead one. */
+	it('says a linked file is gone', () => {
+		const wrapper = mount(TimelineRow, { props: { entry: work, vehicle: VEHICLE, papers: [{ ...invoice, name: null, mime: null }] } })
+
+		expect(wrapper.find('.row__papers a').exists()).toBe(false)
+		expect(wrapper.get('.row__papers').text()).toContain('The file is gone from Files')
+	})
+
+	it('shows no paperclip on a row without papers', () => {
+		expect(row(work).find('.row__papers').exists()).toBe(false)
+	})
+})

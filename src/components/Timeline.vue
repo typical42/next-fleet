@@ -21,6 +21,12 @@ import TimelineRow from './TimelineRow.vue'
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
 	vehicle: { type: Object, required: true },
+	/**
+	 * The vehicle's documents, read by its documents section. Those linked to an entry show on its row.
+	 *
+	 * @type {import('vue').PropType<import('../services/api.js').Document[]>}
+	 */
+	papers: { type: Array, default: () => [] },
 })
 
 // A tapped row, for the screen to open the sheet on (src/views/VehicleView.vue).
@@ -92,6 +98,29 @@ const groups = computed(() => {
 
 /** Each Gap under the trip whose claim opened it, which is the row that offers to close it. */
 const gapOf = computed(() => new Map((gaps.value ?? []).map((gap) => [gap.trip, gap])))
+
+/**
+ * @param {string|null} type - the kind of Entry
+ * @param {string|null} uuid - the Entry's own identity
+ * @return {string} one key for a row and for the documents linked to it
+ */
+function entryKey(type, uuid) {
+	return `${type}-${uuid}`
+}
+
+/** Each entry's linked documents. */
+const papersOf = computed(() => {
+	/** @type {Map<string, import('../services/api.js').Document[]>} */
+	const linked = new Map()
+	for (const paper of props.papers) {
+		if (paper.linked_uuid !== null) {
+			const key = entryKey(paper.linked_type, paper.linked_uuid)
+			linked.set(key, [...(linked.get(key) ?? []), paper])
+		}
+	}
+
+	return linked
+})
 
 /**
  * The Gap the driver is being asked about, or null when no question is open.
@@ -298,7 +327,7 @@ defineExpose({ reload })
 			<h3>{{ t('nextfleet', 'Timeline') }}</h3>
 			<!-- The chips are one choice out of six, which is what a radio group is - and it is the
 			     chooser the rest of the app already uses (src/components/EntrySheet.vue). -->
-			<NcRadioGroup v-model="chip" :label="t('nextfleet', 'Show')">
+			<NcRadioGroup v-model="chip" class="timeline__chips" :label="t('nextfleet', 'Show')">
 				<NcRadioGroupButton v-for="one in chips"
 					:key="one.value"
 					:value="one.value"
@@ -322,10 +351,11 @@ defineExpose({ reload })
 			</h4>
 			<ul class="timeline__rows">
 				<TimelineRow v-for="entry in group.rows"
-					:key="`${entry.type}-${entry[entry.type].uuid}`"
+					:key="entryKey(entry.type, entry[entry.type].uuid)"
 					:entry="entry"
 					:vehicle="vehicle"
 					:gap="entry.trip === undefined ? null : gapOf.get(entry.trip.uuid) ?? null"
+					:papers="papersOf.get(entryKey(entry.type, entry[entry.type].uuid)) ?? []"
 					@close-gap="ask"
 					@open="$emit('open', $event)" />
 			</ul>
@@ -372,6 +402,12 @@ defineExpose({ reload })
 	align-items: center;
 	gap: calc(var(--default-grid-baseline) * 2);
 	margin-bottom: calc(var(--default-grid-baseline) * 2);
+}
+
+/* NcRadioGroup lays its buttons out in one row that never wraps, so six chips run off a phone's
+   edge. The row has no class of its own, only a CSS module's. */
+.timeline__chips :deep([class*='ncFormBox_row']) {
+	flex-wrap: wrap;
 }
 
 .timeline__month {

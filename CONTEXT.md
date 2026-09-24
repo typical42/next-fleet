@@ -50,7 +50,7 @@ a label, exactly as a plate is.
 
 **Engine**:
 A vehicle's drivetrain classification — petrol, diesel, lpg, cng, electric, hybrid. For display,
-filtering and emission defaults only.
+filtering only; the CO₂ Estimate reads each Energy Entry's energy instead.
 
 **Energy Types**:
 The set of energy a vehicle actually accepts. Authoritative: it decides which options the entry
@@ -177,3 +177,13 @@ between the two is what timeliness means.
 The business contact a Trip visited. Free text with autocomplete from the vehicle's history — not an
 entity.
 _Avoid_: Client, customer, contact
+
+**Mileage Claim**:
+One vehicle's business Trips of one year, each valued at its jurisdiction's statutory rate per km
+on its own day. Commutes are not on it.
+_Avoid_: Mileage report, Reisekosten (in code)
+
+**CO₂ Estimate**:
+A year's Energy Entries times their emission factor, electricity at a grid factor. Always an
+estimate, and unavailable, not zero, where the jurisdiction sets no factor.
+_Avoid_: Emissions, carbon footprint

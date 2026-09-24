@@ -6,7 +6,8 @@
 import { request } from 'node:http'
 
 /**
- * What only the server side can do: run the reminder job at a moved clock. Through the Docker
+ * What only the server side can do: run the reminder job at a moved clock, and grant a vehicle
+ * before any route does. Through the Docker
  * Engine API on its socket rather than the docker CLI, because `npm run test:e2e:docker` runs
  * inside Playwright's image, which has the socket mounted and no CLI.
  */
@@ -89,4 +90,17 @@ async function exec(project, command) {
  */
 export function runJobAt(project, at) {
 	return exec(project, ['php', 'custom_apps/nextfleet/tests/e2e/job.php', at.toISOString()])
+}
+
+/**
+ * Grants an account a role on a vehicle (tests/e2e/grant.php).
+ *
+ * @param {string} project - `testInfo.project.name`
+ * @param {string} vehicle - the vehicle's uuid
+ * @param {string} uid - who is granted
+ * @param {string} role - `driver`, `viewer`, …
+ * @return {Promise<string>} what it printed
+ */
+export function grant(project, vehicle, uid, role) {
+	return exec(project, ['php', 'custom_apps/nextfleet/tests/e2e/grant.php', vehicle, uid, role])
 }

@@ -90,7 +90,8 @@ The E2E job starts the compose stack on the runner and waits for it with `docker
 It builds the bundle first: the specs assert what Vue mounted, and an unbuilt `js/` leaves the root
 empty.
 
-Add the app store's `krankerl`/appinfo validation as a release gate.
+There is no `krankerl`: `InfoXmlTest` validates `info.xml` against the store's own schema, and
+`tools/package.sh` builds the tarball ([release](#release)).
 
 **The M0 gate is a build, not a test.** One frontend bundle must build and run against NC 31 and
 NC 34 before any feature work starts ([milestones](../plan.md#milestones)). `@nextcloud/vue` moves
@@ -107,8 +108,13 @@ a partial and a `missed_previous`, the hybrid charging at home and in public, ma
 with a stated VAT rate and without one, and a vehicle with purchase price and
 residual, so every header figure has something to show. Three reminders look the other way: an
 HU/AU three weeks out, an oil change by kilometres with the Readings an estimated date needs, and
-a truck the scheme inspects every 12 months. It powers E2E tests, screenshots for the app store,
-and manual clicking. Trips arrive with the E2E that needs them.
+a truck the scheme inspects every 12 months. The Passat has a cost in every month of that year, so
+the Costs screen has bars; a business trip for the mileage claim and a private one it leaves out;
+and two papers in the seeding account's Files under `Fleet demo/`: the Fahrzeugschein, and the
+HU/AU invoice linked to its maintenance record. It powers screenshots for the app store, manual
+clicking and `demo-fleet.spec.js`. The other E2E specs write their own rows, in a year that is
+already over when a figure is read: the demo is dated back from the seeding day, so its months move
+with that day.
 
 It writes through the services a request writes through, so a fleet it cannot produce is a fleet the
 app cannot hold, and the odometer rules decide the flags rather than the fixture. Every vehicle
@@ -154,13 +160,21 @@ be … a parent directory of root"; and its polyfill chain pulls in `elliptic` a
 so `npm audit` reports seven low-severity advisories with no upstream fix. Gate CI at `--audit-level
 moderate` rather than muting the tool.
 
-The build also writes a `css/nextfleet-<entry>.css` per entry and a hashed `css/*.chunk.css` beside
-the hand-written `css/app.css`: `@nextcloud/vue` ships a stylesheet the bundle does not carry, so
-each template asks for both the script and the style. The generated files are gitignored by
-pattern — a new entry needs no new ignore line — and skipped by Stylelint; `css/app.css` is the
-only source there. The chunk carries a content hash
-and the build cannot empty a directory it shares with sources, so old ones pile up — delete them
-when they bother you, nothing reads them.
+**The main entry is one dynamic import of `src/boot.js`.** NC 31 loads an entry as
+`nextfleet-main.mjs?v=…`, while a lazy chunk (the file picker, a date locale) imports Vite's preload
+helper from `./nextfleet-main.mjs`. The browser treats those as two modules, so a second copy of the
+entry runs. `src/main.js` therefore holds nothing with state and mounts once. Were the app inside the
+entry, the second copy would mount it again the first time a picker opened, and the screen would
+fall back to the overview. NC 34 does not show it; only an NC 31 browser does.
+
+The build writes hashed `css/*.chunk.css` beside the hand-written `css/app.css`: `@nextcloud/vue`
+ships a stylesheet the bundle does not carry. The main entry's stylesheets load with its dynamic
+import, so `templates/main.php` asks only for the script. The settings entry imports statically, so
+the build writes `css/nextfleet-settings.css` and `templates/personal.php` asks for both. The
+generated files are gitignored by pattern — a new entry needs no new ignore line — and skipped by
+Stylelint; `css/app.css` is the only source there. The chunks carry a content hash and the build
+cannot empty a directory it shares with sources, so old ones pile up in `css/` and `js/`. Delete
+them when they bother you; nothing reads them.
 
 `npm run lint` runs all three static frontend checks in turn — ESLint, Stylelint, then `tsc
 --noEmit` — and `npm run lint:js`, `lint:css` and `lint:types` run them one at a time. `npm test`
@@ -300,7 +314,7 @@ the assertion, not the missing build. It logs in through the form — Nextcloud 
 `NEXTFLEET_URL_NC34` and `NEXTFLEET_URL_NC31` override the two ports.
 
 Every vehicle the run makes wears a plate its own spec file owns — `E2E-` for the M1 slice,
-`M2-E2E-`, `M3-E2E-` and `M4-E2E-` for the next three — and each file deletes what it finds under its prefix before it starts.
+`M2-E2E-` to `M5-E2E-` for the next four — and each file deletes what it finds under its prefix before it starts.
 Cleaning up front rather than afterwards leaves a failed run's rows where they can be looked at, and
 still makes the next run find one vehicle rather than two. The prefixes have to stay disjoint:
 Playwright runs the files at once, and a sweep that matched another file's plates would delete a
@@ -336,3 +350,16 @@ Three things that will bite:
 For a full server-source setup (debugging Nextcloud itself, multiple versions, LDAP, Collabora),
 switch to [nextcloud-docker-dev](https://juliusknorr.github.io/nextcloud-docker-dev/). Overkill for
 app work; the right tool once we need to reproduce a server bug.
+
+## Release
+
+1. Set the version in `appinfo/info.xml`, run `npm version <x> --no-git-tag-version`, and rename
+   the CHANGELOG's open section to `## <x> — <date>`. `InfoXmlTest` fails until all four agree.
+2. Reseed NC 34 (`occ nextfleet:seed admin`), clear any E2E vehicles from admin's fleet, and run
+   `npm run screenshots:docker`. `InfoXmlTest` fails for a screenshot `info.xml` names and the
+   repository lacks.
+3. `npm run package` writes `build/artifacts/nextfleet-<version>.tar.gz`. It empties `js/`, runs
+   `npm ci` and a fresh build, since the build never removes old chunks, and copies only the
+   list in `tools/package.sh`. `PackageTest` fails when a new top-level entry is on neither list.
+4. Signing and upload are a maintainer's, on a machine holding the key
+   ([supply chain](security.md#supply-chain)).

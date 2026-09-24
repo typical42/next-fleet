@@ -21,14 +21,14 @@ use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Db\TTransactional;
+use OCP\Files\Config\IUserMountCache;
 use OCP\Files\File;
 use OCP\Files\IRootFolder;
 use OCP\IDBConnection;
 
 /**
- * A vehicle's papers (docs/architecture.md#nextcloud-integration). The file stays where the Files
- * app put it and is referenced by `file_id`; there is no upload path. Reading takes VIEW, attaching
- * and detaching take EDIT, and each answers with the list as it now stands.
+ * A vehicle's papers (docs/architecture.md#documents). The file stays where the Files app put it
+ * and is referenced by `file_id`; there is no upload path.
  *
  * @psalm-type Listed = array{uuid: string, kind: string, file_id: int, name: ?string, mime: ?string, linked_type: ?string, linked_uuid: ?string}
  */
@@ -43,6 +43,7 @@ class DocumentService {
 		private MaintenanceMapper $maintenance,
 		private ExpenseMapper $expenses,
 		private IRootFolder $root,
+		private IUserMountCache $mounts,
 		private IDBConnection $db,
 	) {
 	}
@@ -60,9 +61,8 @@ class DocumentService {
 	/**
 	 * Attaches a file the user picked in Files, optionally to one entry of the same vehicle.
 	 *
-	 * The file must be one the user can read in their own Files. The download serves an attached
-	 * file to everyone who may view the vehicle, so without this check any `file_id` on the
-	 * instance would open somebody else's Files.
+	 * The file must be the user's own, in their own Files: the download serves it to everyone who
+	 * may view the vehicle, so this is the file's own access check (docs/architecture.md#documents).
 	 *
 	 * @param array<string, mixed> $fields `file_id`, `kind`, and `linked_type` with `linked_uuid` or neither
 	 * @return list<Listed> the list as it now stands
@@ -92,23 +92,26 @@ class DocumentService {
 		}
 
 		$node = $this->root->getUserFolder($userId)->getFirstNodeById($fileId);
-		if (!$node instanceof File || !$node->isReadable()) {
+		// Readable is not enough: a share is readable, and not the attacher's to pass on.
+		if (!$node instanceof File || !$node->isReadable() || $node->getOwner()?->getUID() !== $userId) {
 			throw new DoesNotExistException('No such file in ' . $userId . '\'s Files');
 		}
 
-		$this->atomicRetry(function () use ($userId, $vehicle, $fileId, $kind, $linkedType, $linkedUuid): void {
-			$this->vehicles->hold((int)$vehicle->getId());
+		$vehicleId = (int)$vehicle->getId();
+		$this->atomicRetry(function () use ($userId, $vehicleId, $fileId, $kind, $linkedType, $linkedUuid): void {
+			$this->vehicles->hold($vehicleId);
 			// Looked up under the hold, so the entry cannot be deleted between the check and the insert.
 			$linkedId = $linkedType === null ? null
-				: (int)$this->entries($linkedType)->findOnVehicle((int)$vehicle->getId(), (string)$linkedUuid)->getId();
-			foreach ($this->documents->findByVehicle((int)$vehicle->getId()) as $one) {
+				: (int)$this->entries($linkedType)->findOnVehicle($vehicleId, (string)$linkedUuid)->getId();
+			foreach ($this->documents->findByVehicle($vehicleId) as $one) {
+				// The first kind stands; a different one here is not an edit (docs/architecture.md#documents).
 				if ($one->getFileId() === $fileId && $one->getLinkedType() === $linkedType && $one->getLinkedId() === $linkedId) {
 					return;
 				}
 			}
 
 			$row = new Document();
-			$row->setVehicleId((int)$vehicle->getId());
+			$row->setVehicleId($vehicleId);
 			$row->setFileId($fileId);
 			$row->setKind($kind);
 			$row->setLinkedType($linkedType);
@@ -142,12 +145,37 @@ class DocumentService {
 	}
 
 	/**
+	 * The file behind one paper, for whoever may view the vehicle: access follows the vehicle, not
+	 * the file (docs/architecture.md#documents).
+	 *
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not view this vehicle
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException if the vehicle has no such document, or its file is gone
+	 * @throws \OCP\DB\Exception
+	 */
+	public function download(string $userId, string $vehicleUuid, string $documentUuid): File {
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::VIEW, $vehicleUuid);
+		$document = $this->documents->findOnVehicle((int)$vehicle->getId(), $documentUuid);
+
+		return $this->file($document->getFileId())
+			?? throw new DoesNotExistException('The file behind document ' . $documentUuid . ' is gone');
+	}
+
+	/**
 	 * The attached file wherever it lives now, in whoever's Files hold it: access follows the
 	 * vehicle. A file in the trash bin keeps its id, but a paper somebody threw away is gone.
+	 *
+	 * Not `IRootFolder::getById`: in a web request that searches only the session user's mounts,
+	 * so a driver would never find the owner's file. `getUserFolder` mounts that user's Files, and
+	 * its trash bin is outside them.
 	 */
 	private function file(int $fileId): ?File {
-		foreach ($this->root->getById($fileId) as $node) {
-			if ($node instanceof File && preg_match('#^/[^/]+/files/#', $node->getPath()) === 1) {
+		$holders = [];
+		foreach ($this->mounts->getMountsForFileId($fileId) as $mount) {
+			$holders[$mount->getUser()->getUID()] = true;
+		}
+		foreach (array_keys($holders) as $uid) {
+			$node = $this->root->getUserFolder((string)$uid)->getFirstNodeById($fileId);
+			if ($node instanceof File) {
 				return $node;
 			}
 		}

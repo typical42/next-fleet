@@ -131,6 +131,27 @@ describe('a row opened for editing', () => {
 	})
 })
 
+describe('the papers', () => {
+	/**
+	 * A document linked to an entry is carried on that entry's row, and only there. Documents are
+	 * not rows of their own: a registration has no date to sort by.
+	 */
+	it('hands each row the documents linked to its entry', async () => {
+		const fill = { type: 'energy', occurred_at: 1788300000, occurred_at_off: 120, energy: { uuid: 'e-1', energy: 'diesel', amount: 40000 } }
+		vi.mocked(readTimeline).mockResolvedValue(/** @type {any} */ ({ rows: [SEPTEMBER[0], fill], next: null }))
+		const receipt = { uuid: 'd-1', kind: 'receipt', linked_type: 'energy', linked_uuid: 'e-1', name: 'r.pdf' }
+		const registration = { uuid: 'd-2', kind: 'registration', linked_type: null, linked_uuid: null, name: 'z.pdf' }
+
+		const wrapper = await timeline()
+		await wrapper.setProps({ papers: [receipt, registration] })
+
+		const rows = /** @type {any[]} */ (wrapper.findAllComponents(TimelineRow))
+		expect(rows).toHaveLength(2)
+		expect(rows[0].props('papers')).toEqual([])
+		expect(rows[1].props('papers')).toEqual([receipt])
+	})
+})
+
 describe('the month header under Logbook Mode', () => {
 	const LOGBOOK = { ...VEHICLE, logbook_mode: true }
 

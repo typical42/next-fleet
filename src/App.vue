@@ -31,7 +31,18 @@ const preferences = usePreferencesStore()
  * The vehicle the content area shows; empty means the overview (docs/ui.md). A reminder
  * notification opens the app on its vehicle with `?vehicle=`.
  */
-const selected = ref(new URLSearchParams(window.location.search).get('vehicle') ?? '')
+const landing = new URLSearchParams(window.location.search)
+const selected = ref(landing.get('vehicle') ?? '')
+/**
+ * Whether the vehicle's screen opens with the entry sheet up, which is what the QR sticker's link
+ * asks (docs/ui.md). Taken off the address at once, so a reload later does not open a second sheet.
+ */
+const arrivedToEnter = ref(landing.get('entry') === 'new')
+if (arrivedToEnter.value) {
+	landing.delete('entry')
+	const rest = landing.toString()
+	window.history.replaceState(window.history.state, '', `${window.location.pathname}${rest === '' ? '' : `?${rest}`}`)
+}
 /** Whether the content area shows the reports instead, which belong to no one vehicle. */
 const reporting = ref(false)
 /** Whether the selected vehicle's costs show instead of its screen; picking any vehicle ends it. */
@@ -83,6 +94,7 @@ function open(created) {
 function show(uuid) {
 	reporting.value = false
 	costing.value = false
+	arrivedToEnter.value = false
 	selected.value = uuid
 }
 
@@ -131,7 +143,10 @@ function report() {
 			     (docs/features.md#logbook-mode). -->
 			<ReportsView v-else-if="reporting" :vehicles="store.list" />
 			<CostsView v-else-if="vehicle && costing" :vehicle="vehicle" @back="costing = false" />
-			<VehicleView v-else-if="vehicle" :vehicle="vehicle" @costs="costing = true" />
+			<VehicleView v-else-if="vehicle"
+				:vehicle="vehicle"
+				:enter="arrivedToEnter"
+				@costs="arrivedToEnter = false; costing = true" />
 			<OverviewView v-else
 				:vehicles="store.visible"
 				@new="creating = true"

@@ -1,6 +1,6 @@
 {
   "name": "nextfleet",
-  "version": "0.0.6",
+  "version": "0.2.0",
   "private": true,
   "license": "AGPL-3.0-or-later",
   "type": "module",
@@ -18,6 +18,7 @@
     "lint:fix": "npm run lint:js -- --fix",
     "lint:js": "eslint . --ext .js,.cjs,.mjs,.ts,.vue",
     "lint:types": "tsc --noEmit",
+    "package": "sh tools/package.sh",
     "screenshots:docker": "docker run --rm --init --network host -u $(id -u):$(id -g) -e HOME=/tmp -e NEXTFLEET_URL_NC34 -v \"$PWD\":/w -w /w mcr.microsoft.com/playwright:v1.63.0-noble node tools/screenshots.mjs",
     "test": "vitest run",
     "test:e2e": "playwright test",
@@ -29,11 +30,14 @@
     "fast-xml-parser": "^5.7.0"
   },
   "dependencies": {
+    "@mdi/js": "^7.4.47",
     "@nextcloud/auth": "^2.6.0",
+    "@nextcloud/dialogs": "^7.5.0",
     "@nextcloud/l10n": "^3.4.1",
     "@nextcloud/router": "^3.1.0",
     "@nextcloud/vue": "^9.11.0",
     "pinia": "^4.0.3",
+    "uqr": "^0.1.3",
     "vue": "^3.5.0"
   },
   "devDependencies": {

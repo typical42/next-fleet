@@ -5,8 +5,10 @@ Nextcloud app for vehicle fleet management.
 The plan lives in [plan.md](plan.md), with the detail in [docs/](docs/) and screen mockups in [design/](design/).
 [CONTEXT.md](CONTEXT.md) is the glossary — the words the code uses.
 Decisions that are hard to reverse are in [docs/adr/](docs/adr/), and where a document and an ADR disagree, the ADR wins.
-Implemented so far: vehicles and their odometer, on Nextcloud 31 to 34. The rest of
-[plan.md](plan.md) — trips, energy, maintenance, costs, reminders — is not built yet.
+Version 0.2.0 is v1, on Nextcloud 31 to 34: vehicles and their odometer, trips and the Fahrtenbuch,
+energy, maintenance, expenses and the Costs screen, reminders, documents from Files, CSV export and
+the mileage claim. Sharing a vehicle and the rest of M6+ in [plan.md](plan.md) are not built yet.
+What changed is in [CHANGELOG.md](CHANGELOG.md).
 
 Languages: English and German (formal and informal).
 

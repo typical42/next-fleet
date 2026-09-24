@@ -71,7 +71,7 @@ user-entered date, so a wrong or hostile clock cannot silently move a logbook en
 
 ### Things that are visible in the real world
 
-- **The QR sticker ([backlog](features.md#feature-backlog)) is not a credential.** It sits behind a
+- **The QR sticker ([ui](ui.md#the-qr-shortcut)) is not a credential.** It sits behind a
   windscreen where anyone can photograph it, so it carries a vehicle identifier and nothing else —
   opening it still requires a Nextcloud session. A signed token in that sticker would hand write
   access to the car park.

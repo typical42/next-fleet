@@ -12,17 +12,22 @@ import DueBanner from '../components/DueBanner.vue'
 import EntrySheet from '../components/EntrySheet.vue'
 import KpiHeader from '../components/KpiHeader.vue'
 import Timeline from '../components/Timeline.vue'
+import VehicleDocuments from '../components/VehicleDocuments.vue'
 import VehicleSheet from '../components/VehicleSheet.vue'
+import VehicleSticker from '../components/VehicleSticker.vue'
 import { nameOf, subtitleOf } from '../utils/format.js'
 
-defineProps({
+const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
 	vehicle: { type: Object, required: true },
+	/** Whether the screen opens with the entry sheet up, as the QR sticker's link asks. */
+	enter: { type: Boolean, default: false },
 })
 
 defineEmits(['costs'])
 
-const entering = ref(false)
+// Read once: the sticker asks for one sheet on arrival, not for one whenever the flag is set.
+const entering = ref(props.enter)
 const editing = ref(false)
 /**
  * The timeline row the sheet is open on, or null.
@@ -36,6 +41,12 @@ const opened = ref(null)
  * @type {import('vue').Ref<string|null>}
  */
 const closing = ref(null)
+/**
+ * The vehicle's documents as its section last read them; the timeline shows the linked ones.
+ *
+ * @type {import('vue').Ref<import('../services/api.js').Document[]>}
+ */
+const papers = ref([])
 
 // The timeline holds its own pages and its own chip, the header its own period, and neither is
 // this screen's business - what is, is that a write happened and both are now a row behind.
@@ -78,6 +89,7 @@ useHotKey('n', () => {
 				<NcButton @click="editing = true">
 					{{ t('nextfleet', 'Edit vehicle') }}
 				</NcButton>
+				<VehicleSticker :vehicle="vehicle" />
 			</div>
 		</div>
 
@@ -85,9 +97,15 @@ useHotKey('n', () => {
 
 		<DueBanner :vehicle="vehicle" @done="closing = $event" />
 
+		<!-- Above the timeline, which scrolls on without end. -->
+		<VehicleDocuments :vehicle="vehicle" @listed="papers = $event" />
+
 		<!-- One timeline of everything that happened to this vehicle, which is the question people
 		     actually ask (docs/ui.md). -->
-		<Timeline ref="timeline" :vehicle="vehicle" @open="opened = $event" />
+		<Timeline ref="timeline"
+			:vehicle="vehicle"
+			:papers="papers"
+			@open="opened = $event" />
 
 		<EntrySheet v-if="entering"
 			:vehicle="vehicle"
@@ -119,6 +137,8 @@ useHotKey('n', () => {
 
 .vehicle__header {
 	display: flex;
+	/* The buttons go under the name when both do not fit, rather than squeezing it to a word a line. */
+	flex-wrap: wrap;
 	align-items: start;
 	justify-content: space-between;
 	gap: calc(var(--default-grid-baseline) * 2);
