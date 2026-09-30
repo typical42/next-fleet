@@ -358,8 +358,7 @@ app work; the right tool once we need to reproduce a server bug.
 2. Reseed NC 34 (`occ nextfleet:seed admin`), clear any E2E vehicles from admin's fleet, and run
    `npm run screenshots:docker`. `InfoXmlTest` fails for a screenshot `info.xml` names and the
    repository lacks.
-3. `npm run package` writes `build/artifacts/nextfleet-<version>.tar.gz`. It empties `js/`, runs
-   `npm ci` and a fresh build, since the build never removes old chunks, and copies only the
-   list in `tools/package.sh`. `PackageTest` fails when a new top-level entry is on neither list.
+3. `npm run package` writes `build/artifacts/nextfleet-<version>.tar.gz` from a fresh build. What
+   it ships, and why, is in `tools/package.sh`.
 4. Signing and upload are a maintainer's, on a machine holding the key
    ([supply chain](security.md#supply-chain)).

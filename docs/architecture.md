@@ -602,8 +602,9 @@ points are the ones the notification tells, and the lines say what it says, with
 transaction, so a refused mail rolls them back: the notification has its own receipt and stays,
 and the next run tries again. A day counts as mailed by its newest `mail` receipt up to now.
 
-The same prediction could warn on a leasing mileage overrun. That is M6+: it needs the contract's
-end date and mileage cap, two columns no milestone has added.
+The same prediction could warn on a leasing mileage overrun. That is M6+, in the
+[backlog](features.md#feature-backlog) rather than a planned milestone: it needs the contract's end
+date and mileage cap, two columns no milestone has added.
 
 ## Numbers: consumption, cost, emissions
 

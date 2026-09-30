@@ -37,8 +37,7 @@ class PackageTest extends TestCase {
 	/** @return list<string> */
 	private function listIn(string $variable): array {
 		$script = (string)file_get_contents(self::ROOT . '/tools/package.sh');
-		$this->assertMatchesRegularExpression('/^' . $variable . '="[^"]+"$/m', $script);
-		preg_match('/^' . $variable . '="([^"]+)"$/m', $script, $match);
+		$this->assertSame(1, preg_match('/^' . $variable . '="([^"]+)"$/m', $script, $match), $variable . ' is not a one-line list');
 
 		return preg_split('/\s+/', trim($match[1])) ?: [];
 	}

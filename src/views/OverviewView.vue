@@ -103,21 +103,29 @@ useHotKey('n', () => emit('new'))
 	font-weight: bold;
 }
 
+/* A drawn dot rather than a ● in the text: the glyph's size is the font's, and a screen reader
+   would read it out beside the word that already says the state. The element colours come first:
+   on NC 34 `--color-warning` and its kin are pale backgrounds, and NC 31 has only those, vivid. */
 .overview__light::before {
-	content: '●';
+	content: '';
+	display: inline-block;
+	inline-size: 0.75em;
+	block-size: 0.75em;
+	border-radius: 50%;
+	background-color: currentColor;
 	margin-inline-end: var(--default-grid-baseline);
 }
 
 .overview__light--red::before {
-	color: var(--color-error);
+	color: var(--color-element-error, var(--color-error));
 }
 
 .overview__light--amber::before {
-	color: var(--color-warning);
+	color: var(--color-element-warning, var(--color-warning));
 }
 
 .overview__light--green::before {
-	color: var(--color-success);
+	color: var(--color-element-success, var(--color-success));
 }
 
 .overview__next,

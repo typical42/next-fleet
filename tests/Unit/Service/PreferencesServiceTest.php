@@ -276,7 +276,7 @@ class PreferencesServiceTest extends TestCase {
 	public function testEachJurisdictionStatesItsGridAverage(): void {
 		$grids = array_column($this->service()->forUser(self::USER)['jurisdictions'], 'grid_factor', 'key');
 
-		$this->assertSame(363, $grids['de']['grams'] ?? null);
+		$this->assertSame(344, $grids['de']['grams'] ?? null);
 		$this->assertNull($grids['generic']);
 	}
 

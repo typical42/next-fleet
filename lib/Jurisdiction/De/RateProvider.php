@@ -26,11 +26,14 @@ class RateProvider implements IRateProvider {
 
 	/**
 	 * Grams of CO₂ per litre burnt, tank to wheel, by the first day each applied. From 1990, the
-	 * base year of the national inventory; burning a litre of diesel has not changed since. CNG is
-	 * sold by the kilogram but entered in litres, of gas at no stated pressure, so it has none.
+	 * base year of the national inventory. Petrol is the source's own figure for Super E5 as sold
+	 * now, bio share included; the pure fossil petrol of earlier years burnt at about 2370, which
+	 * the source does not state per litre. Diesel and LPG are its t CO₂/TJ at typical densities.
+	 * CNG is sold by the kilogram but entered in litres, of gas at no stated pressure, so it has
+	 * none.
 	 */
 	private const EMISSIONS = [
-		'petrol' => ['1990-01-01' => 2370],
+		'petrol' => ['1990-01-01' => 2280],
 		'diesel' => ['1990-01-01' => 2650],
 		'lpg' => ['1990-01-01' => 1640],
 	];
@@ -68,12 +71,15 @@ class RateProvider implements IRateProvider {
 		return 'https://www.gesetze-im-internet.de/estg/__9.html';
 	}
 
-	/** The Umweltbundesamt's figure for the electricity Germany consumed, its newest year. */
+	/**
+	 * The Umweltbundesamt's figure for the electricity Germany consumed, its newest year. That year
+	 * is an estimate the next edition revises: 2024 went from 363 to 353.
+	 */
 	public function gridFactor(): ?array {
 		return [
-			'grams' => 363,
-			'year' => 2024,
-			'source' => 'https://www.umweltbundesamt.de/publikationen/entwicklung-der-spezifischen-treibhausgas-11',
+			'grams' => 344,
+			'year' => 2025,
+			'source' => 'https://www.umweltbundesamt.de/publikationen/entwicklung-der-spezifischen-treibhausgas-0',
 		];
 	}
 

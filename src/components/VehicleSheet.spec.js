@@ -259,7 +259,9 @@ describe('the vehicle sheet, editing', () => {
 		expect(field(wrapper, 'Registration plate').props('modelValue')).toBe('B-XY 123')
 		expect(field(wrapper, 'VIN').props('modelValue')).toBe('WVWZZZ1KZAW000001')
 		expect(formatDay(day(wrapper, 'First registration').props('modelValue'))).toBe('2019-03-07')
-		expect(field(wrapper, 'Purchase price (cents)').props('modelValue')).toBe('1850000')
+		expect(field(wrapper, 'Tank size (l)').props('modelValue')).toBe('55')
+		expect(field(wrapper, 'Battery capacity (kWh)').props('modelValue')).toBe('13.6')
+		expect(field(wrapper, 'Purchase price').props('modelValue')).toBe('18500')
 		expect(dropdown(wrapper, 'Vehicle type').props('modelValue').id).toBe('van')
 		expect(dropdown(wrapper, 'Energy types').props('modelValue').map((/** @type {{id: string}} */ o) => o.id))
 			.toEqual(['petrol', 'electric'])
@@ -302,14 +304,14 @@ describe('the vehicle sheet, editing', () => {
 			vehicle_type: 'van',
 			engine: 'hybrid',
 			energy_types: ['petrol', 'electric'],
-			tank_ml: '55000',
-			battery_wh: '13600',
+			tank_ml: 55000,
+			battery_wh: 13600,
 			first_reg: '2019-03-07',
 			disposed_at: '',
 			vin: 'WVWZZZ1KZAW000001',
 			odo_unit: 'km',
-			purchase_price: '1850000',
-			residual_est: '400000',
+			purchase_price: 1850000,
+			residual_est: 400000,
 			currency: 'EUR',
 			jurisdiction: 'de',
 			logbook_mode: false,
@@ -588,20 +590,51 @@ describe('the vehicle sheet, editing', () => {
 	 * server judges the field, the sheet stays open saying so, and nothing typed is discarded.
 	 */
 	it('stays open with every value intact when the write is refused', async () => {
-		vi.mocked(updateVehicle).mockRejectedValue(new Error('tank_ml is a whole number'))
+		vi.mocked(updateVehicle).mockRejectedValue(new Error('vin is at most 17 characters'))
 		const wrapper = await sheet(VEHICLE)
 
-		await field(wrapper, 'Tank size (ml)').vm.$emit('update:modelValue', '55 litres')
+		await field(wrapper, 'VIN').vm.$emit('update:modelValue', 'WVWZZZ1KZAW0000012')
 		await saveButton(wrapper).vm.$emit('click')
 		await flushPromises()
 
-		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('tank_ml is a whole number')
-		expect(field(wrapper, 'Tank size (ml)').props('modelValue')).toBe('55 litres')
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('vin is at most 17 characters')
+		expect(field(wrapper, 'VIN').props('modelValue')).toBe('WVWZZZ1KZAW0000012')
 		expect(wrapper.emitted('saved')).toBeUndefined()
 		expect(wrapper.emitted('close')).toBeUndefined()
 		// A field the server judged is not a token that moved: reading the vehicle back would
 		// answer the same values and the retry would be refused for the same reason.
 		expect(getVehicle).not.toHaveBeenCalled()
+	})
+
+	/** Litres, kWh and euros on screen, the column's integer on the wire - either decimal mark. */
+	it('sends the decimals as the integers their columns keep', async () => {
+		const wrapper = await sheet(VEHICLE)
+
+		await field(wrapper, 'Tank size (l)').vm.$emit('update:modelValue', '52,5')
+		await field(wrapper, 'Battery capacity (kWh)').vm.$emit('update:modelValue', '')
+		await field(wrapper, 'Residual value').vm.$emit('update:modelValue', '3999.99')
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({
+			tank_ml: 52500,
+			battery_wh: '',
+			residual_est: 399999,
+		}))
+	})
+
+	/** A number nobody can read is asked about before anything is written, the typing kept. */
+	it('refuses a decimal it cannot read without writing', async () => {
+		const wrapper = await sheet(VEHICLE)
+
+		await field(wrapper, 'Tank size (l)').vm.$emit('update:modelValue', '55 litres')
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('That is not a tank size.')
+		expect(field(wrapper, 'Tank size (l)').props('modelValue')).toBe('55 litres')
+		expect(updateVehicle).not.toHaveBeenCalled()
+		expect(wrapper.emitted('saved')).toBeUndefined()
 	})
 
 	/**

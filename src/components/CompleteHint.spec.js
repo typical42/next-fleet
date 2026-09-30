@@ -110,7 +110,7 @@ describe('the complete-this-vehicle hint', () => {
 		expect(wrapper.text()).toContain('NF-NE 600')
 		expect(wrapper.text()).toContain('VIN')
 		expect(wrapper.text()).toContain('First registration')
-		expect(wrapper.text()).toContain('Tank size (ml)')
+		expect(wrapper.text()).toContain('Tank size (l)')
 		expect(wrapper.text()).toContain('Currency')
 		expect(wrapper.text()).not.toContain('NF-DE 100')
 	})

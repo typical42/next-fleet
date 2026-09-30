@@ -1,14 +1,29 @@
 # Changelog
 
-## 0.2.0 — 2026-09-24
+## 0.2.0 — 2026-09-30
 
 The first release for the app store: v1 by scope, 0.x because it is new
 ([plan](plan.md#milestones)).
 
 - The store listing names what shipped and no longer promises sharing, which has no screen before
   M6. Its screenshots add the Costs and Reports screens.
+
 - `tools/package.sh` builds the store tarball, `build/artifacts/nextfleet-<version>.tar.gz`, from a
   fresh bundle and the app's own files only.
+
+- The vehicle sheet asks for the tank in litres, the battery in kWh and the purchase price and
+  residual value in the vehicle's currency, with either decimal mark, instead of millilitres,
+  watt-hours and cents. A value it cannot read is refused before anything is saved.
+
+- Fixed on NC 34: the traffic lights on the overview and in the due banner were pale tints, because
+  NC 34 turned `--color-warning` and its kin into backgrounds. They take its element colours now.
+  They are drawn dots rather than a ● character, so they no longer change size with the font or
+  get read aloud.
+
+- The app icon, a filled car. `img/app.svg` is white for the header, as Nextcloud's own are;
+  `img/app-dark.svg` is black for notifications, the dashboard widget and app management, which
+  invert it in dark mode. A search result shows the car on a blue tile, because Nextcloud never
+  inverts a result's thumbnail.
 
 - At 320 px the entry sheet and the timeline's filter chips no longer run off the right edge: the
   entry types and chips wrap onto a second line. The vehicle screen's buttons move under its name
@@ -66,7 +81,7 @@ The first release for the app store: v1 by scope, 0.x because it is new
   starts with `'`. The format is in `docs/architecture.md#csv-export`.
 
 - A CO₂ estimate on the Costs screen: the year's fill-ups times their emission factor, linked to
-  its source. Electricity uses a grid factor, the German average (363 g/kWh, 2024) unless the
+  its source. Electricity uses a grid factor, the German average (344 g/kWh, 2025) unless the
   personal settings state your own. A fuel with no factor (CNG, entered in litres) is left out and
   the screen says so. Under `generic` there is no estimate. The year's answer carries it as `co2`.
 

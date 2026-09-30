@@ -61,7 +61,7 @@ class Notifier implements INotifier {
 		$p = $notification->getSubjectParameters();
 
 		$notification->setParsedSubject($this->subject($l, $notification->getSubject(), $p))
-			->setIcon($this->urls->getAbsoluteURL($this->urls->imagePath(Application::APP_ID, 'app.svg')));
+			->setIcon($this->urls->getAbsoluteURL($this->urls->imagePath(Application::APP_ID, 'app-dark.svg')));
 
 		try {
 			$vehicle = $this->vehicles->findByUuid($p['vehicle']);

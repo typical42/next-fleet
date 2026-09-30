@@ -48,7 +48,8 @@ entered it ([odometer rules](architecture.md#odometer-rules)).
 
 ```
 ┌─ NextFleet ──────────────────────────────────────────────────────────┐
-│ Overview        │  M-AB 1234 · VW Passat Variant          [+ Entry]  │
+│ Overview        │  M-AB 1234     [+ Entry][Costs][Edit][QR sticker]  │
+│                 │  VW Passat Variant                                 │
 │                 │  148 320 km · 6,4 l/100 km · 42,10 €/100 km        │
 │ ● M-AB 1234  ⚠  │  ┌────────────────────────────────────────────┐   │
 │ ● HH-CD 42      │  │ ● Coming up · HU/AU · due 24.09.2026 [Done]│   │
@@ -145,7 +146,7 @@ that entry's row. It is never a row of its own, since a registration has no date
 | **Entry sheet** | Trip / Energy / Maintenance / Odometer / Expense — see below | Save |
 | **Vehicle sheet** | Create with four fields; edit every writable one, plus lifecycle, jurisdiction, [logbook mode](features.md#logbook-mode), the inspection interval, the reminder recipients and mail cadence; delete, undoably | Save |
 | **Costs** | One year, one vehicle: stacked bars per month, table below, the CO₂ estimate, export button | Export |
-| **Reports** | Fahrtenbuch and mileage claim — pick a vehicle and a year, get a printable page ([ADR 0005](adr/0005-no-pdf-library.md)). Costs and CO₂ are not reports: they live on the Costs screen and in its CSV | Print |
+| **Reports** | Fahrtenbuch and mileage claim — pick a vehicle and a year, get a printable page ([ADR 0005](adr/0005-no-pdf-library.md)). Costs and CO₂ are not reports: they live on the Costs screen, and its CSV exports the rows behind the costs | Print |
 | **Vehicle sidebar** | Master data, jurisdiction (sharing from M6); reminders stay in the due banner, documents in their section | Edit inline |
 | **Personal settings** | The defaults a person keeps: jurisdiction first, then "I reclaim VAT", then the grid factor for charging (empty for the country's average, which it names). Not a screen in the app: it is the app's block on Nextcloud's own settings page, its own bundle, and it talks to the same API as everything else | Pick and it saves |
 

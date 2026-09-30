@@ -234,21 +234,27 @@ function estimateWords(reminder) {
 	font-weight: bold;
 }
 
+/* Drawn rather than a ● in the text, for the reasons in OverviewView.vue. */
 .due__state::before {
-	content: '●';
+	content: '';
+	display: inline-block;
+	inline-size: 0.75em;
+	block-size: 0.75em;
+	border-radius: 50%;
+	background-color: currentColor;
 	margin-inline-end: var(--default-grid-baseline);
 }
 
 .due__state--red::before {
-	color: var(--color-error);
+	color: var(--color-element-error, var(--color-error));
 }
 
 .due__state--amber::before {
-	color: var(--color-warning);
+	color: var(--color-element-warning, var(--color-warning));
 }
 
 .due__state--green::before {
-	color: var(--color-success);
+	color: var(--color-element-success, var(--color-success));
 }
 
 .due__title {
