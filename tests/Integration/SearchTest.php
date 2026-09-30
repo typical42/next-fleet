@@ -97,7 +97,7 @@ class SearchTest extends TestCase {
 		$this->assertSame('B-XY 123', $entries[0]['title']);
 		$this->assertSame('Volkswagen Golf', $entries[0]['subline']);
 		$this->assertStringEndsWith('/apps/nextfleet/?vehicle=' . $golf->getUuid(), $entries[0]['resourceUrl']);
-		$this->assertStringEndsWith('/nextfleet/img/app.svg', $entries[0]['thumbnailUrl']);
+		$this->assertStringEndsWith('/nextfleet/img/vehicle-thumbnail.svg', $entries[0]['thumbnailUrl']);
 	}
 
 	/** Inside the app a vehicle is what someone is looking for; elsewhere files and mail come first. */

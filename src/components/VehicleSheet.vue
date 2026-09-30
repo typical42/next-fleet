@@ -18,7 +18,7 @@ import InspectionSticker from './InspectionSticker.vue'
 import ReminderRecipients from './ReminderRecipients.vue'
 import { ConflictError, getPreferences, getVehicle, listReminders, reminderTemplates } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
-import { energyWord, formatDay, jurisdictionWord, lifecycleWord, parseDay, parseWhole } from '../utils/format.js'
+import { energyWord, formatDay, formatDecimal, jurisdictionWord, lifecycleWord, parseDay, parseDecimal, parseWhole } from '../utils/format.js'
 import { INSPECTION, inspectionOf, rewrite } from '../utils/reminders.js'
 
 const props = defineProps({
@@ -39,15 +39,16 @@ const editing = computed(() => props.vehicle !== null)
 
 // One ref per writable column (lib/Service/VehicleService.php WRITABLE), each prefilled from the
 // vehicle and visibly editable (docs/ui.md). The numbers stay strings on the way through: the
-// server judges them, and a sheet that refuses a field first would block on validation.
+// server judges them, and a sheet that refuses a field first would block on validation. The four
+// decimals are the exception - litres, kWh and euros go out as the integer their column keeps.
 const plate = ref(text(props.vehicle?.plate))
 const manufacturer = ref(text(props.vehicle?.manufacturer))
 const model = ref(text(props.vehicle?.model))
 const vin = ref(text(props.vehicle?.vin))
-const tankMl = ref(text(props.vehicle?.tank_ml))
-const batteryWh = ref(text(props.vehicle?.battery_wh))
-const purchasePrice = ref(text(props.vehicle?.purchase_price))
-const residualEst = ref(text(props.vehicle?.residual_est))
+const tank = ref(decimalText(props.vehicle?.tank_ml, 3))
+const battery = ref(decimalText(props.vehicle?.battery_wh, 3))
+const purchasePrice = ref(decimalText(props.vehicle?.purchase_price, 2))
+const residualEst = ref(decimalText(props.vehicle?.residual_est, 2))
 const currency = ref(text(props.vehicle?.currency))
 const color = ref(text(props.vehicle?.color))
 const notes = ref(text(props.vehicle?.notes))
@@ -337,8 +338,8 @@ function fields() {
 		vehicle_type: vehicleType.value?.id ?? '',
 		engine: engine.value?.id ?? '',
 		energy_types: energyTypes.value.map((/** @type {{ id: string }} */ one) => one.id),
-		tank_ml: tankMl.value,
-		battery_wh: batteryWh.value,
+		tank_ml: decimal(tank, 3, t('nextfleet', 'That is not a tank size.')),
+		battery_wh: decimal(battery, 3, t('nextfleet', 'That is not a battery capacity.')),
 		first_reg: formatDay(firstReg.value),
 		// Cleared here rather than by a watcher, so that toggling the lifecycle twice does not
 		// throw away a day the user typed in between.
@@ -346,8 +347,8 @@ function fields() {
 		vin: vin.value,
 		odo_unit: odoUnit.value?.id ?? '',
 		second_unit: offersHours.value && countsHours.value ? 'h' : '',
-		purchase_price: purchasePrice.value,
-		residual_est: residualEst.value,
+		purchase_price: decimal(purchasePrice, 2, t('nextfleet', 'That is not a purchase price.')),
+		residual_est: decimal(residualEst, 2, t('nextfleet', 'That is not a residual value.')),
 		currency: currency.value,
 		jurisdiction: jurisdiction.value,
 		logbook_mode: logbookMode.value,
@@ -427,13 +428,15 @@ async function current() {
  * with was not under the mode, and the one it is about to write over is.
  */
 async function write() {
+	// Read first: a field nobody can read stops the save before the interval is written.
+	const changed = fields()
 	const vehicle = await current()
 	if (askingOff.value) {
 		return
 	}
 
 	await writeInterval()
-	emit('saved', await store.save({ ...vehicle, ...fields() }))
+	emit('saved', await store.save({ ...vehicle, ...changed }))
 }
 
 /**
@@ -498,6 +501,38 @@ function requestClose() {
  */
 function text(value) {
 	return value === null || value === undefined ? '' : String(value)
+}
+
+/**
+ * @param {number|null|undefined} value - the column's integer: millilitres, watt-hours, cents
+ * @param {number} places - how many of its digits are decimals
+ * @return {string} the field's text, in litres, kWh or euros
+ */
+function decimalText(value, places) {
+	return value === null || value === undefined ? '' : formatDecimal(value, places)
+}
+
+/**
+ * A decimal as somebody typed it, as the integer its column keeps. The server would refuse `55,5`
+ * as not whole, in words about millilitres the field no longer shows, so the sheet asks itself.
+ *
+ * @param {import('vue').Ref<string>} input - the field
+ * @param {number} places - how many decimals the column keeps
+ * @param {string} complaint - what to say when it cannot be read
+ * @return {number|string} the number, or the empty field that clears the column
+ * @throws {Error} when the field says something that is not a number
+ */
+function decimal(input, places, complaint) {
+	if (input.value.trim() === '') {
+		return ''
+	}
+
+	const number = parseDecimal(input.value, places)
+	if (number === null) {
+		throw new Error(complaint)
+	}
+
+	return number
 }
 
 /**
@@ -611,24 +646,24 @@ function chosen(options, id) {
 					class="sheet__wide"
 					:vehicle="props.vehicle.uuid"
 					:disabled="saving" />
-				<!-- Integers in the units the database keeps: cents, millilitres, watt-hours
-				     (docs/contributing.md). The label says which, because nothing converts yet. -->
-				<NcTextField v-model="tankMl"
-					:label="t('nextfleet', 'Tank size (ml)')"
+				<!-- Asked in litres, kWh and the vehicle's currency, kept as millilitres, watt-hours
+				     and cents (docs/contributing.md) - decimal() converts. -->
+				<NcTextField v-model="tank"
+					:label="t('nextfleet', 'Tank size (l)')"
 					:disabled="saving"
-					inputmode="numeric" />
-				<NcTextField v-model="batteryWh"
-					:label="t('nextfleet', 'Battery capacity (Wh)')"
+					inputmode="decimal" />
+				<NcTextField v-model="battery"
+					:label="t('nextfleet', 'Battery capacity (kWh)')"
 					:disabled="saving"
-					inputmode="numeric" />
+					inputmode="decimal" />
 				<NcTextField v-model="purchasePrice"
-					:label="t('nextfleet', 'Purchase price (cents)')"
+					:label="t('nextfleet', 'Purchase price')"
 					:disabled="saving"
-					inputmode="numeric" />
+					inputmode="decimal" />
 				<NcTextField v-model="residualEst"
-					:label="t('nextfleet', 'Residual value (cents)')"
+					:label="t('nextfleet', 'Residual value')"
 					:disabled="saving"
-					inputmode="numeric" />
+					inputmode="decimal" />
 				<NcTextField v-model="currency"
 					:label="t('nextfleet', 'Currency')"
 					:disabled="saving"

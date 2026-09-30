@@ -166,17 +166,17 @@ class KpiTest extends TestCase {
 
 		$co2 = $this->kpis->year(self::OWNER, $uuid, '2025', ['tz' => 'Europe/Berlin'])['co2'];
 
-		// 40 l × 2650 g/l, and 10 kWh × 363 g/kWh.
-		$this->assertSame(106000 + 3630, $co2['grams'] ?? null);
+		// 40 l × 2650 g/l, and 10 kWh × 344 g/kWh.
+		$this->assertSame(106000 + 3440, $co2['grams'] ?? null);
 		$this->assertFalse($co2['unstated']);
 		$this->assertStringStartsWith('https://', $co2['source']);
-		$this->assertSame(363, $co2['grid']['grams'] ?? null);
-		$this->assertSame(2024, $co2['grid']['year'] ?? null);
+		$this->assertSame(344, $co2['grid']['grams'] ?? null);
+		$this->assertSame(2025, $co2['grid']['year'] ?? null);
 
 		$this->energy->record(self::OWNER, $uuid, ['filled_at' => 1742000000, 'filled_at_off' => 60, 'energy' => 'cng', 'amount' => 30000]);
 		$co2 = $this->kpis->year(self::OWNER, $uuid, '2025', ['tz' => 'Europe/Berlin'])['co2'];
 
-		$this->assertSame(106000 + 3630, $co2['grams'] ?? null);
+		$this->assertSame(106000 + 3440, $co2['grams'] ?? null);
 		$this->assertTrue($co2['unstated']);
 	}
 

@@ -51,7 +51,7 @@ class DueWidget implements IAPIWidgetV2, IIconWidget {
 	}
 
 	public function getIconUrl(): string {
-		return $this->image('app.svg');
+		return $this->image('app-dark.svg');
 	}
 
 	public function getUrl(): ?string {

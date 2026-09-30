@@ -69,7 +69,7 @@ class RateProviderTest extends TestCase {
 		$rates = new De\RateProvider();
 		$day = new \DateTimeImmutable('2025-03-01T12:00:00+01:00');
 
-		$this->assertSame(2370, $rates->emissionFactorAt('petrol', $day));
+		$this->assertSame(2280, $rates->emissionFactorAt('petrol', $day));
 		$this->assertSame(2650, $rates->emissionFactorAt('diesel', $day));
 		$this->assertSame(1640, $rates->emissionFactorAt('lpg', $day));
 		$this->assertNull($rates->emissionFactorAt('cng', $day));
@@ -85,8 +85,8 @@ class RateProviderTest extends TestCase {
 	public function testTheGridFactorIsTheGermanAverageWithItsYear(): void {
 		$grid = (new De\RateProvider())->gridFactor();
 
-		$this->assertSame(363, $grid['grams'] ?? null);
-		$this->assertSame(2024, $grid['year'] ?? null);
+		$this->assertSame(344, $grid['grams'] ?? null);
+		$this->assertSame(2025, $grid['year'] ?? null);
 	}
 
 	/**

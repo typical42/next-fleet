@@ -32,6 +32,8 @@ const out = 'design/screenshots'
 // This is the width at which the navigation and the content column both still carry weight.
 const viewport = { width: 1280, height: 800 }
 const thumbnail = { width: 460, height: 288 }
+// Tall enough for the CO₂ estimate under the year's table.
+const costsViewport = { width: 1280, height: 960 }
 
 /**
  * @param {import('@playwright/test').Page} page - a signed-in page
@@ -45,6 +47,16 @@ async function shoot(page, name, clip) {
 
 const browser = await chromium.launch()
 const page = await browser.newPage({ baseURL, viewport })
+
+// Nextcloud's font stack starts at system-ui, which this image resolves to a CJK font whose € is
+// a full digit wide - every amount would read "€ 19.89". Liberation Sans is Arial's metrics, what
+// a desktop without Segoe UI or SF would show. Set on every element because the theme declares
+// the variable on body, not only on the root.
+await page.addInitScript(() => document.addEventListener('DOMContentLoaded', () => {
+	const style = document.createElement('style')
+	style.textContent = "* { --font-face: 'Liberation Sans', Arial, sans-serif !important; }"
+	document.head.append(style)
+}))
 
 await mkdir(out, { recursive: true })
 await login(page)
@@ -63,7 +75,7 @@ await shoot(page, 'vehicle')
 // NcDialog has finished fading it in - a screenshot taken then catches it at opacity 0. Waiting
 // on a control inside it, and then on the animation, is what makes the picture reproducible.
 await page.getByRole('button', { name: 'New entry' }).click()
-const sheet = page.getByRole('dialog', { name: 'Odometer' })
+const sheet = page.getByRole('dialog', { name: 'New entry' })
 await sheet.getByRole('button', { name: 'Save' }).waitFor()
 await page.waitForFunction(() => [...document.querySelectorAll('[role="dialog"]')]
 	.every((d) => getComputedStyle(d).opacity === '1'))
@@ -71,10 +83,21 @@ await shoot(page, 'entry-sheet')
 await page.keyboard.press('Escape')
 
 // The Passat's year of costs, which the seed fills to the current month. The table answers
-// after the chart's frame is up, so wait on a cell.
+// after the chart's frame is up, so wait on a cell. Beside the navigation the twelve months
+// scroll inside their region and the picture ends mid-table, so the navigation closes for it.
 await page.getByRole('button', { name: 'Costs', exact: true }).click()
 await page.getByRole('region', { name: 'Costs by month' }).getByRole('cell').first().waitFor()
+await page.getByRole('button', { name: 'Close navigation' }).click()
+await page.setViewportSize(costsViewport)
+await page.waitForFunction(() => {
+	const table = document.querySelector('[aria-label="Costs by month"]')
+	return table !== null && table.scrollWidth <= table.clientWidth
+		&& document.getAnimations().every((one) => one.playState !== 'running')
+})
+await page.getByRole('heading', { name: 'CO₂ (estimate)' }).waitFor()
 await shoot(page, 'costs')
+await page.setViewportSize(viewport)
+await page.getByRole('button', { name: 'Open navigation' }).click()
 
 // Reports on the Passat, where both a Fahrtenbuch and a mileage claim print.
 await page.locator('.app-navigation').getByRole('link', { name: 'Reports' }).click()
@@ -86,9 +109,13 @@ await shoot(page, 'reports')
 
 // The thumbnail is the overview again at listing size, not a scaled copy: the store puts it
 // beside the title, where a shrunk 1280px shot is unreadable.
+// The seeded fleet has a vehicle with details missing, whose hint fills the frame at this size.
+// It is hidden here as a dismissal would hide it; dismissing it for real would change admin's
+// preferences, which the seed does not reset.
 await page.setViewportSize(thumbnail)
 await page.goto(appPage)
 await page.getByRole('main').getByRole('listitem').first().waitFor()
+await page.addStyleTag({ content: '#nextfleet .hint { display: none; }' })
 await shoot(page, 'overview-thumb')
 
 await browser.close()

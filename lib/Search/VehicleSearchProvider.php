@@ -80,7 +80,7 @@ class VehicleSearchProvider implements IProvider {
 
 		// The image goes in as a thumbnail: NC 31's search reads `icon` only as a CSS class.
 		return new SearchResultEntry(
-			$this->urls->getAbsoluteURL($this->urls->imagePath(Application::APP_ID, 'app.svg')),
+			$this->urls->getAbsoluteURL($this->urls->imagePath(Application::APP_ID, 'vehicle-thumbnail.svg')),
 			$plate !== '' ? $plate : $made,
 			$plate !== '' ? $made : '',
 			$this->urls->linkToRouteAbsolute('nextfleet.page.index', ['vehicle' => $vehicle->getUuid()]),
