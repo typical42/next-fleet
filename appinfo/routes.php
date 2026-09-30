@@ -87,6 +87,14 @@ return [
 		['name' => 'recipient#create', 'url' => '/api/vehicles/{uuid}/recipients', 'verb' => 'POST'],
 		['name' => 'recipient#delete', 'url' => '/api/vehicles/{uuid}/recipients/{recipient}', 'verb' => 'DELETE'],
 
+		// Who else may use the vehicle, and in which role - the owner's alone to read and write
+		// (CONTEXT.md, Vehicle Access). A grant is named by its uuid, since a user and a group may
+		// share a name; not `{grantee}`, the field a grant sends (tests/Unit/RoutesTest.php).
+		['name' => 'grant#index', 'url' => '/api/vehicles/{uuid}/grants', 'verb' => 'GET'],
+		['name' => 'grant#create', 'url' => '/api/vehicles/{uuid}/grants', 'verb' => 'POST'],
+		['name' => 'grant#update', 'url' => '/api/vehicles/{uuid}/grants/{grant}', 'verb' => 'PUT'],
+		['name' => 'grant#delete', 'url' => '/api/vehicles/{uuid}/grants/{grant}', 'verb' => 'DELETE'],
+
 		// A vehicle's papers. Attaching names a file the user picked in Files, so there is no upload;
 		// not `{file_id}`, the field an attach sends (tests/Unit/RoutesTest.php).
 		['name' => 'document#index', 'url' => '/api/vehicles/{uuid}/documents', 'verb' => 'GET'],

@@ -33,6 +33,7 @@ class VehicleServiceTest extends TestCase {
 	private const UUID = '0195e2f1-0000-4000-8000-000000000001';
 	private const OWNER = 'alice';
 	private const DRIVER = 'carol';
+	private const MANAGER = 'dave';
 	private const STRANGER = 'bob';
 
 	/** The trail, in the order it was written. @var list<Audit> */
@@ -75,16 +76,18 @@ class VehicleServiceTest extends TestCase {
 		$this->config->method('getUserValue')->willReturnArgument(3);
 
 		// The rules of who reaches what are VehicleAccess's own (VehicleAccessTest); here it
-		// stands for the answer: the owner may everything, the driver may look.
+		// stands for the answer: the owner may everything, a manager all but own, the driver may
+		// look and log.
 		$this->access = $this->createMock(VehicleAccess::class);
-		$this->access->method('may')->willReturnCallback(
-			static fn (string $userId, string $operation): bool => match ($userId) {
-				self::OWNER => true,
-				self::DRIVER => $operation === VehicleAccess::VIEW,
-				default => false,
+		$this->access->method('operations')->willReturnCallback(
+			static fn (string $userId): array => match ($userId) {
+				self::OWNER => ['view', 'log', 'edit', 'delete', 'own'],
+				self::MANAGER => ['view', 'log', 'edit', 'delete'],
+				self::DRIVER => ['view', 'log'],
+				default => [],
 			},
 		);
-		$this->access->method('reachableVehicleIds')->willReturn([]);
+		$this->access->method('reachable')->willReturn([]);
 	}
 
 	private function service(): VehicleService {
@@ -500,20 +503,65 @@ class VehicleServiceTest extends TestCase {
 	}
 
 	/**
+	 * The car is the owner's: a manager changes everything on it but whether it exists.
+	 */
+	public function testAManagerDoesNotDeleteTheVehicle(): void {
+		$this->mapper->method('findByUuid')->willReturn($this->stored());
+		$this->mapper->expects($this->never())->method('softDelete');
+
+		$this->expectException(AccessDeniedException::class);
+		$this->service()->delete(self::MANAGER, self::UUID, 1750000000);
+	}
+
+	/** Undo takes the right the delete took, so a manager cannot bring one back either. */
+	public function testAManagerDoesNotRestoreTheVehicle(): void {
+		$this->mapper->method('findAnyByUuid')->willReturn($this->stored());
+		$this->mapper->expects($this->never())->method('restoreChecked');
+
+		$this->expectException(AccessDeniedException::class);
+		$this->service()->restore(self::MANAGER, self::UUID, 1750000000);
+	}
+
+	/**
+	 * The vehicle says what the caller may do on it, from the same answer the gate just gave -
+	 * the screen hides by it and nothing else.
+	 */
+	public function testAVehicleSaysWhatTheCallerMay(): void {
+		$this->mapper->method('findByUuid')->willReturn($this->stored());
+
+		$this->assertSame(['view', 'log'], $this->service()->find(self::DRIVER, self::UUID)->getMay());
+		$this->assertSame(['view', 'log', 'edit', 'delete', 'own'], $this->service()->find(self::OWNER, self::UUID)->getMay());
+	}
+
+	/** Whoever creates a vehicle owns it, and the answer says so at once. */
+	public function testACreatedVehicleSaysItsCreatorMayEverything(): void {
+		$vehicle = $this->service()->create(self::OWNER, ['plate' => 'B-XY 123']);
+
+		$this->assertSame(['view', 'log', 'edit', 'delete', 'own'], $vehicle->getMay());
+	}
+
+	/**
 	 * The overview is what a user owns and what they were granted. The grants resolve to ids
 	 * once, and the vehicles come back in one query - not one per row
-	 * (docs/architecture.md#nextcloud-integration).
+	 * (docs/architecture.md#nextcloud-integration). What each may do comes from those same rows.
 	 */
 	public function testTheListWidensToWhatWasGranted(): void {
 		$this->access = $this->createMock(VehicleAccess::class);
-		$this->access->method('reachableVehicleIds')->with(self::DRIVER)->willReturn([7, 9]);
+		$this->access->method('reachable')->with(self::DRIVER)->willReturn([7 => ['view', 'log'], 9 => ['view']]);
+		$this->access->expects($this->never())->method('operations');
+		$this->access->method('listed')->willReturnCallback(
+			static fn (string $userId, Vehicle $vehicle, array $reachable): array => $reachable[$vehicle->getId()] ?? [],
+		);
 
 		$this->mapper->expects($this->once())
 			->method('findAllVisible')
 			->with(self::DRIVER, [7, 9])
 			->willReturn([$this->stored()]);
 
-		$this->assertCount(1, $this->service()->list(self::DRIVER));
+		$listed = $this->service()->list(self::DRIVER);
+
+		$this->assertCount(1, $listed);
+		$this->assertSame(['view', 'log'], $listed[0]->getMay());
 	}
 
 	/** Owning a vehicle takes no grant, so a user with none still sees their own fleet. */

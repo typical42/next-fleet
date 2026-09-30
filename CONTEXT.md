@@ -136,7 +136,10 @@ The row saying a Warning Point was sent to one Recipient on one channel (`app` o
 
 **Vehicle Access**:
 Our own permission to see or change a vehicle: owner, or a grant with role manager, driver or
-viewer. Decided in one place, `VehicleAccess::may`.
+viewer. It comes as five operations: `view` (every role), `log` (driver and manager: add an Entry,
+change one you entered), `edit` and `delete` (manager: the vehicle's settings and anybody's
+Entries), and `own` (the owner alone: access, and whether the vehicle exists). Decided in one place,
+`VehicleAccess::may`.
 _Avoid_: Share, permission, ACL
 
 **Share**:

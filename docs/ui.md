@@ -301,7 +301,7 @@ SVG path by `uqr` (MIT), so no PHP dependency comes with it. What the code must 
 - **Dark mode and 320 px width are acceptance criteria**, not afterthoughts; the timeline is rows,
   not cards, so it survives both.
 
-### Fleet view (M6+)
+### Fleet view (M7+)
 
 One table, all vehicles, columns for status, km, cost/km, next due, current driver. Sortable,
 filterable by group. This is the manager's screen and it is the one place density beats simplicity.

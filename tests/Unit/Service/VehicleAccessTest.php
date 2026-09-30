@@ -93,8 +93,10 @@ class VehicleAccessTest extends TestCase {
 	 */
 	public static function operations(): iterable {
 		yield 'view' => [VehicleAccess::VIEW];
+		yield 'log' => [VehicleAccess::LOG];
 		yield 'edit' => [VehicleAccess::EDIT];
 		yield 'delete' => [VehicleAccess::DELETE];
+		yield 'own' => [VehicleAccess::OWN];
 	}
 
 	/**
@@ -115,14 +117,21 @@ class VehicleAccessTest extends TestCase {
 	 */
 	public static function roles(): iterable {
 		yield 'a manager sees' => ['manager', VehicleAccess::VIEW, true];
+		yield 'a manager logs' => ['manager', VehicleAccess::LOG, true];
 		yield 'a manager edits' => ['manager', VehicleAccess::EDIT, true];
 		yield 'a manager deletes' => ['manager', VehicleAccess::DELETE, true];
+		// The car is the owner's: a manager keeps everything but access and whether it exists.
+		yield 'a manager does not own' => ['manager', VehicleAccess::OWN, false];
 		yield 'a driver sees' => ['driver', VehicleAccess::VIEW, true];
+		yield 'a driver logs' => ['driver', VehicleAccess::LOG, true];
 		yield 'a driver does not edit' => ['driver', VehicleAccess::EDIT, false];
 		yield 'a driver does not delete' => ['driver', VehicleAccess::DELETE, false];
+		yield 'a driver does not own' => ['driver', VehicleAccess::OWN, false];
 		yield 'a viewer sees' => ['viewer', VehicleAccess::VIEW, true];
+		yield 'a viewer does not log' => ['viewer', VehicleAccess::LOG, false];
 		yield 'a viewer does not edit' => ['viewer', VehicleAccess::EDIT, false];
 		yield 'a viewer does not delete' => ['viewer', VehicleAccess::DELETE, false];
+		yield 'a viewer does not own' => ['viewer', VehicleAccess::OWN, false];
 		// Nothing writes this table yet, so a word from an import or a later migration is the
 		// realistic way one arrives, and it must not read as more than the roles we have.
 		yield 'a role the domain does not have' => ['admin', VehicleAccess::VIEW, false];
@@ -137,5 +146,95 @@ class VehicleAccessTest extends TestCase {
 		]);
 
 		$this->assertTrue($this->access()->may(self::STRANGER, VehicleAccess::DELETE, $this->vehicle()));
+	}
+
+	/**
+	 * What the screen hides by: every operation the caller holds, from the same rows may()
+	 * reads, so a button cannot disagree with the server.
+	 *
+	 * @param list<string> $roles
+	 * @param list<string> $expected
+	 * @dataProvider operationLists
+	 */
+	public function testOperationsAreEverythingTheCallerMay(string $userId, array $roles, array $expected): void {
+		$this->grants = $this->createMock(AccessMapper::class);
+		$this->grants->method('findGrants')->willReturn(array_map(fn (string $role): Access => $this->grant($role), $roles));
+
+		$this->assertSame($expected, $this->access()->operations($userId, $this->vehicle()));
+	}
+
+	/**
+	 * @return iterable<string, array{string, list<string>, list<string>}>
+	 */
+	public static function operationLists(): iterable {
+		yield 'the owner' => [self::OWNER, [], ['view', 'log', 'edit', 'delete', 'own']];
+		yield 'a manager' => [self::STRANGER, ['manager'], ['view', 'log', 'edit', 'delete']];
+		yield 'a driver' => [self::STRANGER, ['driver'], ['view', 'log']];
+		yield 'a viewer' => [self::STRANGER, ['viewer'], ['view']];
+		yield 'a viewer and a driver at once' => [self::STRANGER, ['viewer', 'driver'], ['view', 'log']];
+		yield 'a stranger' => [self::STRANGER, [], []];
+	}
+
+	/**
+	 * The overview's half of the same answer: every vehicle a grant reaches and what the caller
+	 * may do on it, from one query, the widest row per vehicle deciding.
+	 */
+	public function testReachableSaysWhatTheCallerMayOnEachGrantedVehicle(): void {
+		$this->groupIds = ['drivers'];
+		$this->grants = $this->createMock(AccessMapper::class);
+		$this->grants->expects($this->once())
+			->method('findReachable')
+			->with(self::STRANGER, ['drivers'], ['manager', 'driver', 'viewer'])
+			->willReturn([7 => ['viewer', 'driver'], 9 => ['manager']]);
+
+		$this->assertSame(
+			[7 => ['view', 'log'], 9 => ['view', 'log', 'edit', 'delete']],
+			$this->access()->reachable(self::STRANGER),
+		);
+	}
+
+	/**
+	 * A vehicle in a list is answered from what reachable() found, not a query per row; the
+	 * owner's own from the column on the vehicle.
+	 */
+	public function testAListedVehicleIsAnsweredWithoutAQuery(): void {
+		$this->grants->expects($this->never())->method('findGrants');
+		$reachable = [self::VEHICLE_ID => ['view']];
+
+		$this->assertSame(['view', 'log', 'edit', 'delete', 'own'], $this->access()->listed(self::OWNER, $this->vehicle(), $reachable));
+		$this->assertSame(['view'], $this->access()->listed(self::STRANGER, $this->vehicle(), $reachable));
+		$this->assertSame([], $this->access()->listed(self::STRANGER, $this->vehicle(), []));
+	}
+
+	/**
+	 * Changing an Entry: anybody's with the operation, your own with `log`. Read off what the
+	 * gate left on the vehicle, so it asks the table nothing.
+	 *
+	 * @dataProvider entryChanges
+	 * @param list<string> $held
+	 */
+	public function testAnEntryIsChangedWithTheOperationOrByWhoEnteredIt(array $held, string $operation, ?string $createdBy, bool $expected): void {
+		$this->grants->expects($this->never())->method('findGrants');
+		$vehicle = $this->vehicle();
+		$vehicle->setMay($held);
+
+		$this->assertSame($expected, $this->access()->mayChange(self::STRANGER, $operation, $vehicle, $createdBy));
+	}
+
+	/**
+	 * @return iterable<string, array{list<string>, string, ?string, bool}>
+	 */
+	public static function entryChanges(): iterable {
+		$driver = ['view', 'log'];
+		$manager = ['view', 'log', 'edit', 'delete'];
+		yield 'a driver edits their own' => [$driver, 'edit', self::STRANGER, true];
+		yield 'a driver deletes their own' => [$driver, 'delete', self::STRANGER, true];
+		yield 'a driver edits somebody else\'s' => [$driver, 'edit', self::OWNER, false];
+		yield 'a driver deletes somebody else\'s' => [$driver, 'delete', self::OWNER, false];
+		yield 'a driver on an erased author' => [$driver, 'edit', null, false];
+		yield 'a manager edits anybody\'s' => [$manager, 'edit', self::OWNER, true];
+		yield 'a manager deletes anybody\'s' => [$manager, 'delete', self::OWNER, true];
+		yield 'a viewer edits their own' => [['view'], 'edit', self::STRANGER, false];
+		yield 'a vehicle that never passed the gate' => [[], 'edit', self::STRANGER, false];
 	}
 }

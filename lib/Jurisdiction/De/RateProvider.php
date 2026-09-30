@@ -40,8 +40,9 @@ class RateProvider implements IRateProvider {
 
 	/**
 	 * Tenths of a cent per business kilometre by motor car (`Kraftwagen`), by the first day it
-	 * applied. From 2014, when the travel-cost reform wrote it into the statute; a trailer, a
-	 * tractor and a generator are not motor cars and have none.
+	 * applied. From 2014, when the travel-cost reform wrote it into the statute. A trailer and a
+	 * generator make no trip of their own; no source places a tractor under either rate, so it has none
+	 * rather than a guess (docs/legal.md).
 	 */
 	private const MILEAGE = [
 		'car' => ['2014-01-01' => 300],

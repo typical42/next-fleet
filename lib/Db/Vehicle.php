@@ -113,6 +113,14 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 	/** How often the reminder digest covers this vehicle; the column's default. */
 	protected string $reminderMail = self::MAIL_WEEKLY;
 
+	/**
+	 * What whoever asked may do on the vehicle (VehicleAccess::operations()). Not a column:
+	 * private and outside the magic accessors, so no write can mark it and no mapper sees it.
+	 *
+	 * @var list<string>
+	 */
+	private array $may = [];
+
 	public function __construct() {
 		parent::__construct();
 		$this->addType('userId', Types::STRING);
@@ -142,6 +150,16 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 		$this->addType('secondUnit', Types::STRING);
 		$this->addType('secondValue', Types::BIGINT);
 		$this->addType('reminderMail', Types::STRING);
+	}
+
+	/** @return list<string> */
+	public function getMay(): array {
+		return $this->may;
+	}
+
+	/** @param list<string> $may */
+	public function setMay(array $may): void {
+		$this->may = $may;
 	}
 
 	/**
@@ -185,6 +203,8 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 			'updated_at' => $this->updatedAt,
 			'deleted_at' => $this->deletedAt,
 			'created_by' => $this->createdBy,
+			// Read-only: the service writes only the columns it lists, so one sent back is dropped.
+			'may' => $this->may,
 		];
 	}
 }

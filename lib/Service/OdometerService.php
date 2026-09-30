@@ -46,13 +46,13 @@ class OdometerService {
 	 * Writes one Reading and re-states the vehicle's odometer around it.
 	 *
 	 * @param array<string, mixed> $fields
-	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not write this vehicle
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not log on this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \InvalidArgumentException if a field is not what its column holds
 	 * @throws \OCP\DB\Exception
 	 */
 	public function record(string $userId, string $vehicleUuid, array $fields): OdoReading {
-		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
 		$readAt = Field::count('read_at', $fields['read_at'] ?? null);
 		$readAtOff = Field::offset('read_at_off', $fields['read_at_off'] ?? null);
@@ -85,14 +85,14 @@ class OdometerService {
 	 *
 	 * @param array<string, mixed> $fields
 	 * @param int $expectedUpdatedAt the `updated_at` the client read
-	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not write this vehicle
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not edit this Odometer Entry
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException if it is no Odometer Entry on this vehicle
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if it has changed since
 	 * @throws \InvalidArgumentException if a field is not what its column holds
 	 * @throws \OCP\DB\Exception
 	 */
 	public function update(string $userId, string $vehicleUuid, string $readingUuid, int $expectedUpdatedAt, array $fields): OdoReading {
-		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
 		$readAt = Field::count('read_at', $fields['read_at'] ?? null);
 		$readAtOff = Field::offset('read_at_off', $fields['read_at_off'] ?? null);
@@ -100,9 +100,10 @@ class OdometerService {
 		$counter = self::counterOf($vehicle, $fields['counter'] ?? null);
 
 		// Looked up inside the transaction for the reason TripService::delete() gives.
-		return $this->atomicRetry(function () use ($vehicle, $readingUuid, $expectedUpdatedAt, $readAt, $readAtOff, $value, $counter): OdoReading {
+		return $this->atomicRetry(function () use ($userId, $vehicle, $readingUuid, $expectedUpdatedAt, $readAt, $readAtOff, $value, $counter): OdoReading {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$reading = self::entry($this->readings->findOnVehicle((int)$vehicle->getId(), $readingUuid));
+			$this->fleet->change($userId, VehicleAccess::EDIT, $vehicle, $reading->getCreatedBy());
 			$was = $reading->getCounter();
 
 			$reading->setReadAt($readAt);
@@ -124,17 +125,18 @@ class OdometerService {
 	 * Soft-deletes one Odometer Entry, and answers with the token the undo is checked against. No
 	 * audit row: Logbook Mode covers trips only (docs/features.md#logbook-mode).
 	 *
-	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete on this vehicle
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete this Odometer Entry
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException if it is no Odometer Entry on this vehicle
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if it has changed since
 	 * @throws \OCP\DB\Exception
 	 */
 	public function delete(string $userId, string $vehicleUuid, string $readingUuid, int $expectedUpdatedAt): OdoReading {
-		$vehicle = $this->fleet->reach($userId, VehicleAccess::DELETE, $vehicleUuid);
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
-		return $this->atomicRetry(function () use ($vehicle, $readingUuid, $expectedUpdatedAt): OdoReading {
+		return $this->atomicRetry(function () use ($userId, $vehicle, $readingUuid, $expectedUpdatedAt): OdoReading {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$reading = self::entry($this->readings->findOnVehicle((int)$vehicle->getId(), $readingUuid));
+			$this->fleet->change($userId, VehicleAccess::DELETE, $vehicle, $reading->getCreatedBy());
 			$deleted = $this->readings->softDelete($reading, $expectedUpdatedAt);
 			$this->settle($vehicle, $deleted->getCounter());
 
@@ -145,17 +147,18 @@ class OdometerService {
 	/**
 	 * Undo, on the token the delete answered with (TripService::restore()).
 	 *
-	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete on this vehicle
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete this Odometer Entry
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException if it is no Odometer Entry on this vehicle
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if it has changed since, or was never deleted
 	 * @throws \OCP\DB\Exception
 	 */
 	public function restore(string $userId, string $vehicleUuid, string $readingUuid, int $expectedUpdatedAt): OdoReading {
-		$vehicle = $this->fleet->reach($userId, VehicleAccess::DELETE, $vehicleUuid);
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
-		return $this->atomicRetry(function () use ($vehicle, $readingUuid, $expectedUpdatedAt): OdoReading {
+		return $this->atomicRetry(function () use ($userId, $vehicle, $readingUuid, $expectedUpdatedAt): OdoReading {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$reading = self::entry($this->readings->findAnyOnVehicle((int)$vehicle->getId(), $readingUuid));
+			$this->fleet->change($userId, VehicleAccess::DELETE, $vehicle, $reading->getCreatedBy());
 			$back = $this->readings->restoreChecked($reading, $expectedUpdatedAt);
 
 			return $this->restate($vehicle, $back->getCounter(), $back->getUuid());

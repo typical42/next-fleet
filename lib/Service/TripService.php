@@ -100,13 +100,13 @@ class TripService {
 	 * Writes one trip and the Reading it left on the counter.
 	 *
 	 * @param array<string, mixed> $fields
-	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not write this vehicle
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not log on this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \InvalidArgumentException if a field is not what its column holds
 	 * @throws \OCP\DB\Exception
 	 */
 	public function record(string $userId, string $vehicleUuid, array $fields): Trip {
-		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
 		$trip = new Trip();
 		$trip->setVehicleId((int)$vehicle->getId());
@@ -137,16 +137,16 @@ class TripService {
 	/**
 	 * What the sheet's trip fields complete from (docs/ui.md): the places, purposes and partners of
 	 * this vehicle's own trips, each once and the latest first. Starting points and destinations are
-	 * one list, because where a trip ended is where the next one sets off. Asked with EDIT, as the
+	 * one list, because where a trip ended is where the next one sets off. Asked with LOG, as the
 	 * trip it fills in is.
 	 *
 	 * @return array{places: list<string>, purposes: list<string>, partners: list<string>}
-	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not write this vehicle
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not log on this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCP\DB\Exception
 	 */
 	public function prefill(string $userId, string $vehicleUuid): array {
-		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
 		$places = $purposes = $partners = [];
 		foreach ($this->trips->findLatestDescribed((int)$vehicle->getId(), self::TRIP_HISTORY) as $trip) {
@@ -180,13 +180,15 @@ class TripService {
 	 * The client states what it showed the driver, and a Gap that has moved since - a trip entered,
 	 * voided or edited between the read and the confirmation - is not the one they confirmed.
 	 *
-	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not write this vehicle
+	 * Adding a trip, so LOG: whoever closes the Gap is who entered it.
+	 *
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not log on this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws StaleUpdateException if the vehicle has no such Gap any more
 	 * @throws \OCP\DB\Exception
 	 */
 	public function reconcile(string $userId, string $vehicleUuid, string $tripUuid, int $distance, int $fromAt, int $toAt): Trip {
-		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
 		return $this->atomicRetry(function () use ($userId, $vehicle, $tripUuid, $distance, $fromAt, $toAt): Trip {
 			// A second confirmation of the same Gap - another tab, another driver - waits here for
@@ -244,19 +246,20 @@ class TripService {
 	 *
 	 * @param array<string, mixed> $fields
 	 * @param int $expectedUpdatedAt the `updated_at` the client read
-	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not write this vehicle
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not edit this trip
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the trip has changed since
 	 * @throws \InvalidArgumentException if a field is not what its column holds
 	 * @throws \OCP\DB\Exception
 	 */
 	public function update(string $userId, string $vehicleUuid, string $tripUuid, int $expectedUpdatedAt, array $fields): Trip {
-		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
 		// Looked up inside the transaction for the reason delete() gives.
 		return $this->atomicRetry(function () use ($userId, $vehicle, $tripUuid, $expectedUpdatedAt, $fields): Trip {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$trip = $this->on($vehicle, $this->trips->findByUuid($tripUuid));
+			$this->fleet->change($userId, VehicleAccess::EDIT, $vehicle, $trip->getCreatedBy());
 			$was = clone $trip;
 			$this->apply($trip, $fields);
 			$edited = $this->trips->updateChecked($trip, $expectedUpdatedAt);
@@ -301,13 +304,13 @@ class TripService {
 	 * (docs/features.md#logbook-mode), which is what the trash, the undo and the export read it
 	 * back through.
 	 *
-	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete on this vehicle
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not void this trip
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the trip has changed since
 	 * @throws \OCP\DB\Exception
 	 */
 	public function delete(string $userId, string $vehicleUuid, string $tripUuid, int $expectedUpdatedAt): Trip {
-		$vehicle = $this->fleet->reach($userId, VehicleAccess::DELETE, $vehicleUuid);
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
 		// The trip is looked up inside the transaction, not before it: a replay after a deadlock
 		// has to start from the row as the database has it, and an entity a rolled-back statement
@@ -315,6 +318,7 @@ class TripService {
 		return $this->atomicRetry(function () use ($userId, $vehicle, $tripUuid, $expectedUpdatedAt): Trip {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$trip = $this->on($vehicle, $this->trips->findByUuid($tripUuid));
+			$this->fleet->change($userId, VehicleAccess::DELETE, $vehicle, $trip->getCreatedBy());
 			$voided = $this->trips->softDelete($trip, $expectedUpdatedAt);
 			$this->trail($vehicle, $voided, $userId, self::VOIDED, [
 				'deleted_at' => [null, $voided->getDeletedAt()],
@@ -331,17 +335,18 @@ class TripService {
 	 * answered with, which is the one the undo toast holds (docs/architecture.md#concurrency).
 	 *
 	 * @param int $expectedUpdatedAt the `updated_at` the void answered with
-	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete on this vehicle
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not void this trip
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the trip has changed since, or was never voided
 	 * @throws \OCP\DB\Exception
 	 */
 	public function restore(string $userId, string $vehicleUuid, string $tripUuid, int $expectedUpdatedAt): Trip {
-		$vehicle = $this->fleet->reach($userId, VehicleAccess::DELETE, $vehicleUuid);
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
 		return $this->atomicRetry(function () use ($userId, $vehicle, $tripUuid, $expectedUpdatedAt): Trip {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$voided = $this->on($vehicle, $this->trips->findAnyByUuid($tripUuid));
+			$this->fleet->change($userId, VehicleAccess::DELETE, $vehicle, $voided->getCreatedBy());
 			$stamp = $voided->getDeletedAt();
 			$back = $this->trips->restoreChecked($voided, $expectedUpdatedAt);
 			$this->trail($vehicle, $back, $userId, self::RESTORED, ['deleted_at' => [$stamp, null]], [

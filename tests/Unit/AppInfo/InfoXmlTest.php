@@ -64,7 +64,8 @@ class InfoXmlTest extends TestCase {
 	/**
 	 * `occ upgrade` reads the version from info.xml alone, the bundle and its licence notices
 	 * from package.json, and the store shows the CHANGELOG section of the same name. A release
-	 * with one of them behind ships a changelog for a version nobody installs.
+	 * with one of them behind ships a changelog for a version nobody installs. Until the release
+	 * the section says `not released` where the date will go.
 	 */
 	public function testTheVersionIsTheSameEverywhere(): void {
 		$info = simplexml_load_file(self::ROOT . '/appinfo/info.xml');
@@ -78,7 +79,7 @@ class InfoXmlTest extends TestCase {
 		$this->assertSame($version, $lock['version'] ?? null);
 		$this->assertSame($version, $lock['packages']['']['version'] ?? null);
 		$this->assertMatchesRegularExpression(
-			'/^## ' . preg_quote($version, '/') . ' — \d{4}-\d{2}-\d{2}$/m',
+			'/^## ' . preg_quote($version, '/') . ' — (\d{4}-\d{2}-\d{2}|not released)$/m',
 			(string)file_get_contents(self::ROOT . '/CHANGELOG.md'),
 		);
 	}
