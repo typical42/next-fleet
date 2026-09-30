@@ -40,6 +40,25 @@ class AccessMapper extends BaseMapper {
 	}
 
 	/**
+	 * Every live grant on one vehicle, in the order they were given: the owner's list of who
+	 * else may use it. No index on `vehicle_id` - a vehicle has a handful of grants, and an index
+	 * would be a migration, which only a version bump runs.
+	 *
+	 * @return list<Access>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findByVehicle(int $vehicleId): array {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->tableName)
+			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->isNull('deleted_at'))
+			->orderBy('id');
+
+		return $this->findEntities($qb);
+	}
+
+	/**
 	 * What one user holds on one vehicle, their groups' grants included. More than one row can
 	 * come back - a user granted in person and again through a group - and the widest of them
 	 * decides (VehicleAccess).
@@ -60,36 +79,37 @@ class AccessMapper extends BaseMapper {
 	}
 
 	/**
-	 * Every vehicle one user reaches through a grant in one of the given roles, so the overview
-	 * can widen from what they own to what they may see. Ids, not vehicles: the rows live in the
-	 * other table. Which roles those are is VehicleAccess's to say - the column takes any word.
+	 * Every vehicle one user reaches through a grant in one of the given roles, with the roles
+	 * they hold on it, so the overview can widen from what they own to what they may see and say
+	 * what they may do there. Ids, not vehicles: the rows live in the other table. Which roles
+	 * count is VehicleAccess's to say - the column takes any word.
 	 *
 	 * @param list<string> $groupIds
 	 * @param list<string> $roles
-	 * @return list<int>
+	 * @return array<int, list<string>> roles by vehicle id
 	 * @throws \OCP\DB\Exception
 	 */
-	public function findVehicleIds(string $userId, array $groupIds, array $roles): array {
+	public function findReachable(string $userId, array $groupIds, array $roles): array {
 		// No role covers the operation, so no grant can - and an empty IN () would not parse.
 		if ($roles === []) {
 			return [];
 		}
 
 		$qb = $this->db->getQueryBuilder();
-		$qb->selectDistinct('vehicle_id')
+		$qb->selectDistinct(['vehicle_id', 'role'])
 			->from($this->tableName)
 			->where($this->grantedTo($qb, $userId, $groupIds))
 			->andWhere($qb->expr()->in('role', $qb->createNamedParameter($roles, IQueryBuilder::PARAM_STR_ARRAY)))
 			->andWhere($qb->expr()->isNull('deleted_at'));
 
 		$result = $qb->executeQuery();
-		$ids = [];
+		$reachable = [];
 		while (($row = $result->fetch()) !== false) {
-			$ids[] = (int)$row['vehicle_id'];
+			$reachable[(int)$row['vehicle_id']][] = (string)$row['role'];
 		}
 		$result->closeCursor();
 
-		return $ids;
+		return $reachable;
 	}
 
 	/**

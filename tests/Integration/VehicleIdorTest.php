@@ -12,6 +12,7 @@ use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Controller\DocumentController;
 use OCA\NextFleet\Controller\EnergyController;
 use OCA\NextFleet\Controller\ExpenseController;
+use OCA\NextFleet\Controller\GrantController;
 use OCA\NextFleet\Controller\KpiController;
 use OCA\NextFleet\Controller\MaintenanceController;
 use OCA\NextFleet\Controller\OdometerController;
@@ -25,10 +26,12 @@ use OCA\NextFleet\Controller\VehicleController;
 use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\Vehicle;
+use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Service\DocumentService;
 use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\ExpenseService;
 use OCA\NextFleet\Service\ExportService;
+use OCA\NextFleet\Service\GrantService;
 use OCA\NextFleet\Service\KpiService;
 use OCA\NextFleet\Service\LogbookExport;
 use OCA\NextFleet\Service\MaintenanceService;
@@ -61,9 +64,31 @@ class VehicleIdorTest extends TestCase {
 	private const OWNER = 'nextfleet-test-alice';
 	private const STRANGER = 'nextfleet-test-bob';
 	private const CODRIVER = 'nextfleet-test-carol';
+	private const MANAGER = 'nextfleet-test-dave';
+	private const VIEWER = 'nextfleet-test-erin';
+	/** Who walks the role matrix, by the role they hold on the vehicle under test. */
+	private const HOLDERS = [
+		'owner' => self::OWNER,
+		'manager' => self::MANAGER,
+		'driver' => self::CODRIVER,
+		'viewer' => self::VIEWER,
+		'stranger' => self::STRANGER,
+	];
 	private const PLATE = 'B-XY 123';
 	/** An Entry uuid nothing wrote: the refusal must come before the lookup that would miss it. */
 	private const NO_SUCH_ENTRY = '0195e2f1-1111-4000-8000-00000000dead';
+	/**
+	 * Each kind of Entry as the sheet sends it, for an add and an edit alike.
+	 *
+	 * @var array<string, array<string, mixed>>
+	 */
+	private const ENTRY_BODIES = [
+		'odometer' => ['read_at' => 1750000000, 'read_at_off' => 120, 'value' => 1000],
+		'trip' => ['started_at' => 1750000000, 'started_at_off' => 120, 'ended_at' => 1750005400, 'ended_at_off' => 120, 'end_odo' => 1000, 'category' => 'business'],
+		'energy' => ['filled_at' => 1750000000, 'filled_at_off' => 120, 'energy' => 'diesel', 'amount' => 42000],
+		'maintenance' => ['done_at' => 1750000000, 'done_at_off' => 120, 'title' => 'Oil change'],
+		'expense' => ['spent_at' => 1750000000, 'spent_at_off' => 120, 'amount' => 64000],
+	];
 
 	/**
 	 * The routes that reach no vehicle by identity, so a stranger gets an answer rather than a
@@ -80,6 +105,7 @@ class VehicleIdorTest extends TestCase {
 	private ExpenseService $spending;
 	private ReminderService $reminders;
 	private RecipientService $recipients;
+	private GrantService $access;
 	private DocumentService $papers;
 	private TimelineService $history;
 	private KpiService $figures;
@@ -100,6 +126,7 @@ class VehicleIdorTest extends TestCase {
 		$this->spending = $container->get(ExpenseService::class);
 		$this->reminders = $container->get(ReminderService::class);
 		$this->recipients = $container->get(RecipientService::class);
+		$this->access = $container->get(GrantService::class);
 		$this->papers = $container->get(DocumentService::class);
 		$this->history = $container->get(TimelineService::class);
 		$this->figures = $container->get(KpiService::class);
@@ -120,7 +147,7 @@ class VehicleIdorTest extends TestCase {
 	/** The rows this suite invents, gone for real - a soft delete would outlive the run. */
 	private function forgetTestRows(): void {
 		$db = \OCP\Server::get(IDBConnection::class);
-		$people = [self::OWNER, self::STRANGER, self::CODRIVER];
+		$people = array_values(self::HOLDERS);
 
 		$qb = $db->getQueryBuilder();
 		$qb->delete('fleet_vehicles')
@@ -132,7 +159,8 @@ class VehicleIdorTest extends TestCase {
 			->where($qb->expr()->in('grantee', $qb->createNamedParameter($people, $qb::PARAM_STR_ARRAY)));
 		$qb->executeStatement();
 
-		foreach (['fleet_odo_readings', 'fleet_trips', 'fleet_energy', 'fleet_maintenance', 'fleet_expenses', 'fleet_reminders', 'fleet_reminder_recipients'] as $table) {
+		// `fleet_access` again: a grant the owner gave to a real account names nobody above.
+		foreach (['fleet_access', 'fleet_odo_readings', 'fleet_trips', 'fleet_energy', 'fleet_maintenance', 'fleet_expenses', 'fleet_reminders', 'fleet_reminder_recipients'] as $table) {
 			$qb = $db->getQueryBuilder();
 			$qb->delete($table)
 				->where($qb->expr()->in('created_by', $qb->createNamedParameter($people, $qb::PARAM_STR_ARRAY)));
@@ -211,6 +239,15 @@ class VehicleIdorTest extends TestCase {
 	 */
 	private function recipient(string $userId, array $params): RecipientController {
 		return new RecipientController(Application::APP_ID, $this->request($params), $this->recipients, $this->session($userId));
+	}
+
+	/**
+	 * And for who else may use the vehicle. Not `grant()`: that name writes a row.
+	 *
+	 * @param array<string, mixed> $params
+	 */
+	private function grantRoute(string $userId, array $params): GrantController {
+		return new GrantController(Application::APP_ID, $this->request($params), $this->access, $this->session($userId));
 	}
 
 	/**
@@ -386,6 +423,12 @@ class VehicleIdorTest extends TestCase {
 			// A real account, so the refusal cannot be the unknown user's 400.
 			'recipient#create' => $this->recipient(self::STRANGER, $params + ['user_id' => 'admin'])->create($uuid),
 			'recipient#delete' => $this->recipient(self::STRANGER, $params)->delete($uuid, self::OWNER),
+			'grant#index' => $this->grantRoute(self::STRANGER, $params)->index($uuid),
+			// A real account again, for the same reason.
+			'grant#create' => $this->grantRoute(self::STRANGER, $params + ['grantee' => 'admin', 'grantee_type' => 'user', 'role' => 'manager'])->create($uuid),
+			// Walked against a grant that is not there, for the reason the trip's are.
+			'grant#update' => $this->grantRoute(self::STRANGER, $params + ['role' => 'manager'])->update($uuid, self::NO_SUCH_ENTRY),
+			'grant#delete' => $this->grantRoute(self::STRANGER, $params)->delete($uuid, self::NO_SUCH_ENTRY),
 			'document#index' => $this->document(self::STRANGER, $params)->index($uuid),
 			// The access check runs before the file is looked up, so this is the 403 whatever file 1 is.
 			'document#create' => $this->document(self::STRANGER, $params + ['file_id' => 1, 'kind' => 'receipt'])->create($uuid),
@@ -424,6 +467,7 @@ class VehicleIdorTest extends TestCase {
 		$this->assertSame([], $this->reminders->list(self::OWNER, $uuid));
 		$this->assertSame([self::OWNER], array_column($this->recipients->list(self::OWNER, $uuid), 'user_id'));
 		$this->assertSame([], $this->papers->list(self::OWNER, $uuid));
+		$this->assertSame([], $this->access->list(self::OWNER, $uuid));
 	}
 
 	/**
@@ -477,6 +521,214 @@ class VehicleIdorTest extends TestCase {
 
 		$this->assertNotContains($uuid, $this->uuidsIn($stranger->index()));
 		$this->assertSame(Http::STATUS_FORBIDDEN, $stranger->show($uuid)->getStatus());
+	}
+
+	/**
+	 * The role matrix: each route walked by the owner, a manager, a driver, a viewer and a
+	 * stranger, all at once on one vehicle, so a route is judged by the role and not by being
+	 * the only grant there.
+	 *
+	 * @dataProvider roleMatrix
+	 */
+	public function testEachRoleReachesWhatItCoversThroughEveryRoute(string $route, string $role, int $status, bool $deletedAfter): void {
+		$uuid = $this->vehicle->getUuid();
+		$this->grantEveryRole();
+		$who = self::HOLDERS[$role];
+		$token = $this->vehicle->getUpdatedAt();
+		$grants = $this->access->list(self::OWNER, $uuid);
+		// The viewer's grant, which a write under test changes or revokes.
+		$viewers = array_column($grants, 'uuid', 'grantee')[self::VIEWER];
+		if ($route === 'vehicle#restore') {
+			// Against a deleted vehicle, so the owner's arm is the undo that works.
+			$token = $this->service->delete(self::OWNER, $uuid, (int)$token)->getUpdatedAt();
+		}
+
+		$response = match ($route) {
+			'vehicle#delete' => $this->controller($who, ['updated_at' => $token])->delete($uuid),
+			'vehicle#restore' => $this->controller($who, ['updated_at' => $token])->restore($uuid),
+			'grant#index' => $this->grantRoute($who, [])->index($uuid),
+			// A real account: a grantee has to exist, and the refusal must not be that 400.
+			'grant#create' => $this->grantRoute($who, ['grantee' => 'admin', 'grantee_type' => 'user', 'role' => 'manager'])->create($uuid),
+			// A manager must not promote anybody, themselves included.
+			'grant#update' => $this->grantRoute($who, ['role' => 'manager'])->update($uuid, $viewers),
+			'grant#delete' => $this->grantRoute($who, [])->delete($uuid, $viewers),
+			default => $this->fail($route . ' has no arm in the role matrix'),
+		};
+
+		$this->assertSame($status, $response->getStatus());
+		$after = \OCP\Server::get(VehicleMapper::class)->findAnyByUuid($uuid);
+		$this->assertSame($deletedAfter, $after->getDeletedAt() !== null);
+		if ($status === Http::STATUS_FORBIDDEN && !$deletedAfter) {
+			$this->assertSame($grants, $this->access->list(self::OWNER, $uuid));
+		}
+	}
+
+	/**
+	 * @return iterable<string, array{string, string, int, bool}>
+	 */
+	public static function roleMatrix(): iterable {
+		// The car is the owner's: deleting and restoring it is theirs alone, a manager included.
+		foreach (array_keys(self::HOLDERS) as $role) {
+			$owner = $role === 'owner';
+			yield "vehicle#delete by the $role" => ['vehicle#delete', $role, $owner ? Http::STATUS_OK : Http::STATUS_FORBIDDEN, $owner];
+			yield "vehicle#restore by the $role" => ['vehicle#restore', $role, $owner ? Http::STATUS_OK : Http::STATUS_FORBIDDEN, !$owner];
+			// Access is the owner's alone, reading who holds it included.
+			foreach (['grant#index', 'grant#create', 'grant#update', 'grant#delete'] as $route) {
+				yield "$route by the $role" => [$route, $role, $owner ? Http::STATUS_OK : Http::STATUS_FORBIDDEN, false];
+			}
+		}
+	}
+
+	/**
+	 * The Entry routes by role and by who entered the Entry: adding takes `log`, changing
+	 * somebody else's takes `edit` or `delete`, and one you entered takes `log` alone. The Entry is
+	 * real, so a refusal is the gate's and not a lookup that missed.
+	 *
+	 * @dataProvider entryMatrix
+	 */
+	public function testEachRoleChangesTheEntriesItMay(string $route, string $role, string $author, int $status): void {
+		$uuid = $this->vehicle->getUuid();
+		$this->grantEveryRole();
+		$who = self::HOLDERS[$role];
+		[$kind, $action] = explode('#', $route);
+		[$entry, $token] = $action === 'create' || $action === 'prefill' || $action === 'reconcile'
+			? [self::NO_SUCH_ENTRY, 0]
+			: $this->entered($kind, self::HOLDERS[$author], $action === 'restore');
+		$params = self::ENTRY_BODIES[$kind] + ['updated_at' => $token];
+
+		$response = match ($route) {
+			'odometer#create' => $this->odometer($who, $params)->create($uuid),
+			'odometer#update' => $this->odometer($who, $params)->update($uuid, $entry),
+			'odometer#delete' => $this->odometer($who, $params)->delete($uuid, $entry),
+			'odometer#restore' => $this->odometer($who, $params)->restore($uuid, $entry),
+			'trip#create' => $this->trip($who, $params)->create($uuid),
+			'trip#prefill' => $this->trip($who, $params)->prefill($uuid),
+			'trip#update' => $this->trip($who, $params)->update($uuid, $entry),
+			'trip#delete' => $this->trip($who, $params)->delete($uuid, $entry),
+			'trip#restore' => $this->trip($who, $params)->restore($uuid, $entry),
+			// No such Gap, so whoever passes the gate gets the 412 of a Gap that moved on.
+			'trip#reconcile' => $this->trip($who, $params + ['distance' => 200, 'from_at' => 1749990000, 'to_at' => 1750000000])
+				->reconcile($uuid, $entry),
+			'energy#create' => $this->energy($who, $params)->create($uuid),
+			'energy#prefill' => $this->energy($who, $params + ['at' => 1750000000, 'off' => 120])->prefill($uuid),
+			'energy#update' => $this->energy($who, $params)->update($uuid, $entry),
+			'energy#delete' => $this->energy($who, $params)->delete($uuid, $entry),
+			'energy#restore' => $this->energy($who, $params)->restore($uuid, $entry),
+			'maintenance#create' => $this->maintenance($who, $params)->create($uuid),
+			'maintenance#prefill' => $this->maintenance($who, $params + ['at' => 1750000000, 'off' => 120])->prefill($uuid),
+			'maintenance#update' => $this->maintenance($who, $params)->update($uuid, $entry),
+			'maintenance#delete' => $this->maintenance($who, $params)->delete($uuid, $entry),
+			'maintenance#restore' => $this->maintenance($who, $params)->restore($uuid, $entry),
+			'expense#create' => $this->expense($who, $params)->create($uuid),
+			'expense#prefill' => $this->expense($who, $params + ['at' => 1750000000, 'off' => 120])->prefill($uuid),
+			'expense#update' => $this->expense($who, $params)->update($uuid, $entry),
+			'expense#delete' => $this->expense($who, $params)->delete($uuid, $entry),
+			'expense#restore' => $this->expense($who, $params)->restore($uuid, $entry),
+			default => $this->fail($route . ' has no arm in the Entry matrix'),
+		};
+
+		$this->assertSame($status, $response->getStatus());
+	}
+
+	/**
+	 * @return iterable<string, array{string, string, string, int}>
+	 */
+	public static function entryMatrix(): iterable {
+		$writers = ['owner', 'manager', 'driver'];
+		foreach (array_keys(self::ENTRY_BODIES) as $kind) {
+			$adds = ["$kind#create" => Http::STATUS_CREATED];
+			if ($kind !== 'odometer') {
+				$adds["$kind#prefill"] = Http::STATUS_OK;
+			}
+			if ($kind === 'trip') {
+				$adds['trip#reconcile'] = Http::STATUS_PRECONDITION_FAILED;
+			}
+			foreach ($adds as $route => $allowed) {
+				foreach (array_keys(self::HOLDERS) as $role) {
+					yield "$route by the $role" => [$route, $role, 'owner', in_array($role, $writers, true) ? $allowed : Http::STATUS_FORBIDDEN];
+				}
+			}
+
+			foreach (['update', 'delete', 'restore'] as $action) {
+				foreach (['owner', 'driver'] as $author) {
+					foreach (array_keys(self::HOLDERS) as $role) {
+						$may = $role === 'owner' || $role === 'manager' || $role === $author;
+						yield "$kind#$action by the $role on the {$author}'s" => ["$kind#$action", $role, $author, $may ? Http::STATUS_OK : Http::STATUS_FORBIDDEN];
+					}
+				}
+			}
+		}
+	}
+
+	/**
+	 * One Entry of the kind as `$author` entered it, and voided by the owner when the route under
+	 * test is the undo.
+	 *
+	 * @return array{string, int} its uuid and the token the route is checked against
+	 */
+	private function entered(string $kind, string $author, bool $voided): array {
+		$uuid = $this->vehicle->getUuid();
+		$body = self::ENTRY_BODIES[$kind];
+		$row = match ($kind) {
+			'odometer' => $this->odometry->record($author, $uuid, $body)->jsonSerialize(),
+			'trip' => $this->journeys->record($author, $uuid, $body)->jsonSerialize(),
+			'energy' => $this->fillUps->record($author, $uuid, $body),
+			'maintenance' => $this->workshop->record($author, $uuid, $body),
+			'expense' => $this->spending->record($author, $uuid, $body),
+			default => $this->fail($kind . ' is no Entry'),
+		};
+		if ($voided) {
+			[$entry, $token] = [(string)$row['uuid'], (int)$row['updated_at']];
+			$row = match ($kind) {
+				'odometer' => $this->odometry->delete(self::OWNER, $uuid, $entry, $token)->jsonSerialize(),
+				'trip' => $this->journeys->delete(self::OWNER, $uuid, $entry, $token)->jsonSerialize(),
+				'energy' => $this->fillUps->delete(self::OWNER, $uuid, $entry, $token),
+				'maintenance' => $this->workshop->delete(self::OWNER, $uuid, $entry, $token),
+				'expense' => $this->spending->delete(self::OWNER, $uuid, $entry, $token),
+				default => $this->fail($kind . ' is no Entry'),
+			};
+		}
+
+		return [(string)$row['uuid'], (int)$row['updated_at']];
+	}
+
+	/**
+	 * The vehicle JSON says what each role may, on the single route and the list alike, so the
+	 * screen can hide by it; a stranger gets neither.
+	 */
+	public function testTheVehicleSaysWhatEachRoleMay(): void {
+		$uuid = $this->vehicle->getUuid();
+		$this->grantEveryRole();
+		$expected = [
+			'owner' => ['view', 'log', 'edit', 'delete', 'own'],
+			'manager' => ['view', 'log', 'edit', 'delete'],
+			'driver' => ['view', 'log'],
+			'viewer' => ['view'],
+		];
+
+		foreach ($expected as $role => $may) {
+			$controller = $this->controller(self::HOLDERS[$role], []);
+			$shown = $controller->show($uuid)->getData();
+			$this->assertInstanceOf(Vehicle::class, $shown);
+			$this->assertSame($may, $shown->jsonSerialize()['may'], "show, $role");
+
+			$listed = array_values(array_filter(
+				$controller->index()->getData(),
+				static fn (Vehicle $vehicle): bool => $vehicle->getUuid() === $uuid,
+			));
+			$this->assertCount(1, $listed, "index, $role");
+			$this->assertSame($may, $listed[0]->jsonSerialize()['may'], "index, $role");
+		}
+
+		$stranger = $this->controller(self::STRANGER, []);
+		$this->assertSame(Http::STATUS_FORBIDDEN, $stranger->show($uuid)->getStatus());
+		$this->assertNotContains($uuid, $this->uuidsIn($stranger->index()));
+	}
+
+	private function grantEveryRole(): void {
+		$this->grant(self::MANAGER, 'manager');
+		$this->grant(self::CODRIVER, 'driver');
+		$this->grant(self::VIEWER, 'viewer');
 	}
 
 	/** One grant on the vehicle under test, as the sharing UI will write it (M6). */

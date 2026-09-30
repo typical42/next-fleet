@@ -148,6 +148,7 @@ class VehicleService {
 			$owner->setUserId($userId);
 			$owner->setCreatedBy($userId);
 			$this->recipients->insert($owner);
+			$written->setMay($this->access->operations($userId, $written));
 
 			return $written;
 		}, $this->db);
@@ -256,13 +257,13 @@ class VehicleService {
 	 *
 	 * @param int $expectedUpdatedAt the `updated_at` the client read
 	 * @throws DoesNotExistException
-	 * @throws AccessDeniedException if the user may not delete this vehicle
+	 * @throws AccessDeniedException if the user does not own this vehicle
 	 * @throws StaleUpdateException if the row has changed since
 	 * @throws \OCP\DB\Exception
 	 */
 	public function delete(string $userId, string $uuid, int $expectedUpdatedAt): Vehicle {
 		$deleted = $this->mapper->softDelete(
-			$this->reach($userId, VehicleAccess::DELETE, $uuid),
+			$this->reach($userId, VehicleAccess::OWN, $uuid),
 			$expectedUpdatedAt,
 		);
 		foreach ($this->reminders->findByVehicle((int)$deleted->getId()) as $reminder) {
@@ -273,19 +274,19 @@ class VehicleService {
 	}
 
 	/**
-	 * Undo, and it takes the right the delete took - a viewer who cannot delete cannot un-delete.
+	 * Undo, and it takes the right the delete took - only the owner brings a vehicle back.
 	 * The lookup ignores `deleted_at`, so a stranger gets the same refusal here as on every other
 	 * route rather than a 404 that would tell them which uuids are in somebody's trash.
 	 *
 	 * @param int $expectedUpdatedAt the `updated_at` the delete answered with
 	 * @throws DoesNotExistException
-	 * @throws AccessDeniedException if the user may not delete this vehicle
+	 * @throws AccessDeniedException if the user does not own this vehicle
 	 * @throws StaleUpdateException if the row has changed since, or was never deleted
 	 * @throws \OCP\DB\Exception
 	 */
 	public function restore(string $userId, string $uuid, int $expectedUpdatedAt): Vehicle {
 		return $this->mapper->restoreChecked(
-			$this->permit($userId, VehicleAccess::DELETE, $this->mapper->findAnyByUuid($uuid)),
+			$this->permit($userId, VehicleAccess::OWN, $this->mapper->findAnyByUuid($uuid)),
 			$expectedUpdatedAt,
 		);
 	}
@@ -314,6 +315,18 @@ class VehicleService {
 	}
 
 	/**
+	 * The second gate an Entry passes, once reach() let the vehicle through with `log` and the
+	 * Entry is found on it (VehicleAccess::mayChange()). Here once, for the five Entry services.
+	 *
+	 * @throws AccessDeniedException
+	 */
+	public function change(string $userId, string $operation, Vehicle $vehicle, ?string $createdBy): void {
+		if (!$this->access->mayChange($userId, $operation, $vehicle, $createdBy)) {
+			throw new AccessDeniedException();
+		}
+	}
+
+	/**
 	 * The gate itself, once a row is in hand. Separate from reach() only because a restore looks
 	 * the row up differently and must still be refused by the same rule.
 	 *
@@ -321,9 +334,13 @@ class VehicleService {
 	 * @throws \OCP\DB\Exception
 	 */
 	private function permit(string $userId, string $operation, Vehicle $vehicle): Vehicle {
-		if (!$this->access->may($userId, $operation, $vehicle)) {
+		// The whole list rather than may(): the same one query, and the vehicle leaves carrying
+		// the answer the screen hides by.
+		$may = $this->access->operations($userId, $vehicle);
+		if (!in_array($operation, $may, true)) {
 			throw new AccessDeniedException();
 		}
+		$vehicle->setMay($may);
 
 		return $vehicle;
 	}
@@ -333,7 +350,13 @@ class VehicleService {
 	 * @throws \OCP\DB\Exception
 	 */
 	public function list(string $userId): array {
-		return $this->mapper->findAllVisible($userId, $this->access->reachableVehicleIds($userId));
+		$reachable = $this->access->reachable($userId);
+		$vehicles = $this->mapper->findAllVisible($userId, array_keys($reachable));
+		foreach ($vehicles as $vehicle) {
+			$vehicle->setMay($this->access->listed($userId, $vehicle, $reachable));
+		}
+
+		return $vehicles;
 	}
 
 	/**

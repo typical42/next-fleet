@@ -155,7 +155,7 @@ class ErasureTest extends TestCase {
 			$fresh = \OCP\Server::get(VehicleMapper::class)->findAnyByUuid($vehicle->getUuid());
 			$this->assertFalse($access->may(self::DRIVER, VehicleAccess::VIEW, $fresh));
 		}
-		$this->assertSame([], $access->reachableVehicleIds(self::DRIVER));
+		$this->assertSame([], $access->reachable(self::DRIVER));
 	}
 
 	private function vehicle(string $owner, string $plate): Vehicle {

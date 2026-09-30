@@ -168,7 +168,8 @@ class SeedCommandTest extends TestCase {
 
 		$access = $this->createMock(VehicleAccess::class);
 		$access->method('may')->willReturn(true);
-		$access->method('reachableVehicleIds')->willReturn([]);
+		$access->method('operations')->willReturn(['view', 'log', 'edit', 'delete', 'own']);
+		$access->method('reachable')->willReturn([]);
 
 		$time = $this->createMock(ITimeFactory::class);
 		$time->method('getTime')->willReturn(1767225600);

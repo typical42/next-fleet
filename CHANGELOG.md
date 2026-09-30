@@ -1,9 +1,23 @@
 # Changelog
 
-## 0.2.0 — 2026-09-30
+## Unreleased
 
-The first release for the app store: v1 by scope, 0.x because it is new
-([plan](plan.md#milestones)).
+- The dashboard widget lists only the reminders that are red or amber: overdue, due or coming up.
+  A planned or snoozed one waits on the vehicle screen.
+
+- Only the owner deletes or restores a vehicle; a manager keeps everything else. A vehicle's JSON
+  carries `may`, the operations the caller holds on it (`view`, `log`, `edit`, `delete`, `own`).
+
+- A driver adds trips, fill-ups, readings, maintenance and expenses, and edits, voids or deletes
+  the ones they entered. Somebody else's take a manager or the owner.
+
+- The owner grants a user or a group viewer, driver or manager on a vehicle, changes the role and
+  revokes it, through `/api/vehicles/{uuid}/grants`. Revoking also takes anyone who no longer sees
+  the vehicle off its reminder recipients. No screen yet.
+
+## 0.2.0 — not released
+
+v1 by scope, 0.x because it is new ([plan](plan.md#milestones)).
 
 - The store listing names what shipped and no longer promises sharing, which has no screen before
   M6. Its screenshots add the Costs and Reports screens.

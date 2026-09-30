@@ -354,7 +354,8 @@ app work; the right tool once we need to reproduce a server bug.
 ## Release
 
 1. Set the version in `appinfo/info.xml`, run `npm version <x> --no-git-tag-version`, and rename
-   the CHANGELOG's open section to `## <x> — <date>`. `InfoXmlTest` fails until all four agree.
+   the CHANGELOG's open section to `## <x> — <date>`. `InfoXmlTest` fails until all four agree; it
+   takes `## <x> — not released` for a version set but not yet released, as 0.2.0 is.
 2. Reseed NC 34 (`occ nextfleet:seed admin`), clear any E2E vehicles from admin's fleet, and run
    `npm run screenshots:docker`. `InfoXmlTest` fails for a screenshot `info.xml` names and the
    repository lacks.

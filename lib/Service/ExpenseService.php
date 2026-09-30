@@ -59,13 +59,13 @@ class ExpenseService {
 	 *
 	 * @param array<string, mixed> $fields
 	 * @return array<string, mixed> the row as written, in its wire form
-	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not write this vehicle
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not log on this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \InvalidArgumentException if a field is not what its column holds
 	 * @throws \OCP\DB\Exception
 	 */
 	public function record(string $userId, string $vehicleUuid, array $fields): array {
-		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
 		$expense = new Expense();
 		$expense->setVehicleId((int)$vehicle->getId());
@@ -90,18 +90,19 @@ class ExpenseService {
 	 * @param array<string, mixed> $fields
 	 * @param int $expectedUpdatedAt the `updated_at` the client read
 	 * @return array<string, mixed> the row as it now stands, in its wire form
-	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not write this vehicle
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not edit this Expense
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the Expense has changed since
 	 * @throws \InvalidArgumentException if a field is not what its column holds
 	 * @throws \OCP\DB\Exception
 	 */
 	public function update(string $userId, string $vehicleUuid, string $expenseUuid, int $expectedUpdatedAt, array $fields): array {
-		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
-		return $this->atomicRetry(function () use ($vehicle, $expenseUuid, $expectedUpdatedAt, $fields): array {
+		return $this->atomicRetry(function () use ($userId, $vehicle, $expenseUuid, $expectedUpdatedAt, $fields): array {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$expense = $this->expenses->findOnVehicle((int)$vehicle->getId(), $expenseUuid);
+			$this->fleet->change($userId, VehicleAccess::EDIT, $vehicle, $expense->getCreatedBy());
 			self::apply($expense, $fields);
 
 			return $this->expenses->updateChecked($expense, $expectedUpdatedAt)->jsonSerialize();
@@ -112,17 +113,18 @@ class ExpenseService {
 	 * Soft-deletes one Expense, and answers with the token the undo is checked against.
 	 *
 	 * @return array<string, mixed> the row as it was left, in its wire form
-	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete on this vehicle
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete this Expense
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the Expense has changed since
 	 * @throws \OCP\DB\Exception
 	 */
 	public function delete(string $userId, string $vehicleUuid, string $expenseUuid, int $expectedUpdatedAt): array {
-		$vehicle = $this->fleet->reach($userId, VehicleAccess::DELETE, $vehicleUuid);
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
-		return $this->atomicRetry(function () use ($vehicle, $expenseUuid, $expectedUpdatedAt): array {
+		return $this->atomicRetry(function () use ($userId, $vehicle, $expenseUuid, $expectedUpdatedAt): array {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$expense = $this->expenses->findOnVehicle((int)$vehicle->getId(), $expenseUuid);
+			$this->fleet->change($userId, VehicleAccess::DELETE, $vehicle, $expense->getCreatedBy());
 
 			return $this->expenses->softDelete($expense, $expectedUpdatedAt)->jsonSerialize();
 		}, $this->db);
@@ -132,17 +134,18 @@ class ExpenseService {
 	 * Undo, on the token the delete answered with (TripService::restore()).
 	 *
 	 * @return array<string, mixed> the row as it now stands, in its wire form
-	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete on this vehicle
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete this Expense
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the Expense has changed since, or was never deleted
 	 * @throws \OCP\DB\Exception
 	 */
 	public function restore(string $userId, string $vehicleUuid, string $expenseUuid, int $expectedUpdatedAt): array {
-		$vehicle = $this->fleet->reach($userId, VehicleAccess::DELETE, $vehicleUuid);
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
-		return $this->atomicRetry(function () use ($vehicle, $expenseUuid, $expectedUpdatedAt): array {
+		return $this->atomicRetry(function () use ($userId, $vehicle, $expenseUuid, $expectedUpdatedAt): array {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$expense = $this->expenses->findAnyOnVehicle((int)$vehicle->getId(), $expenseUuid);
+			$this->fleet->change($userId, VehicleAccess::DELETE, $vehicle, $expense->getCreatedBy());
 
 			return $this->expenses->restoreChecked($expense, $expectedUpdatedAt)->jsonSerialize();
 		}, $this->db);
@@ -170,13 +173,13 @@ class ExpenseService {
 	 * @param array<string, mixed> $fields `at` and `off`: the moment the sheet is on; `category`
 	 *                                     when one is picked
 	 * @return array{vat_rate: ?int}
-	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not write this vehicle
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not log on this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \InvalidArgumentException if the moment is not one
 	 * @throws \OCP\DB\Exception
 	 */
 	public function prefill(string $userId, string $vehicleUuid, array $fields): array {
-		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 		$at = Field::read('at', 'count', null, $fields['at'] ?? null);
 		$off = Field::read('off', 'offset', null, $fields['off'] ?? null);
 		if (!is_int($at) || !is_int($off)) {

@@ -75,32 +75,46 @@ class DueWidgetTest extends TestCase {
 		$mine = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
 		$shared = $this->vehicles->create(self::MANAGER, ['plate' => 'B-XY 456']);
 		$this->grant($shared, self::OWNER, 'viewer');
-		$this->remind($mine, ['title' => 'Wax', 'due_date' => '2036-01-01']);
-		$this->remind($mine, ['title' => 'Polish', 'due_date' => '2035-01-01']);
 		$this->remind($shared, ['title' => 'Wash', 'due_date' => $this->day('+10 days'), 'warn_month_before' => true], self::MANAGER);
 		$this->remind($shared, ['title' => 'Oil', 'due_date' => $this->day('-1 day')], self::MANAGER);
 		$this->remind($mine, ['template_key' => 'tyre_swap', 'mode' => Reminder::DATE, 'due_date' => $this->day('+0 days'), 'recur_months' => null]);
-		$gone = $this->remind($mine, ['title' => 'Gone', 'due_date' => '2034-01-01']);
+		$gone = $this->remind($mine, ['title' => 'Gone', 'due_date' => $this->day('-2 days')]);
 		$this->reminders->dismiss(self::OWNER, $mine->getUuid(), $gone['uuid'], $gone['updated_at']);
 
 		$items = $this->items(self::OWNER);
 
 		$this->assertSame(
-			['B-XY 456: Oil', 'B-XY 123: Tyre swap', 'B-XY 456: Wash', 'B-XY 123: Polish', 'B-XY 123: Wax'],
+			['B-XY 456: Oil', 'B-XY 123: Tyre swap', 'B-XY 456: Wash'],
 			array_column($items, 'title'),
 		);
-		$this->assertSame(['Overdue', 'Due', 'Coming up', 'Planned', 'Planned'], array_column($items, 'subtitle'));
+		$this->assertSame(['Overdue', 'Due', 'Coming up'], array_column($items, 'subtitle'));
 		$this->assertSame(
-			['red', 'red', 'amber', 'green', 'green'],
+			['red', 'red', 'amber'],
 			array_map(static fn (string $url): string => (string)preg_replace('/^.*\/light-(\w+)\.svg$/', '$1', $url), array_column($items, 'iconUrl')),
 		);
 		$this->assertStringEndsWith('/apps/nextfleet/?vehicle=' . $shared->getUuid(), $items[0]['link']);
 	}
 
+	/**
+	 * The dashboard is what needs you now: a reminder still green, planned or snoozed, waits for the
+	 * vehicle screen, and with nothing red or amber the widget says nothing is due.
+	 */
+	public function testAGreenReminderIsNotListed(): void {
+		$mine = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$this->remind($mine, ['title' => 'Wax', 'due_date' => '2036-01-01']);
+		$later = $this->remind($mine, ['title' => 'Oil', 'due_date' => $this->day('-1 day')]);
+		$this->reminders->snooze(self::OWNER, $mine->getUuid(), $later['uuid'], $later['updated_at'], $this->day('+7 days'));
+
+		$answer = $this->widget->getItemsV2(self::OWNER);
+
+		$this->assertSame([], $answer->getItems());
+		$this->assertSame('Nothing due', $answer->getEmptyContentMessage());
+	}
+
 	/** The dashboard asks for a few; the most urgent are the ones it gets. */
 	public function testTheLimitKeepsTheMostUrgent(): void {
 		$mine = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
-		$this->remind($mine, ['title' => 'Wax', 'due_date' => '2036-01-01']);
+		$this->remind($mine, ['title' => 'Wash', 'due_date' => $this->day('+0 days')]);
 		$this->remind($mine, ['title' => 'Oil', 'due_date' => $this->day('-1 day')]);
 
 		$this->assertSame(['B-XY 123: Oil'], array_column($this->items(self::OWNER, 1), 'title'));

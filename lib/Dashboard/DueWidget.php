@@ -63,13 +63,18 @@ class DueWidget implements IAPIWidgetV2, IIconWidget {
 
 	/**
 	 * `since` pages by newness, which an urgency order does not have; the most urgent always lead.
+	 * Green stays off: the dashboard is what needs you now, the vehicle screen shows the rest.
 	 *
 	 * @throws \OCP\DB\Exception
 	 */
 	public function getItemsV2(string $userId, ?string $since = null, int $limit = 7): WidgetItems {
+		$pressing = array_filter(
+			$this->reminders->due($userId),
+			static fn (array $one): bool => self::light((string)$one['reminder']['state']) !== 'green',
+		);
 		$items = array_map(
 			fn (array $one): WidgetItem => $this->item($one['vehicle'], $one['reminder']),
-			array_slice($this->reminders->due($userId), 0, $limit),
+			array_slice($pressing, 0, $limit),
 		);
 
 		return new WidgetItems($items, $this->l->t('Nothing due'));
@@ -107,14 +112,12 @@ class DueWidget implements IAPIWidgetV2, IIconWidget {
 		};
 	}
 
-	/** src/utils/reminders.js `stateWord`, for the states still open. */
+	/** src/utils/reminders.js `stateWord`, for the states the widget lists. */
 	private function stateWord(string $state): string {
 		return match ($state) {
 			Reminder::OVERDUE => $this->l->t('Overdue'),
 			Reminder::DUE => $this->l->t('Due'),
-			Reminder::WARNED => $this->l->t('Coming up'),
-			Reminder::SNOOZED => $this->l->t('Snoozed'),
-			default => $this->l->t('Planned'),
+			default => $this->l->t('Coming up'),
 		};
 	}
 

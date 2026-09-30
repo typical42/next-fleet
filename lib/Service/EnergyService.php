@@ -88,13 +88,13 @@ class EnergyService {
 	 *
 	 * @param array<string, mixed> $fields
 	 * @return array<string, mixed> the row as written, in its wire form
-	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not write this vehicle
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not log on this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \InvalidArgumentException if a field is not what its column holds
 	 * @throws \OCP\DB\Exception
 	 */
 	public function record(string $userId, string $vehicleUuid, array $fields): array {
-		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
 		$energy = new Energy();
 		$energy->setVehicleId((int)$vehicle->getId());
@@ -121,19 +121,20 @@ class EnergyService {
 	 * @param array<string, mixed> $fields
 	 * @param int $expectedUpdatedAt the `updated_at` the client read
 	 * @return array<string, mixed> the row as it now stands, in its wire form
-	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not write this vehicle
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not edit this fill-up
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the fill-up has changed since
 	 * @throws \InvalidArgumentException if a field is not what its column holds
 	 * @throws \OCP\DB\Exception
 	 */
 	public function update(string $userId, string $vehicleUuid, string $energyUuid, int $expectedUpdatedAt, array $fields): array {
-		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
 		// Looked up inside the transaction for the reason TripService::delete() gives.
 		$edited = $this->atomicRetry(function () use ($userId, $vehicle, $energyUuid, $expectedUpdatedAt, $fields): Energy {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$energy = $this->energies->findOnVehicle((int)$vehicle->getId(), $energyUuid);
+			$this->fleet->change($userId, VehicleAccess::EDIT, $vehicle, $energy->getCreatedBy());
 			$this->apply($vehicle, $energy, $fields);
 			$edited = $this->energies->updateChecked($energy, $expectedUpdatedAt);
 			$this->follow($vehicle, $userId, $edited);
@@ -149,17 +150,18 @@ class EnergyService {
 	 * against.
 	 *
 	 * @return array<string, mixed> the row as it was left, in its wire form
-	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete on this vehicle
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete this fill-up
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the fill-up has changed since
 	 * @throws \OCP\DB\Exception
 	 */
 	public function delete(string $userId, string $vehicleUuid, string $energyUuid, int $expectedUpdatedAt): array {
-		$vehicle = $this->fleet->reach($userId, VehicleAccess::DELETE, $vehicleUuid);
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
 		$deleted = $this->atomicRetry(function () use ($userId, $vehicle, $energyUuid, $expectedUpdatedAt): Energy {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$energy = $this->energies->findOnVehicle((int)$vehicle->getId(), $energyUuid);
+			$this->fleet->change($userId, VehicleAccess::DELETE, $vehicle, $energy->getCreatedBy());
 			$deleted = $this->energies->softDelete($energy, $expectedUpdatedAt);
 			$this->follow($vehicle, $userId, $deleted);
 
@@ -173,17 +175,18 @@ class EnergyService {
 	 * Undo, on the token the delete answered with (TripService::restore()).
 	 *
 	 * @return array<string, mixed> the row as it now stands, in its wire form
-	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete on this vehicle
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete this fill-up
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the fill-up has changed since, or was never deleted
 	 * @throws \OCP\DB\Exception
 	 */
 	public function restore(string $userId, string $vehicleUuid, string $energyUuid, int $expectedUpdatedAt): array {
-		$vehicle = $this->fleet->reach($userId, VehicleAccess::DELETE, $vehicleUuid);
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
 		$back = $this->atomicRetry(function () use ($userId, $vehicle, $energyUuid, $expectedUpdatedAt): Energy {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$energy = $this->energies->findAnyOnVehicle((int)$vehicle->getId(), $energyUuid);
+			$this->fleet->change($userId, VehicleAccess::DELETE, $vehicle, $energy->getCreatedBy());
 			$back = $this->energies->restoreChecked($energy, $expectedUpdatedAt);
 			$this->follow($vehicle, $userId, $back);
 
@@ -224,13 +227,13 @@ class EnergyService {
 	 *
 	 * @param array<string, mixed> $fields `at` and `off`: the moment the sheet is on
 	 * @return array{vat_rate: ?int, stations: list<array{station: string, energy: string, unit_price: ?int}>}
-	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not write this vehicle
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not log on this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \InvalidArgumentException if the moment is not one
 	 * @throws \OCP\DB\Exception
 	 */
 	public function prefill(string $userId, string $vehicleUuid, array $fields): array {
-		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 		$at = Field::read('at', 'count', null, $fields['at'] ?? null);
 		$off = Field::read('off', 'offset', null, $fields['off'] ?? null);
 		if (!is_int($at) || !is_int($off)) {

@@ -9,6 +9,8 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Tests\Integration;
 
 use OCA\NextFleet\AppInfo\Application;
+use OCA\NextFleet\Db\Access;
+use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Db\Reminder;
 use OCA\NextFleet\Exception\StaleUpdateException;
@@ -28,6 +30,7 @@ use PHPUnit\Framework\TestCase;
 class MaintenanceTest extends TestCase {
 	/** Not a Nextcloud account: `user_id` is a string column with no key on it. */
 	private const OWNER = 'nextfleet-test-alice';
+	private const DRIVER = 'nextfleet-test-carol';
 
 	private MaintenanceService $maintenance;
 	private OdometerService $odometer;
@@ -50,9 +53,9 @@ class MaintenanceTest extends TestCase {
 	/** The rows this suite invents, gone for real - a soft delete would outlive the run. */
 	private function forgetTestRows(): void {
 		$db = \OCP\Server::get(IDBConnection::class);
-		foreach (['fleet_vehicles' => 'user_id', 'fleet_odo_readings' => 'created_by', 'fleet_maintenance' => 'created_by', 'fleet_reminders' => 'created_by'] as $table => $column) {
+		foreach (['fleet_vehicles' => 'user_id', 'fleet_access' => 'created_by', 'fleet_odo_readings' => 'created_by', 'fleet_maintenance' => 'created_by', 'fleet_reminders' => 'created_by'] as $table => $column) {
 			$qb = $db->getQueryBuilder();
-			$qb->delete($table)->where($qb->expr()->eq($column, $qb->createNamedParameter(self::OWNER)));
+			$qb->delete($table)->where($qb->expr()->in($column, $qb->createNamedParameter([self::OWNER, self::DRIVER], $qb::PARAM_STR_ARRAY)));
 			$qb->executeStatement();
 		}
 	}
@@ -251,6 +254,25 @@ class MaintenanceTest extends TestCase {
 		$this->assertSame(135450, $next['due_odo']);
 		$this->assertSame(2, $next['occurrence']);
 		$this->assertSame(Reminder::PLANNED, $next['state']);
+	}
+
+	/** A driver logs the work and it closes the reminder as the owner's record would. */
+	public function testADriversRecordClosesAReminder(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$uuid = $vehicle->getUuid();
+		$oil = $this->oilChange($uuid);
+		$grant = new Access();
+		$grant->setVehicleId((int)$vehicle->getId());
+		$grant->setGrantee(self::DRIVER);
+		$grant->setGranteeType(Access::USER);
+		$grant->setRole('driver');
+		$grant->setCreatedBy(self::OWNER);
+		\OCP\Server::get(AccessMapper::class)->insert($grant);
+
+		$written = $this->maintenance->record(self::DRIVER, $uuid, $this->work(['done_at' => 1780000000, 'done_at_off' => 240, 'odo' => 120450, 'closes' => $oil['uuid']]));
+
+		$this->assertSame($oil['uuid'], $written['closes']);
+		$this->assertSame(2, $this->reminder($uuid, $oil['uuid'])['occurrence']);
 	}
 
 	/**

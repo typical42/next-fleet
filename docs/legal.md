@@ -57,6 +57,12 @@ contributor who pastes a rate table out of a commercial handbook makes it our pr
 every commit needs a `Signed-off-by` (DCO), rates and deadlines are cited by URL rather than
 quoted, and a merge request that cannot say where a number came from does not get merged.
 
+**A rate no source states stays "not stated".** A wrong rate on a tax document is worse than none
+(decided 2026-09-30). The known gap: §9 EStG pays 0,30 €/km for a *Kraftwagen* and 0,20 €/km for
+*andere motorbetriebene Fahrzeuge*, and no source we found places a tractor (*Zugmaschine*) under
+either. So `lib/Jurisdiction/De/RateProvider.php` gives it no mileage rate, and its claim lines say
+"not stated" until a source does.
+
 **The bigger legal exposure is data protection, not copyright.** Trips carry destinations, purposes
 and driver identities — personal data under GDPR, and in fleet mode an employer processing employee
 data, which in Germany brings the works council into it. Therefore:

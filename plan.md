@@ -55,13 +55,15 @@ directory that someone else can add by merge request ([contributing](docs/contri
 | M2 | Trips, derived odometer, timeline, filters, gap detection, Logbook Mode with the `de` ruleset (append-only + `fleet_audit`) | Adding a trip moves the vehicle's km; a voided locked trip survives in the export; the German rules sit in `lib/Jurisdiction/De/`, not scattered through services |
 | M3 | Energy entries, maintenance records, expenses, VAT, and the [consumption and cost maths](docs/architecture.md#numbers-consumption-cost-emissions) | Per-vehicle cost per 100 km is correct, and a plug-in hybrid shows two consumption figures |
 | M4 | Reminder engine, TimedJob, notifications, mail digest, recipients, HU/AU from the sticker, closing a reminder by maintenance record. No calendar (decision 16) | HU/AU due in 4 weeks reaches the phone |
-| M5 | Documents, the Costs screen with a CO₂ estimate, CSV export, the mileage claim, a plain logbook for the generic jurisdiction, dashboard widget, search, QR sticker | Feature-complete v1, app store release as 0.2.0 |
-| M6+ | Sharing UI, fleet view, bookings, handover. Then the OCS API, `?since=` delta endpoint, app passwords, API docs | Multi-driver pool works; an Android client can be built against it |
+| M5 | Documents, the Costs screen with a CO₂ estimate, CSV export, the mileage claim, a plain logbook for the generic jurisdiction, dashboard widget, search, QR sticker | Feature-complete v1 as 0.2.0, not released |
+| M6 | Sharing: the owner grants a user or a group viewer, driver or manager; a driver logs their own entries; screens follow the caller's role | A partner or an employee logs trips in the owner's car and sees only what their role allows |
+| M7+ | Bookings, handover, the receipt inbox. Then the OCS API, `?since=` delta endpoint, app passwords, API docs | Multi-driver pool works; an Android client can be built against it |
 
-**v1 ships as 0.2.0.** M5 is v1 by scope; the version tracks maturity, and a first release has none
-yet, so it stays on the 0.x line.
+**v1 is 0.2.0, and it is not released for now** (decided 2026-09-30). M5 is v1 by scope; the
+version tracks maturity, and a first release has none yet, so it stays on the 0.x line. Until a
+release, later milestones collect under the CHANGELOG's `## Unreleased`.
 
-**M5 is v1 and it ships before M6 starts.** Maintenance records sit in M3 rather than M5 because
+**M5 is v1 by scope, and M6 builds on it.** Maintenance records sit in M3 rather than M5 because
 they write odometer readings and close reminders — building the reminder engine against a record
 type that does not exist yet is the wrong order.
 

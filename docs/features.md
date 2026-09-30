@@ -20,7 +20,7 @@ is not the reason anyone would switch.
 
 ## Feature backlog
 
-Ranked by value per effort. **v1** marks what M0–M5 shipped as 0.2.0
+Ranked by value per effort. **v1** marks what M0–M5 built, the unreleased 0.2.0
 ([milestones](../plan.md#milestones)); everything else waits.
 
 **High**
@@ -40,10 +40,10 @@ Ranked by value per effort. **v1** marks what M0–M5 shipped as 0.2.0
   form for *that* car. It removes the one step that makes people skip logging — picking the vehicle.
   Best adoption-per-line-of-code in the list.
 - **v1** — **Mileage claim.** Business trips × the statutory rate → a Reisekosten claim. For
-  freelancers this is the whole reason to keep a logbook, so it ships wherever the jurisdiction
+  freelancers this is the whole reason to keep a logbook, so it exists wherever the jurisdiction
   supplies a rate; under the generic profile it is unavailable rather than zero.
 - **v1** — A plain logbook under the generic jurisdiction, unified search for a vehicle, and a
-  dashboard widget of what is due.
+  dashboard widget of what is red or amber.
 - **Receipt inbox.** The Nextcloud mobile app already auto-uploads photos. Watch `/Fleet/Inbox`,
   show unassigned images, attach in two taps. Reuses Files instead of building an uploader, and
   needs no OCR.

@@ -39,7 +39,7 @@ erDiagram
     VEHICLES ||--o{ REMINDERS : has
     VEHICLES ||--o{ DOCUMENTS : has
     VEHICLES ||--o{ ACCESS : "access through"
-    VEHICLES ||--o{ BOOKINGS : "M6+"
+    VEHICLES ||--o{ BOOKINGS : "M7+"
     TRIPS ||--|| ODO_READINGS : writes
     ENERGY ||--|| ODO_READINGS : writes
     MAINTENANCE ||--|| ODO_READINGS : writes
@@ -66,8 +66,8 @@ Tables (prefix `fleet_`; Nextcloud prepends `oc_`, so names stay under 27 charac
 | `fleet_reminder_recipients` | `vehicle_id`, `user_id` — unique per vehicle; starts as the owner |
 | `fleet_documents` | `vehicle_id`, `file_id`, `kind` (registration/insurance/manual/receipt/photo), `linked_type`, `linked_id` |
 | `fleet_audit` | `entity`, `entity_id`, `diff_json` — only written under Logbook Mode |
-| `fleet_access` | `vehicle_id`, `grantee`, `grantee_type` (user/group), `role` (manager/driver/viewer) |
-| `fleet_bookings` *(M6+)* | `vehicle_id`, `user_id`, `starts_at`, `ends_at`, `purpose`, `state` |
+| `fleet_access` | `vehicle_id`, `grantee`, `grantee_type` (user/group), `role` (manager/driver/viewer) — one live row per grantee; a revoke soft-deletes it |
+| `fleet_bookings` *(M7+)* | `vehicle_id`, `user_id`, `starts_at`, `ends_at`, `purpose`, `state` |
 
 Money as integer cents, distances as integer km, volumes as integer millilitres, energy as integer
 watt-hours. No floats. A unit price is the one exception to cents: pumps price to a tenth of a cent,
@@ -454,14 +454,14 @@ is shown as "not a file of your own", which is what it nearly always means.
 
 | Concern | Mechanism |
 |---|---|
-| Identity, ACL | `OCP\IUserSession`, `IGroupManager`. Every query runs through `VehicleAccess::may` from M1 on: owner, or a row in `fleet_access` with a sufficient role ([ADR 0001](adr/0001-own-access-table.md)). A route that names one vehicle asks `may`; a route that lists them asks `reachableVehicleIds` instead, so the widening is one query and not one per row. |
+| Identity, ACL | `OCP\IUserSession`, `IGroupManager`. Every query runs through `VehicleAccess::may` from M1 on: owner, or a row in `fleet_access` with a sufficient role ([ADR 0001](adr/0001-own-access-table.md)); the strongest row wins and none narrows another. Five operations: `view` (viewer, driver, manager), `log` (driver, manager: add an entry, change one you entered), `edit` (manager: vehicle settings, reminders, recipients, documents, any entry), `delete` (manager: delete any entry) and `own` (the owner alone: access, deleting and restoring the vehicle). A route that names one vehicle asks `may`; a route that lists them asks `reachable` instead, so the widening is one query and not one per row. An Entry route asks for `log`, then `VehicleService::change` for the Entry it found: `edit` or `delete`, or `log` alone when its `created_by` is the caller. The vehicle JSON carries `may`, the caller's operations, from the same rows; the UI hides by it. `…/grants` lists, grants, re-roles (`PUT …/grants/{grant}`) and revokes, all `own`, each answering with the list and each grantee's display name. A grantee is a user or a group the instance has, never the owner; granting one again changes the role. A revoke takes off the reminder recipients who no longer reach `view`; a grant adds none. |
 | Reminders → push | Own `TimedJob` (hourly) evaluates due reminders, then `OCP\Notification\IManager` + an `INotifier`. It reaches the phone through the Nextcloud app. |
 | Reminders → mail | `OCP\Mail\IMailer` + `IEMailTemplate`, using the server's configured SMTP. Digest, not one mail per item. |
 | Files, receipts | `OCP\Files\IRootFolder`. A vehicle's folder is created as `/Fleet/<plate> — <make model>/` for humans who browse Files, and then **referenced only by `folder_file_id`**. A plate change renames it best-effort; a failed rename, or a user who moved the folder themselves, breaks nothing. Documents are `file_id` too. |
 | …but served by us | Downloads go **through our controller**, so access follows the vehicle's access grant, not the file's. Otherwise a receipt on a shared car is invisible to the other driver unless the owner shares their folder. A `file_id` survives a move but not a delete — handle the missing node instead of 500ing. |
-| Talk (optional) | Post due items into a fleet room, only when the Talk app is present. M6+, cheap, and very much the reason someone runs Nextcloud. |
+| Talk (optional) | Post due items into a fleet room, only when the Talk app is present. M7+, cheap, and very much the reason someone runs Nextcloud. |
 | Activity stream | `OCA\Activity` provider — optional, after v1. |
-| Dashboard | `OCP\Dashboard\IAPIWidgetV2` over `ReminderService::due()`: the overview's reminder read (`fleet()`), open ones only, in the overview's urgency order, sorted in PHP because the widget has no browser code. It runs no query of its own. |
+| Dashboard | `OCP\Dashboard\IAPIWidgetV2` over `ReminderService::due()`: the overview's reminder read (`fleet()`), open ones only, in the overview's urgency order, sorted in PHP because the widget has no browser code. It runs no query of its own. It lists red and amber only: the dashboard is what needs you now. |
 | Unified search | `OCP\Search\IProvider`: find a vehicle by plate (separators ignored), manufacturer or model, among the ones `VehicleService::list` gives the searcher, disposed ones left out. Vehicles only: searching trip purposes or notes would take the access check somewhere nobody tests it. |
 | Settings | Personal settings (default jurisdiction, "I reclaim VAT", grid factor). The mail cadence is per vehicle. |
 | CLI | `occ nextfleet:import`, `occ nextfleet:report` for scripting and imports. |
@@ -602,7 +602,7 @@ points are the ones the notification tells, and the lines say what it says, with
 transaction, so a refused mail rolls them back: the notification has its own receipt and stays,
 and the next run tries again. A day counts as mailed by its newest `mail` receipt up to now.
 
-The same prediction could warn on a leasing mileage overrun. That is M6+, in the
+The same prediction could warn on a leasing mileage overrun. That is M7+, in the
 [backlog](features.md#feature-backlog) rather than a planned milestone: it needs the contract's end
 date and mileage cap, two columns no milestone has added.
 

@@ -117,24 +117,29 @@ class AccessMapperTest extends TestCase {
 	 * none of the three databases parses - the same reason grantedTo() drops an empty group list.
 	 */
 	public function testAnEmptyRoleListReachesNoVehicleAndNoDatabase(): void {
-		$this->rows = [['vehicle_id' => 7]];
+		$this->rows = [['vehicle_id' => 7, 'role' => 'viewer']];
 
-		$ids = $this->mapper()->findVehicleIds('alice', ['staff'], []);
+		$reachable = $this->mapper()->findReachable('alice', ['staff'], []);
 
-		$this->assertSame([], $ids);
+		$this->assertSame([], $reachable);
 		$this->assertSame(0, $this->queries);
 	}
 
 	/**
 	 * The ordinary case still asks: the user by name or one of their groups, in one of the roles,
-	 * and not a grant that was withdrawn.
+	 * and not a grant that was withdrawn. A vehicle granted twice - in person and through a group
+	 * - comes back once, with both roles.
 	 */
 	public function testGrantsAreFoundForTheUserTheirGroupsAndTheGivenRoles(): void {
-		$this->rows = [['vehicle_id' => '7'], ['vehicle_id' => '9']];
+		$this->rows = [
+			['vehicle_id' => '7', 'role' => 'viewer'],
+			['vehicle_id' => '9', 'role' => 'manager'],
+			['vehicle_id' => '7', 'role' => 'manager'],
+		];
 
-		$ids = $this->mapper()->findVehicleIds('alice', ['staff'], ['manager', 'viewer']);
+		$reachable = $this->mapper()->findReachable('alice', ['staff'], ['manager', 'viewer']);
 
-		$this->assertSame([7, 9], $ids);
+		$this->assertSame([7 => ['viewer', 'manager'], 9 => ['manager']], $reachable);
 		$this->assertSame([
 			'((grantee_type = user AND grantee = alice) OR (grantee_type = group AND grantee IN (staff)))',
 			'role IN (manager, viewer)',

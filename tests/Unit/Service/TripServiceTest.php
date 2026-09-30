@@ -8,6 +8,7 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Unit\Service;
 
+use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\Audit;
 use OCA\NextFleet\Db\AuditMapper;
 use OCA\NextFleet\Db\BaseEntity;
@@ -30,6 +31,8 @@ use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\IDBConnection;
+use OCP\IGroupManager;
+use OCP\IUserManager;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use Psr\Container\ContainerInterface;
@@ -49,8 +52,7 @@ class TripServiceTest extends TestCase {
 	private const OWNER = 'alice';
 	private const DRIVER = 'carol';
 	private const STRANGER = 'bob';
-	/** Someone who may add to the logbook but not take anything out of it. */
-	private const KEEPER = 'dave';
+	private const VIEWER = 'erin';
 
 	/** The clock the fake mappers stamp a row with, and the token a client then holds. */
 	private const ENTERED_AT = 1750500000;
@@ -254,21 +256,31 @@ class TripServiceTest extends TestCase {
 		});
 
 		// Who reaches which vehicle is VehicleAccessTest's; what this states is which operation a
-		// trip asks the gate for.
+		// trip asks the gate for. The Entry's own gate is the real rule, fed what reach() held.
 		$this->fleet = $this->createMock(VehicleService::class);
 		$this->fleet->method('reach')->willReturnCallback(
 			function (string $userId, string $operation): Vehicle {
-				$allowed = match ($userId) {
-					self::OWNER => true,
-					self::KEEPER => $operation !== VehicleAccess::DELETE,
-					self::DRIVER => $operation === VehicleAccess::VIEW,
-					default => false,
+				$held = match ($userId) {
+					self::OWNER => [VehicleAccess::VIEW, VehicleAccess::LOG, VehicleAccess::EDIT, VehicleAccess::DELETE, VehicleAccess::OWN],
+					self::DRIVER => [VehicleAccess::VIEW, VehicleAccess::LOG],
+					self::VIEWER => [VehicleAccess::VIEW],
+					default => [],
 				};
-				if (!$allowed) {
+				if (!in_array($operation, $held, true)) {
 					throw new AccessDeniedException();
 				}
+				$vehicle = $this->vehicle();
+				$vehicle->setMay($held);
 
-				return $this->vehicle();
+				return $vehicle;
+			},
+		);
+		$access = new VehicleAccess($this->createMock(AccessMapper::class), $this->createMock(IUserManager::class), $this->createMock(IGroupManager::class));
+		$this->fleet->method('change')->willReturnCallback(
+			function (string $userId, string $operation, Vehicle $vehicle, ?string $createdBy) use ($access): void {
+				if (!$access->mayChange($userId, $operation, $vehicle, $createdBy)) {
+					throw new AccessDeniedException();
+				}
 			},
 		);
 
@@ -676,14 +688,11 @@ class TripServiceTest extends TestCase {
 		}
 	}
 
-	/**
-	 * A co-driver who may look at the vehicle may not add to its logbook: a trip moves what the
-	 * vehicle shows, so it asks to edit, not to view.
-	 */
+	/** Somebody who may only look at the vehicle may not add to its logbook: a trip takes `log`. */
 	public function testAGrantToLookIsNotAGrantToAddATrip(): void {
 		$this->expectException(AccessDeniedException::class);
 
-		$this->service()->record(self::DRIVER, self::VEHICLE, $this->drove(1750000000, 120450));
+		$this->service()->record(self::VIEWER, self::VEHICLE, $this->drove(1750000000, 120450));
 	}
 
 	/**
@@ -1000,19 +1009,34 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
-	 * Taking a journey out of the logbook is not the same right as putting one in, and undo takes
-	 * the right the void took: somebody who may drive the car and log what they drove may not make
-	 * either disappear.
+	 * A driver may take out of the logbook only what they put in, and undo takes the right the
+	 * void took.
 	 *
 	 * @dataProvider voids
 	 */
-	public function testAGrantToAddATripIsNotAGrantToVoidOne(string $method): void {
+	public function testADriverVoidsNoTripSomebodyElseEntered(string $method): void {
 		$service = $this->service();
 		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
 
 		$this->expectException(AccessDeniedException::class);
 
-		$service->$method(self::KEEPER, self::VEHICLE, $trip->getUuid(), $trip->getUpdatedAt());
+		$service->$method(self::DRIVER, self::VEHICLE, $trip->getUuid(), $trip->getUpdatedAt());
+	}
+
+	/** Their own they void and bring back, under Logbook Mode as anybody does, and the trail says who. */
+	public function testADriverVoidsAndRestoresATripTheyEntered(): void {
+		$this->logbookMode = true;
+		$service = $this->service();
+		$trip = $service->record(self::DRIVER, self::VEHICLE, $this->drove(1750000000, 120450));
+
+		$voided = $service->delete(self::DRIVER, self::VEHICLE, $trip->getUuid(), $trip->getUpdatedAt());
+		$back = $service->restore(self::DRIVER, self::VEHICLE, $trip->getUuid(), $voided->getUpdatedAt());
+
+		$this->assertNull($back->getDeletedAt());
+		$this->assertSame(
+			[[self::DRIVER, 'created'], [self::DRIVER, 'voided'], [self::DRIVER, 'restored']],
+			array_map(static fn (Audit $row): array => [$row->getCreatedBy(), $row->getDiffJson()['change']], $this->audits),
+		);
 	}
 
 	/**
@@ -1471,20 +1495,17 @@ class TripServiceTest extends TestCase {
 		);
 	}
 
-	/**
-	 * Correcting a journey is the right entering one is: somebody who may log trips may fix one,
-	 * and somebody who may only look may not.
-	 */
-	public function testAGrantToAddATripIsAGrantToEditOneAndAGrantToLookIsNot(): void {
+	/** A driver corrects the journeys they entered, and not somebody else's. */
+	public function testADriverEditsTheTripsTheyEnteredAndNoOthers(): void {
 		$service = $this->service();
-		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
-		$fields = $this->drove(1750000000, 120460);
+		$theirs = $service->record(self::DRIVER, self::VEHICLE, $this->drove(1750000000, 120450));
+		$owners = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750100000, 120600));
 
-		$edited = $service->update(self::KEEPER, self::VEHICLE, $trip->getUuid(), $trip->getUpdatedAt(), $fields);
+		$edited = $service->update(self::DRIVER, self::VEHICLE, $theirs->getUuid(), $theirs->getUpdatedAt(), $this->drove(1750000000, 120460));
 		$this->assertSame(120460, $edited->getEndOdo());
 
 		$this->expectException(AccessDeniedException::class);
-		$service->update(self::DRIVER, self::VEHICLE, $trip->getUuid(), $edited->getUpdatedAt(), $fields);
+		$service->update(self::DRIVER, self::VEHICLE, $owners->getUuid(), $owners->getUpdatedAt(), $this->drove(1750100000, 120610));
 	}
 
 	/** The second gate, as for a void: a trip is reached through the vehicle it hangs off. */
@@ -1730,6 +1751,6 @@ class TripServiceTest extends TestCase {
 
 		$this->expectException(AccessDeniedException::class);
 
-		$service->reconcile(self::DRIVER, self::VEHICLE, $claiming->getUuid(), 200, self::GAP_FROM_AT, self::GAP_TO_AT);
+		$service->reconcile(self::VIEWER, self::VEHICLE, $claiming->getUuid(), 200, self::GAP_FROM_AT, self::GAP_TO_AT);
 	}
 }
