@@ -10,3 +10,5 @@ declare(strict_types=1);
 // nextcloud/ocp declares no autoloader — it feeds Psalm, not PHP — so the first test that
 // needs a real OCP class must map it here. Integration tests bootstrap the container instead.
 require_once __DIR__ . '/../vendor/autoload.php';
+// A double of IRootFolder needs the private interface it extends.
+require_once __DIR__ . '/Stub/oc_hooks_emitter.php';

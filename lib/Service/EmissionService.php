@@ -16,8 +16,7 @@ use OCA\NextFleet\Jurisdiction\Jurisdictions;
  * The CO₂ a vehicle's fill-ups gave off in a period, always an estimate
  * (docs/architecture.md#numbers-consumption-cost-emissions).
  *
- * @psalm-type Grid = array{grams: int, year: ?int, source: ?string}
- * @psalm-type Co2 = array{grams: ?int, unstated: bool, source: string, grid: ?Grid}
+ * @psalm-import-type NextFleetCo2 from \OCA\NextFleet\ResponseDefinitions as Co2
  */
 class EmissionService {
 	public function __construct(
@@ -67,6 +66,7 @@ class EmissionService {
 			'grams' => $grams,
 			'unstated' => $unstated,
 			'source' => $rates->emissionSourceUrl(),
+			'year' => $rates->emissionSourceYear(),
 			'grid' => $charged ? $grid : null,
 		];
 	}

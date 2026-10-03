@@ -25,6 +25,11 @@ use OCP\IDBConnection;
 /**
  * Everything a Reminder is written under (docs/architecture.md#reminder-engine). Its state is
  * the engine's to move; this is what the sheet sets.
+ *
+ * @psalm-import-type NextFleetReminder from \OCA\NextFleet\ResponseDefinitions
+ * @psalm-import-type NextFleetListedReminder from \OCA\NextFleet\ResponseDefinitions
+ * @psalm-import-type NextFleetFleetReminder from \OCA\NextFleet\ResponseDefinitions
+ * @psalm-import-type NextFleetReminderTemplate from \OCA\NextFleet\ResponseDefinitions
  */
 class ReminderService {
 	use TTransactional;
@@ -52,8 +57,8 @@ class ReminderService {
 	 * The state is evaluated at now rather than read from the row: the row holds what the job last
 	 * persisted, and the banner shows where the reminder stands. Nothing is written.
 	 *
-	 * @return list<array<string, mixed>> the vehicle's live reminders, in their wire form, each
-	 *                                    with its `estimate` (ReminderEngine::estimate())
+	 * @return list<NextFleetListedReminder> the vehicle's live reminders, in their wire form, each
+	 *                                       with its `estimate` (ReminderEngine::estimate())
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not see this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCP\DB\Exception
@@ -66,7 +71,7 @@ class ReminderService {
 	 * The overview's read: every vehicle the user may see, as `list()` answers each, and each row
 	 * names its `vehicle`. A sold vehicle has left the overview, so its reminders are not read.
 	 *
-	 * @return list<array<string, mixed>>
+	 * @return list<NextFleetFleetReminder>
 	 * @throws \OCP\DB\Exception
 	 */
 	public function fleet(string $userId): array {
@@ -82,7 +87,7 @@ class ReminderService {
 	 * `openByUrgency`) for a reader with no browser code: by state, then by the sooner of the due
 	 * date and the estimate, a reminder with neither last in its state.
 	 *
-	 * @return list<array{vehicle: Vehicle, reminder: array<string, mixed>}>
+	 * @return list<array{vehicle: Vehicle, reminder: NextFleetListedReminder}>
 	 * @throws \OCP\DB\Exception
 	 */
 	public function due(string $userId): array {
@@ -102,7 +107,7 @@ class ReminderService {
 	}
 
 	/**
-	 * @return list<array{vehicle: Vehicle, reminder: array<string, mixed>}>
+	 * @return list<array{vehicle: Vehicle, reminder: NextFleetListedReminder}>
 	 * @throws \OCP\DB\Exception
 	 */
 	private function fleetBeside(string $userId): array {
@@ -120,11 +125,22 @@ class ReminderService {
 	}
 
 	/**
-	 * @return list<array<string, mixed>>
+	 * @return list<NextFleetListedReminder>
 	 * @throws \OCP\DB\Exception
 	 */
 	private function listed(Vehicle $vehicle): array {
-		$reminders = $this->reminders->findByVehicle((int)$vehicle->getId());
+		return $this->wired($vehicle, $this->reminders->findByVehicle((int)$vehicle->getId()));
+	}
+
+	/**
+	 * Reminders of one vehicle as the list answers them, in the order given; sync answers its
+	 * reminders through this too.
+	 *
+	 * @param list<Reminder> $reminders
+	 * @return list<NextFleetListedReminder>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function wired(Vehicle $vehicle, array $reminders): array {
 		$now = $this->time->now();
 		$today = $this->today();
 		// Only a reminder by km reads the chain, so a vehicle without one skips the query.
@@ -149,7 +165,7 @@ class ReminderService {
 	 * `first_due_months` is set on the inspection only: a new vehicle's first one may come later
 	 * than its cadence, and the sticker question prefills from it.
 	 *
-	 * @return list<array{key: string, mode: string, recur_months: ?int, recur_odo: ?int, lead_odo: ?int, first_due_months: ?int}>
+	 * @return list<NextFleetReminderTemplate>
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not see this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCP\DB\Exception
@@ -174,7 +190,7 @@ class ReminderService {
 	 * the request left out; the due date or km is always the request's.
 	 *
 	 * @param array<string, mixed> $fields
-	 * @return array<string, mixed> the row as written, in its wire form
+	 * @return NextFleetReminder the row as written, in its wire form
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not write this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \InvalidArgumentException if a field is not what its column holds
@@ -211,7 +227,7 @@ class ReminderService {
 	 *
 	 * @param array<string, mixed> $fields
 	 * @param int $expectedUpdatedAt the `updated_at` the client read
-	 * @return array<string, mixed> the row as it now stands, in its wire form
+	 * @return NextFleetReminder the row as it now stands, in its wire form
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not write this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the reminder has changed since
@@ -234,7 +250,7 @@ class ReminderService {
 	 * Ends the reminder, recurrence and all. Dismissing skips one occurrence; this is the explicit
 	 * act rule 6 asks for, so it takes EDIT, not DELETE.
 	 *
-	 * @return array<string, mixed> the row as it was left, in its wire form
+	 * @return NextFleetReminder the row as it was left, in its wire form
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not write this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the reminder has changed since
@@ -258,7 +274,7 @@ class ReminderService {
 	/**
 	 * Undo, on the token the delete answered with (TripService::restore()).
 	 *
-	 * @return array<string, mixed> the row as it now stands, in its wire form
+	 * @return NextFleetReminder the row as it now stands, in its wire form
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not write this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the reminder has changed since, or was never deleted
@@ -280,7 +296,7 @@ class ReminderService {
 	 * date stays (rule 6).
 	 *
 	 * @param mixed $until a plain day after today, YYYY-MM-DD
-	 * @return array<string, mixed> the row as it now stands, in its wire form
+	 * @return NextFleetReminder the row as it now stands, in its wire form
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not write this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the reminder has changed since
@@ -311,7 +327,7 @@ class ReminderService {
 	 * Skips this occurrence. A recurring reminder moves on a recurrence from the planned due, not
 	 * from today, since nothing was done; one that does not recur is left dismissed.
 	 *
-	 * @return array<string, mixed> the row as it now stands, in its wire form
+	 * @return NextFleetReminder the row as it now stands, in its wire form
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not write this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the reminder has changed since

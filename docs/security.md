@@ -9,7 +9,7 @@ The app holds a movement profile: where someone was, when, and why. Treat it acc
 | Attacker | What they want | Where they get in |
 |---|---|---|
 | Another user on the same instance | Read a colleague's trips | Guessable ids, missing access checks |
-| A shared driver | More than their role allows | Role checks done in the UI only |
+| A grantee | More than their role allows | Role checks done in the UI only |
 | The open internet | Any unauthenticated endpoint | Share links, QR routes, any route missing an auth annotation |
 | Someone uploading a file | Code execution in a viewer's browser | Receipt photos, PDFs, **SVG** |
 | Someone importing a file | Server resources, or a poisoned export | CSV import, CSV export opened in Excel |
@@ -19,24 +19,59 @@ The app holds a movement profile: where someone was, when, and why. Treat it acc
 ### Authorization
 
 - **Every controller method is annotated deliberately** — `#[NoAdminRequired]` on user endpoints,
-  `#[NoCSRFRequired]` only where an OCS route genuinely needs it or a read-only page is opened by
-  navigating to it (the [Fahrtenbuch export](architecture.md#the-fahrtenbuch-export): a navigation
-  carries no token, and the same-site cookie is still required), `#[BruteForceProtection]` on
+  `#[NoCSRFRequired]` only where a read-only page or download is opened by navigating to it (the
+  [Fahrtenbuch export](architecture.md#the-fahrtenbuch-export): a navigation carries no token, and
+  the same-site cookie is still required) — an OCS route needs none, `OCS-APIRequest` exempts it — `#[BruteForceProtection]` on
   anything token-addressed, `#[UserRateLimit]` on writes. An unannotated method fails review.
 - **One service decides access.** `VehicleAccess::may($uid, $op, $vehicle)`, backed by
-  `fleet_access` ([ADR 0001](adr/0001-own-access-table.md)). Controllers never reach a mapper
+  `fleet_access` ([ADR 0001](adr/0001-own-access-table.md)), and for an Entry or a booking found
+  on that vehicle `mayChange` or `mayBooking` in the same class: who entered or booked it counts
+  ([Nextcloud integration](architecture.md#nextcloud-integration)). Controllers never reach a mapper
   directly, and no mapper trusts an id from a request body. **IDOR is the realistic bug here** — the
-  API is id-addressed and sharing makes guessing worth the effort — so the integration suite asserts
+  API is id-addressed and grants make guessing worth the effort — so the integration suite asserts
   the stranger case for *every* endpoint, not one
   (`tests/Integration/VehicleIdorTest.php`, which reads its route list from `appinfo/routes.php`).
+  `tests/Unit/RouteSweepTest.php` fails without a server when a route has no arm there, or no OCS
+  twin unless it is a download.
+- **A grant reaches only whom a share could.** An owner who may not share grants nobody. Under the
+  admin's "members only" setting a grantee shares a group with the owner, and with group sharing
+  off no group is granted, as core's share checks read them ([Nextcloud integration](architecture.md#nextcloud-integration)). A grant hands over a
+  movement profile, more than most shares do; the picker offering no one else is not the check.
+- **A grant does not outlive its grantee.** Nextcloud lets a deleted uid or group id be taken
+  again, so a deleted account's grants are renamed to its pseudonym and a deleted group's are
+  revoked ([data model](architecture.md#data-model)). Otherwise whoever creates a group under an
+  old id inherits every car it reached.
 - **A refusal is a 403 and an unknown uuid a 404**, which does tell a caller that a uuid exists.
   That is the trade the PRD asks for, and it costs nothing: a v4 uuid is not guessed, it is leaked —
   and whoever leaked it also leaked the answer.
 - **File downloads are proxied** ([Nextcloud integration](architecture.md#nextcloud-integration)).
   The app's ACL decides, not the file's. That makes attaching the gate on the file side: a
-  `file_id` is taken only if it is a file in the attacher's own Files
-  ([documents](architecture.md#documents)). Otherwise any id on the instance would open somebody
-  else's Files to everyone who may view one vehicle.
+  `file_id` is taken only if it is a file in the attacher's own Files — owned by them and in their
+  home storage, since a group folder or an admin's external storage names whoever asks as the
+  owner ([documents](architecture.md#documents)). Otherwise any id on the instance would open somebody
+  else's Files to everyone who may view one vehicle. The access rule is asked before the file, so
+  a refused attacher learns nothing about an id. The [inbox](architecture.md#the-inbox) folder
+  follows the same rule: a folder of the user's own Files, never a share or a group folder.
+
+### The API
+
+The OCS API ([api](api.md)) is a second door to the same services. It decides nothing itself, so
+every rule above holds through it, and the IDOR matrix walks both doors. What it adds:
+
+- **A stolen app password is the account.** It acts as the user across Nextcloud, not only in this
+  app, and the app cannot narrow it. Nextcloud is the defence: Login Flow v2 hands one out without
+  the client seeing the login password and behind the second factor, a wrong one counts towards
+  brute-force protection, and the user revokes it under Devices & sessions, which ends the client's
+  access at its next call.
+- **Sync hands over everything at once.** A first sync, or one after a `reset`, is every row of
+  every vehicle the caller reaches: the movement profile in a few pages, the CSV export by another
+  door. It reaches what `VehicleAccess` lets the caller reach and no more; the cursor is opaque but
+  no credential, since every id in it is checked against that again. It is limited to 60 calls a
+  minute and 2000 rows a page. Each page is logged as an export is ([what is logged](#what-is-logged)).
+- **Each door has its own rate limit.** Nextcloud counts per controller method, so a user can make
+  60 writes a minute through each door. Accepted: both doors stand behind the same login.
+- **A client's cache is the client's to protect.** Sync exists so that a client can keep a copy;
+  once it is on a phone, nothing here protects it ([the client keeps nothing](#the-client-keeps-nothing)).
 
 ### Hostile content
 
@@ -50,8 +85,12 @@ The app holds a movement profile: where someone was, when, and why. Treat it acc
 - **CSV export is escaped against formula injection.** A field starting with `=`, `+`, `-`, `@`, tab
   or CR gets a leading apostrophe. Otherwise a trip named `=cmd|…` runs when a colleague opens the
   export in Excel — the classic bug in an app whose main output is CSV.
-- **CSV import is bounded**: size cap, row cap, streaming parser, no archives, no `unserialize`,
-  `json_decode` with a depth limit.
+- **CSV import is bounded** (`lib/Import/CsvReader.php`): at most 5 000 000 bytes and
+  20 000 data rows, read streaming. A row over 64 KiB, a NUL byte, an unclosed quote, CR-only line
+  breaks, or text that is not all UTF-8 (BOM or not) or all Windows-1252 refuses the file; nothing
+  else is guessed. No archives, no `unserialize`. A cell is text until a field parses it: nothing is
+  evaluated. The file is one the caller owns in their own Files, checked as a paper's is
+  (`OwnFiles`); a refused file is a 422 naming the reason, never a 500.
 - **Reports load no remote resources.** v1 renders printable HTML and ships no PDF library
   ([ADR 0005](adr/0005-no-pdf-library.md)), which removes this surface rather than defending it. The
   rule stands for the day a server-side renderer arrives: a renderer that fetches URLs is an SSRF
@@ -63,8 +102,9 @@ The app holds a movement profile: where someone was, when, and why. Treat it acc
 The entry sheet writes no `localStorage` ([entry sheet](ui.md#the-entry-sheet-in-detail)). A durable
 offline queue would hold destinations, purposes and partner names in a browser, on a phone that may
 be shared, lost or logged out of — the app's most sensitive data, in its least controlled place, for
-a problem an open form already solves. When the Android client introduces a real queue it introduces
-this threat with it, and it gets its own review.
+a problem an open form already solves. The web UI is the client meant here. The Android client is
+where a real queue arrives, and a synced copy of the fleet with it: it brings this threat along and
+gets its own review ([the API](#the-api)).
 
 The server-time header ([time](architecture.md#time)) is a diagnostic. It never rewrites a
 user-entered date, so a wrong or hostile clock cannot silently move a logbook entry.
@@ -111,9 +151,20 @@ release goes out signed with our certificate, which means our name is on whateve
 - Bounded input: integers clamped to sane ranges, string lengths capped, enums whitelisted.
 - **Logs never contain destinations, purposes or tokens.** Errors carry ids, not content.
 - **Export endpoints are rate-limited and logged.** A full trip CSV is the most sensitive artefact
-  this app can produce, and it is one request away. The same applies to the delta endpoint when the
-  OCS API arrives ([ADR 0006](adr/0006-one-api-surface-in-v1.md)).
+  this app can produce, and it is one request away. Sync is rate-limited and logged too
+  ([what is logged](#what-is-logged)).
 - `occ` commands never take secrets as arguments — shell history keeps them.
+
+### What is logged
+
+Data that leaves or enters in bulk leaves one line at `info` per request. The CSV export, each sync
+page and each import name who, which vehicle — "all reachable" for sync — what (table and year, or
+importer and record type) and how many rows. The logbook and the mileage claim name who, which
+vehicle and which year. Nothing else: no payload, and no file name, which can say whose car it is.
+
+`info` shows from `loglevel` 1; Nextcloud's default, 2, hides it, so an admin who wants the trail
+turns it on. Not `warning`: these are normal actions, and a sync client alone writes a line every
+few minutes. At warning level they would bury the warnings that need someone.
 
 ### Accepted risks, stated openly
 
@@ -121,6 +172,24 @@ A Nextcloud admin can read the database, and we do not encrypt trip data client-
 search, sorting and every report in [the maths](architecture.md#numbers-consumption-cost-emissions).
 That is a deliberate trade, and it belongs in the README rather than in a footnote after an
 incident.
+
+The review of M6–M9 (2026-10-03) left these open on purpose:
+
+- **A driver's maintenance record closes a reminder**, as anybody's does (M6). A driver can silence
+  one by recording work that was not done. The record names who entered it, and deleting it opens
+  the reminder again.
+- **An Entry's author can undo a manager's delete or void of it.** Undo takes the delete's rule,
+  and the author holds it for their own Entry. They could enter it again with `log` anyway; the
+  audit keeps both moves.
+- **Undoing a paper's *Remove* asks the row's rule, not the file's again.** It brings back the
+  attacher's file as it was attached, as a live paper keeps serving it. Nothing re-asks the file
+  side while a paper lives either.
+- **Access is read before the vehicle is held.** A write that passed just before a revoke commits
+  just after it: the same outcome as arriving a moment earlier.
+- **Adding a recipient tells whether an account exists.** Core's own sharee search answers an exact
+  uid the same way by default.
+- **Undoing an import writes no log line.** It soft-deletes only what the caller imported, so no
+  data leaves or enters ([what is logged](#what-is-logged)).
 
 ### Process
 

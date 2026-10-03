@@ -1,0 +1,9 @@
+Datum;Km-Stand;Kostenart;Bezeichnung;Kosten;Währung;Bemerkung
+15.01.2026;;6;Kfz-Steuer;120,00;EUR;
+10.02.2026;51200;1;Inspektion;289,90;EUR;mit Ölwechsel
+01.03.2026;;5;;480,00;EUR;
+12.03.2026;;9;Wäsche\; innen;12,00;EUR;
+20.03.2026;51900;4;;99,00;EUR;
+21.03.2026;;;Vignette;40,00;EUR;
+02.04.2026;;10;Kaufpreis;15000,00;EUR;
+03.04.2026;;16;Erstattung;50,00;EUR;

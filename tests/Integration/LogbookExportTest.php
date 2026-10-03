@@ -10,12 +10,14 @@ namespace OCA\NextFleet\Tests\Integration;
 
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\Trip;
+use OCA\NextFleet\Service\GrantService;
 use OCA\NextFleet\Service\LogbookExport;
 use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\IDBConnection;
 use OCP\IL10N;
+use OCP\IUserManager;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -29,19 +31,33 @@ use PHPUnit\Framework\TestCase;
 class LogbookExportTest extends TestCase {
 	/** Not a Nextcloud account: `created_by` is a string column with no key on it. */
 	private const AUTHOR = 'nextfleet-test-alice';
+	/** An account, since a grantee has to exist on the instance. */
+	private const DRIVER = 'nextfleet-test-logbook-ben';
 
 	private LogbookExport $export;
 	private TripService $trips;
 	private VehicleService $vehicles;
+	private GrantService $grants;
 	/** The year the server is in, so the flips written now fall into the year exported. */
 	private int $year;
 	private int $now;
+
+	public static function setUpBeforeClass(): void {
+		$users = \OCP\Server::get(IUserManager::class);
+		$users->get(self::DRIVER)?->delete();
+		$users->createUser(self::DRIVER, bin2hex(random_bytes(16)))?->setDisplayName('Ben Fahrer');
+	}
+
+	public static function tearDownAfterClass(): void {
+		\OCP\Server::get(IUserManager::class)->get(self::DRIVER)?->delete();
+	}
 
 	protected function setUp(): void {
 		$container = (new Application())->getContainer();
 		$this->export = $container->get(LogbookExport::class);
 		$this->trips = $container->get(TripService::class);
 		$this->vehicles = $container->get(VehicleService::class);
+		$this->grants = $container->get(GrantService::class);
 		$this->now = $container->get(ITimeFactory::class)->getTime();
 		$this->year = (int)gmdate('Y', $this->now);
 
@@ -59,11 +75,12 @@ class LogbookExportTest extends TestCase {
 			'fleet_trips' => 'created_by',
 			'fleet_audit' => 'created_by',
 			'fleet_odo_readings' => 'created_by',
+			'fleet_access' => 'created_by',
 			'fleet_vehicles' => 'user_id',
 		];
 		foreach ($tables as $table => $column) {
 			$qb = $db->getQueryBuilder();
-			$qb->delete($table)->where($qb->expr()->eq($column, $qb->createNamedParameter(self::AUTHOR)));
+			$qb->delete($table)->where($qb->expr()->in($column, $qb->createNamedParameter([self::AUTHOR, self::DRIVER], $qb::PARAM_STR_ARRAY)));
 			$qb->executeStatement();
 		}
 	}
@@ -214,6 +231,44 @@ class LogbookExportTest extends TestCase {
 			"/Nachträglich storniert am {$at}Nachträglich wiederhergestellt am $at\. Vorher: storniert am $at$/u",
 			$lines[0],
 		);
+	}
+
+	/** A vehicle nobody else was given access to prints as it did before access existed. */
+	public function testALogbookNobodyElseReachesNamesNobody(): void {
+		$uuid = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 134', 'jurisdiction' => 'de'])->getUuid();
+		$this->trip($uuid, gmmktime(8, 0, 0, 1, 10, $this->year), ['start_odo' => 120000, 'end_odo' => 120450]);
+
+		[, $page] = $this->printed($uuid, $this->year);
+
+		$this->assertSame(0.0, $page->evaluate('count(//th[. = "Eingetragen von"])'));
+	}
+
+	/**
+	 * Once someone was given access, each line names who entered it - and still does after the
+	 * grant is revoked, because the trips that driver entered are still in the year. An author with
+	 * no account, as an erased one's pseudonym, reads as the id the row carries.
+	 */
+	public function testOnceAccessWasGivenEachLineSaysWhoEnteredIt(): void {
+		$uuid = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 135', 'jurisdiction' => 'de'])->getUuid();
+		$grants = $this->grants->grant(self::AUTHOR, $uuid, ['grantee' => self::DRIVER, 'grantee_type' => 'user', 'role' => 'driver']);
+		$january = gmmktime(8, 0, 0, 1, 10, $this->year);
+		$this->trip($uuid, $january, ['start_odo' => 120000, 'end_odo' => 120450]);
+		$this->trips->record(self::DRIVER, $uuid, [
+			'started_at' => $january + 86400,
+			'started_at_off' => 60,
+			'ended_at' => $january + 86400 + 3600,
+			'ended_at_off' => 60,
+			'start_odo' => 120450,
+			'end_odo' => 120500,
+			'category' => Trip::PRIVATE,
+		]);
+		$this->grants->revoke(self::AUTHOR, $uuid, $grants[0]['uuid']);
+
+		[$lines, $page] = $this->printed($uuid, $this->year);
+
+		$this->assertSame(1.0, $page->evaluate('count(//th[. = "Eingetragen von"])'));
+		$this->assertStringContainsString(self::AUTHOR, $lines[0]);
+		$this->assertStringContainsString('Ben Fahrer', $lines[1]);
 	}
 
 	/** A trip set off while the mode is on is marked with what it lacks: next January is under it. */

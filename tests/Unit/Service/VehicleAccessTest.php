@@ -132,8 +132,8 @@ class VehicleAccessTest extends TestCase {
 		yield 'a viewer does not edit' => ['viewer', VehicleAccess::EDIT, false];
 		yield 'a viewer does not delete' => ['viewer', VehicleAccess::DELETE, false];
 		yield 'a viewer does not own' => ['viewer', VehicleAccess::OWN, false];
-		// Nothing writes this table yet, so a word from an import or a later migration is the
-		// realistic way one arrives, and it must not read as more than the roles we have.
+		// Granting takes only the roles we have, so a word from a later migration that drops one
+		// is the realistic way another arrives, and it must not read as more than those.
 		yield 'a role the domain does not have' => ['admin', VehicleAccess::VIEW, false];
 	}
 

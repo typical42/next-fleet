@@ -70,6 +70,8 @@ use OCP\DB\Types;
  * @method void setSecondValue(?int $secondValue)
  * @method string getReminderMail()
  * @method void setReminderMail(string $reminderMail)
+ *
+ * @psalm-import-type NextFleetVehicle from \OCA\NextFleet\ResponseDefinitions
  */
 class Vehicle extends BaseEntity implements \JsonSerializable {
 	public const ACTIVE = 'active';
@@ -120,6 +122,24 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 	 * @var list<string>
 	 */
 	private array $may = [];
+	/**
+	 * The owner's display name, to whoever reaches the vehicle through a grant; null to the owner,
+	 * whose own vehicle needs no name beneath it. Not a column, like `may`.
+	 */
+	private ?string $ownedBy = null;
+	/**
+	 * Who has the car: the booker it is out with and when they planned to bring it back
+	 * (VehicleService::pool()). Not a column, like `may`.
+	 *
+	 * @var array{user_id: string, user_name: string, ends_at: int, ends_at_off: int}|null
+	 */
+	private ?array $outWith = null;
+	/**
+	 * The reader's own next booking of it within a week, its uuid and span. Not a column, like `may`.
+	 *
+	 * @var array{uuid: string, starts_at: int, starts_at_off: int, ends_at: int, ends_at_off: int}|null
+	 */
+	private ?array $myNextBooking = null;
 
 	public function __construct() {
 		parent::__construct();
@@ -162,12 +182,40 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 		$this->may = $may;
 	}
 
+	public function getOwnedBy(): ?string {
+		return $this->ownedBy;
+	}
+
+	public function setOwnedBy(?string $ownedBy): void {
+		$this->ownedBy = $ownedBy;
+	}
+
+	/** @return array{user_id: string, user_name: string, ends_at: int, ends_at_off: int}|null */
+	public function getOutWith(): ?array {
+		return $this->outWith;
+	}
+
+	/** @param array{user_id: string, user_name: string, ends_at: int, ends_at_off: int}|null $outWith */
+	public function setOutWith(?array $outWith): void {
+		$this->outWith = $outWith;
+	}
+
+	/** @return array{uuid: string, starts_at: int, starts_at_off: int, ends_at: int, ends_at_off: int}|null */
+	public function getMyNextBooking(): ?array {
+		return $this->myNextBooking;
+	}
+
+	/** @param array{uuid: string, starts_at: int, starts_at_off: int, ends_at: int, ends_at_off: int}|null $myNextBooking */
+	public function setMyNextBooking(?array $myNextBooking): void {
+		$this->myNextBooking = $myNextBooking;
+	}
+
 	/**
 	 * The wire form is the column names: what a client reads back is what it may send. The
 	 * numeric `id` stays inside - the uuid is the identity - and `updated_at` goes out because
 	 * the next write has to carry it back (docs/architecture.md#concurrency).
 	 *
-	 * @return array<string, mixed>
+	 * @return NextFleetVehicle
 	 */
 	public function jsonSerialize(): array {
 		return [
@@ -204,7 +252,24 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 			'deleted_at' => $this->deletedAt,
 			'created_by' => $this->createdBy,
 			// Read-only: the service writes only the columns it lists, so one sent back is dropped.
-			'may' => $this->may,
+			'may' => $this->wiredMay(),
+			'owned_by' => $this->ownedBy,
+			'out_with' => $this->outWith,
+			'my_next_booking' => $this->myNextBooking,
 		];
+	}
+
+	/**
+	 * `may`, and `book` where BookingService::bookable() takes a booking. A word the screen hides
+	 * by, not a sixth operation - VehicleAccess never sees it. Derived here, at the last moment,
+	 * so an edit that lays the car up answers without it. `'log'` is VehicleAccess::LOG, spelt
+	 * out so an entity does not reach into the service layer.
+	 *
+	 * @return list<string>
+	 */
+	private function wiredMay(): array {
+		return in_array('log', $this->may, true) && $this->lifecycle === self::ACTIVE
+			? [...$this->may, 'book']
+			: $this->may;
 	}
 }

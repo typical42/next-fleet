@@ -6,16 +6,22 @@
 import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import { useHotKey } from '@nextcloud/vue/composables/useHotKey'
-import { ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import DueBanner from '../components/DueBanner.vue'
 import EntrySheet from '../components/EntrySheet.vue'
+import ImportSheet from '../components/ImportSheet.vue'
 import KpiHeader from '../components/KpiHeader.vue'
+import LeaveVehicle from '../components/LeaveVehicle.vue'
 import Timeline from '../components/Timeline.vue'
+import VehicleBookings from '../components/VehicleBookings.vue'
 import VehicleDocuments from '../components/VehicleDocuments.vue'
 import VehicleSheet from '../components/VehicleSheet.vue'
 import VehicleSticker from '../components/VehicleSticker.vue'
+import { useVehiclesStore } from '../store/index.js'
+import { may } from '../utils/access.js'
 import { nameOf, subtitleOf } from '../utils/format.js'
+import { holderWords, nextBookingWords } from '../utils/pool.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -26,9 +32,15 @@ const props = defineProps({
 
 defineEmits(['costs'])
 
-// Read once: the sticker asks for one sheet on arrival, not for one whenever the flag is set.
-const entering = ref(props.enter)
+const store = useVehiclesStore()
+const logs = computed(() => may(props.vehicle, 'log'))
+// Overdue is read off the clock whenever the vehicle is read again, as after any booking write.
+const holder = computed(() => holderWords(props.vehicle))
+// Read once: the sticker asks for one sheet on arrival, not for one whenever the flag is set. A
+// viewer who scanned it lands on the screen without one.
+const entering = ref(props.enter && logs.value)
 const editing = ref(false)
+const importing = ref(false)
 /**
  * The timeline row the sheet is open on, or null.
  *
@@ -42,6 +54,12 @@ const opened = ref(null)
  */
 const closing = ref(null)
 /**
+ * The returned booking whose trip is being logged, from the Bookings section, or null.
+ *
+ * @type {import('vue').Ref<import('../services/api.js').Booking|null>}
+ */
+const logging = ref(null)
+/**
  * The vehicle's documents as its section last read them; the timeline shows the linked ones.
  *
  * @type {import('vue').Ref<import('../services/api.js').Document[]>}
@@ -52,19 +70,32 @@ const papers = ref([])
 // this screen's business - what is, is that a write happened and both are now a row behind.
 const timeline = ref(null)
 const kpis = ref(null)
+const bookings = ref(null)
 
-/** Reads the list and the figures back after a write. */
+/**
+ * Reads the list and the figures back after a write, and the bookings: a trip logged, voided or
+ * restored changes what its booking's row says.
+ */
 function written() {
 	timeline.value?.reload()
 	kpis.value?.reload()
+	bookings.value?.reload()
 }
+
+// The shell keeps one vehicle screen and swaps the vehicle under it (src/App.vue); a sheet on the
+// last one's booking would log its trip onto this one.
+watch(() => props.vehicle.uuid, () => {
+	logging.value = null
+})
 
 // `n` is the primary action of the screen in view (docs/ui.md), and the shell mounts one screen
 // at a time - so the key belongs to the screen rather than to an arbiter above it. useHotKey
 // already passes over a keystroke typed into a field or aimed at an open sheet, and drops the
 // listener when the screen goes.
 useHotKey('n', () => {
-	entering.value = true
+	if (logs.value) {
+		entering.value = true
+	}
 })
 </script>
 
@@ -77,25 +108,41 @@ useHotKey('n', () => {
 				<p class="vehicle__subtitle">
 					{{ subtitleOf(vehicle) }}
 				</p>
+				<p v-if="holder" class="vehicle__holder" :class="{ 'vehicle__holder--overdue': holder.overdue }">
+					{{ holder.words }}
+				</p>
+				<p v-if="nextBookingWords(vehicle)" class="vehicle__next">
+					{{ nextBookingWords(vehicle) }}
+				</p>
+				<!-- Under the name rather than among the actions: it is about whose car this is. -->
+				<LeaveVehicle :vehicle="vehicle" />
 			</div>
 			<div class="vehicle__actions">
-				<NcButton variant="primary" @click="entering = true">
+				<NcButton v-if="logs" variant="primary" @click="entering = true">
 					{{ t('nextfleet', 'New entry') }}
 				</NcButton>
 				<!-- The shell swaps the screen (src/App.vue). -->
 				<NcButton @click="$emit('costs')">
 					{{ t('nextfleet', 'Costs') }}
 				</NcButton>
-				<NcButton @click="editing = true">
+				<NcButton v-if="may(vehicle, 'edit')" @click="editing = true">
 					{{ t('nextfleet', 'Edit vehicle') }}
 				</NcButton>
-				<VehicleSticker :vehicle="vehicle" />
+				<!-- The sticker's link opens the entry sheet, which is no use to somebody who adds nothing. -->
+				<VehicleSticker v-if="logs" :vehicle="vehicle" />
 			</div>
 		</div>
 
 		<KpiHeader ref="kpis" :vehicle="vehicle" />
 
 		<DueBanner :vehicle="vehicle" @done="closing = $event" />
+
+		<VehicleBookings ref="bookings"
+			:vehicle="vehicle"
+			:papers="papers"
+			@changed="store.refresh(vehicle.uuid)"
+			@log="logging = $event"
+			@open="opened = $event" />
 
 		<!-- Above the timeline, which scrolls on without end. -->
 		<VehicleDocuments :vehicle="vehicle" @listed="papers = $event" />
@@ -116,6 +163,11 @@ useHotKey('n', () => {
 			:closes="closing"
 			@close="closing = null"
 			@saved="written" />
+		<EntrySheet v-if="logging"
+			:vehicle="vehicle"
+			:booking="logging"
+			@close="logging = null"
+			@saved="written" />
 		<EntrySheet v-if="opened"
 			:vehicle="vehicle"
 			:entry="opened"
@@ -126,7 +178,14 @@ useHotKey('n', () => {
 		<VehicleSheet v-if="editing"
 			:vehicle="vehicle"
 			@close="editing = false"
+			@import="editing = false; importing = true"
 			@saved="editing = false" />
+		<!-- In the vehicle sheet's place rather than over it: one dialog, one way out. Its result
+		     and its undo are the toast's (src/components/UndoToast.vue). -->
+		<ImportSheet v-if="importing"
+			:vehicle="vehicle"
+			@close="importing = false"
+			@imported="importing = false; written()" />
 	</div>
 </template>
 
@@ -152,5 +211,11 @@ useHotKey('n', () => {
 
 .vehicle__subtitle {
 	color: var(--color-text-maxcontrast);
+}
+
+/* Text, so the text token, as on the overview. */
+.vehicle__holder--overdue {
+	color: var(--color-warning-text);
+	font-weight: bold;
 }
 </style>

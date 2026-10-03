@@ -19,6 +19,7 @@ use OCA\NextFleet\Service\MailService;
 use OCA\NextFleet\Service\NotificationService;
 use OCA\NextFleet\Service\RecipientService;
 use OCA\NextFleet\Service\ReminderService;
+use OCA\NextFleet\Service\UserZone;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\App\IAppManager;
@@ -40,15 +41,34 @@ use Psr\Log\LoggerInterface;
  * (docs/development.md#testing).
  */
 class ReminderMailTest extends TestCase {
+	use Accounts;
+
 	private const OWNER = 'nextfleet-test-mail-owner';
 	/** On the list, with no Vehicle Access: told the plate and title, not given the link. */
 	private const OUTSIDER = 'nextfleet-test-mail-outsider';
 	private const MAILPIT = 'http://mail:8025/api/v1';
 
-	private string $password;
+	private const LANGUAGES = [self::OWNER => 'de', self::OUTSIDER => 'en'];
+
+	private static string $password;
 	private VehicleService $vehicles;
 	private ReminderService $reminders;
 	private RecipientService $recipients;
+
+	public static function setUpBeforeClass(): void {
+		self::deleteAccounts(array_keys(self::LANGUAGES));
+		self::$password = bin2hex(random_bytes(16));
+		$users = \OCP\Server::get(IUserManager::class);
+		$config = \OCP\Server::get(IConfig::class);
+		foreach (self::LANGUAGES as $uid => $language) {
+			$users->createUser($uid, self::$password)->setSystemEMailAddress($uid . '@example.org');
+			$config->setUserValue($uid, 'core', 'lang', $language);
+		}
+	}
+
+	public static function tearDownAfterClass(): void {
+		self::deleteAccounts(array_keys(self::LANGUAGES));
+	}
 
 	protected function setUp(): void {
 		\OCP\Server::get(IAppManager::class)->loadApps();
@@ -58,35 +78,31 @@ class ReminderMailTest extends TestCase {
 		$this->recipients = $container->get(RecipientService::class);
 		$this->forget();
 		$this->mailpit('DELETE', '/messages');
-
-		$this->password = bin2hex(random_bytes(16));
-		$users = \OCP\Server::get(IUserManager::class);
-		$config = \OCP\Server::get(IConfig::class);
-		foreach ([self::OWNER => 'de', self::OUTSIDER => 'en'] as $uid => $language) {
-			$users->createUser($uid, $this->password)->setSystemEMailAddress($uid . '@example.org');
-			$config->setUserValue($uid, 'core', 'lang', $language);
-		}
 	}
 
+	/** Before the accounts go: a deleted account's uid is on none of its rows. */
 	protected function tearDown(): void {
 		$this->forget();
 	}
 
 	/**
-	 * The accounts and the rows this suite invents, gone for real. Rows first: deleting an account
-	 * pseudonymises them, and they would outlive the run.
+	 * The rows and the notifications this suite invents gone for real, and the accounts as
+	 * setUpBeforeClass() left them: a case may move one's zone or disable it.
 	 */
 	private function forget(): void {
 		$db = \OCP\Server::get(IDBConnection::class);
-		$people = [self::OWNER, self::OUTSIDER];
+		$people = array_keys(self::LANGUAGES);
 		foreach (['fleet_vehicles' => 'user_id', 'fleet_reminders' => 'created_by', 'fleet_reminder_recipients' => 'user_id', 'fleet_reminder_receipts' => 'user_id'] as $table => $column) {
 			$qb = $db->getQueryBuilder();
 			$qb->delete($table)->where($qb->expr()->in($column, $qb->createNamedParameter($people, $qb::PARAM_STR_ARRAY)));
 			$qb->executeStatement();
 		}
+		$manager = \OCP\Server::get(\OCP\Notification\IManager::class);
 		$users = \OCP\Server::get(IUserManager::class);
-		foreach ([self::OWNER, self::OUTSIDER] as $uid) {
-			$users->get($uid)?->delete();
+		foreach ($people as $uid) {
+			$manager->markProcessed($manager->createNotification()->setApp(Application::APP_ID)->setUser($uid));
+			\OCP\Server::get(IConfig::class)->deleteUserValue($uid, 'core', 'timezone');
+			$users->get($uid)?->setEnabled(true);
 		}
 	}
 
@@ -276,6 +292,7 @@ class ReminderMailTest extends TestCase {
 			\OCP\Server::get(IUserManager::class),
 			\OCP\Server::get(IFactory::class),
 			\OCP\Server::get(IConfig::class),
+			$container->get(UserZone::class),
 			\OCP\Server::get(IURLGenerator::class),
 			$clock,
 			$db,
@@ -308,7 +325,7 @@ class ReminderMailTest extends TestCase {
 		$response = \OCP\Server::get(IClientService::class)->newClient()->get(
 			'http://localhost/ocs/v2.php/apps/notifications/api/v2/notifications?format=json',
 			[
-				'auth' => [$uid, $this->password],
+				'auth' => [$uid, self::$password],
 				'headers' => ['OCS-APIRequest' => 'true'],
 				'nextcloud' => ['allow_local_address' => true],
 			],

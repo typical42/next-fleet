@@ -6,39 +6,18 @@
 import { expect, test } from '@playwright/test'
 import { readFile } from 'node:fs/promises'
 
-import { api, appPage, audit, choice, fits, login, ocs, open, opened, removeVehicles, row, settingsPage } from './app.js'
-import { grant } from './server.js'
+import { runAccount } from './accounts.js'
+import { api, appPage, audit, choice, dav, fileId, fits, importing, inboxAt, login, ocs, open, opened, photo, pick, removeVehicles, row, settingsPage } from './app.js'
 
 // Disjoint from every other file's prefix, as a substring too (tests/e2e/m2-slice.spec.js says why).
 const plates = 'M5-E2E-'
-// The accounts each run invents, and the admin's folder the papers sit in.
+// The accounts each run invents, and the folder in the run account's Files the papers sit in.
 const people = 'm5e2e-'
 const folder = 'M5-E2E'
+const me = runAccount().uid
 
 /**
- * WebDAV on the admin's Files from inside the signed-in page, as the Files app writes.
- *
- * @param {import('@playwright/test').Page} page - a page on a signed-in Nextcloud
- * @param {string} method - the HTTP verb
- * @param {string} path - below the admin's Files
- * @param {object} [options] - what else to send
- * @param {string} [options.body] - the request body
- * @param {Record<string, string>} [options.headers] - beside the CSRF token
- * @return {Promise<{status: number, text: string}>} the answer, whole
- */
-function dav(page, method, path, { body, headers = {} } = {}) {
-	return page.evaluate(async ({ method, path, body, headers }) => {
-		const response = await fetch(`/remote.php/dav/files/admin/${path}`, {
-			method,
-			headers: { ...headers, requesttoken: document.head.dataset.requesttoken ?? '' },
-			body,
-		})
-		return { status: response.status, text: await response.text() }
-	}, { method, path, body, headers })
-}
-
-/**
- * Puts a file in the admin's Files and answers its id, which is what the file picker hands over.
+ * Puts a file in the run account's Files and answers its id, which is what the file picker hands over.
  *
  * @param {import('@playwright/test').Page} page - a page on a signed-in Nextcloud
  * @param {string} name - the file's name in the folder
@@ -47,14 +26,8 @@ function dav(page, method, path, { body, headers = {} } = {}) {
  */
 async function upload(page, name, content) {
 	const path = `${folder}/${encodeURIComponent(name)}`
-	expect((await dav(page, 'PUT', path, { body: content })).status).toBe(201)
-	const found = await dav(page, 'PROPFIND', path, {
-		headers: { Depth: '0', 'Content-Type': 'application/xml' },
-		body: '<d:propfind xmlns:d="DAV:" xmlns:oc="http://owncloud.org/ns"><d:prop><oc:fileid/></d:prop></d:propfind>',
-	})
-	const id = /<oc:fileid>(\d+)<\/oc:fileid>/.exec(found.text)?.[1]
-	expect(id, found.text).toBeDefined()
-	return Number(id)
+	expect((await dav(page, me, 'PUT', path, { body: content })).status).toBe(201)
+	return fileId(page, me, path)
 }
 
 test.beforeEach(async ({ page }) => {
@@ -64,21 +37,25 @@ test.beforeEach(async ({ page }) => {
 	for (const uid of users) {
 		await ocs(page, 'DELETE', `/cloud/users/${uid}`)
 	}
-	await dav(page, 'DELETE', folder)
-	expect((await dav(page, 'MKCOL', folder)).status).toBe(201)
+	const { groups } = await ocs(page, 'GET', `/cloud/groups?search=${people}`)
+	for (const gid of groups) {
+		await ocs(page, 'DELETE', `/cloud/groups/${gid}`)
+	}
+	await dav(page, me, 'DELETE', folder)
+	expect((await dav(page, me, 'MKCOL', folder)).status).toBe(201)
 })
 
 // The one place in M5 where a bug leaks a file across an access boundary (PRD M5): the paper is in
-// the admin's Files and shared with nobody, so only the vehicle's grant can be serving it.
+// the run account's Files and shared with nobody, so only the vehicle's grant can be serving it.
 test('a paper downloads for a driver of the vehicle, for nobody else, and not once it is deleted', async ({ page, playwright }, testInfo) => {
-	// Two accounts and a grant through `docker exec`: 33 s on an idle stack, past 90 s beside the
+	// Two accounts and a grant: 33 s on an idle stack, past 90 s beside the
 	// rest of the suite.
 	test.slow()
 	const vehicle = await api(page, { method: 'POST', path: '/api/vehicles', body: { plate: `${plates}doc-${Date.now()}`, jurisdiction: 'de' } })
 	// An SVG, because it is the receipt that would run script if it were ever shown inline.
 	const receipt = '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"/>'
-	const fileId = await upload(page, 'Beleg Werkstatt.svg', receipt)
-	const [paper] = await api(page, { method: 'POST', path: `/api/vehicles/${vehicle.uuid}/documents`, body: { file_id: fileId, kind: 'receipt' } })
+	const id = await upload(page, 'Beleg Werkstatt.svg', receipt)
+	const [paper] = await api(page, { method: 'POST', path: `/api/vehicles/${vehicle.uuid}/documents`, body: { file_id: id, kind: 'receipt' } })
 
 	/**
 	 * A signed-in browser of an account of its own.
@@ -91,7 +68,7 @@ test('a paper downloads for a driver of the vehicle, for nobody else, and not on
 		const password = `${uid}-Secret-2026!`
 		await ocs(page, 'POST', '/cloud/users', { userid: uid, password })
 		if (role !== null) {
-			await grant(testInfo.project.name, vehicle.uuid, uid, role)
+			await api(page, { method: 'POST', path: `/api/vehicles/${vehicle.uuid}/grants`, body: { grantee: uid, grantee_type: 'user', role } })
 		}
 		return playwright.request.newContext({
 			baseURL: testInfo.project.use.baseURL,
@@ -117,7 +94,7 @@ test('a paper downloads for a driver of the vehicle, for nobody else, and not on
 	expect((await stranger.get(link)).status()).toBe(403)
 
 	// A `file_id` survives a move but not a delete, and the trash bin is not somewhere we serve from.
-	expect((await dav(page, 'DELETE', `${folder}/${encodeURIComponent('Beleg Werkstatt.svg')}`)).status).toBe(204)
+	expect((await dav(page, me, 'DELETE', `${folder}/${encodeURIComponent('Beleg Werkstatt.svg')}`)).status).toBe(204)
 	expect((await driver.get(link)).status()).toBe(404)
 
 	await driver.dispose()
@@ -139,15 +116,7 @@ test('a paper picked from Files is listed on the vehicle and opens from its entr
 	await page.goto(appPage)
 	await open(page, plate)
 	await page.getByRole('button', { name: 'Add document' }).click()
-	const picker = page.getByRole('dialog', { name: 'Choose a document' })
-	// The picker opens where it was last left, which after an earlier run is the folder itself.
-	const inFolder = picker.getByRole('row').filter({ hasText: 'Rechnung Ölwechsel' })
-	await expect(picker.locator(`[data-filename="${folder}"]`).or(inFolder)).toBeVisible()
-	if (await inFolder.count() === 0) {
-		await picker.locator(`[data-filename="${folder}"]`).click()
-	}
-	await inFolder.click()
-	await picker.getByRole('button', { name: 'Choose' }).click()
+	await pick(page.getByRole('dialog', { name: 'Choose a document' }), 'Rechnung Ölwechsel', folder)
 
 	const ask = page.getByRole('dialog', { name: 'Attach document' })
 	await opened(ask)
@@ -167,6 +136,22 @@ test('a paper picked from Files is listed on the vehicle and opens from its entr
 	const clip = page.locator('.timeline').getByRole('link', { name: 'Open Rechnung Ölwechsel.txt' })
 	const [download] = await Promise.all([page.waitForEvent('download'), clip.click()])
 	expect(download.suggestedFilename()).toBe('Rechnung Ölwechsel.txt')
+
+	// Removed and taken back from the toast, as every other delete is.
+	await section.getByRole('button', { name: 'Remove Rechnung Ölwechsel.txt' }).click()
+	await expect(section.getByRole('link', { name: 'Rechnung Ölwechsel.txt' })).toBeHidden()
+	await expect(page.locator('.toast')).toContainText('The document was removed.')
+	await page.locator('.toast').getByRole('button', { name: 'Undo' }).click()
+	await expect(page.locator('.toast')).toBeHidden()
+	await expect(section.getByRole('link', { name: 'Rechnung Ölwechsel.txt' })).toBeVisible()
+
+	// The file deleted behind the screen's back: the tap says so in place and the app stays.
+	expect((await dav(page, me, 'DELETE', `${folder}/${encodeURIComponent('Rechnung Ölwechsel.txt')}`)).status).toBe(204)
+	await section.getByRole('link', { name: 'Rechnung Ölwechsel.txt' }).click()
+	await expect(section).toContainText('This document is gone')
+	await clip.click()
+	await expect(page.locator('.row__papers')).toContainText('This document is gone')
+	expect(page.url()).toContain('/apps/nextfleet')
 })
 
 /**
@@ -285,86 +270,360 @@ test('the sticker opens the entry sheet on its vehicle', async ({ page }) => {
 	expect(new URL(page.url()).searchParams.has('entry')).toBe(false)
 })
 
-// Every screen and sheet at the narrowest width, in both themes: the accessibility sweep (PRD M5).
-// One major, for the reason tests/e2e/m1-slice.spec.js gives.
-for (const colorScheme of /** @type {const} */ (['light', 'dark'])) {
-	test.describe(`at 320 x 640, ${colorScheme}`, { tag: '@nc34' }, () => {
-		test.use({ viewport: { width: 320, height: 640 }, colorScheme })
+/** What the app owns while a sheet is open. */
+const withSheet = ['#nextfleet', '[role="dialog"]']
 
-		test('every screen fits the width and passes an axe audit', async ({ page }) => {
-			test.slow()
-			const plate = `${plates}320-${colorScheme}`
-			const { vehicle } = await march(page, plate)
-			// Due within the warning window, so the banner and the overview's traffic light show.
-			const soon = new Date(Date.now() + 10 * 86400_000).toISOString().slice(0, 10)
-			await api(page, { method: 'POST', path: `/api/vehicles/${vehicle.uuid}/reminders`, body: { template_key: 'oil_change', due_date: soon, due_odo: 11000 } })
-			const withSheet = ['#nextfleet', '[role="dialog"]']
-			/**
-			 * @param {string} screen - what is on screen, so a failure names it
-			 * @param {string[]} [within] - what the app owns there
-			 * @param {string[]} [scrolls] - what scrolls sideways on purpose
-			 */
-			const check = async (screen, within, scrolls) => {
-				await fits(page, screen, scrolls)
-				await audit(page, screen, within)
-			}
-			/**
-			 * @param {string} button - what opens it
-			 * @param {string} name - the sheet's title
-			 * @return {Promise<import('@playwright/test').Locator>} the sheet, all the way open
-			 */
-			const sheet = async (button, name) => {
-				await page.getByRole('button', { name: button, exact: true }).click()
-				const dialog = page.getByRole('dialog', { name })
-				await opened(dialog)
-				return dialog
-			}
+/**
+ * @param {import('@playwright/test').Page} page - the page as it stands
+ * @param {string} screen - what is on screen, so a failure names it
+ * @param {string[]} [within] - what the app owns there
+ * @param {string[]} [scrolls] - what scrolls sideways on purpose
+ */
+async function check(page, screen, within, scrolls) {
+	await fits(page, screen, scrolls)
+	await audit(page, screen, within)
+}
 
-			await page.goto(appPage)
-			await expect(row(page, plate)).toBeVisible()
-			await check('the overview')
+/**
+ * @param {import('@playwright/test').Page} page - a page showing the vehicle screen
+ * @param {string} button - what opens it
+ * @param {string} name - the sheet's title
+ * @return {Promise<import('@playwright/test').Locator>} the sheet, all the way open
+ */
+async function sheet(page, button, name) {
+	await page.getByRole('button', { name: button, exact: true }).click()
+	const dialog = page.getByRole('dialog', { name })
+	await opened(dialog)
+	return dialog
+}
 
-			await open(page, plate)
-			await expect(page.locator('.due__row')).toHaveCount(1)
-			await expect(page.locator('.timeline').getByRole('listitem')).toHaveCount(3)
-			await check('the vehicle screen')
+/**
+ * @param {import('@playwright/test').Page} page - a page on a signed-in Nextcloud
+ * @param {string} uuid - the vehicle's
+ */
+async function soonDue(page, uuid) {
+	// Due within the warning window, so the banner and the overview's traffic light show.
+	const soon = new Date(Date.now() + 10 * 86400_000).toISOString().slice(0, 10)
+	await api(page, { method: 'POST', path: `/api/vehicles/${uuid}/reminders`, body: { template_key: 'oil_change', due_date: soon, due_odo: 11000 } })
+}
 
-			const entry = await sheet('New entry', 'New entry')
-			for (const kind of ['Trip', 'Energy', 'Maintenance', 'Expense', 'Odometer']) {
-				await choice(entry, kind).click()
-				await check(`the entry sheet, ${kind}`, withSheet)
-			}
-			await entry.getByRole('button', { name: 'Cancel' }).click()
+// Every screen and sheet in both themes, at the narrowest width and at the store screenshots'
+// (tools/screenshots.mjs): the accessibility sweep (PRD M5, M6). One major, for the reason
+// tests/e2e/m1-slice.spec.js gives.
+for (const viewport of [{ width: 320, height: 640 }, { width: 1280, height: 800 }]) {
+	// Below Nextcloud's 1024 px breakpoint the navigation folds behind a toggle.
+	const folded = viewport.width < 1024
+	for (const colorScheme of /** @type {const} */ (['light', 'dark'])) {
+		const at = `${viewport.width}-${colorScheme}`
+		test.describe(`at ${viewport.width} x ${viewport.height}, ${colorScheme}`, { tag: '@nc34' }, () => {
+			test.use({ viewport, colorScheme })
 
-			await page.locator('.due__open').click()
-			const reminder = page.getByRole('dialog', { name: 'Edit reminder' })
-			await opened(reminder)
-			await check('the reminder sheet', withSheet)
-			await reminder.getByRole('button', { name: 'Cancel' }).click()
+			test('every screen fits the width and passes an axe audit', async ({ page }) => {
+				test.slow()
+				const plate = `${plates}${at}`
+				const { vehicle } = await march(page, plate)
+				await soonDue(page, vehicle.uuid)
 
-			// With the account picker in it (docs/ui.md).
-			const edit = await sheet('Edit vehicle', 'Edit vehicle')
-			await check('the vehicle sheet', withSheet)
-			await edit.getByRole('button', { name: 'Cancel' }).click()
+				await page.goto(appPage)
+				await expect(row(page, plate)).toBeVisible()
+				await check(page, 'the overview')
 
-			await sheet('QR sticker', 'QR sticker')
-			await check('the sticker', withSheet)
-			await page.keyboard.press('Escape')
+				await open(page, plate)
+				await expect(page.locator('.due__row')).toHaveCount(1)
+				await expect(page.locator('.timeline').getByRole('listitem')).toHaveCount(3)
+				await check(page, 'the vehicle screen')
 
-			await page.getByRole('button', { name: 'Costs', exact: true }).click()
-			await page.getByRole('button', { name: 'Previous year' }).click()
-			await expect(page.getByRole('region', { name: 'Costs by month' })).toBeVisible()
-			await check('the Costs screen', undefined, ['.costs__table', '.costs__months li'])
+				const entry = await sheet(page, 'New entry', 'New entry')
+				for (const kind of ['Trip', 'Energy', 'Maintenance', 'Expense', 'Odometer']) {
+					await choice(entry, kind).click()
+					await check(page, `the entry sheet, ${kind}`, withSheet)
+				}
+				await entry.getByRole('button', { name: 'Cancel' }).click()
 
-			await page.getByRole('button', { name: 'Open navigation' }).click()
-			await page.locator('.app-navigation').getByRole('link', { name: 'Reports' }).click()
-			await page.getByRole('button', { name: 'Close navigation' }).click()
-			await expect(page.getByRole('link', { name: 'Open logbook' })).toBeVisible()
-			await check('the reports screen')
+				await page.locator('.due__open').click()
+				const reminder = page.getByRole('dialog', { name: 'Edit reminder' })
+				await opened(reminder)
+				await check(page, 'the reminder sheet', withSheet)
+				await reminder.getByRole('button', { name: 'Cancel' }).click()
 
-			await page.goto(settingsPage)
-			await expect(page.locator('#nextfleet-settings')).toContainText('Germany')
-			await check('the personal settings', ['#nextfleet-settings'])
+				// With the account picker in it (docs/ui.md).
+				const edit = await sheet(page, 'Edit vehicle', 'Edit vehicle')
+				await check(page, 'the vehicle sheet', withSheet)
+				await edit.getByRole('button', { name: 'Cancel' }).click()
+
+				await sheet(page, 'QR sticker', 'QR sticker')
+				await check(page, 'the sticker', withSheet)
+				await page.keyboard.press('Escape')
+
+				await page.getByRole('button', { name: 'Costs', exact: true }).click()
+				await page.getByRole('button', { name: 'Previous year' }).click()
+				await expect(page.getByRole('region', { name: 'Costs by month' })).toBeVisible()
+				await expect(page.locator('.costs__co2-sources').getByRole('link', { name: 'Fuel factors 2022' })).toBeVisible()
+				await check(page, 'the Costs screen', undefined, ['.costs__table', '.costs__months li'])
+
+				if (folded) {
+					await page.getByRole('button', { name: 'Open navigation' }).click()
+				}
+				await page.locator('.app-navigation').getByRole('link', { name: 'Reports' }).click()
+				if (folded) {
+					await page.getByRole('button', { name: 'Close navigation' }).click()
+				}
+				await expect(page.getByRole('link', { name: 'Open logbook' })).toBeVisible()
+				await check(page, 'the reports screen')
+
+				await page.goto(settingsPage)
+				await expect(page.locator('#nextfleet-settings')).toContainText('Germany')
+				await check(page, 'the personal settings', ['#nextfleet-settings'])
+			})
+
+			// M5's small gaps (PRD M10): a refused download said in place, on the section and on the
+			// row, and the undo toast a removed paper gets.
+			test('the papers\' refusals and their undo fit the width and pass an axe audit', async ({ page }) => {
+				test.slow()
+				const plate = `${plates}papers-${at}`
+				const { vehicle } = await march(page, plate)
+				const { rows } = await api(page, { method: 'GET', path: `/api/vehicles/${vehicle.uuid}/timeline?type=maintenance` })
+				const attach = (/** @type {number} */ id, /** @type {object} */ link) => api(page, { method: 'POST', path: `/api/vehicles/${vehicle.uuid}/documents`, body: { file_id: id, kind: 'receipt', ...link } })
+				const bill = 'Rechnung Werkstatt März mit einem sehr langen Dateinamen.pdf'
+				await attach(await upload(page, 'Fahrzeugschein.pdf', '%PDF'), {})
+				await attach(await upload(page, bill, '%PDF'), { linked_type: 'maintenance', linked_uuid: rows[0].maintenance.uuid })
+
+				await page.goto(appPage)
+				await open(page, plate)
+				const section = page.locator('.documents')
+				await expect(section.getByRole('link', { name: bill })).toBeVisible()
+				await expect(page.locator('.timeline__waiting')).toHaveCount(0)
+				expect((await dav(page, me, 'DELETE', `${folder}/${encodeURIComponent(bill)}`)).status).toBe(204)
+
+				await page.locator('.timeline').getByRole('link', { name: `Open ${bill}` }).click()
+				await expect(page.locator('.row__papers')).toContainText('This document is gone')
+				await section.getByRole('link', { name: bill }).click()
+				await expect(section).toContainText('This document is gone')
+				await check(page, 'a refused paper')
+
+				await section.getByRole('button', { name: 'Remove Fahrzeugschein.pdf' }).click()
+				await expect(page.locator('.toast')).toContainText('The document was removed.')
+				await check(page, 'the undo toast for a paper')
+			})
+
+			// What a grant changes (PRD M6). The owner's Access section holds a long name and a
+			// group. The grantee reaches one vehicle in person as a viewer, which trims its screen
+			// and offers Leave, and another only through that group as a driver, which says so.
+			test('the screens a grant changes fit the width and pass an axe audit', async ({ page, browser }) => {
+				// A new account's first sign-in alone took 30 s (tests/e2e/m6-slice.spec.js).
+				test.slow()
+				const plate = `${plates}viewed-${at}`
+				const { vehicle } = await march(page, plate)
+				await soonDue(page, vehicle.uuid)
+				const crewPlate = `${plates}crew-${at}`
+				const crewCar = await api(page, { method: 'POST', path: '/api/vehicles', body: { plate: crewPlate, jurisdiction: 'de' } })
+				const uid = `${people}${at}`
+				const crew = `${uid}-crew`
+				const password = `${uid}-Secret-2026!`
+				await ocs(page, 'POST', '/cloud/users', { userid: uid, password, displayName: 'Maximiliane Alexandra von Hohenzollern-Sigmaringen' })
+				await ocs(page, 'POST', '/cloud/groups', { groupid: crew, displayname: 'Werkstatt und Fuhrpark Stuttgart-Feuerbach' })
+				await ocs(page, 'POST', `/cloud/users/${uid}/groups`, { groupid: crew })
+				/**
+				 * @param {string} uuid - the vehicle's
+				 * @param {string} grantee - the account or group
+				 * @param {string} type - which of the two
+				 * @param {string} role - what it may do
+				 */
+				const give = (uuid, grantee, type, role) => api(page, { method: 'POST', path: `/api/vehicles/${uuid}/grants`, body: { grantee, grantee_type: type, role } })
+				// The group's viewer row adds nothing to the account's own: the strongest row wins.
+				await give(vehicle.uuid, uid, 'user', 'viewer')
+				await give(vehicle.uuid, crew, 'group', 'viewer')
+				await give(crewCar.uuid, crew, 'group', 'driver')
+
+				await page.goto(appPage)
+				await open(page, plate)
+				await expect(page.locator('.timeline').getByRole('listitem')).toHaveCount(3)
+				await expect(page.locator('.timeline')).toContainText('Entered by')
+				await check(page, 'the vehicle screen, saying who entered each row')
+				const edit = await sheet(page, 'Edit vehicle', 'Edit vehicle')
+				await expect(edit.locator('.grants__row')).toHaveCount(2)
+				await check(page, 'the Access section', withSheet)
+				await edit.getByRole('button', { name: 'Cancel' }).click()
+
+				const context = await browser.newContext({ viewport, colorScheme })
+				try {
+					const grantee = await context.newPage()
+					await login(grantee, uid, password)
+					await grantee.goto(appPage)
+					await expect(row(grantee, plate)).toContainText('Owned by')
+					await check(grantee, 'the overview, naming the owner')
+
+					await open(grantee, plate)
+					await expect(grantee.locator('.due__row')).toHaveCount(1)
+					await expect(grantee.locator('.timeline').getByRole('listitem')).toHaveCount(3)
+					await expect(grantee.getByRole('button', { name: 'New entry' })).toHaveCount(0)
+					await grantee.getByRole('button', { name: 'Leave vehicle' }).click()
+					await expect(grantee.getByRole('button', { name: 'Stay' })).toBeVisible()
+					await check(grantee, 'a viewer\'s vehicle screen, asked before leaving')
+					await grantee.getByRole('button', { name: 'Stay' }).click()
+					await check(grantee, 'a viewer\'s vehicle screen')
+
+					await grantee.goto(appPage)
+					await open(grantee, crewPlate)
+					await expect(grantee.locator('.leave__group')).toContainText('Werkstatt und Fuhrpark')
+					await expect(grantee.locator('.timeline__waiting')).toHaveCount(0)
+					await check(grantee, 'a driver\'s vehicle screen, reached through a group')
+				} finally {
+					await context.close()
+				}
+			})
+
+			// What the pool and the inbox add (PRD M7). A driver with a long name has the car while
+			// its owner has booked it for tomorrow with a long purpose, and a photo of the handover
+			// hangs on the driver's booking. The owner walks every sheet a booking opens and gives
+			// the car back into the trip it prefills; the driver files from an inbox of two.
+			test('the pool and the inbox fit the width and pass an axe audit', async ({ page, browser }) => {
+				// A new account's first sign-in alone took 30 s (tests/e2e/m6-slice.spec.js).
+				test.slow()
+				const plate = `${plates}pool-${at}`
+				const { vehicle } = await march(page, plate)
+				const uid = `${people}pool-${at}`
+				const password = `${uid}-Secret-2026!`
+				await ocs(page, 'POST', '/cloud/users', { userid: uid, password, displayName: 'Maximiliane Alexandra von Hohenzollern-Sigmaringen' })
+				await api(page, { method: 'POST', path: `/api/vehicles/${vehicle.uuid}/grants`, body: { grantee: uid, grantee_type: 'user', role: 'driver' } })
+				const bookings = `/api/vehicles/${vehicle.uuid}/bookings`
+				const hour = 3600
+				const now = Math.floor(Date.now() / 1000)
+				const tomorrow = (Math.floor(now / hour) + 24) * hour
+				await api(page, {
+					method: 'POST',
+					path: bookings,
+					body: { starts_at: tomorrow, starts_at_off: 0, ends_at: tomorrow + 3 * hour, ends_at_off: 0, purpose: 'Werkstatttermin in Stuttgart-Feuerbach, danach Ersatzteile beim Großhändler abholen' },
+				})
+
+				const context = await browser.newContext({ viewport, colorScheme })
+				try {
+					const driver = await context.newPage()
+					await login(driver, uid, password)
+					await driver.goto(appPage)
+					const held = await api(driver, { method: 'POST', path: bookings, body: { starts_at: now, starts_at_off: 0, ends_at: now + 3 * hour, ends_at_off: 0 } })
+					await api(driver, { method: 'POST', path: `${bookings}/${held.uuid}/check-out`, body: { odo: 10800, level: 80, at_off: 0 } })
+					const snap = `${folder}/${encodeURIComponent('Übergabe Kratzer hinten links.png')}`
+					expect((await dav(page, me, 'PUT', snap, { body: photo })).status).toBe(201)
+					await api(page, {
+						method: 'POST',
+						path: `/api/vehicles/${vehicle.uuid}/documents`,
+						body: { file_id: await fileId(page, me, snap), kind: 'photo', linked_type: 'booking', linked_uuid: held.uuid },
+					})
+
+					await page.goto(appPage)
+					await expect(row(page, plate).locator('.overview__holder')).toContainText('With Maximiliane')
+					await check(page, 'the overview, saying who has the car')
+
+					await open(page, plate)
+					await expect(page.locator('.bookings__booking')).toHaveCount(2)
+					await expect(page.locator('.bookings__papers a')).toHaveCount(1)
+					await expect(page.locator('.vehicle__holder')).toBeVisible()
+					await expect(page.locator('.vehicle__next')).toBeVisible()
+					await expect(page.locator('.timeline__waiting')).toHaveCount(0)
+					await check(page, 'the vehicle screen with its bookings')
+
+					// The sheet's default span runs into the driver's, out with them, so the server names them.
+					const book = await sheet(page, 'Book', 'Book vehicle')
+					await book.getByRole('button', { name: 'Book', exact: true }).click()
+					await expect(book).toContainText('With Maximiliane')
+					await check(page, 'the booking sheet, refused', withSheet)
+					await book.getByRole('button', { name: 'Cancel' }).click()
+
+					const own = page.locator('.bookings__booking').filter({ hasText: 'Werkstatttermin' })
+					await own.getByRole('button', { name: 'Take the car' }).click()
+					const take = page.getByRole('dialog', { name: 'Take the car' })
+					await opened(take)
+					await check(page, 'the check-out sheet', withSheet)
+					await take.getByRole('button', { name: 'Cancel' }).click()
+
+					const out = page.locator('.bookings__booking').filter({ hasText: 'Maximiliane' })
+					await out.getByRole('button', { name: 'Return the car' }).click()
+					const giving = page.getByRole('dialog', { name: 'Return the car' })
+					await opened(giving)
+					await check(page, 'the check-in sheet', withSheet)
+					await giving.getByRole('textbox', { name: 'Counter reading (km)' }).fill('10842')
+					await giving.getByRole('button', { name: 'Return the car' }).click()
+					const trip = page.getByRole('dialog', { name: 'New entry' })
+					await opened(trip)
+					await expect(trip.getByRole('textbox', { name: 'End counter' })).toHaveValue(/^10[,.]?842$/)
+					await check(page, 'the entry sheet, a trip from a booking', withSheet)
+					await trip.getByRole('button', { name: 'Cancel' }).click()
+
+					await expect(out.getByRole('button', { name: 'Log the trip' })).toBeVisible()
+					await check(page, 'the vehicle screen, the car given back')
+					const instant = await sheet(page, 'Take it now', 'Take the car')
+					await expect(instant.getByLabel('Back by')).toBeVisible()
+					await check(page, 'the check-out sheet, taking it now', withSheet)
+					await instant.getByRole('button', { name: 'Cancel' }).click()
+
+					await inboxAt(driver, uid, 'Belege')
+					const waiting = { 'Tankbeleg Aral Stuttgart-Feuerbach Heilbronner Straße.png': photo, 'Rechnung.pdf': '%PDF-1.4\n%%EOF\n' }
+					for (const [name, body] of Object.entries(waiting)) {
+						expect((await dav(driver, uid, 'PUT', `Belege/${encodeURIComponent(name)}`, { body })).status).toBe(201)
+					}
+					await driver.reload()
+					if (folded) {
+						await driver.getByRole('button', { name: 'Open navigation' }).click()
+					}
+					await driver.locator('.app-navigation').getByRole('link', { name: /Inbox/ }).click()
+					if (folded) {
+						await driver.getByRole('button', { name: 'Close navigation' }).click()
+					}
+					const tiles = driver.locator('.inbox__file img')
+					await expect(tiles).toHaveCount(2)
+					// Lazy thumbnails are blank until they load, and a blank tile measures nothing.
+					await expect.poll(() => tiles.evaluateAll((images) => images.every((image) => image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0))).toBe(true)
+					await check(driver, 'the inbox')
+
+					await driver.locator('.inbox__file').filter({ hasText: 'Tankbeleg' }).click()
+					const attach = driver.getByRole('dialog', { name: 'Attach document' })
+					await opened(attach)
+					await expect(attach.getByRole('button', { name: 'New fill-up' })).toBeVisible()
+					await check(driver, 'the inbox sheet', withSheet)
+				} finally {
+					await context.close()
+				}
+			})
+
+			// What the import adds (PRD M9). One file whose dates read either way round, so the
+			// preview asks; one with a long name and thirteen columns, which is imported.
+			test('the import screens fit the width and pass an axe audit', async ({ page }) => {
+				test.slow()
+				const plate = `${plates}import-${at}`
+				await march(page, plate)
+				const ambiguousFile = 'Tankbuch.csv'
+				const wideFile = 'Spritmonitor-Export Tankbuch Diesel 2026 Stuttgart-Feuerbach.csv'
+				const fixture = (/** @type {string} */ name) => readFile(new URL(`../Fixture/import/${name}`, import.meta.url), 'utf8')
+				const [columns] = (await fixture('lubelogger-fuel.csv')).split('\n')
+				// Every day is 12 or less, so each date reads either way round and the order is asked.
+				await upload(page, ambiguousFile, `${columns}\n3/4/2026,52000,40.00,60.00,,True,False,,,,,,\n4/5/2026,52600,36.00,54.00,,True,False,,,,,,\n`)
+				await upload(page, wideFile, await fixture('spritmonitor-fuel.csv'))
+
+				await page.goto(appPage)
+				await open(page, plate)
+				const asking = await importing(page, ambiguousFile, 'CSV (LubeLogger format) — fuel', folder)
+				await check(page, 'the import sheet, the format step', withSheet)
+				await asking.getByRole('button', { name: 'Preview' }).click()
+				await expect(asking.getByRole('combobox', { name: 'Order of the dates' })).toBeVisible()
+				await check(page, 'the import preview, asking the date order', withSheet)
+				await asking.getByRole('button', { name: 'Back' }).click()
+				await asking.getByRole('button', { name: 'Cancel' }).click()
+				await expect(asking).toBeHidden()
+
+				const wide = await importing(page, wideFile, 'CSV (Spritmonitor format) — fuel', folder)
+				await expect(wide.getByRole('combobox', { name: 'Volume in the file' })).toBeVisible()
+				await check(page, 'the import sheet, the format step with units', withSheet)
+				await wide.getByRole('button', { name: 'Preview' }).click()
+				await expect(wide).toContainText('New: 3. Already there: 0. Not readable: 2.')
+				await check(page, 'the import preview, a long column list', withSheet)
+				await wide.getByRole('button', { name: 'Import', exact: true }).click()
+				await expect(wide).toBeHidden()
+				await expect(page.locator('.toast')).toContainText('Entries imported: 3.')
+				// The timeline reads the new rows behind a spinner that spills while it turns.
+				await expect(page.locator('.timeline__waiting')).toHaveCount(0)
+				await check(page, 'the import result')
+			})
 		})
-	})
+	}
 }

@@ -26,6 +26,8 @@ use OCP\IUserSession;
  * (docs/architecture.md#odometer-rules), including the access check.
  */
 class OdometerController extends Controller {
+	use RequestValues;
+
 	public function __construct(
 		string $appName,
 		IRequest $request,
@@ -87,18 +89,12 @@ class OdometerController extends Controller {
 	}
 
 	/**
-	 * A write checked against the `updated_at` the client read: in the body of a PUT, in the query
-	 * string of a DELETE, and a request parameter either way.
+	 * A write checked against the `updated_at` the client read (RequestValues::token()).
 	 *
 	 * @param callable(int):OdoReading $write given the token
 	 */
 	private function checked(callable $write): DataResponse {
-		$token = filter_var($this->request->getParams()['updated_at'] ?? null, FILTER_VALIDATE_INT);
-		if ($token === false) {
-			return new DataResponse(['message' => 'updated_at is missing, so this write cannot be checked'], Http::STATUS_BAD_REQUEST);
-		}
-
-		return $this->answer(fn (): OdoReading => $write($token));
+		return $this->answer(fn (): OdoReading => $write($this->token()));
 	}
 
 	/**

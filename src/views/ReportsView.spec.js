@@ -29,7 +29,7 @@ const HOURS = { uuid: 'v-hours', updated_at: 1, plate: 'GEN 1', jurisdiction: 'd
 const ELSEWHERE = { uuid: 'v-gen', updated_at: 1, plate: 'XX 42', jurisdiction: 'generic', lifecycle: 'active', odo_unit: 'km' }
 
 const settings = {
-	preferences: { jurisdiction: 'de', dismissed_hints: [], reclaim_vat: false, kpi_period: 'last-12', grid_factor: null },
+	preferences: { jurisdiction: 'de', dismissed_hints: [], reclaim_vat: false, kpi_period: 'last-12', grid_factor: null, inbox_folder: null },
 	jurisdictions: [
 		{ key: 'de', name: 'Germany', logbook_export: true, mileage_claim: true, grid_factor: null },
 		{ key: 'generic', name: 'Generic', logbook_export: false, mileage_claim: false, grid_factor: null },

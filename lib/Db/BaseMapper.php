@@ -262,6 +262,56 @@ abstract class BaseMapper extends QBMapper {
 	}
 
 	/**
+	 * One page of what a sync hands over from this table (docs/api.md#sync), oldest change first:
+	 * every live row of a vehicle the client does not hold yet, and every row of one it holds that
+	 * changed after `$since`, a deleted one included. Only rows past `($afterAt, $afterId)` in
+	 * (`updated_at`, `id`) order, none at `$afterAt` when `$afterId` is null.
+	 *
+	 * @param list<int> $whole vehicles whose live rows all come
+	 * @param list<int> $held vehicles whose rows come when changed after `$since`
+	 * @return list<T>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findChanged(array $whole, array $held, int $since, int $afterAt, ?int $afterId, int $limit): array {
+		$qb = $this->db->getQueryBuilder();
+		// An empty IN () is not a predicate any of the three databases accepts.
+		$wanted = [];
+		if ($whole !== []) {
+			$wanted[] = $qb->expr()->andX(
+				$qb->expr()->in('vehicle_id', $qb->createNamedParameter($whole, IQueryBuilder::PARAM_INT_ARRAY)),
+				$qb->expr()->isNull('deleted_at'),
+			);
+		}
+		if ($held !== []) {
+			$wanted[] = $qb->expr()->andX(
+				$qb->expr()->in('vehicle_id', $qb->createNamedParameter($held, IQueryBuilder::PARAM_INT_ARRAY)),
+				$qb->expr()->gt('updated_at', $qb->createNamedParameter($since, IQueryBuilder::PARAM_INT)),
+			);
+		}
+		if ($wanted === []) {
+			return [];
+		}
+
+		$after = $qb->expr()->gt('updated_at', $qb->createNamedParameter($afterAt, IQueryBuilder::PARAM_INT));
+		if ($afterId !== null) {
+			$after = $qb->expr()->orX($after, $qb->expr()->andX(
+				$qb->expr()->eq('updated_at', $qb->createNamedParameter($afterAt, IQueryBuilder::PARAM_INT)),
+				$qb->expr()->gt('id', $qb->createNamedParameter($afterId, IQueryBuilder::PARAM_INT)),
+			));
+		}
+
+		$qb->select('*')
+			->from($this->tableName)
+			->where($qb->expr()->orX(...$wanted))
+			->andWhere($after)
+			->orderBy('updated_at', 'ASC')
+			->addOrderBy('id', 'ASC')
+			->setMaxResults($limit);
+
+		return $this->findEntities($qb);
+	}
+
+	/**
 	 * The columns that name an account, which an erasure rewrites. Every table has `created_by`;
 	 * a table with an account column of its own adds it.
 	 *
@@ -289,31 +339,30 @@ abstract class BaseMapper extends QBMapper {
 	}
 
 	/**
-	 * The uuids of some of one vehicle's rows, by id, deleted rows included: a row that points at
-	 * another by id still names it on the wire by uuid, and an undo brings a deleted one back.
+	 * Some of one vehicle's rows by id, deleted ones too, keyed by id: a row that points at another
+	 * by id names it on the wire by uuid whatever became of it, and an undo brings a deleted one
+	 * back.
 	 *
 	 * @param list<int> $ids
-	 * @return array<int, string>
+	 * @return array<int, T>
 	 * @throws \OCP\DB\Exception
 	 */
-	public function uuidsById(int $vehicleId, array $ids): array {
+	public function findAnyByIds(int $vehicleId, array $ids): array {
 		if ($ids === []) {
 			return [];
 		}
 		$qb = $this->db->getQueryBuilder();
-		$qb->select('id', 'uuid')
+		$qb->select('*')
 			->from($this->tableName)
 			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
 			->andWhere($qb->expr()->in('id', $qb->createNamedParameter($ids, IQueryBuilder::PARAM_INT_ARRAY)));
 
-		$uuids = [];
-		$result = $qb->executeQuery();
-		while (($row = $result->fetch()) !== false) {
-			$uuids[(int)$row['id']] = (string)$row['uuid'];
+		$byId = [];
+		foreach ($this->findEntities($qb) as $row) {
+			$byId[(int)$row->getId()] = $row;
 		}
-		$result->closeCursor();
 
-		return $uuids;
+		return $byId;
 	}
 
 	private function byUuid(string $uuid): IQueryBuilder {
@@ -345,10 +394,9 @@ abstract class BaseMapper extends QBMapper {
 	 * Undo: the stamp taken off again, on the row the client read and only while it is still
 	 * stamped. A statement that matched a live row would undo a delete nobody did.
 	 *
-	 * The token does not move. It names the state the row is put back into, and the undo toast
-	 * holds exactly one of them - the one the delete answered with - so advancing it here would
-	 * refuse the gesture it exists for. Nobody else can be holding it either: it was minted by
-	 * the delete and never left that response.
+	 * The token moves as on any write: a client that asks what changed since by `updated_at`
+	 * would never see a restore that left it where the delete did. The entity carries the new
+	 * one, and the restore's answer hands it on.
 	 *
 	 * @param T $entity
 	 * @param int $expectedUpdatedAt the `updated_at` the delete answered with
@@ -362,9 +410,12 @@ abstract class BaseMapper extends QBMapper {
 			throw new \InvalidArgumentException('Entity which should be restored has no id');
 		}
 
+		$now = max($this->time->getTime(), $expectedUpdatedAt + 1);
+
 		$qb = $this->db->getQueryBuilder();
 		$qb->update($this->tableName)
 			->set('deleted_at', $qb->createNamedParameter(null, IQueryBuilder::PARAM_INT))
+			->set('updated_at', $qb->createNamedParameter($now, IQueryBuilder::PARAM_INT))
 			->where($qb->expr()->eq('id', $qb->createNamedParameter($id, IQueryBuilder::PARAM_INT)))
 			->andWhere($qb->expr()->eq(
 				'updated_at',
@@ -379,6 +430,7 @@ abstract class BaseMapper extends QBMapper {
 		}
 
 		$entity->setDeletedAt(null);
+		$entity->setUpdatedAt($now);
 		$entity->resetUpdatedFields();
 
 		return $entity;

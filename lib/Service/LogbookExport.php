@@ -32,6 +32,7 @@ class LogbookExport {
 		private AuditMapper $audit,
 		private Completeness $completeness,
 		private Jurisdictions $jurisdictions,
+		private EnteredBy $enteredBy,
 		private LoggerInterface $logger,
 	) {
 	}
@@ -62,13 +63,15 @@ class LogbookExport {
 
 		[$start, $end] = LocalYear::window($year);
 		$periods = $this->periods($vehicle, $start, $end);
+		$lines = $this->lines($vehicle, $year, $start, $end, $periods);
 
 		return $renderer->render(new LogbookReport(
 			$vehicle,
 			$year,
-			$this->lines($vehicle, $year, $start, $end, $periods),
+			$lines,
 			$periods,
 			$jurisdiction->logbookRules()?->sourceUrl(),
+			$this->enteredBy->names($vehicle, array_map(static fn (array $line): string => $line['trip']->getCreatedBy(), $lines)),
 		));
 	}
 

@@ -12,7 +12,7 @@ use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\Vehicle;
 
 /**
- * One vehicle's business trips for one calendar year, each valued at the rate on its day, as the
+ * The business trips one reader entered on one vehicle in one calendar year, each valued at the rate on its day, as the
  * core read them and before any country lays them out (`IClaimRenderer`). Every figure in it is
  * the core's; a renderer decides only how it reads.
  */

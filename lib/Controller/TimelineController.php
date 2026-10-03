@@ -22,6 +22,8 @@ use OCP\IUserSession;
  * The one timeline a vehicle has. Every rule lives in TimelineService, including the access check.
  */
 class TimelineController extends Controller {
+	use RequestValues;
+
 	public function __construct(
 		string $appName,
 		IRequest $request,
@@ -80,22 +82,6 @@ class TimelineController extends Controller {
 		} catch (\InvalidArgumentException $e) {
 			return new DataResponse(['message' => $e->getMessage()], Http::STATUS_BAD_REQUEST);
 		}
-	}
-
-	/**
-	 * One query-string value as the service takes it. The framework casts a controller's int,
-	 * float and bool parameters and nothing else, so `?type[]=trip` arrives as an array - a
-	 * `?string` parameter would make that a 500, when it is a request this route never handed out
-	 * like any other.
-	 *
-	 * @throws \InvalidArgumentException
-	 */
-	private function word(string $name, mixed $value): ?string {
-		if ($value !== null && !is_string($value)) {
-			throw new \InvalidArgumentException($name . ' is a word or nothing at all');
-		}
-
-		return $value;
 	}
 
 	private function userId(): string {

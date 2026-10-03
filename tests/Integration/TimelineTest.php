@@ -14,6 +14,7 @@ use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\ExpenseService;
+use OCA\NextFleet\Service\GrantService;
 use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\ReminderService;
@@ -22,6 +23,7 @@ use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\IDBConnection;
+use OCP\IUserManager;
 use PHPUnit\Framework\TestCase;
 use Psr\Container\ContainerInterface;
 
@@ -35,6 +37,8 @@ use Psr\Container\ContainerInterface;
 class TimelineTest extends TestCase {
 	/** Not a Nextcloud account: `created_by` is a string column with no key on it. */
 	private const AUTHOR = 'nextfleet-test-alice';
+	/** An account, since a grantee has to exist on the instance. */
+	private const DRIVER = 'nextfleet-test-timeline-ben';
 
 	private ContainerInterface $container;
 	private TimelineService $timeline;
@@ -43,6 +47,16 @@ class TimelineTest extends TestCase {
 	private OdometerService $odometer;
 	private VehicleService $vehicles;
 	private string $uuid;
+
+	public static function setUpBeforeClass(): void {
+		$users = \OCP\Server::get(IUserManager::class);
+		$users->get(self::DRIVER)?->delete();
+		$users->createUser(self::DRIVER, bin2hex(random_bytes(16)))?->setDisplayName('Ben Fahrer');
+	}
+
+	public static function tearDownAfterClass(): void {
+		\OCP\Server::get(IUserManager::class)->get(self::DRIVER)?->delete();
+	}
 
 	protected function setUp(): void {
 		$container = $this->container = (new Application())->getContainer();
@@ -70,11 +84,12 @@ class TimelineTest extends TestCase {
 			'fleet_maintenance' => 'created_by',
 			'fleet_expenses' => 'created_by',
 			'fleet_reminders' => 'created_by',
+			'fleet_access' => 'created_by',
 			'fleet_vehicles' => 'user_id',
 		];
 		foreach ($tables as $table => $column) {
 			$qb = $db->getQueryBuilder();
-			$qb->delete($table)->where($qb->expr()->eq($column, $qb->createNamedParameter(self::AUTHOR)));
+			$qb->delete($table)->where($qb->expr()->in($column, $qb->createNamedParameter([self::AUTHOR, self::DRIVER], $qb::PARAM_STR_ARRAY)));
 			$qb->executeStatement();
 		}
 	}
@@ -278,6 +293,10 @@ class TimelineTest extends TestCase {
 		);
 		$this->assertSame([120600], array_map(static fn (OdoReading $r): int => $r->getValue(), $page['rows'][1]['readings']));
 		$this->assertSame([120500], array_map(static fn (OdoReading $r): int => $r->getValue(), $page['rows'][2]['readings']));
+		// A Reading names its Entry here as on its own route.
+		$this->assertSame($work['uuid'], $page['rows'][1]['readings'][0]->getSourceUuid());
+		$this->assertSame($fill['uuid'], $page['rows'][2]['readings'][0]->getSourceUuid());
+		$this->assertSame($trip->getUuid(), $page['rows'][3]['reading']?->getSourceUuid());
 		// No total, on a vehicle that takes no energy yet.
 		$this->assertSame([EnergyService::FOREIGN_ENERGY, EnergyService::NO_PRICE], $page['rows'][2]['flags']);
 
@@ -346,6 +365,22 @@ class TimelineTest extends TestCase {
 		$this->assertSame([null, $oil['uuid']], array_column($rows, 'closes'));
 		$this->assertSame($oil['uuid'], $this->timeline->one(self::AUTHOR, $this->uuid, TimelineService::MAINTENANCE, $closing['uuid'])['closes']);
 		$this->assertNull($this->timeline->one(self::AUTHOR, $this->uuid, TimelineService::MAINTENANCE, $plain['uuid'])['closes']);
+	}
+
+	/**
+	 * A row names who entered it once anybody else was given access, the page and one row alike;
+	 * before that it names nobody. An author with no account reads as the id the row carries.
+	 */
+	public function testARowNamesWhoEnteredItOnceAccessWasGiven(): void {
+		$this->trip(1750000000, 120450);
+		$this->assertSame([null], array_column($this->timeline->page(self::AUTHOR, $this->uuid, null, null)['rows'], 'entered_by'));
+
+		$this->container->get(GrantService::class)->grant(self::AUTHOR, $this->uuid, ['grantee' => self::DRIVER, 'grantee_type' => 'user', 'role' => 'driver']);
+		$driven = $this->odometer->record(self::DRIVER, $this->uuid, ['read_at' => 1750100000, 'read_at_off' => 120, 'value' => 120500]);
+
+		$rows = $this->timeline->page(self::AUTHOR, $this->uuid, null, null)['rows'];
+		$this->assertSame(['Ben Fahrer', self::AUTHOR], array_column($rows, 'entered_by'));
+		$this->assertSame('Ben Fahrer', $this->timeline->one(self::AUTHOR, $this->uuid, TimelineService::ODOMETER, $driven->getUuid())['entered_by']);
 	}
 
 	private function assertMissing(string $type, string $uuid): void {

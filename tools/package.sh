@@ -11,8 +11,8 @@
 
 set -eu
 
-SHIP="appinfo css img js l10n lib templates CHANGELOG.md LICENSE LICENSES README.md"
-LEAVE=".docker .eslintignore .eslintrc.cjs .github .gitignore .php-cs-fixer.dist.php .stylelintignore CONTEXT.md CONTRIBUTING.md REUSE.toml SECURITY.md composer.json composer.lock design docs package-lock.json package.json phpunit.integration.xml phpunit.xml plan.md playwright.config.js psalm-baseline.xml psalm.xml src stylelint.config.cjs tests tools tsconfig.json vite.config.js vitest.config.js"
+SHIP="appinfo css img js l10n lib templates CHANGELOG.md LICENSE LICENSES README.md openapi.json"
+LEAVE=".docker .eslintignore .eslintrc.cjs .github .gitignore .php-cs-fixer.dist.php .stylelintignore CONTEXT.md CONTRIBUTING.md REUSE.toml SECURITY.md composer.json composer.lock design docs package-lock.json package.json phpunit.api.xml phpunit.integration.xml phpunit.xml plan.md playwright.config.js psalm-baseline.xml psalm.xml src stylelint.config.cjs tests tools tsconfig.json vendor-bin vite.config.js vitest.config.js"
 
 cd "$(dirname "$0")/.."
 

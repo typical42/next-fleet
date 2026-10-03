@@ -50,11 +50,14 @@ class LogbookRendererTest extends TestCase {
 		]);
 	}
 
-	/** @param list<Trip> $trips */
-	private function render(array $trips): \DOMXPath {
+	/**
+	 * @param list<Trip> $trips
+	 * @param ?array<string, string> $enteredBy
+	 */
+	private function render(array $trips, ?array $enteredBy = null): \DOMXPath {
 		$vehicle = Vehicle::fromRow(['id' => 7, 'plate' => 'W-12345X', 'manufacturer' => 'VW', 'model' => 'Caddy', 'jurisdiction' => 'generic']);
 		$lines = array_map(static fn (Trip $trip): array => ['trip' => $trip, 'missing' => [], 'late' => []], $trips);
-		$html = (new Generic\LogbookRenderer(new Untranslated()))->render(new LogbookReport($vehicle, 2026, $lines, [], null));
+		$html = (new Generic\LogbookRenderer(new Untranslated()))->render(new LogbookReport($vehicle, 2026, $lines, [], null, $enteredBy));
 
 		$document = new \DOMDocument();
 		$this->assertTrue($document->loadHTML($html, LIBXML_NOERROR));
@@ -101,6 +104,17 @@ class LogbookRendererTest extends TestCase {
 			'Category' => 'Business',
 			'Note' => '',
 		]], $this->rows($this->render([$this->trip()])));
+	}
+
+	/** On a vehicle others were given access to, each line says who entered it, before the note. */
+	public function testALineSaysWhoEnteredItWhenTheCoreNamesThem(): void {
+		$rows = $this->rows($this->render(
+			[$this->trip(), $this->trip(['created_by' => 'erased-k3x9'])],
+			['alice' => 'Alice Example', 'erased-k3x9' => 'erased-k3x9'],
+		));
+
+		$this->assertSame(['Alice Example', 'erased-k3x9'], array_column($rows, 'Entered by'));
+		$this->assertSame(['Entered by', 'Note'], array_slice(array_keys($rows[0]), -2));
 	}
 
 	/** A voided trip stays on the page, marked, and says when: an entry that vanished says nothing. */

@@ -15,7 +15,7 @@ use OCP\Settings\ISettings;
 /**
  * The app's own block on a user's settings page. It hands over a page and nothing else: what the
  * page then does goes through /api/preferences, exactly as the fleet screen goes through
- * /api/vehicles (docs/adr/0006-one-api-surface-in-v1.md).
+ * /api/vehicles (docs/adr/0009-the-ocs-api-v1-is-the-public-contract.md).
  */
 class Personal implements ISettings {
 	/**

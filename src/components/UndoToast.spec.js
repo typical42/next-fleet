@@ -8,7 +8,7 @@ import { flushPromises, shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { deleteEntry, deleteVehicle, getVehicle, restoreEntry, restoreVehicle } from '../services/api.js'
+import { ChangedError, deleteEntry, deleteVehicle, detachDocument, getVehicle, restoreDocument, restoreEntry, restoreVehicle, runImport, undoImport } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
 import UndoToast from './UndoToast.vue'
 
@@ -18,14 +18,22 @@ vi.mock('../services/api.js', async (original) => ({
 	...await original(),
 	deleteEntry: vi.fn(),
 	deleteVehicle: vi.fn(),
+	detachDocument: vi.fn(),
 	getVehicle: vi.fn(),
+	restoreDocument: vi.fn(),
 	restoreEntry: vi.fn(),
 	restoreVehicle: vi.fn(),
+	runImport: vi.fn(),
+	undoImport: vi.fn(),
 }))
 
 const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', lifecycle: 'active' }
+/** What an import answered it created. */
+const CREATED = [{ type: 'energy', uuid: 'e-1' }, { type: 'expense', uuid: 'x-1' }]
 /** The same vehicle as the delete left it: one token further on, and out of the fleet. */
 const DELETED = { ...VEHICLE, updated_at: 1700000800 }
+/** @type {import('../services/api.js').Document} */
+const PAPER = { uuid: 'd-1', kind: 'manual', file_id: 11, name: 'handbuch.pdf', mime: 'application/pdf', linked_type: null, linked_uuid: null, may: ['detach'] }
 
 /**
  * The toast, after a vehicle was deleted through the store the way the sheet deletes one.
@@ -202,6 +210,42 @@ describe('the undo toast', () => {
 		expect(store.restored).toBe(1)
 	})
 
+	/**
+	 * _Remove_ on a paper gets the way back every other delete has. The papers section is not the
+	 * toast's, so the list the restore answered is held for it.
+	 */
+	it('offers a removed paper back, and hands on the list it answered', async () => {
+		vi.mocked(detachDocument).mockResolvedValue([])
+		vi.mocked(restoreDocument).mockResolvedValue([PAPER])
+		const store = useVehiclesStore()
+		await store.detach('v-1', PAPER)
+		const wrapper = shallowMount(UndoToast, { global: { renderStubDefaultSlot: true } })
+
+		expect(detachDocument).toHaveBeenCalledWith('v-1', 'd-1')
+		expect(wrapper.text()).toContain('The document was removed.')
+
+		await button(wrapper, 'Undo').vm.$emit('click')
+		await flushPromises()
+
+		expect(restoreDocument).toHaveBeenCalledWith('v-1', 'd-1')
+		expect(store.refiled).toEqual({ vehicle: 'v-1', list: [PAPER] })
+		expect(wrapper.find('.toast').exists()).toBe(false)
+	})
+
+	it('says when a removed paper could not be brought back', async () => {
+		vi.mocked(detachDocument).mockResolvedValue([])
+		vi.mocked(restoreDocument).mockRejectedValue(new Error('Not yours'))
+		const store = useVehiclesStore()
+		await store.detach('v-1', PAPER)
+		const wrapper = shallowMount(UndoToast, { global: { renderStubDefaultSlot: true } })
+
+		await button(wrapper, 'Undo').vm.$emit('click')
+		await flushPromises()
+
+		expect(wrapper.text()).toContain('The document could not be brought back: Not yours')
+		expect(store.refiled).toBeNull()
+	})
+
 	/** Under Logbook Mode a trip is voided rather than deleted, and the toast says which. */
 	it('says a trip under Logbook Mode was voided', async () => {
 		vi.mocked(getVehicle).mockResolvedValue({ ...VEHICLE, logbook_mode: true })
@@ -221,6 +265,53 @@ describe('the undo toast', () => {
 
 		expect(store.struck).toBeNull()
 		expect(store.deleted).not.toBeNull()
+	})
+
+	/**
+	 * The import's result is this toast (docs/ui.md, "Importing"): what was created and what was
+	 * left out, and the one way to take all of it back.
+	 */
+	it('says what an import created and takes all of it back', async () => {
+		const store = useVehiclesStore()
+		vi.mocked(runImport).mockResolvedValue({ counts: { new: 12, duplicate: 3, unreadable: 1, creates: 12 }, created: CREATED })
+		vi.mocked(undoImport).mockResolvedValue({ undone: 2 })
+		await store.bring('v-1', /** @type {any} */ ({ etag: 'e-1' }))
+		const wrapper = shallowMount(UndoToast, { global: { renderStubDefaultSlot: true } })
+
+		expect(wrapper.text()).toContain('Entries imported: 12. Rows already there, skipped: 3. Rows not readable: 1.')
+
+		await button(wrapper, 'Undo').vm.$emit('click')
+		await flushPromises()
+
+		expect(undoImport).toHaveBeenCalledWith('v-1', CREATED)
+		expect(wrapper.find('.toast').exists()).toBe(false)
+	})
+
+	/** After that, its entries are deleted one by one like any other (docs/architecture.md#import). */
+	it('says an import changed since is no longer undone as a whole', async () => {
+		const store = useVehiclesStore()
+		vi.mocked(runImport).mockResolvedValue({ counts: { new: 2, duplicate: 0, unreadable: 0, creates: 2 }, created: CREATED })
+		vi.mocked(undoImport).mockRejectedValue(new ChangedError('energy e-1 is not a live entry'))
+		await store.bring('v-1', /** @type {any} */ ({ etag: 'e-1' }))
+		const wrapper = shallowMount(UndoToast, { global: { renderStubDefaultSlot: true } })
+
+		await button(wrapper, 'Undo').vm.$emit('click')
+		await flushPromises()
+
+		expect(wrapper.text()).toContain('This import can no longer be undone as a whole, because some of its entries were deleted since. Delete the rest one by one instead.')
+		expect(button(wrapper, 'Undo')).toBeUndefined()
+	})
+
+	/** Rows entered since the preview are duplicates under the hold, so an import may create none. */
+	it('offers no undo of an import that created nothing', async () => {
+		const store = useVehiclesStore()
+		vi.mocked(runImport).mockResolvedValue({ counts: { new: 0, duplicate: 2, unreadable: 0, creates: 0 }, created: [] })
+		await store.bring('v-1', /** @type {any} */ ({ etag: 'e-1' }))
+		const wrapper = shallowMount(UndoToast, { global: { renderStubDefaultSlot: true } })
+
+		expect(wrapper.text()).toContain('Entries imported: 0. Rows already there, skipped: 2.')
+		expect(button(wrapper, 'Undo')).toBeUndefined()
+		expect(button(wrapper, 'Dismiss')).toBeDefined()
 	})
 
 	/** The offer is made once, and dismissing it is the answer that takes nothing back. */

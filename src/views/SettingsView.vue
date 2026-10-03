@@ -3,7 +3,9 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
+import { FilePickerClosed, getFilePickerBuilder } from '@nextcloud/dialogs'
 import { t } from '@nextcloud/l10n'
+import NcButton from '@nextcloud/vue/components/NcButton'
 import NcCheckboxRadioSwitch from '@nextcloud/vue/components/NcCheckboxRadioSwitch'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import NcSelect from '@nextcloud/vue/components/NcSelect'
@@ -11,7 +13,7 @@ import NcSettingsSection from '@nextcloud/vue/components/NcSettingsSection'
 import NcTextField from '@nextcloud/vue/components/NcTextField'
 import { computed, onMounted, ref } from 'vue'
 
-import { getPreferences, savePreferences } from '../services/api.js'
+import { getPreferences, readInbox, savePreferences } from '../services/api.js'
 import { jurisdictionWord, parseWhole } from '../utils/format.js'
 
 /** The registered countries, as the server named them. @type {import('vue').Ref<{ key: string, name: string }[]>} */
@@ -64,6 +66,19 @@ function showGrid() {
 	grid.value = stored.gridFactor === null ? '' : String(stored.gridFactor)
 }
 
+/** The inbox folder's file id, as the preference holds it. @type {import('vue').Ref<number|null>} */
+const inboxFolder = ref(null)
+/** Its path in Files, or null where it is gone. The preference holds only the id; the inbox names it. @type {import('vue').Ref<string|null>} */
+const inboxPath = ref(null)
+
+const inboxWords = computed(() => {
+	if (inboxFolder.value === null) {
+		return t('nextfleet', 'None chosen')
+	}
+
+	return inboxPath.value ?? t('nextfleet', 'The folder is gone, or no longer yours alone')
+})
+
 /** @param {import('../services/api.js').Settings} settings - the server's answer */
 function hold(settings) {
 	offered.value = settings.jurisdictions
@@ -72,11 +87,18 @@ function hold(settings) {
 	stored.gridFactor = settings.preferences.grid_factor
 	showGrid()
 	gridUnreadable.value = false
+	inboxFolder.value = settings.preferences.inbox_folder
+}
+
+/** @return {Promise<void>} when the inbox folder is named, or known to be gone */
+async function nameInbox() {
+	inboxPath.value = inboxFolder.value === null ? null : (await readInbox()).folder?.path ?? null
 }
 
 onMounted(async () => {
 	try {
 		hold(await getPreferences())
+		await nameInbox()
 	} catch (error) {
 		failure.value = error.message
 	} finally {
@@ -155,6 +177,60 @@ async function saveGrid() {
 		busy.value = false
 	}
 }
+
+/**
+ * Nextcloud's own picker, one folder. The server takes only a folder of the person's own
+ * (docs/architecture.md#the-inbox); a refusal leaves the one they had.
+ *
+ * @return {Promise<void>} when the pick is saved, refused, or the picker was closed
+ */
+async function chooseInbox() {
+	failure.value = ''
+	let nodes
+	try {
+		nodes = await getFilePickerBuilder(t('nextfleet', 'Choose the inbox folder'))
+			.setMultiSelect(false)
+			.allowDirectories(true)
+			.setMimeTypeFilter(['httpd/unix-directory'])
+			// The picker brings no button of its own; pickNodes() answers with what this one picked.
+			.setButtonFactory((selected) => [{
+				label: t('nextfleet', 'Choose'),
+				variant: 'primary',
+				disabled: selected.length === 0,
+				callback: () => {},
+			}])
+			.build()
+			.pickNodes()
+	} catch (error) {
+		if (!(error instanceof FilePickerClosed)) {
+			failure.value = error.message
+		}
+		return
+	}
+	const [node] = nodes
+	if (node?.fileid === undefined) {
+		return
+	}
+
+	await saveInbox(node.fileid)
+}
+
+/**
+ * @param {number|null} folder - the folder's file id, or null to stop using one
+ * @return {Promise<void>} when it is saved and named, or the refusal is on screen
+ */
+async function saveInbox(folder) {
+	busy.value = true
+	failure.value = ''
+	try {
+		hold(await savePreferences({ inbox_folder: folder }))
+		await nameInbox()
+	} catch (error) {
+		failure.value = error.message
+	} finally {
+		busy.value = false
+	}
+}
 </script>
 
 <template>
@@ -188,11 +264,46 @@ async function saveGrid() {
 			:disabled="busy"
 			inputmode="numeric"
 			@change="saveGrid" />
+
+		<div class="inbox">
+			<p>
+				{{ t('nextfleet', 'Inbox folder') }}:
+				<strong class="inbox__folder">{{ inboxWords }}</strong>
+			</p>
+			<div class="inbox__actions">
+				<NcButton :disabled="busy" @click="chooseInbox">
+					{{ t('nextfleet', 'Choose folder') }}
+				</NcButton>
+				<NcButton v-if="inboxFolder !== null"
+					variant="tertiary"
+					:disabled="busy"
+					@click="saveInbox(null)">
+					{{ t('nextfleet', 'Stop using it') }}
+				</NcButton>
+			</div>
+			<p class="hint">
+				{{ t('nextfleet', 'Point the auto-upload of the Nextcloud mobile app at this folder. Its photos and PDFs that belong to no vehicle yet wait under Inbox in NextFleet. The app never moves or deletes them.') }}
+			</p>
+		</div>
 	</NcSettingsSection>
 </template>
 
 <style scoped>
 .hint {
 	color: var(--color-text-maxcontrast);
+}
+
+.inbox {
+	margin-top: calc(var(--default-grid-baseline) * 4);
+}
+
+.inbox__folder {
+	overflow-wrap: anywhere;
+}
+
+.inbox__actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: calc(var(--default-grid-baseline) * 2);
 }
 </style>

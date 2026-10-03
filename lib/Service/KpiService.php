@@ -16,11 +16,9 @@ use OCA\NextFleet\Db\Vehicle;
  * since "this year" starts at midnight where the person is; the period before it is the client's
  * to ask for too, with a second read.
  *
- * @psalm-import-type Period from ConsumptionService
- * @psalm-import-type Rolling from ConsumptionService
- * @psalm-import-type Cost from CostService
- * @psalm-import-type Co2 from EmissionService
- * @psalm-type Figures = array{consumption: list<Period>, wall_side: ?Rolling, cost: Cost, hours: ?int}
+ * @psalm-import-type NextFleetCost from \OCA\NextFleet\ResponseDefinitions as Cost
+ * @psalm-import-type NextFleetCo2 from \OCA\NextFleet\ResponseDefinitions as Co2
+ * @psalm-import-type NextFleetFigures from \OCA\NextFleet\ResponseDefinitions as Figures
  */
 class KpiService {
 	public function __construct(
@@ -77,7 +75,7 @@ class KpiService {
 		}
 		$net = self::net($fields);
 
-		$january = new \DateTimeImmutable($year . '-01-01', self::zone($fields['tz'] ?? null));
+		$january = new \DateTimeImmutable($year . '-01-01', Field::zone('tz', $fields['tz'] ?? null));
 		$starts = [];
 		for ($i = 0; $i <= 12; $i++) {
 			$starts[] = $january->add(new \DateInterval('P' . $i . 'M'))->getTimestamp();
@@ -117,18 +115,5 @@ class KpiService {
 	/** @param array<string, mixed> $fields */
 	private static function net(array $fields): bool {
 		return Field::read('net', 'flag', null, $fields['net'] ?? null) === true;
-	}
-
-	/**
-	 * The backward-compatible names count too: browsers still report some zones by them.
-	 *
-	 * @throws \InvalidArgumentException unless it names an IANA zone
-	 */
-	private static function zone(mixed $name): \DateTimeZone {
-		if (!is_string($name) || !in_array($name, \DateTimeZone::listIdentifiers(\DateTimeZone::ALL_WITH_BC), true)) {
-			throw new \InvalidArgumentException('tz is the zone the months are cut in');
-		}
-
-		return new \DateTimeZone($name);
 	}
 }

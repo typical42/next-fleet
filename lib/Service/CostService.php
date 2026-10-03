@@ -16,8 +16,8 @@ use OCA\NextFleet\Db\Vehicle;
 /**
  * What a vehicle cost in a period (docs/architecture.md#numbers-consumption-cost-emissions).
  *
- * @psalm-type Itemised = array{category: ?string, total: int}
- * @psalm-type Cost = array{currency: ?string, net: bool, per: ?string, distance: ?int, total: ?int, energy: ?int, maintenance: ?int, expenses: ?list<Itemised>, value: ?float, energy_value: ?float, tco: ?float, incomplete: bool, unstated: bool}
+ * @psalm-import-type NextFleetItemised from \OCA\NextFleet\ResponseDefinitions as Itemised
+ * @psalm-import-type NextFleetCost from \OCA\NextFleet\ResponseDefinitions as Cost
  */
 class CostService {
 	public function __construct(

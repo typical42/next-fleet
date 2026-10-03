@@ -9,6 +9,7 @@ import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import { computed, ref } from 'vue'
 
 import { usePreferencesStore } from '../store/preferences.js'
+import { may } from '../utils/access.js'
 import { missingFrom } from '../utils/complete.js'
 import { fieldWords, nameOf } from '../utils/format.js'
 
@@ -34,8 +35,9 @@ const incomplete = computed(() => {
 		return []
 	}
 
+	// The answer is in the edit sheet, which takes `edit`.
 	return props.vehicles
-		.filter((vehicle) => !preferences.isDismissed(vehicle.uuid))
+		.filter((vehicle) => may(vehicle, 'edit') && !preferences.isDismissed(vehicle.uuid))
 		.map((vehicle) => ({ vehicle, missing: missingFrom(vehicle) }))
 		.filter((one) => one.missing.length > 0)
 })

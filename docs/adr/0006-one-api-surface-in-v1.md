@@ -1,5 +1,7 @@
 # v1 has one internal API; the OCS API arrives with the client that needs it
 
+Superseded by [ADR 0009](0009-the-ocs-api-v1-is-the-public-contract.md).
+
 The plan called for an internal route set and a versioned OCS API built together from day one, with
 contract snapshot tests failing CI on a breaking change. With the Android client deferred, that is a
 public contract maintained for nobody — the same speculative cost the plan rejects elsewhere. v1

@@ -10,6 +10,7 @@ namespace OCA\NextFleet\Service;
 
 use OCA\NextFleet\Db\Expense;
 use OCA\NextFleet\Db\ExpenseMapper;
+use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCP\AppFramework\Db\TTransactional;
@@ -18,6 +19,8 @@ use OCP\IDBConnection;
 /**
  * Everything an Expense is written under. It knows no counter, so unlike a fill-up or a
  * Maintenance Record it leaves the odometer alone.
+ *
+ * @psalm-import-type NextFleetExpense from \OCA\NextFleet\ResponseDefinitions
  */
 class ExpenseService {
 	use TTransactional;
@@ -58,7 +61,7 @@ class ExpenseService {
 	 * Writes one Expense.
 	 *
 	 * @param array<string, mixed> $fields
-	 * @return array<string, mixed> the row as written, in its wire form
+	 * @return NextFleetExpense the row as written, in its wire form
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not log on this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \InvalidArgumentException if a field is not what its column holds
@@ -67,21 +70,32 @@ class ExpenseService {
 	public function record(string $userId, string $vehicleUuid, array $fields): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
+		// Held though an Expense moves no counter, so every write on a vehicle queues behind the
+		// same row (docs/architecture.md#odometer-rules, rule 2). Retried for the reason
+		// TripService::record() gives. The replay builds a fresh row.
+		return $this->atomicRetry(function () use ($userId, $vehicle, $fields): array {
+			$this->vehicles->hold((int)$vehicle->getId());
+
+			return $this->add($vehicle, $userId, $fields);
+		}, $this->db);
+	}
+
+	/**
+	 * What record() writes, for a caller that has reached the vehicle and holds it, as
+	 * EnergyService::add() is.
+	 *
+	 * @param array<string, mixed> $fields
+	 * @return NextFleetExpense the row as written, in its wire form
+	 * @throws \InvalidArgumentException if a field is not what its column holds
+	 * @throws \OCP\DB\Exception
+	 */
+	public function add(Vehicle $vehicle, string $userId, array $fields): array {
 		$expense = new Expense();
 		$expense->setVehicleId((int)$vehicle->getId());
 		$expense->setCreatedBy($userId);
 		self::apply($expense, $fields);
 
-		// Held though an Expense moves no counter, so every write on a vehicle queues behind the
-		// same row (docs/architecture.md#odometer-rules, rule 2). Retried for the reason
-		// TripService::record() gives.
-		$written = $this->atomicRetry(function () use ($vehicle, $expense): Expense {
-			$this->vehicles->hold((int)$vehicle->getId());
-
-			return $this->expenses->insert($expense);
-		}, $this->db);
-
-		return $written->jsonSerialize();
+		return $this->expenses->insert($expense)->jsonSerialize();
 	}
 
 	/**
@@ -89,7 +103,7 @@ class ExpenseService {
 	 *
 	 * @param array<string, mixed> $fields
 	 * @param int $expectedUpdatedAt the `updated_at` the client read
-	 * @return array<string, mixed> the row as it now stands, in its wire form
+	 * @return NextFleetExpense the row as it now stands, in its wire form
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not edit this Expense
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the Expense has changed since
@@ -112,7 +126,7 @@ class ExpenseService {
 	/**
 	 * Soft-deletes one Expense, and answers with the token the undo is checked against.
 	 *
-	 * @return array<string, mixed> the row as it was left, in its wire form
+	 * @return NextFleetExpense the row as it was left, in its wire form
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete this Expense
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the Expense has changed since
@@ -126,14 +140,26 @@ class ExpenseService {
 			$expense = $this->expenses->findOnVehicle((int)$vehicle->getId(), $expenseUuid);
 			$this->fleet->change($userId, VehicleAccess::DELETE, $vehicle, $expense->getCreatedBy());
 
-			return $this->expenses->softDelete($expense, $expectedUpdatedAt)->jsonSerialize();
+			return $this->remove($expense, $expectedUpdatedAt);
 		}, $this->db);
+	}
+
+	/**
+	 * What delete() writes, for a caller that holds the vehicle and found the Expense on it, as
+	 * EnergyService::remove() is.
+	 *
+	 * @return NextFleetExpense the row as it was left, in its wire form
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the Expense has changed since
+	 * @throws \OCP\DB\Exception
+	 */
+	public function remove(Expense $expense, int $expectedUpdatedAt): array {
+		return $this->expenses->softDelete($expense, $expectedUpdatedAt)->jsonSerialize();
 	}
 
 	/**
 	 * Undo, on the token the delete answered with (TripService::restore()).
 	 *
-	 * @return array<string, mixed> the row as it now stands, in its wire form
+	 * @return NextFleetExpense the row as it now stands, in its wire form
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete this Expense
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the Expense has changed since, or was never deleted

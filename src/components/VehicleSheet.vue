@@ -16,8 +16,10 @@ import { computed, onMounted, ref, watch } from 'vue'
 
 import InspectionSticker from './InspectionSticker.vue'
 import ReminderRecipients from './ReminderRecipients.vue'
+import VehicleGrants from './VehicleGrants.vue'
 import { ConflictError, getPreferences, getVehicle, listReminders, reminderTemplates } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
+import { may } from '../utils/access.js'
 import { energyWord, formatDay, formatDecimal, jurisdictionWord, lifecycleWord, parseDay, parseDecimal, parseWhole } from '../utils/format.js'
 import { INSPECTION, inspectionOf, rewrite } from '../utils/reminders.js'
 
@@ -31,7 +33,7 @@ const props = defineProps({
 	vehicle: { type: Object, default: null },
 })
 
-const emit = defineEmits(['close', 'created', 'saved'])
+const emit = defineEmits(['close', 'created', 'import', 'saved'])
 
 const store = useVehiclesStore()
 
@@ -56,6 +58,8 @@ const firstReg = ref(parseDay(props.vehicle?.first_reg))
 const disposedAt = ref(parseDay(props.vehicle?.disposed_at))
 const reminderMail = ref(text(props.vehicle?.reminder_mail))
 const counter = ref('')
+/** How often the recipients were read; a revoke counts it up. */
+const recipientsRead = ref(0)
 
 const saving = ref(false)
 const failure = ref('')
@@ -175,6 +179,25 @@ function chooseType(option) {
 	odoUnit.value = chosen(units.value, ['tractor', 'generator'].includes(option.id) ? 'h' : 'km')
 }
 
+/**
+ * What the fields hold, raw: the import takes this sheet's place (src/views/VehicleView.vue), so it
+ * waits until nothing typed here would be lost. Raw rather than fields(), which refuses a decimal
+ * nobody can read - and a half-typed one is exactly a change to keep.
+ *
+ * @return {string} the fields, comparable
+ */
+function typed() {
+	return JSON.stringify([
+		plate.value, manufacturer.value, model.value, vin.value, tank.value, battery.value,
+		purchasePrice.value, residualEst.value, currency.value, color.value, notes.value,
+		formatDay(firstReg.value), formatDay(disposedAt.value), reminderMail.value,
+		vehicleType.value?.id, engine.value?.id, energyTypes.value.map((/** @type {{ id: string }} */ one) => one.id),
+		odoUnit.value?.id, lifecycle.value?.id, jurisdiction.value, countsHours.value, logbookMode.value,
+	])
+}
+const untyped = typed()
+const pristine = computed(() => typed() === untyped)
+
 // The disposal day is a fact about a disposed vehicle and about no other, so it appears with that
 // lifecycle and is written away again with any other one - see fields().
 const disposing = computed(() => lifecycle.value?.id === 'disposed')
@@ -255,9 +278,8 @@ const note = computed(() => {
 })
 
 /**
- * The registration list an edit picks a country from. It is read from the settings route because
- * the app has one API surface (docs/adr/0006-one-api-surface-in-v1.md), and the vehicle's own key
- * is added to whatever comes back: a country a later release stopped offering is still the one
+ * The registration list an edit picks a country from. It is read from the settings route, which
+ * already carries it, and the vehicle's own key is added to whatever comes back: a country a later release stopped offering is still the one
  * this vehicle is kept under, and the dropdown may not quietly hide it.
  */
 onMounted(async () => {
@@ -640,9 +662,11 @@ function chosen(options, id) {
 						{{ t('nextfleet', 'Add HU/AU reminder') }}
 					</NcButton>
 				</div>
-				<!-- Shown only to whoever may edit the list; the section reads it and hides itself
-				     when refused (docs/ui.md). -->
-				<ReminderRecipients v-model:cadence="reminderMail"
+				<!-- The list takes `edit` (docs/ui.md). Re-keyed on a revoke, which prunes it server
+				     side. -->
+				<ReminderRecipients v-if="may(props.vehicle, 'edit')"
+					:key="recipientsRead"
+					v-model:cadence="reminderMail"
 					class="sheet__wide"
 					:vehicle="props.vehicle.uuid"
 					:disabled="saving" />
@@ -715,13 +739,28 @@ function chosen(options, id) {
 					class="sheet__wide"
 					:label="t('nextfleet', 'Notes')"
 					:disabled="saving" />
+				<!-- Written on each change, like the recipients; the owner's alone. -->
+				<VehicleGrants class="sheet__wide"
+					:vehicle="props.vehicle"
+					:disabled="saving"
+					@revoked="recipientsRead++" />
+				<!-- Importing is `edit`, and a disposed vehicle takes none (docs/architecture.md#import).
+				     The screen swaps this sheet for the import's (src/views/VehicleView.vue). -->
+				<div v-if="may(props.vehicle, 'edit') && props.vehicle.lifecycle !== 'disposed'" class="sheet__wide sheet__import">
+					<NcButton :disabled="saving || !pristine" @click="emit('import')">
+						{{ t('nextfleet', 'Import from a file…') }}
+					</NcButton>
+					<span v-if="!pristine" class="sheet__hint">
+						{{ t('nextfleet', 'Save or cancel your changes first.') }}
+					</span>
+				</div>
 			</template>
 		</div>
 
 		<template #actions>
 			<!-- First in the row and last in emphasis: the one action here nobody reaches for by
-			     accident, and the only one with a way back (docs/ui.md). -->
-			<NcButton v-if="editing"
+			     accident, and the only one with a way back (docs/ui.md). The owner's alone. -->
+			<NcButton v-if="editing && may(props.vehicle, 'own')"
 				variant="error"
 				:disabled="saving"
 				@click="remove">
@@ -756,6 +795,17 @@ function chosen(options, id) {
 	flex-wrap: wrap;
 	gap: calc(var(--default-grid-baseline) * 2);
 	justify-content: end;
+}
+
+.sheet__import {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: calc(var(--default-grid-baseline) * 2);
+}
+
+.sheet__hint {
+	color: var(--color-text-maxcontrast);
 }
 
 /* One column on a phone; two once there is room, so twenty fields are not twenty screens. */

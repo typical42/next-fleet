@@ -9,20 +9,23 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Controller;
 
 use OCA\NextFleet\Exception\AccessDeniedException;
+use OCA\NextFleet\Exception\BookingConflictException;
 use OCA\NextFleet\Exception\StaleUpdateException;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\DataResponse;
 
 /**
- * What the fill-up, maintenance, expense, reminder and document controllers answer alike: the
- * refusals a service throws, as the status each one means, and the token an edit, a delete or an
- * undo is checked against. The trip's controller spells the same out on its own, since its service
- * answers with an entity.
+ * What the fill-up, maintenance, expense, reminder, booking and document controllers answer alike:
+ * the refusals a service throws, as the status each one means, and the token an edit, a delete or
+ * an undo is checked against. The trip's controller spells the same out on its own, since its
+ * service answers with an entity.
  *
  * Wants `$request` (Controller's) and an `IUserSession $session` on the class that uses it.
  */
 trait EntryAnswers {
+	use RequestValues;
+
 	/**
 	 * @param \Closure(): DataResponse $call
 	 */
@@ -33,6 +36,9 @@ trait EntryAnswers {
 			return new DataResponse(['message' => 'No such vehicle'], Http::STATUS_NOT_FOUND);
 		} catch (AccessDeniedException) {
 			return new DataResponse(['message' => 'Not yours'], Http::STATUS_FORBIDDEN);
+		} catch (BookingConflictException $e) {
+			// The booking in the way travels with the refusal, so the sheet names it.
+			return new DataResponse(['message' => $e->getMessage(), 'booking' => $e->booking], Http::STATUS_CONFLICT);
 		} catch (StaleUpdateException) {
 			// `conflict` tells this apart from Nextcloud's own failed CSRF check, which is a 412 as
 			// well (docs/architecture.md#concurrency).
@@ -46,18 +52,12 @@ trait EntryAnswers {
 	}
 
 	/**
-	 * A write checked against the `updated_at` the client read. A DELETE has no body, so the token
-	 * travels in the query string; a PUT carries it beside the fields. Both arrive as parameters.
+	 * A write checked against the `updated_at` the client read (RequestValues::token()).
 	 *
 	 * @param \Closure(int): array<string, mixed> $write given the token
 	 */
 	private function checked(\Closure $write): DataResponse {
-		$token = filter_var($this->request->getParams()['updated_at'] ?? null, FILTER_VALIDATE_INT);
-		if ($token === false) {
-			return new DataResponse(['message' => 'updated_at is missing, so this write cannot be checked'], Http::STATUS_BAD_REQUEST);
-		}
-
-		return $this->answer(fn (): DataResponse => new DataResponse($write($token)));
+		return $this->answer(fn (): DataResponse => new DataResponse($write($this->token())));
 	}
 
 	private function userId(): string {

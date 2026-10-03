@@ -12,6 +12,8 @@ use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Db\OdoReadingMapper;
 use OCA\NextFleet\Exception\StaleUpdateException;
+use OCA\NextFleet\Service\EnergyService;
+use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleService;
@@ -46,7 +48,7 @@ class OdometerTest extends TestCase {
 	/** The rows this suite invents, gone for real - a soft delete would outlive the run. */
 	private function forgetTestRows(): void {
 		$db = \OCP\Server::get(IDBConnection::class);
-		foreach (['fleet_vehicles' => 'user_id', 'fleet_odo_readings' => 'created_by', 'fleet_trips' => 'created_by'] as $table => $column) {
+		foreach (['fleet_vehicles' => 'user_id', 'fleet_odo_readings' => 'created_by', 'fleet_trips' => 'created_by', 'fleet_energy' => 'created_by', 'fleet_maintenance' => 'created_by', 'fleet_audit' => 'created_by'] as $table => $column) {
 			$qb = $db->getQueryBuilder();
 			$qb->delete($table)->where($qb->expr()->eq($column, $qb->createNamedParameter(self::OWNER)));
 			$qb->executeStatement();
@@ -243,6 +245,7 @@ class OdometerTest extends TestCase {
 		$back = $this->odometer->restore(self::OWNER, $uuid, $newest->getUuid(), $deleted->getUpdatedAt());
 
 		$this->assertNull($back->getDeletedAt());
+		$this->assertGreaterThan($deleted->getUpdatedAt(), $back->getUpdatedAt());
 		$this->assertSame(120500, $this->vehicles->find(self::OWNER, $uuid)->getOdoValue());
 	}
 
@@ -265,6 +268,35 @@ class OdometerTest extends TestCase {
 
 		$this->expectException(DoesNotExistException::class);
 		$this->odometer->delete(self::OWNER, $vehicle->getUuid(), $reading->getUuid(), $reading->getUpdatedAt());
+	}
+
+	/** A client ties each Reading to the Entry that wrote it by uuid; an Odometer Entry names none. */
+	public function testEachListedReadingNamesTheEntryThatWroteIt(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$container = (new Application())->getContainer();
+		$this->odometer->record(self::OWNER, $vehicle->getUuid(), $this->at(1749900000, 120000));
+		$trip = $container->get(TripService::class)->record(self::OWNER, $vehicle->getUuid(), [
+			'started_at' => 1750000000,
+			'started_at_off' => 120,
+			'ended_at' => 1750005400,
+			'ended_at_off' => 120,
+			'end_odo' => 120450,
+			'category' => 'private',
+		]);
+		$fillUp = $container->get(EnergyService::class)->record(self::OWNER, $vehicle->getUuid(), [
+			'filled_at' => 1750100000, 'filled_at_off' => 120, 'energy' => 'diesel', 'amount' => 42000, 'total' => 7350, 'full_tank' => true, 'odo' => 120900,
+		]);
+		$work = $container->get(MaintenanceService::class)->record(self::OWNER, $vehicle->getUuid(), [
+			'done_at' => 1750200000, 'done_at_off' => 120, 'title' => 'Oil change', 'cost' => 18990, 'odo' => 121300,
+		]);
+
+		$named = array_map(
+			static fn (OdoReading $reading): array => [$reading->getValue(), $reading->jsonSerialize()['source_uuid']],
+			$this->odometer->list(self::OWNER, $vehicle->getUuid()),
+		);
+
+		$this->assertSame([null, $trip->getUuid(), $fillUp['uuid'], $work['uuid']], array_column($named, 1));
+		$this->assertSame([120000, 120450, 120900, 121300], array_column($named, 0));
 	}
 
 	/**

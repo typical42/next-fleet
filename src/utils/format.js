@@ -60,6 +60,26 @@ export function lifecycleWord(lifecycle) {
 }
 
 /**
+ * The roles a grant gives, weakest first (CONTEXT.md, Vehicle Access).
+ */
+export const ROLES = ['viewer', 'driver', 'manager']
+
+/**
+ * @param {string} role - a grant's role
+ * @return {string} its word; the German nouns match the grant notification's
+ */
+export function roleWord(role) {
+	/** @type {Record<string, string>} */
+	const words = {
+		viewer: t('nextfleet', 'Viewer'),
+		driver: t('nextfleet', 'Driver'),
+		manager: t('nextfleet', 'Manager'),
+	}
+
+	return words[role] ?? role
+}
+
+/**
  * What a trip may be driven for, in the order it is offered (CONTEXT.md). The order is one fact and
  * the words below are another: the words change with the language, this does not.
  *
@@ -436,6 +456,19 @@ export function shortDate(instant, offset, locale = getCanonicalLocale()) {
 }
 
 /**
+ * A day named on its own, where no month header says the year: in a list that spans years.
+ *
+ * @param {number} instant - when it happened, seconds
+ * @param {number} offset - the UTC offset it happened at, minutes
+ * @param {string} [locale] - defaults to the one Nextcloud resolved for this session
+ * @return {string} the day, `03.09.2026` in German and `09/03/2026` in American English
+ */
+export function formatDate(instant, offset, locale = getCanonicalLocale()) {
+	return new Intl.DateTimeFormat(locale, { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' })
+		.format(local(instant, offset))
+}
+
+/**
  * A moment named on its own, where no month header says which month and year it is in - a question
  * put to the driver about it, say.
  *
@@ -446,6 +479,35 @@ export function shortDate(instant, offset, locale = getCanonicalLocale()) {
  */
 export function fullMoment(instant, offset, locale = getCanonicalLocale()) {
 	return new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' })
+		.format(local(instant, offset))
+}
+
+/**
+ * A booking's span. It is looked at within days of it, so the weekday stands in for the year, and a
+ * span within one day names the day once.
+ *
+ * @param {number} from - its first second
+ * @param {number} fromOff - the UTC offset that end was planned at, minutes
+ * @param {number} to - the second after its last
+ * @param {number} toOff - the UTC offset that end was planned at, minutes
+ * @param {string} [locale] - defaults to the one Nextcloud resolved for this session
+ * @return {string} the span, `Fri 02/10, 14:00–18:00` in British English
+ */
+export function formatSpan(from, fromOff, to, toOff, locale = getCanonicalLocale()) {
+	return new Intl.DateTimeFormat(locale, { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })
+		.formatRange(local(from, fromOff), local(to, toOff))
+}
+
+/**
+ * One end of a booking, named the way formatSpan() names a span's.
+ *
+ * @param {number} instant - the moment, seconds
+ * @param {number} offset - the UTC offset it was planned at, minutes
+ * @param {string} [locale] - defaults to the one Nextcloud resolved for this session
+ * @return {string} the moment, `Fri 02/10, 18:00` in British English
+ */
+export function formatWhen(instant, offset, locale = getCanonicalLocale()) {
+	return new Intl.DateTimeFormat(locale, { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })
 		.format(local(instant, offset))
 }
 

@@ -13,10 +13,11 @@ Standard Nextcloud app, no external services.
   the whole supported range** — proving that is the M0 gate ([plan](../plan.md#milestones)). One
   per *page*, though: the app's block on the user's settings page is a second entry, because
   mounting the fleet inside a settings section would load every view for one dropdown.
-- **One API surface in v1**: the internal route set the web UI uses
-  ([ADR 0006](adr/0006-one-api-surface-in-v1.md)). The versioned OCS API and `GET /sync?since=`
-  arrive with the Android client that consumes them. Until then, controllers stay thin and every
-  rule lives in a service, which is what makes that layer cheap to add later. The routes are in
+- **Two doors, one rule.** The web UI uses an internal route set; the versioned OCS API twins it
+  under `/api/v1` and is the public contract
+  ([ADR 0009](adr/0009-the-ocs-api-v1-is-the-public-contract.md), [api.md](api.md)). Both call the
+  same service with the same arguments. Controllers stay thin and every rule lives in a service,
+  which is what makes the second door cheap. The routes are in
   `appinfo/routes.php`; the JSON keys are the column names, so what a client reads back is what it
   may send — and what it may *not* send is stated once, in the service.
 - **Target:** Nextcloud 31 → 34 (`min-version`/`max-version` in `appinfo/info.xml`). App id
@@ -39,7 +40,7 @@ erDiagram
     VEHICLES ||--o{ REMINDERS : has
     VEHICLES ||--o{ DOCUMENTS : has
     VEHICLES ||--o{ ACCESS : "access through"
-    VEHICLES ||--o{ BOOKINGS : "M7+"
+    VEHICLES ||--o{ BOOKINGS : "booked through"
     TRIPS ||--|| ODO_READINGS : writes
     ENERGY ||--|| ODO_READINGS : writes
     MAINTENANCE ||--|| ODO_READINGS : writes
@@ -67,7 +68,7 @@ Tables (prefix `fleet_`; Nextcloud prepends `oc_`, so names stay under 27 charac
 | `fleet_documents` | `vehicle_id`, `file_id`, `kind` (registration/insurance/manual/receipt/photo), `linked_type`, `linked_id` |
 | `fleet_audit` | `entity`, `entity_id`, `diff_json` — only written under Logbook Mode |
 | `fleet_access` | `vehicle_id`, `grantee`, `grantee_type` (user/group), `role` (manager/driver/viewer) — one live row per grantee; a revoke soft-deletes it |
-| `fleet_bookings` *(M7+)* | `vehicle_id`, `user_id`, `starts_at`, `ends_at`, `purpose`, `state` |
+| `fleet_bookings` | `vehicle_id`, `user_id` (the booker), `starts_at`, `starts_at_off`, `ends_at`, `ends_at_off`, `purpose`, `state` (booked/out/returned/cancelled), `out_at`, `out_at_off`, `out_odo`, `out_level`, `out_notes`, `in_at`, `in_at_off`, `in_odo`, `in_level`, `in_notes`, `trip_id` (the trip logged from it) |
 
 Money as integer cents, distances as integer km, volumes as integer millilitres, energy as integer
 watt-hours. No floats. A unit price is the one exception to cents: pumps price to a tenth of a cent,
@@ -126,7 +127,7 @@ second source of truth and a country the core is not supposed to know.
 
 **Every table carries** `uuid`, `created_at`, `updated_at`, `deleted_at` (soft delete),
 `created_by`. `uuid` is identity, `updated_at` powers optimistic concurrency
-([below](#concurrency)) and offline sync later, `deleted_at` gives users a trash and gives GDPR
+([below](#concurrency)) and [sync](api.md#sync), `deleted_at` gives users a trash and gives GDPR
 erasure something explicit to purge. A jurisdiction that needs its own field adds a column in a
 reviewed migration ([contributing](contributing.md)) — there is no catch-all JSON blob, because a
 field that is not in the schema is a field nobody maintains. That rule is why notification receipts
@@ -143,11 +144,65 @@ first purge, and must then take the vehicle's child rows with it.
 **Deleting a Nextcloud account pseudonymises, it purges nothing**
 ([ADR 0008](adr/0008-erasing-a-driver-pseudonymises.md)). `UserDeletedListener` hands the uid to
 `ErasureService`, which replaces it with one random `erased-…` pseudonym on every table, in one
-transaction: `created_by` everywhere, a vehicle's owner `user_id`, a receipt's `user_id` and a user
-grant's `grantee`. Ownership and grants are renamed too because Nextcloud lets a deleted uid be
+transaction: `created_by` everywhere, a vehicle's owner `user_id`, a receipt's and a booking's
+`user_id` and a user grant's `grantee`. Ownership and grants are renamed too because Nextcloud lets a deleted uid be
 taken again, and the new account must inherit nothing. The account's reminder-list entries are the
 rows that go: a deleted account receives nothing. A new table that names an account says so in its
 mapper's `accountColumns()` and joins `ErasureService`'s list.
+
+**Deleting a group revokes its grants**, for the same reason: a group made later under the same id
+must reach nothing. `GroupDeletedListener` hands the id to `GrantService::forgetGroup`, which
+revokes each of the group's grants with a revoke's rules — one transaction per vehicle under its
+hold, recipients who no longer reach `view` off the list, the grant's notification withdrawn. A
+vehicle in the trash is included, since an undo would bring its grants back.
+
+**A booking is a plan, not an Entry.** It writes no Reading and is on no timeline, logbook or
+report. Its span is half-open, `[starts_at, ends_at)`, so one ending at noon and the next starting
+at noon do not collide; only a `booked` or `out` one is live and holds the vehicle
+(`BookingMapper::findLiveOverlapping`). The handover is the booking's own two moments, so it is
+columns, not a table: `out_*` at check-out, `in_*` at check-in, `level` a percentage of the main
+tank or battery. The handover writes no Reading either — the trip logged from it does, and
+`trip_id` points there.
+
+**`…/bookings`** lists a vehicle's bookings by start, every state, from a week ago unless `from`
+and `to` say otherwise; it books, changes the span or purpose (`PUT …/bookings/{booking}`, with
+the `updated_at` token) and cancels (`DELETE`, which keeps the row as `cancelled`). Only an
+`active` vehicle takes a booking or a change, its end must be still to come — a past booking is a
+trip — and only a `booked` one changes or is cancelled. Under the vehicle's hold a span another
+live booking holds is refused with 409 and that booking, booker's display name included, so the
+sheet says whose it is. A double-booked car is what a pool exists to prevent, so this is a
+refusal, not a flag.
+
+**`…/bookings/{booking}/check-out`** and **`…/check-in`** take `odo` (required), `level` (0–100),
+`notes` and `at_off`; the instant is the server's. Check-out needs a `booked` booking of an
+`active` vehicle, until its end, and is refused with 409 and that booking while another of the
+vehicle is `out` ("still with Anna"); the 409's booking carries its `state`, so the sheet tells
+"still with" from "booked by". Early is allowed but claims the hours before the start too,
+so another live booking in them refuses it the same way. Check-in needs an `out` one, on any vehicle —
+a car laid up while out still comes back — and answers the booking. Neither sends the `updated_at`
+token: what counts is the booking's state when the car changes hands, not what the screen showed.
+Each booking carries `flags`, worked out on read and never refusing: `odo_below` (the check-out
+counter below the vehicle's Reading at `out_at` — not its newest, which the trip logged afterwards
+moves past it — or the check-in counter below the check-out one) and `late` (checked in after
+`ends_at`).
+
+**A returned booking becomes a trip** only through the driver. While it has none it carries
+`trip_draft` — `started_*`/`ended_*` and `start_odo`/`end_odo` from the handover, the booking's
+purpose, no category — for the entry sheet to prefill. `POST …/trips` takes an optional
+`booking_uuid`: a `returned` booking of the same vehicle, under the booking rule, with no trip yet.
+Under the trip's own hold and transaction `trip_id` is written to it (`BookingService::tie`), or
+the trip is refused with 409 and that booking; another vehicle's booking is not found. The
+check-in logs no trip itself: a business trip needs a purpose and a partner the app would be
+inventing. A voided trip stays tied, `trip_voided` on the booking says so, and the booking is
+not logged twice. `open_trip` in the booking's `may` is the trip's own `edit`, as its timeline row
+carries it, while the trip is not voided.
+
+**A vehicle says who has it.** Its JSON carries `out_with` — the booker of its `out` booking, by uid
+and display name, with that booking's `ends_at`/`_off` — and `my_next_booking`, the caller's own
+`booked` one not over yet that starts within seven days, by uuid and span. Both are null when there
+is none. The list fills them for every vehicle from one query (`BookingMapper::findPooled`), never
+one per vehicle; the single read, the update and the restore fill them too, because the screen
+replaces the vehicle it holds with their answer. Overdue is the client's to say, against the clock.
 
 **A boolean column is nullable and carries a default.** Nextcloud's schema check refuses a `NOT NULL`
 boolean outright — it is an integer of length 1 on the databases it supports — and NC 31 enforces
@@ -155,8 +210,9 @@ that where NC 34 no longer does. The default is what a flag nobody touched means
 
 **Indexes are part of the schema, not an optimisation:** a unique index on `uuid` everywhere, so the
 database states the identity too; `(vehicle_id, <time column>)` on every child table, `(user_id)` on
-vehicles, `(vehicle_id, read_at)` on readings, `(vehicle_id, started_at)` on trips, `(grantee)` on
-access, `(entity, entity_id)` on the audit trail, which hangs off a row rather than a vehicle.
+vehicles, `(vehicle_id, read_at)` on readings, `(vehicle_id, started_at)` on trips, `(vehicle_id,
+starts_at)` on bookings, `(grantee)` and `(vehicle_id)` on access, `(entity, entity_id)` on the
+audit trail, which hangs off a row rather than a vehicle.
 QBMapper hides the query, not the missing index.
 
 ### Time
@@ -179,7 +235,7 @@ ending 00:30 in Berlin belongs to the previous day in UTC.
 
 An update sends the `updated_at` it read; a stale one is rejected with **412**, never silently
 overwritten. Roughly ten lines in the base mapper. Two browser tabs are the realistic case today and
-any later sync needs the same foundation. Trips under Logbook Mode cannot collide — they are
+sync stands on the same foundation. Trips under Logbook Mode cannot collide — they are
 append-only.
 
 The token is `updated_at` itself, a unix second, and the statement that checks it is the statement
@@ -189,13 +245,14 @@ replaces, because two writes in the same second would otherwise leave the second
 looking fresh. Identity and provenance — `uuid`, `created_at`, `created_by` — are not writable
 through an update at all.
 
-**Undo is the one write that does not advance the token.** `POST /api/vehicles/{uuid}/restore` runs
-`UPDATE … SET deleted_at = NULL WHERE id = ? AND updated_at = ? AND deleted_at IS NOT NULL`: the
-same check, the mirror predicate, and `updated_at` left where the delete put it. The undo toast
-holds exactly one token — the one the delete answered with — so moving it would refuse the gesture,
-and nobody else can be holding it, because it was minted by the delete and never left that response.
-A restore that matches nothing is a **412** like any other: either the row moved on, or it was never
-deleted, and both mean what you read is not what is there.
+**Undo advances the token too.** `POST /api/vehicles/{uuid}/restore` (and each Entry's and
+reminder's) runs `UPDATE … SET deleted_at = NULL, updated_at = ? WHERE id = ? AND updated_at = ? AND
+deleted_at IS NOT NULL`: the same check against the token the delete answered with, the mirror
+predicate, and a new token as on any write, answered with the row. A client that asks what changed
+since by `updated_at` would otherwise never see a restore — a trip voided under Logbook Mode and
+restored a month later would never reach it. The delete's token is spent: an edit still holding it
+is a 412. A restore that matches nothing is a **412** like any other: either the row moved on, or it
+was never deleted, and both mean what you read is not what is there.
 
 **Recomputed columns stay out of it.** `fleet_vehicles.odo_value` and `fleet_odo_readings.flagged`
 are derived from the readings ([odometer rules](#odometer-rules)), so each is written by a statement
@@ -390,7 +447,10 @@ day, in tenths of a cent, rounded half up to the cent. A trip with no rate for i
 kilometres prints "not stated" and stays out of the total, which is null when no line has an
 amount. There is no claim (404) where the jurisdiction has no rates or no renderer, or the vehicle
 counts hours. **Commutes are not on it**: they are a different deduction under different rules,
-and a sum mixing them would be wrong where nobody could see it.
+and a sum mixing them would be wrong where nobody could see it. **A claim is the reader's**: it
+lists only the trips whose `created_by` is the reader, so on a granted car the owner's does not
+carry the driver's, and the page says so in its own language ("Fahrten, die Sie eingetragen
+haben"). On a car nobody else logs on, that is every trip.
 
 ### CSV export
 
@@ -417,23 +477,34 @@ stays a number.
 
 ### Documents
 
-`GET`, `POST /api/vehicles/{uuid}/documents` and `DELETE …/documents/{document}` list, attach and
-detach a vehicle's papers (`DocumentService`). Listing takes VIEW, the writes EDIT and the vehicle's
-hold. Each answers with the list as it now stands, so there is no token: nothing edits a document.
+`GET`, `POST /api/vehicles/{uuid}/documents`, `DELETE …/documents/{document}` and `POST
+…/documents/{document}/restore` list, attach, detach and restore a vehicle's papers
+(`DocumentService`). Listing takes VIEW. The writes take LOG, the vehicle's hold, and the rule of
+the row the paper hangs on: on an Entry the Entry's own (`edit`, or `log` when
+the caller entered it), on a booking the booking's (`VehicleAccess::mayBooking`), and `edit` for the
+vehicle's own papers. A driver files the receipt of their own fill-up; the registration and the
+insurance stay a manager's. Detaching asks the same rule of the same row, whoever attached the
+paper, and so does restoring it. Each answers with the list as it now stands, so there is no token:
+nothing edits a document.
 
 **Attaching takes a `file_id` from Nextcloud's file picker**, with a `kind` and optionally a
-`linked_type` (`energy`, `maintenance`, `expense`) plus `linked_uuid`. There is no upload path. The
+`linked_type` (`energy`, `maintenance`, `expense`, `booking`) plus `linked_uuid`. A booking's papers
+are its handover photos, `kind: photo` by convention, not by rule. There is no upload path. The
 file must be one the attacher owns and can read in their own Files, or it is a 404: the download
 serves it to everyone who may view the vehicle, so this is where the file's own access is checked
 ([security](security.md)). A file shared with the attacher is refused, since the download would
-outlive a revoked share and ignore a view-only one. So is a file in a group folder, which no account
-owns. A link to an entry of another vehicle is a 404 too. The same file on the same entry twice is
+outlive a revoked share and ignore a view-only one. So is a file in a group folder or an admin's
+external storage: both name whoever asks as the owner, so the file must also sit in the attacher's
+home storage (`OwnFiles::owns`, which the inbox and the import ask too). A link to an entry of another vehicle is a 404 too. The same file on the same entry twice is
 one document, and its first `kind` stands: nothing edits a document, so a new kind means detaching
-and attaching again. Detaching soft-deletes the row and leaves the file alone.
+and attaching again. Detaching soft-deletes the row and leaves the file alone. Restoring takes the
+stamp off again; a paper that is live already, or whose file is on the same row again by then, is
+left as it is, so restoring never makes two papers of one. A paper whose entry or booking was deleted
+since does not come back: like attaching, restoring takes a live row only.
 
-**A listed document carries** `uuid`, `kind`, `file_id`, `name`, `mime`, `linked_type` and
-`linked_uuid`. The name is looked up by id wherever the file lives now, in whoever's Files hold it,
-so a move is followed. A deleted file, trash bin included, lists with `name` and `mime` null: the
+**A listed document carries** `uuid`, `kind`, `file_id`, `name`, `mime`, `linked_type`,
+`linked_uuid`, and `may`: `detach` where the caller may take it off. The name is looked up by id
+wherever the file lives now, in whoever's Files hold it, so a move is followed. A deleted file, trash bin included, lists with `name` and `mime` null: the
 row stays, and the screen says the file is gone.
 
 **The download** is `GET /vehicles/{uuid}/documents/{document}`, outside `/api` beside the CSV
@@ -441,30 +512,153 @@ because it is a link. It takes VIEW, so a driver gets the owner's file without a
 file is a 404. The file always goes out as an attachment, with `nosniff` and a CSP that runs
 nothing ([security](security.md#hostile-content)). The file is found through the accounts the
 mount cache says hold it, not `IRootFolder::getById`: in a web request that searches only the
-signed-in account's mounts, and a driver's include none of the owner's.
+signed-in account's mounts, and a driver's include none of the owner's. The screen fetches the file
+rather than following the link, so a refusal is said in place (`src/utils/papers.js`): a link
+followed into a 404 replaces the app with the refusal's JSON.
 
 **The screen** is a *Documents* section on the vehicle screen (`VehicleDocuments.vue`), the only
-place a paper is added. It reads the list once and hands it to the timeline, which puts a paperclip
-on the row of each linked entry. A paper is not a timeline row of its own: a registration has no
-date to sort by. The entry a paper may belong to is offered from the newest page of fill-ups,
-maintenance records and expenses; an older one cannot be linked from the screen yet. A 404 on attach
-is shown as "not a file of your own", which is what it nearly always means.
+place a paper is added. It reads the list once and hands it to the timeline and the Bookings
+section, which put a paperclip on the row of each linked entry or booking. A paper is not a timeline
+row of its own: a registration has no date to sort by. The row a paper may belong to is offered from
+the newest fill-ups, maintenance records and expenses whose timeline row carries `edit` — the first
+page of each kind holding any, at most four pages back, since a driver's own may lie behind other
+drivers' — and from the bookings whose `may` carries `attach` (handed over, and the caller's by the
+booking rule). Typing searches the whole history instead (`src/utils/owners.js`): the first
+keystroke of a dialog reads every page of those kinds, at most forty each, and every booking since
+the first, and every word typed must be in the option's title, a booking's purpose, or its date —
+as the label writes it, or as `YYYY-MM-DD`. The client searches because the labels are its own:
+an energy or a category is a code until the screen words it. Without `edit` on the vehicle one of
+them must be chosen, so the search is offered even when none of the newest is the caller's. A 404 on
+attach is shown as "not a file of your own", which is what it nearly always means.
+
+### The inbox
+
+A receipt photographed on the phone reaches an entry without the file picker: the Nextcloud mobile
+app's auto-upload fills a folder, and the app lists what in it belongs to no vehicle yet. **The
+folder is a preference**, `inbox_folder` in `GET`/`PUT /api/preferences`: a file id, or null. As for
+documents, the id is the identity and the path a label, so a renamed or moved folder is still the
+inbox. `PUT` takes only a folder in the user's own Files — their home storage, so neither a share
+nor a group folder — or it is a 400: what lands in somebody else's folder is not the user's to
+attach, and attaching would refuse it anyway.
+
+**`GET /api/inbox`** (`InboxService`) answers `folder` (`file_id`, `path`), `files` and `count`.
+`files` are the folder's direct children whose MIME is `image/*` or `application/pdf`, which the
+user owns, and whose file id no live paper on a vehicle they reach references (one query,
+`DocumentMapper::findAttachedFileIds`): newest `mtime` first, at most 100, each with `file_id`,
+`name`, `mime`, `mtime` and `size`. `count` is all of them, past the hundred. Direct children only:
+auto-upload sorts into subfolders only when asked to, and a recursive walk over a large folder is a
+slow request. `folder` is null, and the list empty, when none is chosen or the folder is gone —
+deleted, or no longer the user's own — while the preference keeps the id it was given.
+
+The inbox only lists. Attaching is the documents route as before, and the app never moves, renames
+or deletes a file in it: a receipt the app moved out of sight is one the user cannot find. Nothing
+watches the folder; it is read when the app loads, for the count in the navigation, and again when
+the [Inbox screen](ui.md#the-inbox-screen) opens.
+
+### Import
+
+Another tool's CSV export becomes entries (`ImportService`). The file is picked in Files, never
+uploaded, and must be the caller's own, by the check a paper's attach makes (`OwnFiles`). Importing
+takes `edit` on a vehicle that is not disposed: it writes many entries at once, other people's
+history among them. It never creates a trip: neither format keeps a logbook a ruleset accepts, and
+trips made up from counter values would be the batch of invented trips that closing a Gap refuses
+to make ([Logbook Mode](features.md#logbook-mode)).
+
+- **The seam.** An importer (`lib/Import/IImporter.php`, [contributing](contributing.md)) has a
+  key, a nominative label ([legal](legal.md)), the record types of its export — one file each — and
+  the questions such a file leaves open. It places the header's columns and turns the rows into
+  proposals: a kind, the fields in canonical units, the row, and whether it is new, a duplicate or
+  unreadable, with a reason word and its column. It writes nothing. Neither format states VAT, so
+  an imported row's `vat_rate` is null: not stated.
+- **Formats are evidence, not promises.** Each importer's class names where its headers were read
+  and when, or that no source was found. A header it cannot place is reported as ignored, never
+  guessed into a field.
+- **Bounded.** `CsvReader` reads under the caps [security](security.md) names and refuses the whole
+  file past one. It reads RFC 4180, or with the escape character an importer names. `Values` turns a cell into a number, a moment or a yes or no, judging a decimal
+  mark or a date order on the whole column, and converts to canonical units, rounding half up once.
+
+**The preview**, `POST /api/vehicles/{uuid}/import/preview`, writes nothing. It takes `file_id`,
+`importer` (`lubelogger`, `spritmonitor`), `record_type`, `units`, `tz` (the zone a date without a
+time is noon in) and the answers `date_order`, `energy`, `category_map` and `include_duplicates`.
+It answers the columns placed and ignored, the `questions` still open with their choices, the
+file's cost `categories` and `category_defaults` (what a code the format names becomes unless
+answered), `counts` (`new`, `duplicate`, `unreadable`, and `creates` under these
+answers), the unreadable rows' `reasons`, the first 50 proposals, and the file's `etag`.
+
+- **Stateless.** Nothing is kept between preview and import: a table would be a migration, a cache
+  entry a second place for the truth. The import sends the same body again with the etag, and the
+  file is read again.
+- **What the vehicle says is not asked.** Money is in the vehicle's currency; a row in another is
+  unreadable. A sign stands for every currency written with it, so `$` is never the euro
+  (`Values::mayName`). The energy is asked only for rows that name none, which is every LubeLogger row and
+  a Spritmonitor row whose `Kraftstoff` code or word decides nothing, and only of a vehicle that
+  takes several. Meanwhile the rows are read with the first, as an open date order is read day
+  first (`Answers::energy`). A vehicle with no energy type yet takes no fuel import.
+- **A Spritmonitor cost type is a code** with a default meaning (`SpritmonitorImporter`), which
+  the user may change; a text without one is asked. A purchase price and a refund are no running
+  cost and are never imported.
+- **A fill-up of an energy the vehicle does not take is unreadable** (`energy`), because the
+  fill-up's own rule would refuse it.
+- **A duplicate** is a live entry of the same kind on the same local day with the same counter or,
+  where either has none, the same amount (`Duplicates`); a fill-up also of the same energy, an
+  odometer entry on the same counter chain. Of each kind, only the entries from two days before
+  the file's first row to two days after its last are loaded.
+- **A refused file is a 422** with the reader's reason word and row, whole: nothing of it is
+  previewed. One somebody is writing is a 423.
+
+**The import**, `POST /api/vehicles/{uuid}/import`, takes the preview's body plus the `etag` it
+answered. It reads the file again and writes what the preview counted as `creates`.
+
+- **409 when the etag moved**: the user agreed to counts that no longer describe the file, so the
+  screen previews again. **400 while a question is open**: the rows were read with a provisional
+  answer.
+- **One transaction under the hold.** Duplicates are marked again inside it, so an entry somebody
+  logged since the preview is a duplicate now. Each row goes through its entry service's `add()`,
+  the same write `record()` makes, entered by the caller. A row the service refuses stops the whole
+  import with a 400 that names the row; nothing is written.
+- **Readings settle once.** `OdometerService::batch()` defers each chain's settle to after the last
+  row, since settling reads the whole chain and once per row would be quadratic. The flags and the
+  cached value come out as if each row had been entered by hand: a lower counter is flagged, not
+  refused. `ImportTest` holds 5 000 fill-ups to 30 seconds.
+- **The answer is the import's identity**: the counts, and every created entry as `{type, uuid}`
+  in file order, `type` being the timeline's. Undoing an import names that list; nothing else
+  records it.
+
+**The undo**, `POST /api/vehicles/{uuid}/import/undo`, takes that list as `created` and
+soft-deletes every entry on it, all or nothing, under the hold. It takes `edit`, as the import did.
+
+- **Only what the import left.** Each entry must be live on this vehicle and entered by the caller,
+  or the undo is a 409 and deletes nothing: a list naming one entry already deleted, entered by
+  somebody else, on another vehicle or a Reading a fill-up wrote is not this import's. All four get
+  one answer, so a foreign uuid tells nothing. An entry edited since is still undone. Once one entry
+  is gone, the rest are deleted one by one.
+- **Through the services' own deletes.** Each entry goes through its service's `remove()`, the
+  write `delete()` makes, so a fill-up's or a record's Readings go with it. Inside
+  `OdometerService::batch()`, the chains settle once, after the last.
+
+**From a script**, `occ nextfleet:import <uid> <vehicle-uuid> <path> --importer= --record-type=
+--units=km,l [--date-order=] [--energy=] [--map=text:choice …] [--include-duplicates] [--dry-run]`
+builds the screen's request and runs it as that user, through the same `ImportService`: a preview,
+printed, then the import with its etag unless `--dry-run`. The path is resolved in the user's Files
+and the file then checked as a picked one, so a share is refused here too. `tz` is the user's zone,
+else the server's (`UserZone`). A refusal exits 1 with its reason. There is no undo command; `-v`
+prints the created list the undo route takes.
 
 ## Nextcloud integration
 
 | Concern | Mechanism |
 |---|---|
-| Identity, ACL | `OCP\IUserSession`, `IGroupManager`. Every query runs through `VehicleAccess::may` from M1 on: owner, or a row in `fleet_access` with a sufficient role ([ADR 0001](adr/0001-own-access-table.md)); the strongest row wins and none narrows another. Five operations: `view` (viewer, driver, manager), `log` (driver, manager: add an entry, change one you entered), `edit` (manager: vehicle settings, reminders, recipients, documents, any entry), `delete` (manager: delete any entry) and `own` (the owner alone: access, deleting and restoring the vehicle). A route that names one vehicle asks `may`; a route that lists them asks `reachable` instead, so the widening is one query and not one per row. An Entry route asks for `log`, then `VehicleService::change` for the Entry it found: `edit` or `delete`, or `log` alone when its `created_by` is the caller. The vehicle JSON carries `may`, the caller's operations, from the same rows; the UI hides by it. `…/grants` lists, grants, re-roles (`PUT …/grants/{grant}`) and revokes, all `own`, each answering with the list and each grantee's display name. A grantee is a user or a group the instance has, never the owner; granting one again changes the role. A revoke takes off the reminder recipients who no longer reach `view`; a grant adds none. |
+| Identity, ACL | `OCP\IUserSession`, `IGroupManager`. Every query runs through `VehicleAccess::may` from M1 on: owner, or a row in `fleet_access` with a sufficient role ([ADR 0001](adr/0001-own-access-table.md)); the strongest row wins and none narrows another. Five operations: `view` (viewer, driver, manager), `log` (driver, manager: add an entry, change one you entered), `edit` (manager: vehicle settings, reminders, recipients, the vehicle's own documents, any entry), `delete` (manager: delete any entry) and `own` (the owner alone: access, deleting and restoring the vehicle). A route that names one vehicle asks `may`; a route that lists them asks `reachable` instead, so the widening is one query and not one per row. An Entry route asks for `log`, then `VehicleService::change` for the Entry it found: `edit` or `delete`, or `log` alone when its `created_by` is the caller. The vehicle JSON carries `may`, the caller's operations, from the same rows, plus `book` where they hold `log` on an `active` vehicle — the booking rule as a word to hide by, not a sixth operation — and each timeline row carries `may` too — `edit` and `delete`, or neither, as `VehicleService::changes` reads them off the vehicle with no further query; the UI hides by these ([screens follow the role](ui.md#screens-follow-the-role)). On a vehicle with any `fleet_access` row, revoked ones included, timeline rows and the logbook name who entered each Entry from its `created_by` (`EnteredBy`, [who entered it](ui.md#who-entered-it)). `…/grants` lists, grants, re-roles (`PUT …/grants/{grant}`) and revokes, all `own`, each answering with the list and each grantee's display name. A grantee is a user or a group the instance has, never the owner, and one the admin's sharing settings let the owner share with — none while the Share API is off or the owner is excluded from sharing; under "members only" a user sharing a group with the owner, minus the exempt groups, or a group the owner is in, and no group at all where group sharing is off — read as core's own share checks read them; any other is the same 400 as nobody. Granting one again changes the role. A revoke takes off the reminder recipients who no longer reach `view`; a grant adds none. A new grant notifies the user, or each member the group has then, never the owner; the notification's object is the grant, so a revoke withdraws it, and `Notifier::prepare()` names owner, vehicle and role as they stand when it is read. A role change sends nothing. `…/access` is the caller's own, at `view`: `GET` answers their own grant's role and each group that reaches the vehicle; `DELETE` leaves, giving back only the grant in their own name, with a revoke's rules (recipients, notification). Through a group there is nothing to leave — a personal opt-out would be a weaker row beating a stronger one — and the owner holds no grant, so both 404. A deleted group's grants are revoked ([data model](#data-model)). A booking route asks for `view` to list and `log` for the rest, then `VehicleAccess::mayBooking` for the booking it found: `edit`, or `log` alone when the caller is the booker — the Entry rule with the booker in the author's place, not a sixth operation. Each listed booking carries `may`: `edit`, `cancel`, `check_out`, `check_in`, `log_trip` and `attach` as its state and that rule allow; a trip logged from a booking takes the same rule. A document route asks for `log`, then the rule of the Entry or booking the paper hangs on, or `edit` for the vehicle's own ([documents](#documents)). A cancel by anyone but the booker notifies the booker; the notification's object is the booking, `Notifier::prepare()` drops it once the booking is no longer cancelled, and deleting the vehicle withdraws it (`BookingNotices`). |
 | Reminders → push | Own `TimedJob` (hourly) evaluates due reminders, then `OCP\Notification\IManager` + an `INotifier`. It reaches the phone through the Nextcloud app. |
 | Reminders → mail | `OCP\Mail\IMailer` + `IEMailTemplate`, using the server's configured SMTP. Digest, not one mail per item. |
 | Files, receipts | `OCP\Files\IRootFolder`. A vehicle's folder is created as `/Fleet/<plate> — <make model>/` for humans who browse Files, and then **referenced only by `folder_file_id`**. A plate change renames it best-effort; a failed rename, or a user who moved the folder themselves, breaks nothing. Documents are `file_id` too. |
 | …but served by us | Downloads go **through our controller**, so access follows the vehicle's access grant, not the file's. Otherwise a receipt on a shared car is invisible to the other driver unless the owner shares their folder. A `file_id` survives a move but not a delete — handle the missing node instead of 500ing. |
-| Talk (optional) | Post due items into a fleet room, only when the Talk app is present. M7+, cheap, and very much the reason someone runs Nextcloud. |
+| Talk (optional) | Post due items into a fleet room, only when the Talk app is present. In the backlog, cheap, and very much the reason someone runs Nextcloud. |
 | Activity stream | `OCA\Activity` provider — optional, after v1. |
 | Dashboard | `OCP\Dashboard\IAPIWidgetV2` over `ReminderService::due()`: the overview's reminder read (`fleet()`), open ones only, in the overview's urgency order, sorted in PHP because the widget has no browser code. It runs no query of its own. It lists red and amber only: the dashboard is what needs you now. |
 | Unified search | `OCP\Search\IProvider`: find a vehicle by plate (separators ignored), manufacturer or model, among the ones `VehicleService::list` gives the searcher, disposed ones left out. Vehicles only: searching trip purposes or notes would take the access check somewhere nobody tests it. |
 | Settings | Personal settings (default jurisdiction, "I reclaim VAT", grid factor). The mail cadence is per vehicle. |
-| CLI | `occ nextfleet:import`, `occ nextfleet:report` for scripting and imports. |
+| CLI | `occ nextfleet:import` imports a CSV export as the user it names ([import](#import)); `occ nextfleet:seed` writes a demo fleet ([development](development.md)). |
 
 **No calendar.** Public `OCP` on NC 31–34 can create a calendar event but cannot update or delete
 one. A reminder that is changed, snoozed or completed would leave an event that still rings, so
@@ -583,8 +777,9 @@ receipt. A vehicle that fails is logged and the round goes on.
   stays up while the state moves on: an unticked due date leaves "due on" standing. The job takes
   it back when the reminder moves to where nothing is told, and so do snoozing, dismissing,
   deleting, and a maintenance record closing the reminder or being withdrawn. Deleting the vehicle
-  takes back every one of its reminders' notifications, since the job no longer reads it; an undo
-  sends nothing, and the next round tells what is still due.
+  takes back every one of its reminders' notifications, since the job no longer reads it, and
+  its grants' too (`GrantNotices`); an undo sends nothing, and the next round tells what is still
+  due.
 - `laid_up` evaluates and persists but sends nothing. Back to `active`, the point it stands at has
   no receipt yet, so it sends once. `disposed` is not evaluated at all.
 - A receipt is per point and occurrence, and the schema has no more. A snooze that ends on a point
@@ -602,7 +797,7 @@ points are the ones the notification tells, and the lines say what it says, with
 transaction, so a refused mail rolls them back: the notification has its own receipt and stays,
 and the next run tries again. A day counts as mailed by its newest `mail` receipt up to now.
 
-The same prediction could warn on a leasing mileage overrun. That is M7+, in the
+The same prediction could warn on a leasing mileage overrun. That is in the
 [backlog](features.md#feature-backlog) rather than a planned milestone: it needs the contract's end
 date and mileage cap, two columns no milestone has added.
 
@@ -667,7 +862,8 @@ KPI labels derive from the vehicle (`€/100 km`, `€/h`), and a vehicle with n
 period shows cost as a period total instead.
 
 **CO₂** = amount × emission factor per energy type, from a versioned table in code with the
-source cited (`IRateProvider::emissionFactorAt()`), read on the fill-up's own day. Electricity uses
+source cited (`IRateProvider::emissionFactorAt()`), read on the fill-up's own day, and the source's
+year beside it where the country states one (`emissionSourceYear()`). Electricity uses
 a grid factor instead: the person's own from the personal settings, or the country's newest average
 with its year and source (`gridFactor()`). One figure, not a table, because a grid average is
 published years late. The personal figure is the reader's, so two people sharing a car can see

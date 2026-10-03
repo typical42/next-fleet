@@ -49,15 +49,19 @@ entered it ([odometer rules](architecture.md#odometer-rules)).
 ```
 ┌─ NextFleet ──────────────────────────────────────────────────────────┐
 │ Overview        │  M-AB 1234     [+ Entry][Costs][Edit][QR sticker]  │
-│                 │  VW Passat Variant                                 │
+│ Inbox       (3) │  VW Passat Variant                                 │
 │                 │  148 320 km · 6,4 l/100 km · 42,10 €/100 km        │
 │ ● M-AB 1234  ⚠  │  ┌────────────────────────────────────────────┐   │
 │ ● HH-CD 42      │  │ ● Coming up · HU/AU · due 24.09.2026 [Done]│   │
 │ ● M-EV 7   ⛔   │  │ ● Planned · Oil change · ~02.11.2026 [Done]│   │
 │                 │  └────────────────────────────────────────────┘   │
 │ Reports         │                                                    │
-│ ─────────────── │  Documents [Add document]                          │
-│ Settings        │  REGISTRATION                                      │
+│ ─────────────── │  Bookings [Book][Take it now]                      │
+│ Settings        │  COMING                                            │
+│                 │  Fr., 02.10., 14:00–18:00 Uhr  Anna  Booked        │
+│                 │                                                    │
+│                 │  Documents [Add document]                          │
+│                 │  REGISTRATION                                      │
 │                 │  Fahrzeugschein.pdf                        Remove  │
 │                 │  RECEIPT                                           │
 │                 │  Huber.pdf  Belongs to a maintenance rec.  Remove  │
@@ -132,23 +136,28 @@ on a row that is worked out rather than given.
 
 The right sidebar holds the vehicle's own data — the things you set once and rarely touch. That
 keeps the middle free for the things you touch weekly. The documents sit in a section of their own
-between the due banner and the timeline instead: listed by kind, each one a link, with *Add
+above the timeline instead: listed by kind, each one a link, with *Add
 document* opening Nextcloud's file picker. A document linked to an entry shows as a paperclip on
-that entry's row. It is never a row of its own, since a registration has no date to sort by
-([documents](architecture.md#documents)).
+that entry's row, one linked to a booking on the booking's. It is never a row of its own, since a
+registration has no date to sort by ([documents](architecture.md#documents)). A driver adds papers
+too, but only to an entry or booking of their own: *Belongs to* offers only those and must be
+chosen, and *Remove* shows on the papers the server says they may take off. *Belongs to* offers the
+newest rows; typing a word of the title or a date searches all of them. *Remove* goes with the undo
+toast. A tap on a paper saves its file; when the server refuses, the section or the row says why.
 
 ### Screens
 
 | Screen | Purpose | Primary action |
 |---|---|---|
-| **Overview** | All vehicles, sorted by urgency, not alphabetically: laid-up ones last, then by the most urgent open reminder's state and day, then by plate. Traffic light (red due or overdue, amber coming up, green otherwise) with its word, plate, km, next due. | Open a vehicle |
-| **Vehicle** | Header KPIs + due banner + documents + timeline (above) | **+ Entry** |
+| **Overview** | All vehicles, sorted by urgency, not alphabetically: laid-up ones last, then by the most urgent open reminder's state and day, then by plate. Traffic light (red due or overdue, amber coming up, green otherwise) with its word, plate, km, next due. A vehicle reached through a grant sorts among the reader's own and says "Owned by" its owner's display name, from the server's `owned_by`. A car that is out says who has it until when ([who has the car](#the-bookings-section)). | Open a vehicle |
+| **Vehicle** | Header KPIs + due banner + bookings + documents + timeline (above) | **+ Entry** |
 | **Entry sheet** | Trip / Energy / Maintenance / Odometer / Expense — see below | Save |
-| **Vehicle sheet** | Create with four fields; edit every writable one, plus lifecycle, jurisdiction, [logbook mode](features.md#logbook-mode), the inspection interval, the reminder recipients and mail cadence; delete, undoably | Save |
+| **Vehicle sheet** | Create with four fields; edit every writable one, plus lifecycle, jurisdiction, [logbook mode](features.md#logbook-mode), the inspection interval, the reminder recipients and mail cadence, [access](#the-access-section); delete, undoably | Save |
 | **Costs** | One year, one vehicle: stacked bars per month, table below, the CO₂ estimate, export button | Export |
+| **Inbox** | The files in the person's inbox folder that belong to no vehicle yet, as thumbnails ([the Inbox screen](#the-inbox-screen)). Shown once a folder is chosen | Attach |
 | **Reports** | Fahrtenbuch and mileage claim — pick a vehicle and a year, get a printable page ([ADR 0005](adr/0005-no-pdf-library.md)). Costs and CO₂ are not reports: they live on the Costs screen, and its CSV exports the rows behind the costs | Print |
-| **Vehicle sidebar** | Master data, jurisdiction (sharing from M6); reminders stay in the due banner, documents in their section | Edit inline |
-| **Personal settings** | The defaults a person keeps: jurisdiction first, then "I reclaim VAT", then the grid factor for charging (empty for the country's average, which it names). Not a screen in the app: it is the app's block on Nextcloud's own settings page, its own bundle, and it talks to the same API as everything else | Pick and it saves |
+| **Vehicle sidebar** | Master data, jurisdiction; reminders stay in the due banner, documents in their section, access in the vehicle sheet | Edit inline |
+| **Personal settings** | The defaults a person keeps: jurisdiction first, then "I reclaim VAT", then the grid factor for charging (empty for the country's average, which it names), then the inbox folder. Not a screen in the app: it is the app's block on Nextcloud's own settings page, its own bundle, and it talks to the same API as everything else | Pick and it saves |
 
 **Reports** has two, each one vehicle and one year, opened as a page in a tab of its own: the
 logbook ([export](architecture.md#the-fahrtenbuch-export)), a Fahrtenbuch in Germany and a plain one
@@ -231,7 +240,8 @@ Rules for all four:
   knows whether the other change matters, and the message says that is what the button does.
 - Saving returns to where you were, with an undo toast. Nothing asks "are you sure?"; `deleted_at`
   ([data model](architecture.md#data-model)) makes undo the cheaper pattern.
-- **Tapping a timeline row opens the sheet on that Entry**, any kind. It keeps its kind — the
+- **Tapping a timeline row opens the sheet on that Entry**, any kind, when the reader may change it
+  ([screens follow the role](#screens-follow-the-role)). It keeps its kind — the
   chooser is gone — and opens with what the Entry says; a rate it was saved with, stated or not,
   stays. Save writes the whole Entry back; _Delete_ goes with the undo toast, and a trip under
   [logbook mode](features.md#logbook-mode) offers _Void trip_ instead, whose late edits the
@@ -255,6 +265,163 @@ vehicle's name beneath. *Print* prints the sticker alone, about 5 cm wide. The c
 opened the sheet, so a reload does not open a second one. The code is drawn in the browser as an
 SVG path by `uqr` (MIT), so no PHP dependency comes with it. What the code must not carry is in
 [security](security.md#things-that-are-visible-in-the-real-world).
+
+### The Access section
+
+The last section of the Edit vehicle sheet, shown to the owner alone, since only the owner grants
+([Vehicle Access](../CONTEXT.md)). It lists each grant with its name, whether it is an account or a
+group, a role picker and *Remove*. Below, a search finds accounts and groups through core's
+autocomplete, which applies the instance's rules on who may find whom. A role picker beside it
+offers a driver first, because a car is lent to be driven. Like the recipients, each change is
+written at once, not with *Save*. A revoke may take people off the recipients, so the sheet reads
+that list again. It is never called "Share" (CONTEXT.md).
+
+### The Bookings section
+
+On the vehicle screen, between the due banner and the documents, because who has the car when is
+what a shared car is checked for before it is driven. It lists the coming bookings, then the last
+seven days', each with its span, booker, purpose and state. A car still out past its end stays among
+the coming ones: it has not been given back. A booking is no timeline row
+([a booking is a plan](architecture.md#data-model)).
+
+*Book* opens a small sheet: start, end and purpose. The start defaults to the next full hour and the
+end to two hours later. A span another live booking holds is refused; the sheet stays open with
+what was typed and names the booking in the way: "Booked by Anna, Fri 02/10, 14:00–18:00", or
+"With Anna until Fri 02/10, 18:00" when that booking is out. The weekday stands in for the year,
+since a booking is looked at within days of it.
+
+*Change* opens the same sheet on the booking; a booking that moved on meanwhile is handled as in
+every sheet ([the entry sheet](#the-entry-sheet-in-detail)). *Cancel booking* asks once, because a
+cancel has no undo. Both show where the booking's own `may` allows them.
+
+*Take the car* on a booking the reader may check out, and *Return the car* on one that is out, open
+the handover sheet: the counter, the tank or battery in percent, and a note. Taking it, the counter
+is prefilled from the vehicle's; giving it back, the field starts empty and says the counter the car
+was taken at, because a prefilled one would be saved unread. A car still out with someone refuses
+the check-out by name: "Still with Anna, booked Fri 02/10, 10:00–12:00". While no booking holds the
+car this minute and none is out, *Take it now* opens the same sheet with one more field, *Back by*
+(the next full hour plus two): it books from now to then and checks out — two requests, so a failed
+check-out keeps the booking, its end fixed, and *Try again* takes the car under it. A booking whose handover is in
+question says so on its row in words ("Counter below the one before", "Returned after the end");
+nothing is refused for it. Handover photos are added in the documents section, *Belongs to* the
+booking, and show as paperclips on its row.
+
+Giving the car back opens the entry sheet on *Trip*, filled in from the handover: departure and
+arrival, both counters, the booking's purpose. The category is left empty and the sheet asks for it,
+because only the driver knows whether the drive was business; there is no kind to switch to. Saving
+ties the trip to the booking. Closed unsaved, the returned booking offers *Log the trip* until it
+has one; then *Show the trip* opens it in the entry sheet, for whoever its timeline row opens for,
+and the row says "Trip logged" to everyone else. A voided trip stays tied, and the row says "Trip
+voided" instead. Any entry-sheet save reads the bookings again, since a trip voided or restored
+changes its booking's row.
+
+**Who has the car** is said twice, so nobody has to open the section to ask. A car that is out says
+"With Anna until Fri 02/10, 18:00" (or "With you") on its overview row, right after the light, and
+under the name in the vehicle header; past its end, "With Anna, overdue since …" in the warning
+colour. The header also names the reader's own next booking within seven days that is not taken
+yet: "Your booking: Sat 03/10, 09:00–12:00". Both come from the vehicle's `out_with` and
+`my_next_booking` ([architecture](architecture.md#data-model)); any write in the section reads the
+vehicle again.
+
+### The Inbox screen
+
+A receipt photographed at the pump should reach its fill-up without the file picker. The person
+chooses an *Inbox folder* on the personal settings page — Nextcloud's picker in folder mode, a
+folder of their own — and points the mobile app's auto-upload at it
+([the inbox](architecture.md#the-inbox)). From then on the navigation offers *Inbox* under
+*Overview*, with the count of files waiting; without a folder there is no entry.
+
+The screen is a grid of thumbnails, newest first, two across at 320 px: Nextcloud's own preview,
+core's PDF icon for a PDF, the name and the day beneath. Past a hundred it says how many more wait.
+A tap opens a small sheet: *Vehicle* (those the reader may `log` on, the one used last in this
+session picked, else the first), *What it is* (*Receipt*), *Belongs to* and *Attach*. Someone
+without `edit` must hang the paper on a row of their own, so their newest own entry is picked for
+them. Either way the common case is two taps: the file, then *Attach*. The attached file leaves the
+grid and the count.
+
+A receipt for a cost not entered yet is logged from the file: *New fill-up* (on a vehicle that
+names an energy), *New maintenance* or *New expense* opens the [entry sheet](#the-entry-sheet-in-detail) on that
+kind for the vehicle picked, without the kind chooser, dated when the file was saved. Saving it
+attaches the file to the new entry, as the kind chosen. If that attach fails, the entry stays and
+the screen says so; the file stays in the grid, to be attached to the entry by hand.
+
+Empty, the screen says where files come from. With no folder, or one deleted or shared since, it
+says what to do and links to the settings page. Nothing on this screen moves, renames or deletes a
+file.
+
+### Importing
+
+History from another tool arrives through the vehicle sheet: *Import from a file…*, for `edit` on a
+vehicle that is not disposed ([import](architecture.md#import)). The import sheet takes the vehicle
+sheet's place, so one dialog is open at a time; while the vehicle sheet holds unsaved changes the
+button waits and says to save or cancel them first.
+
+1. **The file.** Nextcloud's picker, CSV files only. Closing it closes everything; nothing is
+   uploaded.
+2. **The format.** One choice names the file and its record type: "CSV (LubeLogger format) — fuel",
+   "CSV (Spritmonitor format) — costs", and so on. The units the file does not say come with it,
+   preset to kilometres and litres: the distance for a file with a counter, the volume for fuel on a
+   vehicle that takes more than electricity. *Preview*.
+3. **The preview.** Counts in words ("New: 12. Already there: 3. Not readable: 1."), then only the
+   questions the file leaves open, each a field: the order of slash dates, the energy of fill-ups
+   that name none, and what each cost category text of a costs file means — an expense category, a
+   maintenance type, or skip. A code the format names shows its default meaning already chosen. Rows already there are skipped unless a switch includes them. Below,
+   which header became which field and which were not read, then the rows among the first fifty that
+   will not become an entry, each with its reason. Every answer previews again. *Back* returns to
+   the format and drops the answers.
+4. **The import.** *Import* stays grey while a question is open or nothing would be created. A file
+   changed since its preview is previewed again, and the sheet says so. Done, the sheet closes; the
+   result is the undo toast: how many entries were imported, how many rows were skipped as already
+   there, how many could not be read, and *Undo*. Undo takes back every entry of that import, or
+   none; an entry edited since goes with the rest. Once any of them was deleted, the toast says so
+   and drops *Undo*, and the rest are deleted one by one like any other. An import that created
+   nothing offers no *Undo*.
+
+A file the reader refuses — too large, not text, a broken quote — is named with its reason; so is a
+file shared with the person rather than their own, and a picker that failed.
+
+### Screens follow the role
+
+A grantee sees the whole vehicle and only the buttons their role allows. The screen hides by `may`
+and by nothing else: the vehicle carries the operations the session holds
+([Vehicle Access](../CONTEXT.md)), and each timeline row carries `edit` and `delete` where the
+reader may change that Entry. The server still refuses on its own; the screen just stops offering.
+
+| Offered | Takes |
+|---|---|
+| *New entry*, `n`, the QR sticker's sheet, *QR sticker*, *Done* on a reminder, *Close gap*, *Add document* | `log` |
+| *Book*, *Take it now* | `book`: `log` on a car in service |
+| *Change*, *Cancel booking*, *Take the car*, *Return the car* or *Log the trip* on a booking | the booking's `edit`, `cancel`, `check_out`, `check_in` or `log_trip` |
+| A vehicle in the inbox sheet, *New maintenance*, *New expense* | `log` |
+| *New fill-up* in the inbox sheet | `log`, on a vehicle that names an energy |
+| A booking under *Belongs to* | the booking's `attach` |
+| An entry under *Belongs to* | the entry's `edit` |
+| *The vehicle itself* under *Belongs to* | `edit` |
+| *Remove* on a document | the document's `detach` |
+| *Edit vehicle*, the reminder sheet, *+ Reminder*, the HU/AU question, the recipients, the complete-this-vehicle hint | `edit` |
+| *Import from a file…* | `edit`, on a vehicle that is not disposed |
+| A timeline row that opens its sheet | the row's `edit` |
+| *Show the trip* on a booking | the booking's `open_trip`: the trip's `edit` |
+| *Delete* or *Void trip* in that sheet | the row's `delete` |
+| *Delete vehicle*, the Access section | `own` |
+
+A row the reader may not change still says everything it says to anyone, and opens nothing; a
+reminder row likewise. A viewer who scans the sticker lands on the vehicle without a sheet.
+
+### Who entered it
+
+Once anybody else was given access to a vehicle — a revoked grant counts, because the trips that
+driver entered stay — every timeline row ends with "Entered by" and a display name, and the logbook
+gains an *Eingetragen von* column ([logbook mode](features.md#logbook-mode)). Both read
+`created_by`; there is no driver field. An erased account reads as its pseudonym. A vehicle nobody
+else was given looks as it did before access existed.
+
+### Leaving a vehicle
+
+Under the vehicle's name, a grantee with a grant of their own sees *Leave vehicle*. It asks once,
+because only the owner grants again, and there is no undo. One who reaches the vehicle through a
+group reads which group and that only the owner can change it, with no button. The owner sees
+neither. Leaving with no group left takes the vehicle out of the fleet, and the screen with it.
 
 ### Details that decide whether it feels easy
 
@@ -300,11 +467,6 @@ SVG path by `uqr` (MIT), so no PHP dependency comes with it. What the code must 
   through Nextcloud's unified search and its shortcut ([integration](architecture.md#nextcloud-integration)).
 - **Dark mode and 320 px width are acceptance criteria**, not afterthoughts; the timeline is rows,
   not cards, so it survives both.
-
-### Fleet view (M7+)
-
-One table, all vehicles, columns for status, km, cost/km, next due, current driver. Sortable,
-filterable by group. This is the manager's screen and it is the one place density beats simplicity.
 
 ## Languages
 

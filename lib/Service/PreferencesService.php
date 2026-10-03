@@ -11,6 +11,8 @@ namespace OCA\NextFleet\Service;
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Jurisdiction\IJurisdiction;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
+use OCP\Files\Folder;
+use OCP\Files\IRootFolder;
 use OCP\IConfig;
 
 /**
@@ -18,8 +20,7 @@ use OCP\IConfig;
  * per instance: a jurisdiction belongs to a person and to the vehicles they create afterwards,
  * never to the server (CONTEXT.md).
  *
- * @psalm-import-type GridAverage from \OCA\NextFleet\Jurisdiction\IRateProvider
- * @psalm-type Settings = array{preferences: array{jurisdiction: string, dismissed_hints: list<string>, reclaim_vat: bool, kpi_period: string, grid_factor: ?int}, jurisdictions: list<array{key: string, name: string, logbook_export: bool, mileage_claim: bool, grid_factor: ?GridAverage}>}
+ * @psalm-import-type NextFleetPreferences from \OCA\NextFleet\ResponseDefinitions as Settings
  */
 class PreferencesService {
 	/**
@@ -55,6 +56,12 @@ class PreferencesService {
 	 */
 	private const GRID_FACTOR = 'grid_factor';
 
+	/**
+	 * The file id of the folder the Inbox screen lists, or unset. An id rather than a path, so a
+	 * folder renamed or moved in Files is still the inbox; the path is only its label.
+	 */
+	private const INBOX = 'inbox_folder';
+
 	/** Above the dirtiest lignite plant, so a figure past it is a typo rather than a grid. */
 	private const GRID_MAX = 2000;
 
@@ -64,13 +71,14 @@ class PreferencesService {
 	public function __construct(
 		private IConfig $config,
 		private Jurisdictions $jurisdictions,
+		private IRootFolder $root,
 	) {
 	}
 
 	/**
 	 * What the settings screen shows: this user's choices, and the vocabulary each one is picked
 	 * from. One answer rather than two routes, because a value without its options is a dropdown
-	 * with nothing in it (docs/adr/0006-one-api-surface-in-v1.md).
+	 * with nothing in it.
 	 *
 	 * @return Settings
 	 */
@@ -90,6 +98,8 @@ class PreferencesService {
 				self::RECLAIM_VAT => $this->config->getUserValue($userId, Application::APP_ID, self::RECLAIM_VAT, '0') === '1',
 				self::KPI_PERIOD => $this->period($userId),
 				self::GRID_FACTOR => $this->gridFactor($userId),
+				// As stored, even once the folder is gone: GET /api/inbox is what says so.
+				self::INBOX => $this->inboxId($userId),
 			],
 			'jurisdictions' => array_map(
 				// The name is English and reaches no catalogue here; the screen translates it
@@ -150,6 +160,13 @@ class PreferencesService {
 			}
 			$values[self::GRID_FACTOR] = $grams === null ? '' : (string)$grams;
 		}
+		if (array_key_exists(self::INBOX, $fields)) {
+			$folderId = $fields[self::INBOX];
+			if ($folderId !== null && (!is_int($folderId) || $this->ownFolder($userId, $folderId) === null)) {
+				throw new \InvalidArgumentException(self::INBOX . ' is a folder of your own Files, or null');
+			}
+			$values[self::INBOX] = $folderId === null ? '' : (string)$folderId;
+		}
 
 		foreach ($values as $key => $value) {
 			$this->config->setUserValue($userId, Application::APP_ID, $key, $value);
@@ -207,6 +224,33 @@ class PreferencesService {
 		$stored = $this->config->getUserValue($userId, Application::APP_ID, self::GRID_FACTOR, '');
 
 		return preg_match('/^\d+$/', $stored) === 1 ? (int)$stored : null;
+	}
+
+	/**
+	 * The folder the Inbox screen lists, or null when none is chosen or it is no longer a folder of
+	 * this user's own.
+	 */
+	public function inbox(string $userId): ?Folder {
+		$folderId = $this->inboxId($userId);
+
+		return $folderId === null ? null : $this->ownFolder($userId, $folderId);
+	}
+
+	private function inboxId(string $userId): ?int {
+		$stored = $this->config->getUserValue($userId, Application::APP_ID, self::INBOX, '');
+
+		return preg_match('/^\d+$/', $stored) === 1 ? (int)$stored : null;
+	}
+
+	/**
+	 * A folder in the user's own Files - their home storage, not a share or a group folder, which
+	 * are somebody else's (docs/architecture.md#the-inbox). Asked again on every read, since a
+	 * folder moves.
+	 */
+	private function ownFolder(string $userId, int $folderId): ?Folder {
+		$node = $this->root->getUserFolder($userId)->getFirstNodeById($folderId);
+
+		return $node instanceof Folder && OwnFiles::owns($userId, $node) ? $node : null;
 	}
 
 	/**

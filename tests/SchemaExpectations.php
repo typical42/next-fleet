@@ -123,7 +123,7 @@ trait SchemaExpectations {
 
 		$this->assertSame(
 			[
-				'fleet_access', 'fleet_audit', 'fleet_documents', 'fleet_energy', 'fleet_expenses',
+				'fleet_access', 'fleet_audit', 'fleet_bookings', 'fleet_documents', 'fleet_energy', 'fleet_expenses',
 				'fleet_maintenance', 'fleet_odo_readings', 'fleet_reminder_receipts', 'fleet_reminder_recipients',
 				'fleet_reminders', 'fleet_trips', 'fleet_vehicles',
 			],
@@ -346,6 +346,35 @@ trait SchemaExpectations {
 		]);
 	}
 
+	public function testBookingsHoldsTheDataModelsColumnsAndNoOthers(): void {
+		$this->assertTable('fleet_bookings', [
+			'vehicle_id' => 'bigint, not null',
+			// The booker.
+			'user_id' => 'string(64), not null',
+			// The booker's plan, each end with the offset it was planned at.
+			'starts_at' => 'bigint, not null',
+			'starts_at_off' => 'integer, not null',
+			'ends_at' => 'bigint, not null',
+			'ends_at_off' => 'integer, not null',
+			'purpose' => 'text, null',
+			'state' => 'string(16), not null',
+			// The handover's two moments, null until each happens. The level is a percentage of
+			// the main tank or battery.
+			'out_at' => 'bigint, null',
+			'out_at_off' => 'integer, null',
+			'out_odo' => 'bigint, null',
+			'out_level' => 'integer, null',
+			'out_notes' => 'text, null',
+			'in_at' => 'bigint, null',
+			'in_at_off' => 'integer, null',
+			'in_odo' => 'bigint, null',
+			'in_level' => 'integer, null',
+			'in_notes' => 'text, null',
+			// The trip logged from it, once one is.
+			'trip_id' => 'bigint, null',
+		]);
+	}
+
 	/**
 	 * Indexes are part of the schema, not an optimisation: the unique one on `uuid` is the
 	 * database stating the identity, and the rest are the reads M1 makes.
@@ -361,9 +390,11 @@ trait SchemaExpectations {
 			'fleet_odo_veh_read_idx' => 'index(vehicle_id, read_at)',
 		], $this->indexes('fleet_odo_readings'));
 
+		// Grants listed per vehicle, and a group's revoked across vehicles.
 		$this->assertSame([
 			'fleet_acc_grantee_idx' => 'index(grantee)',
 			'fleet_acc_uuid_uniq' => 'unique(uuid)',
+			'fleet_acc_veh_idx' => 'index(vehicle_id)',
 		], $this->indexes('fleet_access'));
 
 		$this->assertSame([
@@ -416,6 +447,12 @@ trait SchemaExpectations {
 			'fleet_doc_uuid_uniq' => 'unique(uuid)',
 			'fleet_doc_veh_idx' => 'index(vehicle_id)',
 		], $this->indexes('fleet_documents'));
+
+		// A vehicle's bookings by time, and the overlap check before each one.
+		$this->assertSame([
+			'fleet_bkg_uuid_uniq' => 'unique(uuid)',
+			'fleet_bkg_veh_start_idx' => 'index(vehicle_id, starts_at)',
+		], $this->indexes('fleet_bookings'));
 	}
 
 	/**

@@ -12,8 +12,12 @@ import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import NcSelect from '@nextcloud/vue/components/NcSelect'
 import { computed, ref, watch } from 'vue'
 
-import { attachDocument, detachDocument, documentUrl, listDocuments, NotFoundError, readTimeline } from '../services/api.js'
-import { DOCUMENT_KINDS, documentKindWord, entryName, shortDate } from '../utils/format.js'
+import { attachDocument, documentUrl, listDocuments, NotFoundError } from '../services/api.js'
+import { useVehiclesStore } from '../store/index.js'
+import { may } from '../utils/access.js'
+import { DOCUMENT_KINDS, documentKindWord } from '../utils/format.js'
+import { matching, readHistory, readOwners } from '../utils/owners.js'
+import { savePaper } from '../utils/papers.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -24,6 +28,8 @@ const props = defineProps({
 // (src/views/VehicleView.vue) rather than both reading it.
 const emit = defineEmits(['listed'])
 
+const store = useVehiclesStore()
+
 /**
  * The list as the server last answered, or null until it is read.
  *
@@ -32,6 +38,12 @@ const emit = defineEmits(['listed'])
 const documents = ref(null)
 const failure = ref('')
 const writing = ref(false)
+/**
+ * Anyone who sees the vehicle reads the papers. A paper on an entry or a booking takes that row's
+ * rule, so a driver files the receipt of their own fill-up; the vehicle's own papers take `edit`.
+ */
+const files = computed(() => may(props.vehicle, 'log'))
+const keepsVehicles = computed(() => may(props.vehicle, 'edit'))
 
 /** The papers under their kinds, in a fixed order, kinds without any left out. */
 const groups = computed(() => DOCUMENT_KINDS
@@ -69,6 +81,13 @@ async function load() {
 // The shell keeps one vehicle screen and swaps the vehicle under it (src/App.vue).
 watch(() => props.vehicle.uuid, load, { immediate: true })
 
+// The undo of a removal is the toast's, and the list it answered comes through the store.
+watch(() => store.refiled, (refiled) => {
+	if (refiled?.vehicle === props.vehicle.uuid) {
+		show(refiled.list)
+	}
+})
+
 /**
  * @param {import('../services/api.js').Document} paper - a linked one
  * @return {string} what it belongs to, in words
@@ -79,9 +98,24 @@ function belongsWord(paper) {
 		energy: t('nextfleet', 'Belongs to a fill-up'),
 		maintenance: t('nextfleet', 'Belongs to a maintenance record'),
 		expense: t('nextfleet', 'Belongs to an expense'),
+		booking: t('nextfleet', 'Belongs to a booking'),
 	}
 
 	return words[paper.linked_type ?? ''] ?? ''
+}
+
+/**
+ * @param {import('../services/api.js').Document} paper - the one to save
+ * @return {Promise<void>} when it is saved, or why not is on screen
+ */
+async function save(paper) {
+	const uuid = props.vehicle.uuid
+	failure.value = ''
+	const why = await savePaper(uuid, paper)
+	// The section stays when the shell swaps the vehicle under it; the refusal was the last one's.
+	if (uuid === props.vehicle.uuid) {
+		failure.value = why
+	}
 }
 
 /**
@@ -92,7 +126,7 @@ async function detach(paper) {
 	writing.value = true
 	failure.value = ''
 	try {
-		show(await detachDocument(props.vehicle.uuid, paper.uuid))
+		show(await store.detach(props.vehicle.uuid, paper))
 	} catch (error) {
 		failure.value = t('nextfleet', 'The document was not removed: {reason}', { reason: error.message })
 	} finally {
@@ -111,36 +145,63 @@ const kind = ref(null)
 /** @type {import('vue').Ref<{id: string, label: string, type: string}|null>} */
 const belongs = ref(null)
 /**
- * What "Belongs to" offers: one option per entry, named as its timeline row is.
+ * What "Belongs to" offers: one option per entry, named as its timeline row is, and per booking.
  *
- * @type {import('vue').Ref<{id: string, label: string, type: string}[]>}
+ * @type {import('vue').Ref<import('../utils/owners.js').Owner[]>}
  */
 const owners = ref([])
+/** What was typed into *Belongs to*; empty offers the newest rows. */
+const search = ref('')
+/**
+ * Every row the paper may belong to, read on the first search of each dialog and only then: it
+ * takes a page per fifty rows of each kind.
+ *
+ * @type {import('vue').Ref<import('../utils/owners.js').Owner[]|null>}
+ */
+const history = ref(null)
+/** @type {Promise<void>|null} */
+let reading = null
+const offered = computed(() => search.value.trim() === '' ? owners.value : matching(history.value ?? [], search.value))
 const attachFailure = ref('')
 
 const kinds = computed(() => DOCUMENT_KINDS.map((one) => ({ id: one, label: documentKindWord(one) })))
 
-/**
- * The entries a paper may belong to: the newest page of each linkable kind, newest first. A receipt
- * is filed soon after the fill-up or the invoice it is for.
- *
- * @return {Promise<void>} when they are in; a refusal leaves none, since the link is optional
- */
-async function readOwners() {
+/** @return {Promise<void>} when the rows a paper may belong to are in; a refusal leaves none */
+async function listOwners() {
 	owners.value = []
+	search.value = ''
+	history.value = null
+	reading = null
 	try {
-		const pages = await Promise.all(['energy', 'maintenance', 'expense']
-			.map((type) => readTimeline(props.vehicle.uuid, { type, cursor: null })))
-		owners.value = pages.flatMap((one) => one.rows)
-			.sort((a, b) => b.occurred_at - a.occurred_at)
-			.map((entry) => ({
-				id: entry[entry.type].uuid,
-				type: entry.type,
-				label: `${shortDate(entry.occurred_at, entry.occurred_at_off)} · ${entryName(entry)}`,
-			}))
+		owners.value = await readOwners(props.vehicle.uuid)
 	} catch {
 		owners.value = []
 	}
+}
+
+/**
+ * @param {string} typed - what is in the search field now
+ * @return {Promise<void>} when the history is in; a refusal leaves the search finding nothing
+ */
+async function lookFor(typed) {
+	search.value = typed
+	if (typed.trim() === '' || reading !== null) {
+		return
+	}
+	history.value = null
+	const asked = reading = readHistory(props.vehicle.uuid)
+		.then((all) => {
+			// A dialog opened since has its own history to read.
+			if (reading === asked) {
+				history.value = all
+			}
+		}, () => {
+			// Nothing found this time, and the next keystroke asks again.
+			if (reading === asked) {
+				history.value = []
+				reading = null
+			}
+		})
 }
 
 /**
@@ -180,7 +241,7 @@ async function add() {
 	kind.value = null
 	belongs.value = null
 	attachFailure.value = ''
-	await readOwners()
+	await listOwners()
 }
 
 /** Closes the question, unless its answer is still on the way. */
@@ -218,7 +279,7 @@ async function attach() {
 		<div class="documents__head">
 			<h3>{{ t('nextfleet', 'Documents') }}</h3>
 			<!-- The only place a document is added: an entry's row opens its papers but adds none. -->
-			<NcButton :disabled="writing" @click="add">
+			<NcButton v-if="files" :disabled="writing" @click="add">
 				{{ t('nextfleet', 'Add document') }}
 			</NcButton>
 		</div>
@@ -226,7 +287,9 @@ async function attach() {
 		<NcNoteCard v-if="failure" type="error" :text="failure" />
 		<NcLoadingIcon v-if="documents === null && failure === ''" />
 		<p v-else-if="documents !== null && documents.length === 0" class="documents__empty">
-			{{ t('nextfleet', 'No documents yet. Attach the registration, the insurance policy or a receipt from your Files.') }}
+			{{ keepsVehicles
+				? t('nextfleet', 'No documents yet. Attach the registration, the insurance policy or a receipt from your Files.')
+				: t('nextfleet', 'No documents yet.') }}
 		</p>
 
 		<div v-for="group in groups" :key="group.kind">
@@ -236,11 +299,13 @@ async function attach() {
 			<ul class="documents__list">
 				<li v-for="paper in group.papers" :key="paper.uuid" class="documents__paper">
 					<span class="documents__name">
-						<a v-if="paper.name !== null" :href="documentUrl(vehicle.uuid, paper.uuid)">{{ paper.name }}</a>
+						<!-- The address stays for a middle click and a copied link; a click saves in place. -->
+						<a v-if="paper.name !== null" :href="documentUrl(vehicle.uuid, paper.uuid)" @click.prevent="save(paper)">{{ paper.name }}</a>
 						<span v-else class="documents__gone">{{ t('nextfleet', 'The file is gone from Files') }}</span>
 						<span v-if="paper.linked_type !== null" class="documents__belongs">{{ belongsWord(paper) }}</span>
 					</span>
-					<NcButton variant="tertiary"
+					<NcButton v-if="paper.may.includes('detach')"
+						variant="tertiary"
 						:aria-label="paper.name === null
 							? t('nextfleet', 'Remove this document')
 							: t('nextfleet', 'Remove {name}', { name: { value: paper.name, escape: false } })"
@@ -269,18 +334,28 @@ async function attach() {
 				:clearable="false"
 				label="label"
 				@update:model-value="kind = $event?.id ?? null" />
-			<NcSelect v-if="owners.length > 0"
+			<!-- Not filterable: the newest rows are offered until something is typed, and then the whole
+			     history is searched (src/utils/owners.js). Without `edit` a row must be chosen, and the
+			     session's own may lie behind the newest, so the search stays. -->
+			<NcNoteCard v-if="!keepsVehicles && owners.length === 0"
+				type="info"
+				:text="t('nextfleet', 'You can attach a paper only to an entry or a booking of your own. None is among the newest; type to search older ones.')" />
+			<NcSelect v-if="owners.length > 0 || !keepsVehicles"
 				v-model="belongs"
-				:options="owners"
+				:options="offered"
+				:filterable="false"
+				:loading="search.trim() !== '' && history === null"
 				:input-label="t('nextfleet', 'Belongs to')"
-				:placeholder="t('nextfleet', 'The vehicle itself')"
-				label="label" />
+				:placeholder="keepsVehicles ? t('nextfleet', 'The vehicle itself') : t('nextfleet', 'Choose an entry or a booking')"
+				label="label"
+				@search="lookFor" />
 
 			<template #actions>
 				<NcButton :disabled="writing" @click="dismiss">
 					{{ t('nextfleet', 'Cancel') }}
 				</NcButton>
-				<NcButton variant="primary" :disabled="writing || kind === null" @click="attach">
+				<!-- Without `edit`, a paper must hang on a row of the session's own: the vehicle's take a manager. -->
+				<NcButton variant="primary" :disabled="writing || kind === null || (!keepsVehicles && belongs === null)" @click="attach">
 					{{ t('nextfleet', 'Attach') }}
 				</NcButton>
 			</template>

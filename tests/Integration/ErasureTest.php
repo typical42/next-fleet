@@ -14,6 +14,7 @@ use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
+use OCA\NextFleet\Service\BookingService;
 use OCA\NextFleet\Service\ExpenseService;
 use OCA\NextFleet\Service\RecipientService;
 use OCA\NextFleet\Service\TripService;
@@ -48,6 +49,7 @@ class ErasureTest extends TestCase {
 		'fleet_documents' => ['created_by'],
 		'fleet_audit' => ['created_by'],
 		'fleet_access' => ['grantee', 'created_by'],
+		'fleet_bookings' => ['user_id', 'created_by'],
 	];
 
 	private VehicleService $vehicles;
@@ -108,6 +110,7 @@ class ErasureTest extends TestCase {
 		$this->grant($shared, self::DRIVER, 'manager');
 		$trip = $this->trip(self::DRIVER, $shared);
 		$expense = $this->expenses->record(self::DRIVER, $shared->getUuid(), ['spent_at' => 1750000000, 'spent_at_off' => 120, 'amount' => 6400]);
+		$booking = $this->takenBooking(self::DRIVER, $shared, 'Scratch on the tailgate');
 		$own = $this->vehicle(self::DRIVER, 'B-DR 1');
 		$before = $this->rowCounts();
 
@@ -123,11 +126,15 @@ class ErasureTest extends TestCase {
 			$this->column('fleet_vehicles', 'user_id', $own->getId()),
 			$this->column('fleet_vehicles', 'created_by', $own->getId()),
 			$this->granteeOn($shared),
+			$this->column('fleet_bookings', 'user_id', $this->idOf('fleet_bookings', $booking)),
+			$this->column('fleet_bookings', 'created_by', $this->idOf('fleet_bookings', $booking)),
 		]);
 		$this->assertCount(1, $pseudonyms, 'one erasure, one pseudonym');
 		$this->assertNotSame('', $pseudonyms[0]);
 		$this->assertStringNotContainsString(self::DRIVER, $pseudonyms[0]);
 		$this->assertSame(self::OWNER, $this->column('fleet_vehicles', 'user_id', $shared->getId()));
+		// The handover note is the owner's record of their car, as a trip is.
+		$this->assertSame('Scratch on the tailgate', $this->column('fleet_bookings', 'out_notes', $this->idOf('fleet_bookings', $booking)));
 	}
 
 	/** A deleted account receives nothing, so it leaves every reminder list. */
@@ -174,6 +181,20 @@ class ErasureTest extends TestCase {
 			'end_odo' => 12000,
 			'category' => Trip::BUSINESS,
 		]);
+	}
+
+	/** @return string the uuid of a booking the booker has checked out under, with a note */
+	private function takenBooking(string $booker, Vehicle $vehicle, string $notes): string {
+		$bookings = \OCP\Server::get(BookingService::class);
+		$booking = $bookings->book($booker, $vehicle->getUuid(), [
+			'starts_at' => time() + 3600,
+			'starts_at_off' => 120,
+			'ends_at' => time() + 3 * 3600,
+			'ends_at_off' => 120,
+		]);
+		$bookings->checkOut($booker, $vehicle->getUuid(), (string)$booking['uuid'], ['odo' => 12000, 'notes' => $notes, 'at_off' => 120]);
+
+		return (string)$booking['uuid'];
 	}
 
 	private function grant(Vehicle $vehicle, string $grantee, string $role): void {

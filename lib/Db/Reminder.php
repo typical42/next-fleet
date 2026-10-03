@@ -39,6 +39,8 @@ use OCP\DB\Types;
  * @method void setSnoozedUntil(\DateTime|string|null $snoozedUntil)
  * @method int getOccurrence()
  * @method void setOccurrence(int $occurrence)
+ *
+ * @psalm-import-type NextFleetReminder from \OCA\NextFleet\ResponseDefinitions
  */
 class Reminder extends BaseEntity implements \JsonSerializable {
 	public const DATE = 'date';
@@ -120,7 +122,7 @@ class Reminder extends BaseEntity implements \JsonSerializable {
 	/**
 	 * The wire form is the column names, as it is for every entity.
 	 *
-	 * @return array<string, mixed>
+	 * @return NextFleetReminder
 	 */
 	public function jsonSerialize(): array {
 		return [

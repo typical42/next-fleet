@@ -6,7 +6,7 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createVehicle, deleteEntry, deleteVehicle, getVehicle, listVehicles, recordMaintenance, recordReading, recordTrip, restoreEntry, restoreVehicle, updateEntry, updateVehicle } from '../services/api.js'
+import { createVehicle, deleteEntry, deleteVehicle, getVehicle, leaveVehicle, listVehicles, recordMaintenance, recordReading, recordTrip, restoreEntry, restoreVehicle, runImport, undoImport, updateEntry, updateVehicle } from '../services/api.js'
 import { useVehiclesStore } from './index.js'
 
 // The network is the api client's own seam (api.spec.js); what is under test here is what the
@@ -16,12 +16,15 @@ vi.mock('../services/api.js', () => ({
 	deleteEntry: vi.fn(),
 	deleteVehicle: vi.fn(),
 	getVehicle: vi.fn(),
+	leaveVehicle: vi.fn(),
 	listVehicles: vi.fn(),
 	recordMaintenance: vi.fn(),
 	recordReading: vi.fn(),
 	recordTrip: vi.fn(),
 	restoreEntry: vi.fn(),
 	restoreVehicle: vi.fn(),
+	runImport: vi.fn(),
+	undoImport: vi.fn(),
 	updateEntry: vi.fn(),
 	updateVehicle: vi.fn(),
 }))
@@ -266,23 +269,63 @@ describe('vehicles store', () => {
 		})
 	})
 
+	describe('leave', () => {
+		/** Nothing left to reach it by, so it goes the way a deleted vehicle goes - with no undo. */
+		it('drops the vehicle when no group still reaches it', async () => {
+			const store = useVehiclesStore()
+			store.upsert(vehicle({ uuid: 'a' }))
+			store.upsert(vehicle({ uuid: 'b' }))
+			vi.mocked(leaveVehicle).mockResolvedValue({ role: null, groups: [] })
+
+			expect(await store.leave('a')).toEqual({ role: null, groups: [] })
+
+			expect(leaveVehicle).toHaveBeenCalledWith('a')
+			expect(store.list.map((v) => v.uuid)).toEqual(['b'])
+			expect(store.deleted).toBeNull()
+		})
+
+		/** A group still reaches it, perhaps with less: what the caller may do is read again. */
+		it('reads the vehicle again when a group still reaches it', async () => {
+			const store = useVehiclesStore()
+			store.upsert(vehicle({ uuid: 'a', may: ['view', 'log'] }))
+			const held = { role: null, groups: [{ grantee: 'crew', display_name: 'The Crew', role: 'viewer' }] }
+			vi.mocked(leaveVehicle).mockResolvedValue(held)
+			vi.mocked(getVehicle).mockResolvedValue(vehicle({ uuid: 'a', may: ['view'] }))
+
+			expect(await store.leave('a')).toEqual(held)
+
+			expect(store.byUuid.get('a')?.may).toEqual(['view'])
+		})
+
+		it('lets a refused leave through and keeps the vehicle', async () => {
+			const store = useVehiclesStore()
+			store.upsert(vehicle({ uuid: 'a' }))
+			const refusal = new Error('No such vehicle')
+			vi.mocked(leaveVehicle).mockRejectedValue(refusal)
+
+			await expect(store.leave('a')).rejects.toBe(refusal)
+
+			expect(store.list.map((v) => v.uuid)).toEqual(['a'])
+		})
+	})
+
 	describe('restore', () => {
 		/**
 		 * Undo takes the vehicle the delete answered with, and no other: the token it carries is
-		 * the one the server checks, and it is minted by the delete
-		 * (docs/architecture.md#concurrency).
+		 * the one the server checks, and it is minted by the delete. The restore mints the next one,
+		 * and the next edit is checked against that (docs/architecture.md#concurrency).
 		 */
 		it('puts back the vehicle the last delete took, under the token it answered with', async () => {
 			const store = useVehiclesStore()
 			store.upsert(vehicle({ uuid: 'a', plate: 'M-AB 123' }))
 			vi.mocked(deleteVehicle).mockResolvedValue(vehicle({ uuid: 'a', updated_at: 1750000002 }))
-			vi.mocked(restoreVehicle).mockResolvedValue(vehicle({ uuid: 'a', plate: 'M-AB 123' }))
+			vi.mocked(restoreVehicle).mockResolvedValue(vehicle({ uuid: 'a', plate: 'M-AB 123', updated_at: 1750000003 }))
 			await store.remove(vehicle({ uuid: 'a' }))
 
 			await store.restore()
 
 			expect(restoreVehicle).toHaveBeenCalledWith(expect.objectContaining({ updated_at: 1750000002 }))
-			expect(store.list.map((v) => v.plate)).toEqual(['M-AB 123'])
+			expect(store.list.map((v) => [v.plate, v.updated_at])).toEqual([['M-AB 123', 1750000003]])
 			expect(store.deleted).toBeNull()
 		})
 
@@ -338,6 +381,83 @@ describe('vehicles store', () => {
 
 			await store.revise('a', 'energy', entry, {})
 			expect(store.reminded).toBe(4)
+		})
+	})
+
+	describe('an import', () => {
+		const ASKED = /** @type {any} */ ({ file_id: 42, importer: 'lubelogger', record_type: 'fuel', etag: 'e-1' })
+		const CREATED = [{ type: 'energy', uuid: 'e-1' }, { type: 'energy', uuid: 'e-2' }]
+		const COUNTS = { new: 2, duplicate: 1, unreadable: 0, creates: 2 }
+
+		/** Its fill-ups are Readings, so the counter moved; its list is the undo's only key. */
+		it('re-reads the vehicle and holds the list the undo names', async () => {
+			const store = useVehiclesStore()
+			vi.mocked(runImport).mockResolvedValue({ counts: COUNTS, created: CREATED })
+			vi.mocked(getVehicle).mockResolvedValue(vehicle({ uuid: 'a', odo_value: 1200 }))
+
+			const result = await store.bring('a', ASKED)
+
+			expect(runImport).toHaveBeenCalledWith('a', ASKED)
+			expect(result.counts).toEqual(COUNTS)
+			expect(store.byUuid.get('a')?.odo_value).toBe(1200)
+			expect(store.imported).toEqual({ vehicle: 'a', counts: COUNTS, created: CREATED })
+		})
+
+		/** One offer at a time: the import's undo is the toast's, as a delete's is. */
+		it('takes the place of the last delete\'s way back, and gives it up to the next', async () => {
+			const store = useVehiclesStore()
+			vi.mocked(getVehicle).mockResolvedValue(vehicle({}))
+			vi.mocked(deleteEntry).mockResolvedValue({ uuid: 'm-1', updated_at: 2 })
+			vi.mocked(runImport).mockResolvedValue({ counts: COUNTS, created: CREATED })
+			await store.strike('a', 'expense', { uuid: 'x-1', updated_at: 1 })
+
+			await store.bring('a', ASKED)
+			expect(store.struck).toBeNull()
+
+			await store.strike('a', 'expense', { uuid: 'x-1', updated_at: 1 })
+			expect(store.imported).toBeNull()
+		})
+
+		/** The timeline, the header and the banner read again on `restored`, as after any undo. */
+		it('is undone as the list it created, all of it', async () => {
+			const store = useVehiclesStore()
+			vi.mocked(runImport).mockResolvedValue({ counts: COUNTS, created: CREATED })
+			vi.mocked(undoImport).mockResolvedValue({ undone: 2 })
+			vi.mocked(getVehicle).mockResolvedValue(vehicle({}))
+			await store.bring('a', ASKED)
+
+			await store.restore()
+
+			expect(undoImport).toHaveBeenCalledWith('a', CREATED)
+			expect(store.imported).toBeNull()
+			expect(store.restored).toBe(1)
+			expect(getVehicle).toHaveBeenCalledTimes(2)
+		})
+
+		/** The toast says it can no longer be undone as a whole; the offer is its to drop. */
+		it('lets a refused undo through and keeps the offer', async () => {
+			const store = useVehiclesStore()
+			const refusal = new Error('Changed')
+			vi.mocked(runImport).mockResolvedValue({ counts: COUNTS, created: CREATED })
+			vi.mocked(undoImport).mockRejectedValue(refusal)
+			vi.mocked(getVehicle).mockResolvedValue(vehicle({}))
+			await store.bring('a', ASKED)
+
+			await expect(store.restore()).rejects.toBe(refusal)
+
+			expect(store.imported?.created).toEqual(CREATED)
+			expect(store.restored).toBe(0)
+		})
+
+		it('is let go of like a delete', async () => {
+			const store = useVehiclesStore()
+			vi.mocked(runImport).mockResolvedValue({ counts: COUNTS, created: CREATED })
+			vi.mocked(getVehicle).mockResolvedValue(vehicle({}))
+			await store.bring('a', ASKED)
+
+			store.forget()
+
+			expect(store.imported).toBeNull()
 		})
 	})
 

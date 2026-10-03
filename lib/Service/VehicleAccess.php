@@ -85,6 +85,15 @@ class VehicleAccess {
 	}
 
 	/**
+	 * Whether the user may change, cancel, check out or check in one Booking: anybody's with `edit`,
+	 * their own with `log` (CONTEXT.md, Pool). mayChange()'s rule with the booker in the author's
+	 * place, so a booking needs no sixth operation.
+	 */
+	public function mayBooking(string $userId, Vehicle $vehicle, string $bookerId): bool {
+		return $this->mayChange($userId, self::EDIT, $vehicle, $bookerId);
+	}
+
+	/**
 	 * Everything the user may do on one vehicle - what the vehicle JSON carries as `may`, so the
 	 * screen hides by the same answer the server refuses by. The owner needs no grant, and asking
 	 * the table anyway would be a query on every read of every vehicle the common case owns.

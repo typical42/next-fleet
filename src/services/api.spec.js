@@ -4,11 +4,12 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { addRecipient, attachDocument, closeGap, ConflictError, createReminder, createVehicle, csvUrl, deleteEntry, deleteVehicle, detachDocument, dismissReminder, documentUrl, getPreferences, listDocuments, listFleetReminders, listRecipients, listReminders, listVehicles, logbookUrl, mileageClaimUrl, NotFoundError, readEntry, readGaps, readKpis, readTimeline, readYear, recordReading, recordTrip, reminderTemplates, removeRecipient, restoreEntry, searchUsers, restoreVehicle, savePreferences, snoozeReminder, stickerUrl, updateEntry, updateVehicle } from './api.js'
+import { addGrant, addRecipient, attachDocument, BookingConflictError, cancelBooking, ChangedError, changeBooking, changeGrant, checkIn, checkOut, closeGap, createBooking, ImportRefusedError, listBookings, ConflictError, previewImport, runImport, undoImport, createReminder, createVehicle, csvUrl, deleteEntry, deleteVehicle, detachDocument, dismissReminder, documentUrl, fetchDocument, getPreferences, LockedError, restoreDocument, listDocuments, listFleetReminders, listGrants, listRecipients, listReminders, listVehicles, logbookUrl, mileageClaimUrl, NotFoundError, readEntry, readGaps, readInbox, readKpis, readTimeline, readYear, recordReading, recordTrip, reminderTemplates, removeRecipient, restoreEntry, revokeGrant, searchGrantees, searchUsers, restoreVehicle, savePreferences, snoozeReminder, stickerUrl, thumbnailUrl, updateEntry, updateVehicle } from './api.js'
 
 vi.mock('@nextcloud/router', () => ({
 	generateUrl: (/** @type {string} */ path) => `/index.php${path}`,
 	generateOcsUrl: (/** @type {string} */ path) => `/ocs/v2.php/${path}`,
+	imagePath: (/** @type {string} */ app, /** @type {string} */ file) => `/${app}/img/${file}.svg`,
 }))
 vi.mock('@nextcloud/auth', () => ({ getRequestToken: () => 'a-request-token' }))
 
@@ -280,9 +281,8 @@ describe('deleteVehicle', () => {
 
 describe('restoreVehicle', () => {
 	/**
-	 * Undo is the one write that does not advance the token, so it is checked against the very
-	 * token the delete answered with (docs/architecture.md#concurrency) - the toast holds that
-	 * vehicle and hands it back here.
+	 * Undo is checked against the very token the delete answered with
+	 * (docs/architecture.md#concurrency) - the toast holds that vehicle and hands it back here.
 	 */
 	it('posts the token the delete answered with', async () => {
 		const deleted = { ...vehicle, updated_at: 1750000002 }
@@ -382,7 +382,10 @@ describe('the documents', () => {
 		await listDocuments(vehicle.uuid)
 		await attachDocument(vehicle.uuid, { file_id: 42, kind: 'receipt', linked_type: 'maintenance', linked_uuid: 'm-1' })
 		await detachDocument(vehicle.uuid, 'd-1')
+		await restoreDocument(vehicle.uuid, 'd-1')
 
+		expect(fetch.mock.calls[3][0]).toBe(`${base}/d-1/restore`)
+		expect(fetch.mock.calls[3][1].method).toBe('POST')
 		expect(fetch.mock.calls[0][0]).toBe(base)
 		expect(fetch.mock.calls[0][1].method).toBe('GET')
 		expect(fetch.mock.calls[1][0]).toBe(base)
@@ -408,6 +411,88 @@ describe('the documents', () => {
 	/** A link the browser follows, outside the api beside the CSV. */
 	it('downloads one paper outside the api', () => {
 		expect(documentUrl(vehicle.uuid, 'd-1')).toBe(`/index.php/apps/nextfleet/vehicles/${vehicle.uuid}/documents/d-1`)
+	})
+
+	/** Fetched rather than followed, so a refusal is said on the screen and not in a tab of JSON. */
+	it('fetches one paper\'s file from that address', async () => {
+		const file = new Blob(['%PDF'])
+		const fetch = vi.fn().mockResolvedValue({ ok: true, status: 200, blob: async () => file })
+		vi.stubGlobal('fetch', fetch)
+
+		expect(await fetchDocument(vehicle.uuid, 'd-1')).toBe(file)
+		expect(fetch.mock.calls[0][0]).toBe(documentUrl(vehicle.uuid, 'd-1'))
+	})
+
+	it('tells a paper that is gone, and one being written, from the rest', async () => {
+		answers(404, { message: 'No such document' })
+		expect(await fetchDocument(vehicle.uuid, 'd-1').catch((error) => error)).toBeInstanceOf(NotFoundError)
+
+		answers(423, { message: 'Being written, try again' })
+		expect(await fetchDocument(vehicle.uuid, 'd-1').catch((error) => error)).toBeInstanceOf(LockedError)
+
+		answers(403, { message: 'Not yours' })
+		const refused = await fetchDocument(vehicle.uuid, 'd-1').catch((error) => error)
+		expect(refused.message).toBe('Not yours')
+	})
+})
+
+describe('the import calls', () => {
+	const base = `/index.php/apps/nextfleet/api/vehicles/${vehicle.uuid}/import`
+	const body = { file_id: 42, importer: 'lubelogger', record_type: 'fuel', units: { distance: 'km', volume: 'l' }, tz: 'Europe/Berlin' }
+
+	it('previews, imports and undoes under the vehicle', async () => {
+		const fetch = answers(200, {})
+
+		await previewImport(vehicle.uuid, body)
+		await runImport(vehicle.uuid, { ...body, etag: 'e-1' })
+		await undoImport(vehicle.uuid, [{ type: 'energy', uuid: 'e-1' }])
+
+		expect(fetch.mock.calls.map(([url, options]) => [url, options.method])).toEqual([
+			[`${base}/preview`, 'POST'],
+			[base, 'POST'],
+			[`${base}/undo`, 'POST'],
+		])
+		expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ ...body, etag: 'e-1' })
+		expect(JSON.parse(fetch.mock.calls[2][1].body)).toEqual({ created: [{ type: 'energy', uuid: 'e-1' }] })
+	})
+
+	/** The screen previews again on a changed file, and drops the undo on changed entries. */
+	it('tells a 409 that is no booking apart from the rest', async () => {
+		answers(409, { message: 'The file changed since the preview' })
+
+		const failure = await runImport(vehicle.uuid, { ...body, etag: 'e-1' }).catch((error) => error)
+
+		expect(failure).toBeInstanceOf(ChangedError)
+		expect(failure.message).toBe('The file changed since the preview')
+	})
+
+	/** The reason is a word the screen puts into words; the message is English for a log. */
+	it('carries why a file is not read', async () => {
+		answers(422, { message: 'Not a file an import reads: binary', reason: 'binary', row: 3 })
+
+		const failure = await previewImport(vehicle.uuid, body).catch((error) => error)
+
+		expect(failure).toBeInstanceOf(ImportRefusedError)
+		expect(failure.reason).toBe('binary')
+		expect(failure.row).toBe(3)
+	})
+})
+
+describe('the inbox', () => {
+	/** One request answers the folder, the files waiting in it and how many there are. */
+	it('reads the waiting files outside any vehicle', async () => {
+		const inbox = { folder: { file_id: 7, path: '/Belege' }, files: [], count: 0 }
+		const fetch = answers(200, inbox)
+
+		expect(await readInbox()).toEqual(inbox)
+		expect(fetch.mock.calls[0][0]).toBe('/index.php/apps/nextfleet/api/inbox')
+		expect(fetch.mock.calls[0][1].method).toBe('GET')
+	})
+
+	/** Nextcloud's own preview; a PDF, which core may not preview, shows core's PDF icon instead. */
+	it('shows a thumbnail by core\'s preview, and a PDF by its icon', () => {
+		expect(thumbnailUrl({ file_id: 42, mime: 'image/jpeg' })).toBe('/index.php/core/preview?fileId=42&x=256&y=256&a=1&mimeFallback=true')
+		expect(thumbnailUrl({ file_id: 43, mime: 'application/pdf' })).toBe('/core/img/filetypes/application-pdf.svg')
 	})
 })
 
@@ -536,5 +621,104 @@ describe('the recipient calls', () => {
 		expect(url.searchParams.getAll('shareTypes[]')).toEqual(['0'])
 		expect(fetch.mock.calls[0][1].headers['OCS-APIRequest']).toBe('true')
 		expect(found).toEqual([{ user_id: 'jane', display_name: 'Jane Doe' }])
+	})
+})
+
+describe('the booking calls', () => {
+	const base = `/index.php/apps/nextfleet/api/vehicles/${vehicle.uuid}/bookings`
+	const booking = { uuid: 'b-1', updated_at: 1750000300 }
+	const span = { starts_at: 1790000000, starts_at_off: 120, ends_at: 1790007200, ends_at_off: 120, purpose: 'Client' }
+
+	/** A change states the whole booking beside its token; a cancel has no body, so its token is in the query. */
+	it('lists, books, changes and cancels under the vehicle', async () => {
+		const fetch = answers(200, booking)
+
+		await listBookings(vehicle.uuid)
+		await createBooking(vehicle.uuid, span)
+		await changeBooking(vehicle.uuid, booking, span)
+		await cancelBooking(vehicle.uuid, booking)
+
+		expect(fetch.mock.calls[0][0]).toBe(base)
+		expect(fetch.mock.calls[0][1].method).toBe('GET')
+		expect(fetch.mock.calls[1][0]).toBe(base)
+		expect(fetch.mock.calls[1][1].method).toBe('POST')
+		expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual(span)
+		expect(fetch.mock.calls[2][0]).toBe(`${base}/b-1`)
+		expect(fetch.mock.calls[2][1].method).toBe('PUT')
+		expect(JSON.parse(fetch.mock.calls[2][1].body)).toEqual({ ...span, updated_at: 1750000300 })
+		expect(fetch.mock.calls[3][0]).toBe(`${base}/b-1?updated_at=1750000300`)
+		expect(fetch.mock.calls[3][1].method).toBe('DELETE')
+	})
+
+	/** The 409 carries the booking in the way, so the sheet names it without a second read. */
+	it('hands over the booking that holds the span', async () => {
+		const held = { uuid: 'b-2', user_id: 'anna', user_name: 'Anna', starts_at: 1790000000, starts_at_off: 120, ends_at: 1790014400, ends_at_off: 120 }
+		answers(409, { message: 'the vehicle is booked then', booking: held })
+
+		const failure = await createBooking(vehicle.uuid, span).catch((error) => error)
+
+		expect(failure).toBeInstanceOf(BookingConflictError)
+		expect(failure.booking).toEqual(held)
+	})
+
+	/** No token: the state the booking must be in is the guard against a second submit. */
+	it('checks out and in under the booking, with the handover and no token', async () => {
+		const fetch = answers(200, booking)
+		const handover = { odo: 52000, level: 80, notes: 'Scratch on the left door', at_off: 120 }
+
+		await checkOut(vehicle.uuid, booking, handover)
+		await checkIn(vehicle.uuid, booking, handover)
+
+		expect(fetch.mock.calls[0][0]).toBe(`${base}/b-1/check-out`)
+		expect(fetch.mock.calls[0][1].method).toBe('POST')
+		expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual(handover)
+		expect(fetch.mock.calls[1][0]).toBe(`${base}/b-1/check-in`)
+		expect(fetch.mock.calls[1][1].method).toBe('POST')
+		expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual(handover)
+	})
+})
+
+describe('the grant calls', () => {
+	const base = `/index.php/apps/nextfleet/api/vehicles/${vehicle.uuid}/grants`
+
+	it('lists, grants, changes and revokes without a token', async () => {
+		const fetch = answers(200, [])
+
+		await listGrants(vehicle.uuid)
+		await addGrant(vehicle.uuid, { grantee: 'crew', grantee_type: 'group' }, 'driver')
+		await changeGrant(vehicle.uuid, 'g-1', 'manager')
+		await revokeGrant(vehicle.uuid, 'g-1')
+
+		expect(fetch.mock.calls[0][0]).toBe(base)
+		expect(fetch.mock.calls[1][1].method).toBe('POST')
+		expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ grantee: 'crew', grantee_type: 'group', role: 'driver' })
+		expect(fetch.mock.calls[2][0]).toBe(`${base}/g-1`)
+		expect(fetch.mock.calls[2][1].method).toBe('PUT')
+		expect(JSON.parse(fetch.mock.calls[2][1].body)).toEqual({ role: 'manager' })
+		expect(fetch.mock.calls[3][0]).toBe(`${base}/g-1`)
+		expect(fetch.mock.calls[3][1].method).toBe('DELETE')
+	})
+
+	/** Users and groups both, and a group keeps its type: a gid may also be somebody's uid. */
+	it('searches accounts and groups through the core autocomplete', async () => {
+		const fetch = answers(200, {
+			ocs: {
+				data: [
+					{ id: 'jane', label: 'Jane Doe', source: 'users' },
+					{ id: 'crew', label: 'The Crew', source: 'groups' },
+				],
+			},
+		})
+
+		const found = await searchGrantees('cr')
+
+		const url = new URL(fetch.mock.calls[0][0], 'https://cloud.example')
+		expect(url.pathname).toBe('/ocs/v2.php/core/autocomplete/get')
+		expect(url.searchParams.get('search')).toBe('cr')
+		expect(url.searchParams.getAll('shareTypes[]')).toEqual(['0', '1'])
+		expect(found).toEqual([
+			{ grantee: 'jane', grantee_type: 'user', display_name: 'Jane Doe' },
+			{ grantee: 'crew', grantee_type: 'group', display_name: 'The Crew' },
+		])
 	})
 })

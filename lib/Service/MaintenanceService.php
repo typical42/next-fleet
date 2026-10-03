@@ -22,6 +22,8 @@ use OCP\IDBConnection;
 /**
  * Everything a Maintenance Record is written under. Its counters follow the fill-up's rules
  * (docs/architecture.md#odometer-rules), and the Readings they leave are OdometerService's.
+ *
+ * @psalm-import-type NextFleetMaintenance from \OCA\NextFleet\ResponseDefinitions
  */
 class MaintenanceService {
 	use TTransactional;
@@ -71,7 +73,7 @@ class MaintenanceService {
 	 * Writes one Maintenance Record and a Reading per counter it was given.
 	 *
 	 * @param array<string, mixed> $fields
-	 * @return array<string, mixed> the row as written, in its wire form
+	 * @return NextFleetMaintenance the row as written, in its wire form
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not log on this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \InvalidArgumentException if a field is not what its column holds
@@ -80,24 +82,37 @@ class MaintenanceService {
 	public function record(string $userId, string $vehicleUuid, array $fields): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
+		// Retried for the reason TripService::record() gives. The replay builds a fresh row.
+		return $this->atomicRetry(function () use ($userId, $vehicle, $fields): array {
+			$this->vehicles->hold((int)$vehicle->getId());
+
+			return $this->add($vehicle, $userId, $fields);
+		}, $this->db);
+	}
+
+	/**
+	 * What record() writes, for a caller that has reached the vehicle and holds it, as
+	 * EnergyService::add() is.
+	 *
+	 * @param array<string, mixed> $fields
+	 * @return NextFleetMaintenance the row as written, in its wire form
+	 * @throws \InvalidArgumentException if a field is not what its column holds
+	 * @throws \OCP\DB\Exception
+	 */
+	public function add(Vehicle $vehicle, string $userId, array $fields): array {
 		$record = new Maintenance();
 		$record->setVehicleId((int)$vehicle->getId());
 		$record->setCreatedBy($userId);
 		$this->apply($vehicle, $record, $fields);
+		$closes = $this->reminders->closable((int)$vehicle->getId(), $fields['closes'] ?? null, null);
+		$record->setReminderId($closes?->getId());
+		$written = $this->records->insert($record);
+		$this->follow($vehicle, $userId, $written);
+		if ($closes !== null) {
+			$this->reminders->closeBy($closes, $written);
+		}
 
-		// Retried for the reason TripService::record() gives.
-		return $this->atomicRetry(function () use ($userId, $vehicle, $record, $fields): array {
-			$this->vehicles->hold((int)$vehicle->getId());
-			$closes = $this->reminders->closable((int)$vehicle->getId(), $fields['closes'] ?? null, null);
-			$record->setReminderId($closes?->getId());
-			$written = $this->records->insert($record);
-			$this->follow($vehicle, $userId, $written);
-			if ($closes !== null) {
-				$this->reminders->closeBy($closes, $written);
-			}
-
-			return self::wire($written, $closes);
-		}, $this->db);
+		return self::wire($written, $closes);
 	}
 
 	/**
@@ -106,7 +121,7 @@ class MaintenanceService {
 	 *
 	 * @param array<string, mixed> $fields
 	 * @param int $expectedUpdatedAt the `updated_at` the client read
-	 * @return array<string, mixed> the row as it now stands, in its wire form
+	 * @return NextFleetMaintenance the row as it now stands, in its wire form
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not edit this record
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the record has changed since
@@ -145,7 +160,7 @@ class MaintenanceService {
 	/**
 	 * Soft-deletes one record and its Readings, as EnergyService::delete() does a fill-up.
 	 *
-	 * @return array<string, mixed> the row as it was left, in its wire form
+	 * @return NextFleetMaintenance the row as it was left, in its wire form
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete this record
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the record has changed since
@@ -158,21 +173,34 @@ class MaintenanceService {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$record = $this->records->findOnVehicle((int)$vehicle->getId(), $recordUuid);
 			$this->fleet->change($userId, VehicleAccess::DELETE, $vehicle, $record->getCreatedBy());
-			$deleted = $this->records->softDelete($record, $expectedUpdatedAt);
-			$this->follow($vehicle, $userId, $deleted);
-			$closes = $this->closed($deleted);
-			if ($closes !== null) {
-				$this->reminders->reopenBy($closes, $deleted);
-			}
 
-			return self::wire($deleted, $closes);
+			return $this->remove($vehicle, $userId, $record, $expectedUpdatedAt);
 		}, $this->db);
+	}
+
+	/**
+	 * What delete() writes, for a caller that has reached the vehicle, holds it and found the
+	 * record on it, as EnergyService::remove() is.
+	 *
+	 * @return NextFleetMaintenance the row as it was left, in its wire form
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the record has changed since
+	 * @throws \OCP\DB\Exception
+	 */
+	public function remove(Vehicle $vehicle, string $userId, Maintenance $record, int $expectedUpdatedAt): array {
+		$deleted = $this->records->softDelete($record, $expectedUpdatedAt);
+		$this->follow($vehicle, $userId, $deleted);
+		$closes = $this->closed($deleted);
+		if ($closes !== null) {
+			$this->reminders->reopenBy($closes, $deleted);
+		}
+
+		return self::wire($deleted, $closes);
 	}
 
 	/**
 	 * Undo, on the token the delete answered with (TripService::restore()).
 	 *
-	 * @return array<string, mixed> the row as it now stands, in its wire form
+	 * @return NextFleetMaintenance the row as it now stands, in its wire form
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete this record
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the record has changed since, or was never deleted
@@ -215,9 +243,9 @@ class MaintenanceService {
 	 * The wire form, with the reminder the record closes named by its uuid: `reminder_id` is an
 	 * id and stays off the wire.
 	 *
-	 * @return array<string, mixed>
+	 * @return NextFleetMaintenance
 	 */
-	private static function wire(Maintenance $record, ?Reminder $closes): array {
+	public static function wire(Maintenance $record, ?Reminder $closes): array {
 		return $record->jsonSerialize() + ['closes' => $closes?->getUuid()];
 	}
 

@@ -20,6 +20,8 @@ use OCP\IDBConnection;
 /**
  * Everything a fill-up or a charging session is written under. The Readings its counters leave
  * are OdometerService's, in the one place that writes one (docs/architecture.md#odometer-rules).
+ *
+ * @psalm-import-type NextFleetEnergy from \OCA\NextFleet\ResponseDefinitions
  */
 class EnergyService {
 	use TTransactional;
@@ -87,7 +89,7 @@ class EnergyService {
 	 * Writes one fill-up and a Reading per counter it was given.
 	 *
 	 * @param array<string, mixed> $fields
-	 * @return array<string, mixed> the row as written, in its wire form
+	 * @return NextFleetEnergy the row as written, in its wire form
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not log on this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \InvalidArgumentException if a field is not what its column holds
@@ -96,19 +98,30 @@ class EnergyService {
 	public function record(string $userId, string $vehicleUuid, array $fields): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
+		// Retried for the reason TripService::record() gives. The replay builds a fresh row.
+		return $this->atomicRetry(function () use ($userId, $vehicle, $fields): array {
+			$this->vehicles->hold((int)$vehicle->getId());
+
+			return $this->add($vehicle, $userId, $fields);
+		}, $this->db);
+	}
+
+	/**
+	 * What record() writes, for a caller that has reached the vehicle and holds it: an import
+	 * writes many under one hold (ImportService).
+	 *
+	 * @param array<string, mixed> $fields
+	 * @return NextFleetEnergy the row as written, in its wire form
+	 * @throws \InvalidArgumentException if a field is not what its column holds
+	 * @throws \OCP\DB\Exception
+	 */
+	public function add(Vehicle $vehicle, string $userId, array $fields): array {
 		$energy = new Energy();
 		$energy->setVehicleId((int)$vehicle->getId());
 		$energy->setCreatedBy($userId);
 		$this->apply($vehicle, $energy, $fields);
-
-		// Retried for the reason TripService::record() gives.
-		$written = $this->atomicRetry(function () use ($userId, $vehicle, $energy): Energy {
-			$this->vehicles->hold((int)$vehicle->getId());
-			$written = $this->energies->insert($energy);
-			$this->follow($vehicle, $userId, $written);
-
-			return $written;
-		}, $this->db);
+		$written = $this->energies->insert($energy);
+		$this->follow($vehicle, $userId, $written);
 
 		return self::wire($vehicle, $written);
 	}
@@ -120,7 +133,7 @@ class EnergyService {
 	 *
 	 * @param array<string, mixed> $fields
 	 * @param int $expectedUpdatedAt the `updated_at` the client read
-	 * @return array<string, mixed> the row as it now stands, in its wire form
+	 * @return NextFleetEnergy the row as it now stands, in its wire form
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not edit this fill-up
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the fill-up has changed since
@@ -149,7 +162,7 @@ class EnergyService {
 	 * Soft-deletes one fill-up and its Readings, and answers with the token the undo is checked
 	 * against.
 	 *
-	 * @return array<string, mixed> the row as it was left, in its wire form
+	 * @return NextFleetEnergy the row as it was left, in its wire form
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete this fill-up
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the fill-up has changed since
@@ -162,19 +175,31 @@ class EnergyService {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$energy = $this->energies->findOnVehicle((int)$vehicle->getId(), $energyUuid);
 			$this->fleet->change($userId, VehicleAccess::DELETE, $vehicle, $energy->getCreatedBy());
-			$deleted = $this->energies->softDelete($energy, $expectedUpdatedAt);
-			$this->follow($vehicle, $userId, $deleted);
 
-			return $deleted;
+			return $this->remove($vehicle, $userId, $energy, $expectedUpdatedAt);
 		}, $this->db);
 
 		return self::wire($vehicle, $deleted);
 	}
 
 	/**
+	 * What delete() writes, for a caller that has reached the vehicle, holds it and found the
+	 * fill-up on it, as add() is: undoing an import takes back many under one hold.
+	 *
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the fill-up has changed since
+	 * @throws \OCP\DB\Exception
+	 */
+	public function remove(Vehicle $vehicle, string $userId, Energy $energy, int $expectedUpdatedAt): Energy {
+		$deleted = $this->energies->softDelete($energy, $expectedUpdatedAt);
+		$this->follow($vehicle, $userId, $deleted);
+
+		return $deleted;
+	}
+
+	/**
 	 * Undo, on the token the delete answered with (TripService::restore()).
 	 *
-	 * @return array<string, mixed> the row as it now stands, in its wire form
+	 * @return NextFleetEnergy the row as it now stands, in its wire form
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete this fill-up
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the fill-up has changed since, or was never deleted
@@ -214,8 +239,8 @@ class EnergyService {
 		);
 	}
 
-	/** @return array<string, mixed> */
-	private static function wire(Vehicle $vehicle, Energy $energy): array {
+	/** @return NextFleetEnergy */
+	public static function wire(Vehicle $vehicle, Energy $energy): array {
 		return $energy->jsonSerialize() + ['flags' => self::flags($vehicle, $energy)];
 	}
 

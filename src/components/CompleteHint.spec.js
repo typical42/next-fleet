@@ -29,6 +29,7 @@ const NEW = {
 	lifecycle: 'active',
 	engine: 'petrol',
 	energy_types: ['petrol'],
+	may: ['view', 'log', 'edit', 'delete', 'own'],
 }
 
 /** The same vehicle with every question answered. */
@@ -96,6 +97,13 @@ describe('the complete-this-vehicle hint', () => {
 	/** A fleet with nothing left to answer is a fleet the hint stays out of the way of. */
 	it('says nothing about a vehicle that has it all', async () => {
 		const wrapper = await hint([DONE])
+
+		expect(wrapper.findComponent(NcNoteCard).exists()).toBe(false)
+	})
+
+	/** The answer is in the edit sheet, so a vehicle the reader may not edit is not asked about. */
+	it('says nothing about a vehicle the reader may not edit', async () => {
+		const wrapper = await hint([{ ...NEW, may: ['view', 'log'] }])
 
 		expect(wrapper.findComponent(NcNoteCard).exists()).toBe(false)
 	})

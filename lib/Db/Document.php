@@ -37,7 +37,9 @@ class Document extends BaseEntity {
 	public const ENERGY = 'energy';
 	public const MAINTENANCE = 'maintenance';
 	public const EXPENSE = 'expense';
-	public const LINKABLE = [self::ENERGY, self::MAINTENANCE, self::EXPENSE];
+	/** A handover's photos: a booking is no Entry, but what the car looked like belongs to it. */
+	public const BOOKING = 'booking';
+	public const LINKABLE = [self::ENERGY, self::MAINTENANCE, self::EXPENSE, self::BOOKING];
 
 	protected int $vehicleId = 0;
 	protected int $fileId = 0;

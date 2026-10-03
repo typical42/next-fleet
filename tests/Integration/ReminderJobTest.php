@@ -37,14 +37,32 @@ use Psr\Log\LoggerInterface;
  * accounts, since the list is read the way the phone reads it.
  */
 class ReminderJobTest extends TestCase {
+	use Accounts;
+
 	private const OWNER = 'nextfleet-test-job-owner';
 	/** On the list, with no Vehicle Access: told the plate and title, not given the link. */
 	private const OUTSIDER = 'nextfleet-test-job-outsider';
+	private const LANGUAGES = [self::OWNER => 'de', self::OUTSIDER => 'en'];
 
-	private string $password;
+	private static string $password;
 	private VehicleService $vehicles;
 	private ReminderService $reminders;
 	private RecipientService $recipients;
+
+	public static function setUpBeforeClass(): void {
+		self::deleteAccounts(array_keys(self::LANGUAGES));
+		self::$password = bin2hex(random_bytes(16));
+		$users = \OCP\Server::get(IUserManager::class);
+		$config = \OCP\Server::get(IConfig::class);
+		foreach (self::LANGUAGES as $uid => $language) {
+			$users->createUser($uid, self::$password);
+			$config->setUserValue($uid, 'core', 'lang', $language);
+		}
+	}
+
+	public static function tearDownAfterClass(): void {
+		self::deleteAccounts(array_keys(self::LANGUAGES));
+	}
 
 	protected function setUp(): void {
 		// cron.php boots every app before it runs a job; a test does not, and without the
@@ -55,35 +73,25 @@ class ReminderJobTest extends TestCase {
 		$this->reminders = $container->get(ReminderService::class);
 		$this->recipients = $container->get(RecipientService::class);
 		$this->forget();
-
-		$this->password = bin2hex(random_bytes(16));
-		$users = \OCP\Server::get(IUserManager::class);
-		$config = \OCP\Server::get(IConfig::class);
-		foreach ([self::OWNER => 'de', self::OUTSIDER => 'en'] as $uid => $language) {
-			$users->createUser($uid, $this->password);
-			$config->setUserValue($uid, 'core', 'lang', $language);
-		}
 	}
 
+	/** Before the accounts go: a deleted account's uid is on none of its rows. */
 	protected function tearDown(): void {
 		$this->forget();
 	}
 
-	/**
-	 * The accounts and the rows this suite invents, gone for real. Rows first: deleting an account
-	 * pseudonymises them, and they would outlive the run.
-	 */
+	/** The rows and the notifications this suite invents, gone for real. */
 	private function forget(): void {
 		$db = \OCP\Server::get(IDBConnection::class);
-		$people = [self::OWNER, self::OUTSIDER];
+		$people = array_keys(self::LANGUAGES);
 		foreach (['fleet_vehicles' => 'user_id', 'fleet_reminders' => 'created_by', 'fleet_reminder_recipients' => 'user_id', 'fleet_reminder_receipts' => 'user_id', 'fleet_odo_readings' => 'created_by', 'fleet_maintenance' => 'created_by'] as $table => $column) {
 			$qb = $db->getQueryBuilder();
 			$qb->delete($table)->where($qb->expr()->in($column, $qb->createNamedParameter($people, $qb::PARAM_STR_ARRAY)));
 			$qb->executeStatement();
 		}
-		$users = \OCP\Server::get(IUserManager::class);
-		foreach ([self::OWNER, self::OUTSIDER] as $uid) {
-			$users->get($uid)?->delete();
+		$manager = \OCP\Server::get(\OCP\Notification\IManager::class);
+		foreach ($people as $uid) {
+			$manager->markProcessed($manager->createNotification()->setApp(Application::APP_ID)->setUser($uid));
 		}
 	}
 
@@ -289,7 +297,7 @@ class ReminderJobTest extends TestCase {
 		$response = \OCP\Server::get(IClientService::class)->newClient()->get(
 			'http://localhost/ocs/v2.php/apps/notifications/api/v2/notifications?format=json',
 			[
-				'auth' => [$uid, $this->password],
+				'auth' => [$uid, self::$password],
 				'headers' => ['OCS-APIRequest' => 'true'],
 				'nextcloud' => ['allow_local_address' => true],
 			],

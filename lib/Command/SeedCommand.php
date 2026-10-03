@@ -9,9 +9,11 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Command;
 
 use OCA\NextFleet\Db\Vehicle;
+use OCA\NextFleet\Service\BookingService;
 use OCA\NextFleet\Service\DocumentService;
 use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\ExpenseService;
+use OCA\NextFleet\Service\GrantService;
 use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\ReminderService;
@@ -22,6 +24,7 @@ use OCP\IUserManager;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 
 /**
@@ -383,6 +386,21 @@ class SeedCommand extends Command {
 	];
 
 	/**
+	 * What `--grant-to` adds: the Passat as a car two people use, with one business trip the
+	 * other account entered - so the timeline, the Fahrtenbuch and their mileage claim each have
+	 * somebody else's row to show. It sets off where the Passat's last Reading left the counter,
+	 * so no Gap opens before it, and ends short of the oil change's 112900.
+	 *
+	 * And one booking of theirs, tomorrow morning in Berlin's hours: ahead of any day it is
+	 * seeded on, so the Bookings section has a coming one and the overview a pool.
+	 */
+	private const GRANTED = [
+		'plate' => self::DISTRICT . 'DE 100',
+		'trip' => ['days' => 3, 'minutes' => 45, 'start_odo' => 112180, 'end_odo' => 112236, 'category' => 'business', 'from_label' => 'Stuttgart, Büro', 'to_label' => 'Ludwigsburg, Schneider Logistik', 'purpose' => 'Lieferung', 'partner' => 'Schneider Logistik GmbH'],
+		'booking' => ['from' => 9, 'to' => 12, 'purpose' => 'Kundentermin Esslingen'],
+	];
+
+	/**
 	 * What a fill-up row leaves out: full, and the German standard rate every day of the year
 	 * the costs span (De\RateProvider).
 	 */
@@ -412,6 +430,8 @@ class SeedCommand extends Command {
 		private ExpenseService $expenses,
 		private ReminderService $reminders,
 		private TripService $trips,
+		private GrantService $grants,
+		private BookingService $bookings,
 		private DocumentService $documents,
 		private SeedPapers $papers,
 		private ITimeFactory $time,
@@ -422,13 +442,21 @@ class SeedCommand extends Command {
 	protected function configure(): void {
 		$this->setName('nextfleet:seed')
 			->setDescription('Write a demo fleet into one user\'s account')
-			->addArgument('user', InputArgument::REQUIRED, 'the uid the fleet belongs to');
+			->addArgument('user', InputArgument::REQUIRED, 'the uid the fleet belongs to')
+			->addOption('grant-to', null, InputOption::VALUE_REQUIRED, 'a uid to give the Passat to as a driver, with one trip of theirs');
 	}
 
 	protected function execute(InputInterface $input, OutputInterface $output): int {
 		$userId = (string)$input->getArgument('user');
 		if (!$this->users->userExists($userId)) {
 			$output->writeln('<error>No such user: ' . $userId . '</error>');
+
+			return self::FAILURE;
+		}
+		/** @var string|null $driver */
+		$driver = $input->getOption('grant-to');
+		if ($driver !== null && ($driver === $userId || !$this->users->userExists($driver))) {
+			$output->writeln('<error>Cannot give access to ' . $driver . ': not another user</error>');
 
 			return self::FAILURE;
 		}
@@ -443,9 +471,12 @@ class SeedCommand extends Command {
 		$trips = 0;
 		$papers = 0;
 		$reminders = 0;
+		/** @var array<string, string> $uuids by plate */
+		$uuids = [];
 		foreach (self::FLEET as $entry) {
 			$vehicle = $this->fleet->create($userId, $this->fields($entry));
 			$uuid = $vehicle->getUuid();
+			$uuids[(string)$vehicle->getPlate()] = $uuid;
 			// Readings first: a cost row's counter lands between them, and a derived Reading
 			// counts from the ones already there when it is written.
 			foreach ($entry['readings'] as $reading) {
@@ -501,13 +532,22 @@ class SeedCommand extends Command {
 			$userId,
 		));
 
+		if ($driver !== null) {
+			$uuid = $uuids[self::GRANTED['plate']];
+			$this->grants->grant($userId, $uuid, ['grantee' => $driver, 'grantee_type' => 'user', 'role' => 'driver']);
+			$this->trips->record($driver, $uuid, $this->driven(self::GRANTED['trip']));
+			$this->bookings->book($driver, $uuid, $this->booked(self::GRANTED['booking']));
+			$output->writeln('Gave ' . $driver . ' access to ' . self::GRANTED['plate'] . ' as a driver, with one trip and one booking of theirs.');
+		}
+
 		return self::SUCCESS;
 	}
 
 	/**
 	 * The fleet an earlier run left, deleted the way the app deletes: the rows stay for the
 	 * trash, and only the plates this command writes are touched, so a real vehicle parked next
-	 * to the demo one survives.
+	 * to the demo one survives. Only the account's own: the list holds the Passat another run
+	 * gave it access to, which is that owner's to keep.
 	 *
 	 * @throws \OCP\DB\Exception
 	 */
@@ -516,7 +556,7 @@ class SeedCommand extends Command {
 
 		$retired = 0;
 		foreach ($this->fleet->list($userId) as $vehicle) {
-			if (in_array($vehicle->getPlate(), $plates, true)) {
+			if ($vehicle->getUserId() === $userId && in_array($vehicle->getPlate(), $plates, true)) {
 				$this->fleet->delete($userId, $vehicle->getUuid(), $vehicle->getUpdatedAt());
 				$retired++;
 			}
@@ -571,6 +611,26 @@ class SeedCommand extends Command {
 		$end = (int)$trip['started_at'] + $minutes * 60;
 
 		return $trip + ['ended_at' => $end, 'ended_at_off' => $this->offsetAt($end)];
+	}
+
+	/**
+	 * One booking as the sheet would send it: tomorrow in Berlin, from one full hour to another.
+	 *
+	 * @param array{from: int, to: int, purpose: string} $row
+	 * @return array<string, mixed>
+	 */
+	private function booked(array $row): array {
+		$tomorrow = $this->berlin($this->time->getTime())->modify('+1 day');
+		$starts = $tomorrow->setTime($row['from'], 0)->getTimestamp();
+		$ends = $tomorrow->setTime($row['to'], 0)->getTimestamp();
+
+		return [
+			'starts_at' => $starts,
+			'starts_at_off' => $this->offsetAt($starts),
+			'ends_at' => $ends,
+			'ends_at_off' => $this->offsetAt($ends),
+			'purpose' => $row['purpose'],
+		];
 	}
 
 	/**

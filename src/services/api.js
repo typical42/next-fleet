@@ -4,7 +4,7 @@
  */
 
 import { getRequestToken } from '@nextcloud/auth'
-import { generateOcsUrl, generateUrl } from '@nextcloud/router'
+import { generateOcsUrl, generateUrl, imagePath } from '@nextcloud/router'
 
 /**
  * A vehicle as it travels: the JSON keys are the column names, so what a client reads is what it
@@ -32,6 +32,15 @@ import { generateOcsUrl, generateUrl } from '@nextcloud/router'
  * @property {string|null} [currency] - the code its costs are in; null leaves them unsummed
  * @property {string} [reminder_mail] - how often the reminder digest covers it: `off`, `daily`,
  *   `weekly` or `monthly`
+ * @property {string[]} [may] - what the session may do on it: `view`, `log`, `edit`, `delete`,
+ *   `own` (CONTEXT.md, Vehicle Access), and `book` - `log` on a car in service; the server's
+ *   answer, never a field a client sends
+ * @property {string|null} [owned_by] - the owner's display name when the session reached it through
+ *   a grant; null on the session's own
+ * @property {{user_id: string, user_name: string, ends_at: number, ends_at_off: number}|null} [out_with]
+ *   - who has the car checked out, and the end of their booking; null while it is not out
+ * @property {{uuid: string, starts_at: number, starts_at_off: number, ends_at: number, ends_at_off: number}|null} [my_next_booking]
+ *   - the session's own next booking of it within seven days, not yet taken; null when none
  */
 
 /**
@@ -130,6 +139,9 @@ import { generateOcsUrl, generateUrl } from '@nextcloud/router'
  *   none
  * @property {string|null} [closes] - the uuid of the reminder a maintenance record closed, sent back
  *   as `closes` when the record is saved (docs/architecture.md#reminder-engine)
+ * @property {string[]} [may] - what the session may do to this Entry: `edit`, `delete`, or neither
+ * @property {string|null} [entered_by] - who entered it, by display name, on a vehicle anybody else
+ *   was ever given access to; null on any other
  */
 
 /**
@@ -208,6 +220,7 @@ import { generateOcsUrl, generateUrl } from '@nextcloud/router'
  * @property {number|null} grams - null when nothing was burnt
  * @property {boolean} unstated - a fill-up had no factor and is left out
  * @property {string} source - where the fuel factors are written down
+ * @property {number|null} year - the year that source came out, null where it is not stated
  * @property {{grams: number, year: number|null, source: string|null}|null} grid - the factor the
  *   charges were read at, null without a charge; the reader's own has no year and no source
  */
@@ -221,8 +234,9 @@ import { generateOcsUrl, generateUrl } from '@nextcloud/router'
  * @property {number} file_id - the file in Files
  * @property {string|null} name - the file's name now; null once it is deleted
  * @property {string|null} mime - its type; null once it is deleted
- * @property {'energy'|'maintenance'|'expense'|null} linked_type - the kind of entry it belongs to
- * @property {string|null} linked_uuid - that entry; null when it belongs to the vehicle itself
+ * @property {'energy'|'maintenance'|'expense'|'booking'|null} linked_type - the kind of entry it belongs to, or a booking
+ * @property {string|null} linked_uuid - that entry or booking; null when it belongs to the vehicle itself
+ * @property {string[]} may - `detach` where the session may take it off, by the rule of the row it hangs on
  */
 
 /**
@@ -291,17 +305,156 @@ import { generateOcsUrl, generateUrl } from '@nextcloud/router'
  */
 
 /**
+ * A plan to use a vehicle for a span (CONTEXT.md, Booking). Not an Entry: it is on no timeline. The
+ * span is half-open, and only `booked` and `out` hold the vehicle.
+ *
+ * @typedef {object} Booking
+ * @property {string} uuid - identity
+ * @property {number} updated_at - the token the next write is checked against
+ * @property {string} user_id - the booker
+ * @property {string} user_name - the booker's display name, or the account where it has none
+ * @property {number} starts_at - the first second, unix
+ * @property {number} starts_at_off - the UTC offset it was planned at, minutes
+ * @property {number} ends_at - the second after the last
+ * @property {number} ends_at_off - the UTC offset it was planned at, minutes
+ * @property {string|null} purpose - what it is for
+ * @property {'booked'|'out'|'returned'|'cancelled'} state - where it stands
+ * @property {number|null} out_at - when the car was taken, seconds
+ * @property {number|null} out_at_off - the UTC offset it was taken at, minutes
+ * @property {number|null} out_odo - the main counter as it was taken
+ * @property {number|null} out_level - the tank or battery as it was taken, percent
+ * @property {string|null} out_notes - what the driver noted on taking it
+ * @property {number|null} in_at - when it was given back, seconds
+ * @property {number|null} in_at_off - the UTC offset it was given back at, minutes
+ * @property {number|null} in_odo - the main counter as it was given back
+ * @property {number|null} in_level - the tank or battery as it was given back, percent
+ * @property {string|null} in_notes - what the driver noted on giving it back
+ * @property {string|null} trip_uuid - the trip logged from it
+ * @property {boolean} trip_voided - whether that trip was voided since; it stays tied
+ * @property {TripDraft|null} trip_draft - the trip the handover describes, while a returned booking has none
+ * @property {('odo_below'|'late')[]} flags - what the handover is in question for, computed on read
+ * @property {string[]} may - what the session may do to it: `edit`, `cancel`, `check_out`, `check_in`,
+ *   `log_trip`, `attach` (a handover photo, once handed over), and `open_trip` where the trip it
+ *   became is the session's to open, as its timeline row says
+ */
+
+/**
+ * The booking a refused span or check-out collides with, as the 409 names it: `out` when the car is
+ * still with its booker.
+ *
+ * @typedef {Pick<Booking, 'uuid'|'user_id'|'user_name'|'starts_at'|'starts_at_off'|'ends_at'|'ends_at_off'|'state'>} BookingHeld
+ */
+
+/**
+ * What a check-out or check-in states about the car. The moment is the server's; the offset is the
+ * client's (docs/architecture.md#time).
+ *
+ * @typedef {object} Handover
+ * @property {number} odo - the main counter, in its unit
+ * @property {number} [level] - the tank or battery, percent
+ * @property {string} [notes] - anything worth telling the next driver or the owner
+ * @property {number} at_off - the UTC offset now, minutes
+ */
+
+/**
+ * The trip a returned booking suggests, from the two handovers, while it has none. No category:
+ * that is the driver's word.
+ *
+ * @typedef {object} TripDraft
+ * @property {number} started_at - when the car was taken, seconds
+ * @property {number} started_at_off - minutes
+ * @property {number} ended_at - when it was given back, seconds
+ * @property {number} ended_at_off - minutes
+ * @property {number} start_odo - the counter as it was taken
+ * @property {number} end_odo - the counter as it was given back
+ * @property {string|null} purpose - the booking's
+ */
+
+/**
  * The personal settings screen's whole state: what this user chose, and what each choice may be.
- * The options travel with the values because a dropdown needs both and the app has one API
- * surface (docs/adr/0006-one-api-surface-in-v1.md).
+ * The options travel with the values because a dropdown needs both.
  *
  * @typedef {object} Settings
- * @property {{ jurisdiction: string, dismissed_hints: string[], reclaim_vat: boolean, kpi_period: string, grid_factor: number|null }} preferences -
+ * @property {{ jurisdiction: string, dismissed_hints: string[], reclaim_vat: boolean, kpi_period: string, grid_factor: number|null, inbox_folder: number|null }} preferences -
  *   this user's own choices: the country new vehicles are kept under, the vehicles whose "complete
  *   this vehicle" hint they have answered, whether cost figures are net of VAT, the period the
- *   vehicle header shows, and their electricity's grams of CO₂ per kWh (null for the country's)
+ *   vehicle header shows, their electricity's grams of CO₂ per kWh (null for the country's), and
+ *   the file id of their inbox folder (null for none; kept even once the folder is gone)
  * @property {{ key: string, name: string, logbook_export: boolean, mileage_claim: boolean, grid_factor: {grams: number, year: number, source: string}|null }[]} jurisdictions -
  *   the registered countries, English, whether each prints a logbook and a mileage claim, and its grid average
+ */
+
+/**
+ * A file in the inbox folder that no paper references yet.
+ *
+ * @typedef {object} Waiting
+ * @property {number} file_id - the file in Files, what attaching it names
+ * @property {string} name - its name
+ * @property {string} mime - an image type or `application/pdf`
+ * @property {number} mtime - when it last changed, seconds
+ * @property {number} size - bytes
+ */
+
+/**
+ * @typedef {object} Inbox
+ * @property {{file_id: number, path: string}|null} folder - the inbox folder and its path in the
+ *   person's Files; null when none is chosen or it is gone
+ * @property {Waiting[]} files - the newest hundred, newest first
+ * @property {number} count - all of them, the hundred or not
+ */
+
+/**
+ * What an import preview and the import itself are asked with (docs/api.md). `units` is
+ * `{distance: km|mi, volume: l|us_gal|uk_gal}`; `tz` is the zone a date without a time is local to.
+ *
+ * @typedef {object} ImportAsked
+ * @property {number} file_id - the file in the person's own Files
+ * @property {string} importer - `lubelogger` or `spritmonitor`
+ * @property {string} record_type - one of the importer's
+ * @property {{distance: string, volume: string}} units - what the file does not say
+ * @property {string} tz - an IANA zone
+ * @property {string} [date_order] - `dmy` or `mdy`
+ * @property {string} [energy] - one of the vehicle's energy types
+ * @property {Record<string, string>} [category_map] - text => `skip`, `expense.…` or `maintenance.…`
+ * @property {boolean} [include_duplicates] - whether rows already there are created again; not by default
+ */
+
+/**
+ * One row of the file as the import would take it. `outcome` is null for a new entry.
+ *
+ * @typedef {object} ImportProposal
+ * @property {number} row - the spreadsheet row; the header is 1
+ * @property {string} kind - `energy`, `maintenance`, `expense` or `odometer`
+ * @property {Record<string, unknown>} fields - the entry's fields in canonical units; empty when unreadable
+ * @property {'duplicate'|'unreadable'|null} outcome - what becomes of it
+ * @property {string|null} reason - why it is not new
+ * @property {string|null} column - the header blamed
+ */
+
+/**
+ * @typedef {object} ImportCounts
+ * @property {number} new - rows that become entries
+ * @property {number} duplicate - rows already there
+ * @property {number} unreadable - rows that cannot be read
+ * @property {number} creates - what an import with these answers writes
+ */
+
+/**
+ * @typedef {object} ImportPreview
+ * @property {{placed: {header: string, field: string}[], ignored: string[]}} columns - which header became which field
+ * @property {{name: string, choices: string[]}[]} questions - what is still to be answered
+ * @property {string[]} categories - a costs file's distinct category texts, all of them
+ * @property {{text: string, meaning: string}[]} category_defaults - what a text the format gives a meaning becomes unless answered
+ * @property {ImportCounts} counts - every row by outcome
+ * @property {{reason: string, count: number}[]} reasons - how many rows each reason left out
+ * @property {ImportProposal[]} proposals - the first fifty rows, in file order
+ * @property {string} etag - the file as it was read; the import is checked against it
+ */
+
+/**
+ * @typedef {object} ImportResult
+ * @property {ImportCounts} counts - as the preview counted them
+ * @property {{type: string, uuid: string}[]} created - what was created, which is what an undo names
  */
 
 /**
@@ -317,6 +470,56 @@ export class ConflictError extends Error {}
  * (src/components/VehicleDocuments.vue).
  */
 export class NotFoundError extends Error {}
+
+/**
+ * Another live booking holds part of the span, or the booking a trip is logged from is not back or
+ * was logged already. It carries that booking, so the sheet says whose it is and when without a
+ * second read.
+ */
+export class BookingConflictError extends Error {
+
+	/**
+	 * @param {string} message - the server's words
+	 * @param {BookingHeld} booking - the booking in the way
+	 */
+	constructor(message, booking) {
+		super(message)
+		this.booking = booking
+	}
+
+}
+
+/**
+ * What a request stood on moved since it was read: an import's file since its preview, or the
+ * entries an undo names since their import. Unlike ConflictError there is no token to read anew;
+ * the screen previews again, or lets the undo go.
+ */
+export class ChangedError extends Error {}
+
+/**
+ * Somebody's client is writing the file right now; a moment later it serves
+ * (DocumentController::download()).
+ */
+export class LockedError extends Error {}
+
+/**
+ * A file an import will not read at all (docs/security.md). It carries the server's reason word
+ * and the row reading stopped at, which the screen puts into words (src/utils/imports.js).
+ */
+export class ImportRefusedError extends Error {
+
+	/**
+	 * @param {string} message - the server's words, English, for a log
+	 * @param {string} reason - `too_large`, `binary`, `encoding`, …
+	 * @param {number|null} row - where reading stopped, null when no row is to blame
+	 */
+	constructor(message, reason, row) {
+		super(message)
+		this.reason = reason
+		this.row = row
+	}
+
+}
 
 /**
  * Every vehicle the session may see - their own and the ones granted to them
@@ -377,11 +580,12 @@ export async function deleteVehicle(vehicle) {
 }
 
 /**
- * Undo a delete. It is checked against the token the delete answered with and leaves it where it
- * is, so the toast may hand back exactly the vehicle it was given and nothing newer.
+ * Undo a delete. It is checked against the token the delete answered with, so the toast hands back
+ * exactly the vehicle it was given and nothing newer. The answer carries a new token; the next edit
+ * needs it.
  *
  * @param {Vehicle} vehicle - the vehicle as the delete answered with it
- * @return {Promise<Vehicle>} the vehicle, back in the fleet
+ * @return {Promise<Vehicle>} the vehicle, back in the fleet, under its new token
  * @throws {ConflictError} when it moved on since, or was never deleted
  */
 export async function restoreVehicle(vehicle) {
@@ -408,8 +612,10 @@ export async function recordReading(uuid, entry) {
  *
  * @param {string} uuid - the vehicle that drove it
  * @param {object} trip - what the sheet holds: the two instants with their offsets, the category,
- *   an end counter or a distance, and whatever of the route the driver typed
+ *   an end counter or a distance, whatever of the route the driver typed, and `booking_uuid` when
+ *   it is a returned booking's trip
  * @return {Promise<Trip>} the trip as the server wrote it
+ * @throws {BookingConflictError} when that booking is not back yet, or was logged already
  */
 export async function recordTrip(uuid, trip) {
 	return request('POST', `/api/vehicles/${uuid}/trips`, trip)
@@ -688,6 +894,38 @@ export async function removeRecipient(uuid, userId) {
 }
 
 /**
+ * What the session holds on a vehicle through grants: a grant in their own name they may leave,
+ * and the groups only the owner can change. The owner holds no grant and gets neither.
+ *
+ * @typedef {object} Held
+ * @property {string|null} role - the role of their own grant, null when they have none
+ * @property {{grantee: string, display_name: string, role: string}[]} groups - each group that
+ *   reaches the vehicle, with its role
+ */
+
+/**
+ * @param {string} uuid - the vehicle
+ * @return {Promise<Held>} what the session holds on it
+ */
+export async function readHeld(uuid) {
+	return request('GET', `/api/vehicles/${uuid}/access`)
+}
+
+/**
+ * Give back the session's own grant. A group's grant stays: only the owner changes that.
+ *
+ * @param {string} uuid - the vehicle
+ * @return {Promise<Held>} what the session still holds on it
+ */
+export async function leaveVehicle(uuid) {
+	return request('DELETE', `/api/vehicles/${uuid}/access`)
+}
+
+/** Core's share types, as its autocomplete takes them. */
+const USERS = '0'
+const GROUPS = '1'
+
+/**
  * Accounts matching what was typed, for the recipient picker. Core's own search rather than one of
  * ours: it already applies the instance's rules on who may find whom, which the sharing dialog
  * uses too.
@@ -696,9 +934,86 @@ export async function removeRecipient(uuid, userId) {
  * @return {Promise<Recipient[]>} at most ten accounts
  */
 export async function searchUsers(term) {
+	// Accounts only: groups, mail addresses and remote accounts are nobody the job can notify.
+	return (await autocomplete(term, [USERS]))
+		.map((one) => ({ user_id: one.id, display_name: one.label }))
+}
+
+/**
+ * Who else may use one vehicle: a user or a group, with its role (CONTEXT.md, Vehicle Access).
+ *
+ * @typedef {object} Grant
+ * @property {string} uuid - the grant's identity
+ * @property {string} grantee - the account or the group
+ * @property {'user'|'group'} grantee_type - which of the two
+ * @property {string} display_name - its name, or the grantee where it has none any more
+ * @property {'viewer'|'driver'|'manager'} role - what it may do
+ */
+
+/**
+ * @param {string} uuid - the vehicle
+ * @return {Promise<Grant[]>} its grants, in the order they were given; the owner alone reads them
+ */
+export async function listGrants(uuid) {
+	return request('GET', `/api/vehicles/${uuid}/grants`)
+}
+
+/**
+ * Give a user or a group access. Granting to one that already has it changes its role.
+ *
+ * @param {string} uuid - the vehicle
+ * @param {{ grantee: string, grantee_type: 'user'|'group' }} whom - the user or the group
+ * @param {string} role - viewer, driver or manager
+ * @return {Promise<Grant[]>} the list as it now stands
+ */
+export async function addGrant(uuid, whom, role) {
+	return request('POST', `/api/vehicles/${uuid}/grants`, { grantee: whom.grantee, grantee_type: whom.grantee_type, role })
+}
+
+/**
+ * @param {string} uuid - the vehicle
+ * @param {string} grant - the grant's uuid
+ * @param {string} role - its new role
+ * @return {Promise<Grant[]>} the list as it now stands
+ */
+export async function changeGrant(uuid, grant, role) {
+	return request('PUT', `/api/vehicles/${uuid}/grants/${grant}`, { role })
+}
+
+/**
+ * Take a grant back. Whoever no longer sees the vehicle leaves its reminder recipients with it.
+ *
+ * @param {string} uuid - the vehicle
+ * @param {string} grant - the grant's uuid
+ * @return {Promise<Grant[]>} the list as it now stands
+ */
+export async function revokeGrant(uuid, grant) {
+	return request('DELETE', `/api/vehicles/${uuid}/grants/${grant}`)
+}
+
+/**
+ * Accounts and groups matching what was typed, for the Access section, by the same core search as
+ * searchUsers().
+ *
+ * @param {string} term - what was typed
+ * @return {Promise<{ grantee: string, grantee_type: 'user'|'group', display_name: string }[]>} at
+ *   most ten of each
+ */
+export async function searchGrantees(term) {
+	return (await autocomplete(term, [USERS, GROUPS]))
+		.map((one) => ({ grantee: one.id, grantee_type: one.source === 'groups' ? 'group' : 'user', display_name: one.label }))
+}
+
+/**
+ * @param {string} term - what was typed
+ * @param {string[]} types - the share types to search
+ * @return {Promise<{ id: string, label: string, source: string }[]>} core's matches
+ */
+async function autocomplete(term, types) {
 	const query = new URLSearchParams({ search: term, itemType: 'nextfleet', itemId: '', limit: '10' })
-	// A user share only: groups, mail addresses and remote accounts are nobody the job can notify.
-	query.append('shareTypes[]', '0')
+	for (const type of types) {
+		query.append('shareTypes[]', type)
+	}
 	const response = await fetch(`${generateOcsUrl('core/autocomplete/get')}?${query}`, {
 		headers: {
 			Accept: 'application/json',
@@ -711,7 +1026,7 @@ export async function searchUsers(term) {
 	}
 
 	const answer = await response.json()
-	return (answer?.ocs?.data ?? []).map((/** @type {{id: string, label: string}} */ one) => ({ user_id: one.id, display_name: one.label }))
+	return answer?.ocs?.data ?? []
 }
 
 /**
@@ -874,6 +1189,17 @@ export async function detachDocument(uuid, document) {
 }
 
 /**
+ * Put a removed paper back. No token, for the reason detaching takes none.
+ *
+ * @param {string} uuid - the vehicle
+ * @param {string} document - the paper's uuid
+ * @return {Promise<Document[]>} the list as it now stands
+ */
+export async function restoreDocument(uuid, document) {
+	return request('POST', `/api/vehicles/${uuid}/documents/${document}/restore`)
+}
+
+/**
  * Where one paper is saved from; an address for the reason logbookUrl() gives. Served by us, so a
  * driver reaches the owner's file without a share.
  *
@@ -883,6 +1209,164 @@ export async function detachDocument(uuid, document) {
  */
 export function documentUrl(uuid, document) {
 	return generateUrl(`/apps/nextfleet/vehicles/${uuid}/documents/${document}`)
+}
+
+/**
+ * One paper's file, fetched from documentUrl() rather than followed: a refusal is JSON, which a
+ * followed link would show in place of the app.
+ *
+ * @param {string} uuid - the vehicle
+ * @param {string} document - the paper's uuid
+ * @return {Promise<Blob>} the file
+ * @throws {NotFoundError} when the paper or its file is gone
+ * @throws {LockedError} when somebody is writing the file
+ */
+export async function fetchDocument(uuid, document) {
+	const response = await fetch(documentUrl(uuid, document))
+	if (!response.ok) {
+		throw refusal(response, await parse(response))
+	}
+
+	return response.blob()
+}
+
+/**
+ * What importing a file of the person's own would do, row by row (docs/architecture.md#import).
+ * Stateless: nothing is kept between this and runImport().
+ *
+ * @param {string} uuid - the vehicle
+ * @param {ImportAsked} asked - the file, the format and the answers
+ * @return {Promise<ImportPreview>} the columns, the open questions, the counts and a sample
+ * @throws {ImportRefusedError} when the file is not one an import reads
+ * @throws {NotFoundError} when the file is not the person's own
+ */
+export async function previewImport(uuid, asked) {
+	return request('POST', `/api/vehicles/${uuid}/import/preview`, asked)
+}
+
+/**
+ * Create what the preview with the same answers counted, in one go.
+ *
+ * @param {string} uuid - the vehicle
+ * @param {ImportAsked & {etag: string}} asked - the preview's request and the etag it answered
+ * @return {Promise<ImportResult>} the counts, and what was created
+ * @throws {ChangedError} when the file changed since the preview
+ */
+export async function runImport(uuid, asked) {
+	return request('POST', `/api/vehicles/${uuid}/import`, asked)
+}
+
+/**
+ * Take back exactly what one import created, all of it or nothing.
+ *
+ * @param {string} uuid - the vehicle
+ * @param {{type: string, uuid: string}[]} created - the import's answer's list, as it came
+ * @return {Promise<{undone: number}>} how many went
+ * @throws {ChangedError} when one of them is no longer as the import left it
+ */
+export async function undoImport(uuid, created) {
+	return request('POST', `/api/vehicles/${uuid}/import/undo`, { created })
+}
+
+/**
+ * One vehicle's bookings from a week ago on, by start: the coming ones and the last week's.
+ *
+ * @param {string} uuid - the vehicle
+ * @param {object} [since] - how far back instead
+ * @param {number} [since.from] - the instant, seconds, the bookings reach past; 0 for all of them
+ * @return {Promise<Booking[]>} the list
+ */
+export async function listBookings(uuid, { from } = {}) {
+	return request('GET', `/api/vehicles/${uuid}/bookings${from === undefined ? '' : `?from=${from}`}`)
+}
+
+/**
+ * Book the vehicle for the session. No token: nothing was read that it could lose a race against.
+ *
+ * @param {string} uuid - the vehicle
+ * @param {object} fields - the span, each end with its offset, and the purpose
+ * @return {Promise<Booking>} the booking as the server wrote it
+ * @throws {BookingConflictError} when another live booking holds part of the span
+ */
+export async function createBooking(uuid, fields) {
+	return request('POST', `/api/vehicles/${uuid}/bookings`, fields)
+}
+
+/**
+ * Move the span or rewrite the purpose. It states the whole booking: an absent purpose is cleared.
+ *
+ * @param {string} uuid - the vehicle
+ * @param {{uuid: string, updated_at: number}} booking - as it was read
+ * @param {object} fields - the span and the purpose
+ * @return {Promise<Booking>} the booking as it now stands
+ * @throws {ConflictError} when it moved on since it was read
+ * @throws {BookingConflictError} when another live booking holds part of the new span
+ */
+export async function changeBooking(uuid, booking, fields) {
+	return request('PUT', `/api/vehicles/${uuid}/bookings/${booking.uuid}`, { ...fields, updated_at: booking.updated_at })
+}
+
+/**
+ * Cancel a booking. The row stays, `cancelled`; a booker who did not cancel it is told.
+ *
+ * @param {string} uuid - the vehicle
+ * @param {{uuid: string, updated_at: number}} booking - as it was read
+ * @return {Promise<Booking>} the booking as the cancel left it
+ * @throws {ConflictError} when it moved on since it was read
+ */
+export async function cancelBooking(uuid, booking) {
+	return request('DELETE', `/api/vehicles/${uuid}/bookings/${booking.uuid}?updated_at=${booking.updated_at}`)
+}
+
+/**
+ * Take the car under a booking. No token: a booking already out refuses a second check-out. The
+ * server stamps the moment; the client says only its offset.
+ *
+ * @param {string} uuid - the vehicle
+ * @param {{uuid: string}} booking - the booking it is taken under
+ * @param {Handover} handover - what the driver read off the car
+ * @return {Promise<Booking>} the booking, now `out`
+ * @throws {BookingConflictError} when the car is still out with someone, or booked until then
+ */
+export async function checkOut(uuid, booking, handover) {
+	return request('POST', `/api/vehicles/${uuid}/bookings/${booking.uuid}/check-out`, handover)
+}
+
+/**
+ * Give the car back. Writes no Reading: the trip it answers a draft of is the evidence
+ * (docs/architecture.md, "A booking is a plan").
+ *
+ * @param {string} uuid - the vehicle
+ * @param {{uuid: string}} booking - the booking it was taken under
+ * @param {Handover} handover - what the driver read off the car
+ * @return {Promise<Booking>} the booking, now `returned`, its trip as a draft
+ */
+export async function checkIn(uuid, booking, handover) {
+	return request('POST', `/api/vehicles/${uuid}/bookings/${booking.uuid}/check-in`, handover)
+}
+
+/**
+ * The files in the person's inbox folder that no paper references yet (docs/architecture.md#the-inbox).
+ *
+ * @return {Promise<Inbox>} the folder, the newest of them, and how many wait
+ */
+export async function readInbox() {
+	return request('GET', '/api/inbox')
+}
+
+/**
+ * Nextcloud's own thumbnail of a file; no preview code of ours. A PDF gets core's icon, since an
+ * instance previews PDFs only when its admin enabled that.
+ *
+ * @param {Pick<Waiting, 'file_id'|'mime'>} file - one waiting in the inbox
+ * @return {string} the image's address
+ */
+export function thumbnailUrl(file) {
+	if (file.mime === 'application/pdf') {
+		return imagePath('core', 'filetypes/application-pdf')
+	}
+
+	return generateUrl(`/core/preview?fileId=${file.file_id}&x=256&y=256&a=1&mimeFallback=true`)
 }
 
 /**
@@ -942,16 +1426,39 @@ async function request(method, path, body) {
 		return answer
 	}
 
+	throw refusal(response, answer)
+}
+
+/**
+ * The error a refused request is thrown as, by what the server answered.
+ *
+ * @param {Response} response - the refusal
+ * @param {any} answer - its parsed body, or null
+ * @return {Error} the error to throw
+ */
+function refusal(response, answer) {
 	// Nextcloud answers its own failed CSRF check with 412 as well, so the conflict is the one
 	// the body claims, not the one the status suggests.
 	if (response.status === 412 && answer?.conflict === true) {
-		throw new ConflictError(answer.message)
+		return new ConflictError(answer.message)
 	}
 	if (response.status === 404) {
-		throw new NotFoundError(answer?.message ?? 'Not found')
+		return new NotFoundError(answer?.message ?? 'Not found')
+	}
+	if (response.status === 409 && answer?.booking) {
+		return new BookingConflictError(answer.message, answer.booking)
+	}
+	if (response.status === 409) {
+		return new ChangedError(answer?.message ?? 'Changed meanwhile')
+	}
+	if (response.status === 422 && typeof answer?.reason === 'string') {
+		return new ImportRefusedError(answer.message, answer.reason, answer.row ?? null)
+	}
+	if (response.status === 423) {
+		return new LockedError(answer?.message ?? 'Locked')
 	}
 
-	throw new Error(answer?.message ?? `The server answered ${response.status}`)
+	return new Error(answer?.message ?? `The server answered ${response.status}`)
 }
 
 /**

@@ -10,18 +10,23 @@ namespace OCA\NextFleet\Tests\Unit\Service;
 
 use OCA\NextFleet\Db\Audit;
 use OCA\NextFleet\Db\AuditMapper;
+use OCA\NextFleet\Db\BookingMapper;
 use OCA\NextFleet\Db\ReminderMapper;
 use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Exception\AccessDeniedException;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
+use OCA\NextFleet\Service\BookingNotices;
+use OCA\NextFleet\Service\GrantNotices;
 use OCA\NextFleet\Service\NotificationService;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
 use OCA\NextFleet\Tests\Stub\RegisteredProfiles;
+use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\IConfig;
 use OCP\IDBConnection;
+use OCP\IUserManager;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
@@ -46,8 +51,11 @@ class VehicleServiceTest extends TestCase {
 	private VehicleAccess&MockObject $access;
 	private AuditMapper&MockObject $audit;
 	private IDBConnection&MockObject $db;
+	private IUserManager&MockObject $users;
 
 	protected function setUp(): void {
+		$this->users = $this->createMock(IUserManager::class);
+
 		$this->audits = [];
 		$this->calls = [];
 
@@ -101,6 +109,11 @@ class VehicleServiceTest extends TestCase {
 			$this->createMock(ReminderRecipientMapper::class),
 			$this->createMock(ReminderMapper::class),
 			$this->createMock(NotificationService::class),
+			$this->createMock(GrantNotices::class),
+			$this->createMock(BookingNotices::class),
+			$this->createMock(BookingMapper::class),
+			$this->createMock(ITimeFactory::class),
+			$this->users,
 		);
 	}
 
@@ -572,6 +585,18 @@ class VehicleServiceTest extends TestCase {
 			->willReturn([$this->stored()]);
 
 		$this->assertCount(1, $this->service()->list(self::OWNER));
+	}
+
+	/** Two vehicles of one owner cost one name lookup, not one per row. */
+	public function testTheListLooksUpEachOwnerOnce(): void {
+		$second = $this->stored();
+		$second->setId(9);
+		$this->mapper->method('findAllVisible')->willReturn([$this->stored(), $second]);
+		$this->users->expects($this->once())->method('getDisplayName')->with(self::OWNER)->willReturn('Alice Adler');
+
+		$listed = $this->service()->list(self::DRIVER);
+
+		$this->assertSame(['Alice Adler', 'Alice Adler'], array_map(static fn (Vehicle $one): ?string => $one->getOwnedBy(), $listed));
 	}
 
 	/** A vehicle is found by its identity, never by the row number. */

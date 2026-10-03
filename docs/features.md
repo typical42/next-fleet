@@ -21,7 +21,8 @@ is not the reason anyone would switch.
 ## Feature backlog
 
 Ranked by value per effort. **v1** marks what M0–M5 built, the unreleased 0.2.0
-([milestones](../plan.md#milestones)); everything else waits.
+([milestones](../plan.md#milestones)); **M6** to **M9** what each built after it, the unreleased
+0.3.0. Everything else waits.
 
 **High**
 
@@ -41,25 +42,37 @@ Ranked by value per effort. **v1** marks what M0–M5 built, the unreleased 0.2.
   Best adoption-per-line-of-code in the list.
 - **v1** — **Mileage claim.** Business trips × the statutory rate → a Reisekosten claim. For
   freelancers this is the whole reason to keep a logbook, so it exists wherever the jurisdiction
-  supplies a rate; under the generic profile it is unavailable rather than zero.
+  supplies a rate; under the generic profile it is unavailable rather than zero. It is personal:
+  each reader's lists the trips they entered.
 - **v1** — A plain logbook under the generic jurisdiction, unified search for a vehicle, and a
   dashboard widget of what is red or amber.
-- **Receipt inbox.** The Nextcloud mobile app already auto-uploads photos. Watch `/Fleet/Inbox`,
-  show unassigned images, attach in two taps. Reuses Files instead of building an uploader, and
-  needs no OCR.
+- **M7** — **Receipt inbox.** The Nextcloud mobile app already auto-uploads photos. A folder of the
+  user's own is their inbox; the app lists its images and PDFs that belong to no vehicle and
+  attaches one in two taps, or logs it as a new entry. Reuses Files instead of building an
+  uploader, and needs no OCR.
 - Tyre set management: summer/winter, storage place, DOT, tread depth.
 
 **Medium**
 
-- Fleet mode: share a vehicle with a group, roles manager/driver/viewer. The access check exists
-  from M1; only the UI waits ([ADR 0001](adr/0001-own-access-table.md)).
-- Pool booking with conflict check, mirrored into a shared calendar.
-- Check-out / check-in with odometer, fuel level, damage photos (handover protocol).
+- **M6** — Access: the owner grants a user or a group viewer, driver or manager, and a driver logs
+  their own entries ([ADR 0001](adr/0001-own-access-table.md)).
+- **M7** — Pool booking with conflict check; no calendar ([decision 16](../plan.md#decisions-taken)).
+  Check-out / check-in with odometer, fuel level, notes and photos (handover protocol), and the
+  check-in prefills the trip.
+- **M8** — The OCS API for clients other than the web UI, signed in with an app password, with a
+  sync endpoint that hands a client what changed since its last call ([api](api.md)). The
+  Android client itself waits.
+- **M9** — Import from LubeLogger and Spritmonitor CSV exports picked in Files: energy
+  entries, maintenance, expenses and odometer entries, previewed first and undone as a whole, never trips
+  ([import](architecture.md#import)). Drivvo waits for someone with a real export: it publishes no
+  format, and no sample is at hand.
+- Fleet view: one table of every vehicle a manager reaches, across owners, with status, km,
+  cost/km, next due and who has the car. Sortable, filterable by group: the one screen where
+  density beats simplicity.
 - Damage and incident log with claim number.
 - Leasing/warranty contract: end date, mileage cap, projected overrun warning.
 - Führerscheinkontrolle: recurring 6-month check per driver (a legal duty for company fleets).
 - UVV / DGUV V70 annual safety inspection as a built-in reminder template.
-- Import from Drivvo, Spritmonitor, LubeLogger CSV.
 - Consumption anomaly alert: efficiency drop over 3 fill-ups → hint at a service need.
 - Cost centre and partner promoted from free text to entities — but only when mileage is actually
   billed on ([entry sheet](ui.md#the-entry-sheet-in-detail)).
@@ -70,7 +83,6 @@ Ranked by value per effort. **v1** marks what M0–M5 built, the unreleased 0.2.
   state ([data model](architecture.md#data-model)).
 - "O bis O" (Oktober bis Ostern) as a built-in tyre-swap template.
 - Fuel price memory per station, to prefill the next fill-up.
-- A booking becomes a trip: check-in prefills date, driver and starting odometer.
 
 **Low / later**
 
@@ -131,6 +143,10 @@ who and when, and the export lists the trip as voided. The Reading the trip left
 with it ([rule 5](architecture.md#odometer-rules)). Undo stays the default gesture everywhere in
 the app ([entry sheet](ui.md#the-entry-sheet-in-detail)) and is recorded in its turn; under this mode
 it simply cannot destroy evidence.
+
+**The logbook of a car others use says who entered each trip.** On a vehicle anybody else was ever
+given access to, the export gains an *Eingetragen von* column, read off `created_by`
+([who entered it](ui.md#who-entered-it)).
 
 **Switching the mode on locks nothing retroactively**
 ([ADR 0003](adr/0003-logbook-mode-does-not-lock-the-past.md)). The export states the date the mode

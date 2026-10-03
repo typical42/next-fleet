@@ -29,6 +29,8 @@ use OCP\DB\Types;
  * @method void setVatRate(?int $vatRate)
  * @method string|null getNotes()
  * @method void setNotes(?string $notes)
+ *
+ * @psalm-import-type NextFleetExpense from \OCA\NextFleet\ResponseDefinitions
  */
 class Expense extends BaseEntity implements \JsonSerializable {
 	protected int $vehicleId = 0;
@@ -53,7 +55,7 @@ class Expense extends BaseEntity implements \JsonSerializable {
 	/**
 	 * The wire form is the column names, as it is for every entity.
 	 *
-	 * @return array<string, mixed>
+	 * @return NextFleetExpense
 	 */
 	public function jsonSerialize(): array {
 		return [

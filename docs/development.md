@@ -13,7 +13,7 @@ time is a reminder engine you cannot test.
 | Static | Psalm (with the `nextcloud/ocp` stubs), php-cs-fixer + `nextcloud/coding-standard`, ESLint/Stylelint (`@nextcloud/eslint-config`), TypeScript | Wrong types, private API use, style |
 | Unit | PHPUnit, mappers mocked | The logic worth trusting: odometer derivation and the observed-beats-derived rule, due-date/km evaluation, recurrence from actual completion, consumption and cost per 100 km, mileage projection and its data floor |
 | Integration | PHPUnit inside a running Nextcloud container, real DB | Migrations, QBMapper queries, optimistic concurrency (a stale `updated_at` must 412), the access layer (owner vs. role vs. stranger) |
-| API contract | PHPUnit + Guzzle with an app password | Arrives with the OCS API, not before ([ADR 0006](adr/0006-one-api-surface-in-v1.md)). Snapshot the JSON; a breaking change must fail CI |
+| API | PHPUnit over HTTP with an app password (`tests/Api/`) | What a client gets from the [OCS API](api.md): signing in, a write, a 412, a download, sync across a delete and its restore, an import; the M8 slice, an owner and a driver kept in step by sync. A breaking change to the contract must fail CI |
 | Frontend | Vitest for stores and pure components | Consumption/cost formatting, form validation |
 | E2E | Playwright against the dev container | Quick-add flow, vehicle creation, reminder appears on the dashboard |
 | Mail | Mailpit as the SMTP sink | The digest actually renders and sends |
@@ -38,6 +38,46 @@ docker compose -f .docker/compose.yml exec -u www-data -w /var/www/html/custom_a
 `NEXTCLOUD_ROOT` says where the server is, `/var/www/html` by default. The schema test drops and
 rebuilds the app's tables, so run it against a dev instance and nothing else.
 
+**The API suite is a client.** It loads no server class: it calls `http://localhost` with curl and
+uses `occ` only for what a client cannot do: make a fresh account and its app password, as
+`user:auth-tokens:add` does on 31 and 34 alike, delete the accounts again, and forgive its failed
+logins. Same place, its own config:
+
+```bash
+docker compose -f .docker/compose.yml exec -u www-data -w /var/www/html/custom_apps/nextfleet \
+  app php vendor/bin/phpunit -c phpunit.api.xml
+```
+
+`NEXTFLEET_API_URL` overrides the address. The failed logins forgiven are the ones its 401 case
+counts against `127.0.0.1` and `::1` — Nextcloud slows every later login from an address that
+failed, the E2E run's included.
+
+**No suite writes as `admin`.** Its fleet is the demo, and a dev server holds more than tests. Each
+suite makes accounts of its own and deletes them when it is done, and again up front in case a
+crashed run left some. Deleting an account takes its app passwords and its home folder with it; the
+app keeps its rows under a pseudonym ([ADR 0008](adr/0008-erasing-a-driver-pseudonymises.md)).
+
+| Suite | Its accounts | Deleted by |
+|---|---|---|
+| Integration | `nextfleet-test-…`, one fixed set per class | the class, after its last test or after each |
+| API | `nextfleet-api-…` and `nextfleet-m8-…`, a random tail each | the class, after its last test |
+| E2E | `nextfleet-e2e-<ms>`, the run's own, in the `admin` group so it can make the rest; `m4e2e-` to `m9e2e-` and `rolese2e-`, each spec file's | `tests/e2e/accounts.js`, Playwright's global setup and teardown |
+| Unit, country | none | — |
+
+The E2E setup deletes every such account it finds, a running run's included: one E2E run per
+server at a time.
+
+`demo-fleet.spec.js` and `tools/screenshots.mjs` sign in as `admin` to read the seeded fleet, and sign
+out, which deletes the session. Two things still reach `admin`'s rows: the integration schema test
+drops the app's tables, and the M4 slice runs the reminder job over every vehicle at a moved clock.
+Reseed after either.
+
+**`openapi.json` is generated** ([api](api.md#the-document)): `composer openapi` after any change to
+an OCS controller or to `lib/ResponseDefinitions.php`, and commit the result. The extractor needs
+`nikic/php-parser` 5 and Psalm 5 pins 4, so it lives in `vendor-bin/openapi-extractor/` behind
+`bamarni/composer-bin-plugin`; `composer install` installs it too. The unit suite then holds the
+result to the v1 baseline ([api](api.md#what-v1-promises)).
+
 PHPUnit loads our autoloader first, stubs included, and `lib/base.php` then puts the server's own
 in front of it — so `OCP\` resolves to the running server and not to the pinned stubs. That is the
 server's doing, not ours, and it holds on 31 and 34 alike; `tests/Integration/AutoloadingTest.php`
@@ -58,9 +98,11 @@ because that is the axis users actually vary.
 | Weekly | The fuller matrix, allowed to fail loudly without blocking anyone |
 
 `.github/workflows/ci.yml` implements it. Alongside the matrix run — a Nextcloud checkout, a real
-database, `occ maintenance:install`, `occ app:enable`, then both PHPUnit suites, which is where
-the schema meets PostgreSQL and SQLite — three jobs run once each:
-static analysis with `composer lint` and `composer audit`, the frontend checks, and `reuse lint`. A
+database, `occ maintenance:install`, `occ app:enable`, then the unit and integration suites, which is
+where the schema meets PostgreSQL and SQLite, then `php -S localhost:8080` in front of the checkout
+and the API suite against it — three jobs run once each:
+static analysis with `composer lint`, `composer audit` and a fresh `openapi.json` diffed against the
+committed one, the frontend checks, and `reuse lint`. A
 `plan` job picks the combinations for the event that triggered the run; the three lists sit in its
 environment as JSON so `tests/Unit/CiWorkflowTest.php` can read them, because `actionlint` only
 proves GitHub will run the file, not that it runs the right thing.
@@ -91,7 +133,8 @@ It builds the bundle first: the specs assert what Vue mounted, and an unbuilt `j
 empty.
 
 There is no `krankerl`: `InfoXmlTest` validates `info.xml` against the store's own schema, and
-`tools/package.sh` builds the tarball ([release](#release)).
+`tools/package.sh` builds the tarball and `tools/upgrade-check.sh` installs it
+([release](#release)).
 
 **The M0 gate is a build, not a test.** One frontend bundle must build and run against NC 31 and
 NC 34 before any feature work starts ([milestones](../plan.md#milestones)). `@nextcloud/vue` moves
@@ -121,7 +164,14 @@ app cannot hold, and the odometer rules decide the flags rather than the fixture
 states `de`, whatever the account seeding it has chosen: the plates, the VAT rates and the HU/AU are
 one country's, and a profile without an inspection scheme has no HU/AU to write. Every plate starts
 `NF-`, which keeps the demo out of the way of the E2E's `E2E-`; a re-run retires the rows it is
-about to write again, and leaves anything else parked next to them alone.
+about to write again, and leaves anything else parked next to them alone — a vehicle another
+account owns included.
+
+`--grant-to <uid>` makes the Passat a car two people use: that account becomes its driver and
+enters one business trip, so the timeline and the Fahrtenbuch name who entered each trip, and the
+account's overview shows the Passat with "Owned by" beneath. It sends the grant's notification.
+The account also books the Passat for tomorrow 09:00–12:00, Berlin time, so the Bookings section has
+a coming booking to show.
 
 Testing the reminder job by waiting is not testing. Move the clock, then run
 `occ background-job:list` / `background-job:execute <id>` to fire the job on demand.
@@ -282,6 +332,14 @@ It sets the period back to the default first, since the picker keeps its choice 
 cadence set in the vehicle sheet, then the job run twice at a moved clock. It checks the one
 notification the recipient reads over OCS and the one digest in Mailpit, both in German. Then an
 oil change is closed from the banner, the next one shows, and the overview reorders.
+`m7-slice.spec.js` covers the pool and the inbox with fresh accounts: a driver books the owner's car,
+the owner's booking over it is refused with the driver named, the driver takes the car while the
+owner's overview says who has it, returns it and logs the prefilled trip, and files a receipt from
+the inbox on their own fill-up in two taps. A second case logs a receipt as a new fill-up. M8 has
+no spec here: its slice is a client's, so it lives in the API suite, and the M7 slice is what shows
+the web UI did not move. `m9-slice.spec.js` covers importing with fresh accounts: the owner previews
+a LubeLogger file whose rows are new, already there and unreadable, imports it, sees the consumption
+it closes, undoes it from the toast, and imports a Spritmonitor file. A driver is offered no import.
 
 **The job at a moved clock.** The server's clock cannot move, so `tests/e2e/job.php` runs
 `ReminderJob` once with a stopped `ITimeFactory` at the instant it is given. `server.js` runs it
@@ -295,8 +353,12 @@ blocks today's mail, and deletes the previous run's account first. Mailpit must 
 Four things about those files worth knowing before adding to them:
 
 - **A test tagged `@nc34` runs on that major alone**, because every other project would re-measure
-  the same stylesheet. The audit at 320 × 640 in dark mode is the one that wears it; the tag is
-  filtered out per project in `playwright.config.js`.
+  the same stylesheet. The sweep at the end of `m5-slice.spec.js` wears it. It runs every screen
+  through `fits()` and axe at 320 × 640 and 1280 × 800, light and dark. Since M6 that includes
+  what a grant changes for the owner and the grantee; since M7 the bookings, the handover sheets,
+  who has the car and the inbox; since M9 the import's format step, its preview with an open
+  question and with a long column list, and its result. The tag is filtered out per project in
+  `playwright.config.js`.
 - **A dialog is visible from the first frame of its fade-in**, so an audit taken right after
   `toBeVisible()` measures the text against a background it is still blended with and reports a
   contrast violation that is over in 200 ms. `opened()` waits for the opacity instead.
@@ -306,7 +368,8 @@ Four things about those files worth knowing before adding to them:
   keystroke is enough to prove the keystroke did not close it. Close a sheet through `:open` instead
   and that check would pass during the fade.
 - **What every spec file shares lives in `app.js`** — signing in, the API, the overview row, opening
-  a vehicle, making one, and the sweep each file starts with.
+  a vehicle, making one, a header tile, WebDAV on an account's Files and choosing its inbox, a
+  file chosen in the picker, the way into the import sheet, and the sweep each file starts with.
 
 It needs the stack up and `js/` built — without a bundle the root stays empty and the failure names
 the assertion, not the missing build. It logs in through the form — Nextcloud redirects a browser to
@@ -314,9 +377,10 @@ the assertion, not the missing build. It logs in through the form — Nextcloud 
 `NEXTFLEET_URL_NC34` and `NEXTFLEET_URL_NC31` override the two ports.
 
 Every vehicle the run makes wears a plate its own spec file owns — `E2E-` for the M1 slice,
-`M2-E2E-` to `M5-E2E-` for the next four — and each file deletes what it finds under its prefix before it starts.
-Cleaning up front rather than afterwards leaves a failed run's rows where they can be looked at, and
-still makes the next run find one vehicle rather than two. The prefixes have to stay disjoint:
+`M2-E2E-` to `M7-E2E-` for the next six, `M9-E2E-` for the M9 slice, `ROLES-` for the role cases — and each file deletes what it finds under its prefix before it starts.
+They all belong to the run's account or to an account a spec made, so the teardown that deletes the
+accounts ([testing](#testing)) takes them out of every list. The sweep up front is for
+`--repeat-each`, which runs a file again on the same account. The prefixes have to stay disjoint:
 Playwright runs the files at once, and a sweep that matched another file's plates would delete a
 vehicle out from under a test still using it.
 
@@ -353,13 +417,65 @@ app work; the right tool once we need to reproduce a server bug.
 
 ## Release
 
-1. Set the version in `appinfo/info.xml`, run `npm version <x> --no-git-tag-version`, and rename
-   the CHANGELOG's open section to `## <x> — <date>`. `InfoXmlTest` fails until all four agree; it
-   takes `## <x> — not released` for a version set but not yet released, as 0.2.0 is.
-2. Reseed NC 34 (`occ nextfleet:seed admin`), clear any E2E vehicles from admin's fleet, and run
-   `npm run screenshots:docker`. `InfoXmlTest` fails for a screenshot `info.xml` names and the
-   repository lacks.
-3. `npm run package` writes `build/artifacts/nextfleet-<version>.tar.gz` from a fresh build. What
-   it ships, and why, is in `tools/package.sh`.
-4. Signing and upload are a maintainer's, on a machine holding the key
-   ([supply chain](security.md#supply-chain)).
+The maintainer's steps, in order, on a machine that holds the signing key.
+
+**Once, before the first release.** Request the app's certificate: a private key and a CSR for
+`nextfleet`, by pull request to `nextcloud/app-certificate-requests`. Keep the key offline
+([supply chain](security.md#supply-chain)). Then register the app on apps.nextcloud.com with the
+certificate and the app id signed by the key:
+
+```bash
+echo -n nextfleet | openssl dgst -sha512 -sign nextfleet.key | openssl base64
+```
+
+**Each release:**
+
+1. **Review and commit the working tree.** For the first release that is M6–M10, uncommitted on
+   `42ec311` of the `initial` branch. Untracked files belong to it too: `openapi.json`,
+   `tests/Api/v1-baseline.json`, `vendor-bin/` (its `vendor/` stays ignored) and the new source,
+   tests and docs. `composer test`, `composer lint`, `npm test` and `npm run lint` pass first.
+2. **0.3.0 is the first release** (decided 2026-10-03, once). 0.2.0 was never released, so no store
+   user runs it, and the upgrade from its source keeps every row (step 6); shipping it alone first
+   would cost a branch, a second signing and a second upload for nobody. The store shows only the
+   CHANGELOG section named after the version, so move 0.2.0's subsections under 0.3.0 and drop its
+   heading, or the listing's changelog starts after v1.
+3. **Date the section.** `## <x> — not released` becomes `## <x> — <YYYY-MM-DD>`. The version is
+   already set in `appinfo/info.xml`, `package.json` and `package-lock.json`; `InfoXmlTest` fails
+   until all four agree. For a release that ships the API, copy `openapi.json` over
+   `tests/Api/v1-baseline.json`: everything released is promised
+   ([what v1 promises](api.md#what-v1-promises)). Commit.
+4. **Build.** `npm run package` writes `build/artifacts/nextfleet-<x>.tar.gz` from a fresh build.
+   What it ships, and why, is in `tools/package.sh`. If a screen changed since the screenshots were
+   last taken, first reseed NC 34 (`occ nextfleet:seed admin`), run `npm run screenshots:docker`
+   and commit them.
+5. **Sign the code.** Unpack the tarball, sign the folder, pack it again the way `package.sh` does.
+   `integrity:sign-app` writes `appinfo/signature.json`, so whoever runs `occ` must be able to
+   write there. Any Nextcloud's `occ` does.
+
+   ```bash
+   rm -rf build/sign && mkdir -p build/sign && tar -xzf build/artifacts/nextfleet-<x>.tar.gz -C build/sign
+   occ integrity:sign-app --privateKey=<path>/nextfleet.key \
+     --certificate=<path>/nextfleet.crt --path=<repo>/build/sign/nextfleet
+   tar --sort=name --owner=0 --group=0 --numeric-owner \
+     -czf build/artifacts/nextfleet-<x>.tar.gz -C build/sign nextfleet
+   ```
+
+6. **Check the upgrade** on that signed tarball, not a rebuild:
+   `npm run upgrade-check -- build/artifacts/nextfleet-<x>.tar.gz [<base>]`. It installs the
+   tarball on throwaway NC 31 and NC 34 servers, fresh and over the base with its seed, and fails if
+   a row is lost or changed. The base defaults to `27142b4`, 0.2.0's source, since a user may run
+   it from the repository. Once a version is out, pass that release's tarball. It takes about four
+   minutes and never touches the dev servers. How it works is in `tools/upgrade-check.sh`.
+7. **Publish the source.** Fast-forward `main` to `initial` (`git push origin initial:main`, or a
+   pull request if `main` is protected): `info.xml` points the store at the screenshots on `main`.
+   Then tag the release commit `v<x>` and push the tag.
+8. **Upload.** Attach the tarball to a GitHub release for the tag; the store downloads it from
+   there. On apps.nextcloud.com, *Upload app release* takes that download URL and the tarball's
+   signature:
+
+   ```bash
+   openssl dgst -sha512 -sign nextfleet.key build/artifacts/nextfleet-<x>.tar.gz | openssl base64
+   ```
+
+9. **Open the next version** when the first change for it lands: set it in `appinfo/info.xml`, run
+   `npm version <y> --no-git-tag-version`, and add `## <y> — not released` above the dated section.

@@ -7,9 +7,11 @@ import { mdiPaperclip } from '@mdi/js'
 import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcIconSvgWrapper from '@nextcloud/vue/components/NcIconSvgWrapper'
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 
 import { documentUrl } from '../services/api.js'
+import { may } from '../utils/access.js'
+import { savePaper } from '../utils/papers.js'
 import { categoryWord, entryName, fieldWords, formatConsumption, formatCount, formatEnergyAmount, formatMoney, isoInstant, maintenanceWord, shortDate } from '../utils/format.js'
 
 const props = defineProps({
@@ -35,6 +37,21 @@ const props = defineProps({
 
 // `open` is the row itself, tapped: the Entry is edited in the sheet it was entered in (docs/ui.md).
 defineEmits(['closeGap', 'open'])
+
+/**
+ * The sheet the row opens is where an Entry is edited, voided or deleted, so a row the reader may not
+ * change opens nothing (TimelineService::withMay()).
+ */
+const opens = computed(() => may(props.entry, 'edit'))
+
+/** Why the last paper tapped was not saved, said on the row it was tapped on. */
+const unsaved = ref('')
+
+/** @param {import('../services/api.js').Document} paper - the one tapped */
+async function save(paper) {
+	unsaved.value = ''
+	unsaved.value = await savePaper(props.vehicle.uuid, paper)
+}
 
 const unaccounted = computed(() => (props.gap === null ? '' : `${formatCount(props.gap.distance)} ${props.vehicle.odo_unit}`))
 
@@ -135,15 +152,19 @@ const missingWords = computed(() => (props.vehicle.logbook_mode === true ? field
 </script>
 
 <template>
-	<li class="row">
+	<li class="row" :class="{ 'row--opens': opens }">
 		<!-- The whole moment, so what a machine reads off the markup is the moment the text beside
 		     it states - offset and all (src/utils/format.js). -->
 		<time class="row__day" :datetime="isoInstant(entry.occurred_at, entry.occurred_at_off)">{{ day }}</time>
 		<!-- The name is the button, so it is what a keyboard and a screen reader reach the row by;
 		     its hit area is stretched over the whole row. -->
-		<button type="button" class="row__open" @click="$emit('open', entry)">
+		<button v-if="opens"
+			type="button"
+			class="row__open"
+			@click="$emit('open', entry)">
 			{{ name }}
 		</button>
+		<span v-else class="row__open">{{ name }}</span>
 		<span class="row__figure">{{ figure }}</span>
 		<span class="row__tail">
 			<span v-for="(said, index) in tail" :key="index">{{ said }}</span>
@@ -158,24 +179,31 @@ const missingWords = computed(() => (props.vehicle.logbook_mode === true ? field
 				<!-- The words are ours, and Vue escapes what it interpolates. -->
 				<span>{{ t('nextfleet', 'Still missing: {fields}', { fields: { value: missingWords, escape: false } }) }}</span>
 			</template>
+			<!-- Only on a vehicle others use (TimelineService::withEnteredBy()). -->
+			<span v-if="entry.entered_by">{{ t('nextfleet', 'Entered by {name}', { name: { value: entry.entered_by, escape: false } }) }}</span>
 		</span>
 		<span v-if="papers.length > 0" class="row__papers">
 			<template v-for="paper in papers" :key="paper.uuid">
 				<a v-if="paper.name !== null"
 					:href="documentUrl(vehicle.uuid, paper.uuid)"
 					:aria-label="t('nextfleet', 'Open {name}', { name: { value: paper.name, escape: false } })"
-					:title="paper.name">
+					:title="paper.name"
+					@click.prevent="save(paper)">
 					<NcIconSvgWrapper :path="mdiPaperclip" :size="20" />
 				</a>
 				<span v-else class="row__flag">{{ t('nextfleet', 'The file is gone from Files') }}</span>
 			</template>
+			<span v-if="unsaved" class="row__flag">{{ unsaved }}</span>
 		</span>
 		<!-- Offered on the trip that opened the Gap, because a Gap is closed one at a time (CONTEXT.md). -->
 		<span v-if="unaccounted" class="row__gap">
 			<span class="row__flag">
 				{{ t('nextfleet', '{distance} unaccounted before this trip', { distance: { value: unaccounted, escape: false } }) }}
 			</span>
-			<NcButton variant="tertiary" size="small" @click="$emit('closeGap', gap)">
+			<NcButton v-if="may(vehicle, 'log')"
+				variant="tertiary"
+				size="small"
+				@click="$emit('closeGap', gap)">
 				{{ t('nextfleet', 'Close gap') }}
 			</NcButton>
 		</span>
@@ -199,7 +227,7 @@ const missingWords = computed(() => (props.vehicle.logbook_mode === true ? field
 	border-bottom: 1px solid var(--color-border);
 }
 
-.row:hover {
+.row--opens:hover {
 	background-color: var(--color-background-hover);
 }
 
@@ -221,11 +249,14 @@ const missingWords = computed(() => (props.vehicle.logbook_mode === true ? field
 	text-align: start;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+button.row__open {
 	cursor: pointer;
 }
 
 /* The whole row is the target, which is what "tap a row" means on a phone. */
-.row__open::after {
+button.row__open::after {
 	content: '';
 	position: absolute;
 	inset: 0;

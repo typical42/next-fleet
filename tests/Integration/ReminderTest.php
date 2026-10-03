@@ -203,8 +203,9 @@ class ReminderTest extends TestCase {
 		$this->assertNotNull($deleted['deleted_at']);
 		$this->assertSame([], $this->reminders->list(self::OWNER, $vehicle->getUuid()));
 
-		$this->reminders->restore(self::OWNER, $vehicle->getUuid(), $written['uuid'], $deleted['updated_at']);
+		$back = $this->reminders->restore(self::OWNER, $vehicle->getUuid(), $written['uuid'], $deleted['updated_at']);
 
+		$this->assertGreaterThan($deleted['updated_at'], $back['updated_at']);
 		$this->assertSame([$written['uuid']], array_column($this->reminders->list(self::OWNER, $vehicle->getUuid()), 'uuid'));
 	}
 

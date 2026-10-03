@@ -18,9 +18,9 @@ use OCA\NextFleet\Db\Vehicle;
  * Consumption, full tank to full tank (docs/architecture.md#numbers-consumption-cost-emissions).
  * Each energy is a chain of its own, so a plug-in hybrid gets two figures and never a blended one.
  *
- * @psalm-type Segment = array{energy: string, closes: string, filled_at: int, amount: int, distance: int, per: string, value: float}
- * @psalm-type Rolling = array{amount: int, distance: int, per: string, value: float}
- * @psalm-type Period = array{energy: string, amount: int, distance: int, per: string, value: float}
+ * @psalm-import-type NextFleetSegment from \OCA\NextFleet\ResponseDefinitions as Segment
+ * @psalm-import-type NextFleetRolling from \OCA\NextFleet\ResponseDefinitions as Rolling
+ * @psalm-import-type NextFleetPeriod from \OCA\NextFleet\ResponseDefinitions as Period
  */
 class ConsumptionService {
 	public function __construct(

@@ -38,9 +38,18 @@ export const usePreferencesStore = defineStore('preferences', () => {
 	 */
 	let picked = null
 
+	/**
+	 * The inbox folder's file id, or null while none is chosen. Chosen on the settings page, which
+	 * is another page, so this session never writes it.
+	 *
+	 * @type {import('vue').Ref<number|null>}
+	 */
+	const inboxFolder = ref(null)
+
 	/** @param {import('../services/api.js').Settings} settings - the server's answer */
 	function hold(settings) {
 		dismissed.value = settings.preferences.dismissed_hints
+		inboxFolder.value = settings.preferences.inbox_folder
 		reclaimVat.value = settings.preferences.reclaim_vat
 		period.value = picked ?? settings.preferences.kpi_period
 		loaded.value = true
@@ -126,6 +135,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
 		choosePeriod,
 		dismiss,
 		dismissed: computed(() => dismissed.value),
+		inboxFolder: computed(() => inboxFolder.value),
 		isDismissed,
 		load,
 		loaded,

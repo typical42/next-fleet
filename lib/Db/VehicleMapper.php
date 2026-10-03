@@ -76,6 +76,23 @@ class VehicleMapper extends BaseMapper {
 	}
 
 	/**
+	 * findAnyByUuid() by id, for a caller that starts from a row hanging off the vehicle rather
+	 * than from a route.
+	 *
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException
+	 * @throws \OCP\AppFramework\Db\MultipleObjectsReturnedException
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findAnyById(int $id): Vehicle {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->tableName)
+			->where($qb->expr()->eq('id', $qb->createNamedParameter($id, IQueryBuilder::PARAM_INT)));
+
+		return $this->findEntity($qb);
+	}
+
+	/**
 	 * Every live vehicle not disposed of, whoever owns it: the reminder job's round. A disposed
 	 * one's reminders stop (docs/architecture.md#data-model).
 	 *

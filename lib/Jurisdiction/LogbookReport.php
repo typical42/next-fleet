@@ -32,6 +32,9 @@ final class LogbookReport {
 	 *                                                  off, for every period that reaches into the year; `to` is null while it is still on
 	 * @param ?string $sourceUrl where the requirement the logbook claims to meet is written, or null
 	 *                           where the jurisdiction states none
+	 * @param ?array<string, string> $enteredBy the name of whoever entered each trip, by the trip's
+	 *                                          `created_by`, or null on a vehicle nobody else was ever given access to - whose
+	 *                                          logbook names nobody (EnteredBy)
 	 */
 	public function __construct(
 		public readonly Vehicle $vehicle,
@@ -39,6 +42,7 @@ final class LogbookReport {
 		public readonly array $trips,
 		public readonly array $periods,
 		public readonly ?string $sourceUrl,
+		public readonly ?array $enteredBy = null,
 	) {
 	}
 }

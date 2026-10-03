@@ -37,6 +37,6 @@ class M5EntitiesTest extends TestCase {
 
 	public function testTheKindsAndLinksAreTheDataModels(): void {
 		$this->assertSame(['registration', 'insurance', 'manual', 'receipt', 'photo'], Document::KINDS);
-		$this->assertSame(['energy', 'maintenance', 'expense'], Document::LINKABLE);
+		$this->assertSame(['energy', 'maintenance', 'expense', 'booking'], Document::LINKABLE);
 	}
 }

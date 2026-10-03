@@ -46,7 +46,7 @@ data formats are not protected. What creates actual exposure:
 |---|---|
 | Copied source | Write our own. Never paste from LubeLogger (MIT), Vehicle Manager, or any GPL project. If we ever do vendor MIT code, keep its notice and record it in `LICENSE.third-party`. |
 | Copied schema/strings/icons | Same rule. Icons from Nextcloud's own icon set or a permissive set, tracked in a `NOTICE` file. |
-| Other projects' names | No "Drivvo", "LubeLogger", "Spritmonitor" in the UI. Import features are described as "CSV import (Drivvo format)" — nominative use of a name to say what a file is, nothing more. |
+| Other projects' names | "Drivvo", "LubeLogger", "Spritmonitor" never stand alone in the UI, as a feature or a logo. An import format is "CSV (LubeLogger format)" — nominative use of a name to say what a file is, nothing more. |
 | **"TÜV"** | A registered trademark since 1979, actively enforced, and *not* usable as a synonym for inspection. The UI says **HU/AU** or "Hauptuntersuchung". Never "TÜV-Termin", never a TÜV-like seal. |
 | "Nextcloud" | App store rule: not in the app name. `NextFleet` is clear of it, though the `Next` prefix invites confusion — `FleetLog` is the safer fallback if anyone objects. Never restyle it "NextCloud"; the brand is one word, one capital. |
 | Dependencies | CI check that every npm/composer dependency is AGPL-compatible. One GPL-incompatible transitive package can block a release. v1 avoids the hardest case by shipping no PDF library at all ([ADR 0005](adr/0005-no-pdf-library.md)). |
@@ -74,7 +74,7 @@ data, which in Germany brings the works council into it. Therefore:
   retention period, so it promises nothing. What follows is the design for when one is built.
 - **Retention is opt-in and off by default.** No automatic purge unless a vehicle is given a
   retention period. A logbook that quietly deletes its owner's history is a worse failure than one
-  that keeps too much, and the real GDPR exposure here is driver data on shared vehicles, handled
+  that keeps too much, and the real GDPR exposure here is driver data on granted vehicles, handled
   below. Soft-deleted rows clear from the trash after 30 days; under Logbook Mode voided rows stay
   for the retention period ([logbook mode](features.md#logbook-mode)).
 - **Under Logbook Mode retention cannot go below the jurisdiction's required period**, and the field
@@ -85,6 +85,26 @@ data, which in Germany brings the works council into it. Therefore:
   retention duty. A co-driver leaving must not shred someone else's tax evidence. This is built:
   deleting a Nextcloud account replaces its uid with one random pseudonym on every row, the
   ownership of its vehicles and its grants included, and takes it off every reminder list.
+- **Bookings and handover notes are the driver's personal data** as well: they say who had the car
+  when, and a note may say how they left it. Erasure treats them as it treats trips — the uid goes,
+  the span, counters and notes stay as the owner's record of the car. One gap: an unread
+  cancel notice in a booker's inbox keeps its canceller's uid once that account is gone, because
+  Nextcloud's notifications are not rows the app can rename. The uid is no longer shown: the notice
+  names "a former user".
+- **An employer pooling cars has duties the app does not discharge.** Bookings and handovers show
+  when an employee drives which car. In Germany a system able to monitor employees needs the works
+  council's consent (§ 87 (1) no. 6 BetrVG), and the employer needs its own legal basis and
+  information duties for employee data under the GDPR. The app records; it consults no one.
+- **Bookings get no retention rule of their own.** They are kept like every other row, until the
+  opt-in retention above is built.
+- **Granting access shows the whole vehicle** (decided 2026-09-30). Every role, viewer included,
+  reads its costs, every trip with its purpose and business partner, and its documents — whoever
+  entered them. There is no narrower view; the owner decides whom to grant, and the Access section
+  says who holds what ([Vehicle Access](../CONTEXT.md)).
+- **Imported history is entered by whoever imports it** ([import](architecture.md#import)). Every
+  entry an import creates carries the importing user's `created_by`, so where *Entered by* shows
+  ([who entered it](ui.md#who-entered-it)), it names them, not whoever drove or paid in the other
+  tool: neither format says who that was, and the app invents no author.
 - Full per-user data export and per-vehicle export, wired into Nextcloud's own user-deletion hooks.
   The per-vehicle export is also what a buyer gets when a vehicle is sold — v1 transfers no
   ownership between users ([data model](architecture.md#data-model)).

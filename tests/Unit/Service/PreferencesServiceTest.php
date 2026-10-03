@@ -17,6 +17,7 @@ use OCA\NextFleet\Jurisdiction\IReportRenderer;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCA\NextFleet\Service\PreferencesService;
 use OCA\NextFleet\Tests\Stub\RegisteredProfiles;
+use OCP\Files\IRootFolder;
 use OCP\IConfig;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
@@ -65,7 +66,7 @@ class PreferencesServiceTest extends TestCase {
 	 * question only the list can answer, and a stubbed one would prove nothing.
 	 */
 	private function service(): PreferencesService {
-		return new PreferencesService($this->config, RegisteredProfiles::jurisdictions());
+		return new PreferencesService($this->config, RegisteredProfiles::jurisdictions(), $this->createMock(IRootFolder::class));
 	}
 
 	/**
@@ -97,7 +98,7 @@ class PreferencesServiceTest extends TestCase {
 			return $profile;
 		});
 
-		$jurisdictions = (new PreferencesService($this->config, new Jurisdictions($container)))->forUser(self::USER)['jurisdictions'];
+		$jurisdictions = (new PreferencesService($this->config, new Jurisdictions($container), $this->createMock(IRootFolder::class)))->forUser(self::USER)['jurisdictions'];
 
 		$this->assertSame(['de' => false, 'generic' => true], array_column($jurisdictions, 'logbook_export', 'key'));
 	}
@@ -118,7 +119,7 @@ class PreferencesServiceTest extends TestCase {
 		$jurisdictions = $this->createMock(Jurisdictions::class);
 		$jurisdictions->method('all')->willReturn($profiles);
 
-		$answers = (new PreferencesService($this->config, $jurisdictions))->forUser(self::USER)['jurisdictions'];
+		$answers = (new PreferencesService($this->config, $jurisdictions, $this->createMock(IRootFolder::class)))->forUser(self::USER)['jurisdictions'];
 
 		$this->assertSame(['both' => true, 'no rates' => false, 'no page' => false], array_column($answers, 'mileage_claim', 'key'));
 	}
@@ -213,6 +214,11 @@ class PreferencesServiceTest extends TestCase {
 		$this->assertSame('last-12', $preferences['kpi_period']);
 	}
 
+	/** Nobody has an inbox until they choose its folder; the Inbox screen stays hidden until then. */
+	public function testItReadsNoInboxFolderUntilSomebodyChoosesOne(): void {
+		$this->assertNull($this->service()->forUser(self::USER)['preferences']['inbox_folder']);
+	}
+
 	public function testItWritesThatThisUserReclaimsVatAndTakesItBack(): void {
 		$this->assertTrue($this->service()->write(self::USER, ['reclaim_vat' => true])['preferences']['reclaim_vat']);
 		$this->assertTrue($this->service()->forUser(self::USER)['preferences']['reclaim_vat']);
@@ -252,6 +258,8 @@ class PreferencesServiceTest extends TestCase {
 		yield 'a grid factor with a fraction' => ['grid_factor', 120.5];
 		yield 'a grid factor below nothing' => ['grid_factor', -1];
 		yield 'a grid factor no grid has' => ['grid_factor', 5001];
+		yield 'an inbox folder as a path' => ['inbox_folder', 'Belege'];
+		yield 'an inbox folder as a word' => ['inbox_folder', '42'];
 	}
 
 	/**

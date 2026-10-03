@@ -3,10 +3,13 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi } from 'vitest'
 
+import { savePaper } from '../utils/papers.js'
 import TimelineRow from './TimelineRow.vue'
+
+vi.mock('../utils/papers.js', () => ({ savePaper: vi.fn(async () => '') }))
 
 // The locale decides the separators and the date order, and it is the reader's rather than the
 // language's (docs/ui.md#languages) - so it is pinned here, or every assertion below would depend
@@ -17,10 +20,12 @@ vi.mock('@nextcloud/l10n', async (importOriginal) => ({
 	getCanonicalLocale: () => 'en-GB',
 }))
 
-const VEHICLE = { uuid: 'v-1', odo_unit: 'km' }
+const VEHICLE = { uuid: 'v-1', odo_unit: 'km', may: ['view', 'log', 'edit', 'delete', 'own'] }
 
 /** Half past midnight on the 3rd in Berlin, which is the evening of the 2nd in UTC. */
 const NIGHT = { occurred_at: 1788391800, occurred_at_off: 120 }
+/** What the owner may do to every row (TimelineService::withMay()). */
+const CHANGEABLE = { may: ['edit', 'delete'] }
 
 /**
  * @param {object} entry - the row as the timeline hands it over
@@ -39,6 +44,7 @@ function row(entry, vehicle = VEHICLE) {
 function journey(trip, reading = { value: 148402, origin: 'observed', flagged: false }) {
 	return {
 		...NIGHT,
+		...CHANGEABLE,
 		type: 'trip',
 		trip: { uuid: 't-1', category: 'business', distance: null, end_odo: null, ...trip },
 		reading,
@@ -52,6 +58,7 @@ function journey(trip, reading = { value: 148402, origin: 'observed', flagged: f
 function counter(odometer) {
 	return {
 		...NIGHT,
+		...CHANGEABLE,
 		type: 'odometer',
 		odometer: { uuid: 'r-1', origin: 'observed', flagged: false, ...odometer },
 	}
@@ -64,7 +71,7 @@ function counter(odometer) {
  * @return {object} the row a timeline page carries for it
  */
 function cost(type, fields, extra = {}) {
-	return { ...NIGHT, type, [type]: { uuid: 'c-1', ...fields }, ...extra }
+	return { ...NIGHT, ...CHANGEABLE, type, [type]: { uuid: 'c-1', ...fields }, ...extra }
 }
 
 describe('a cost row', () => {
@@ -275,6 +282,41 @@ describe('a timeline row', () => {
 		expect(wrapper.emitted('open')).toEqual([[entry]])
 	})
 
+	/**
+	 * The sheet is where an Entry is edited, voided or deleted, so a row the reader may not change
+	 * opens nothing (docs/ui.md). It still says everything it says to anyone.
+	 */
+	it('opens nothing the reader may not change', async () => {
+		const wrapper = row({ ...journey({ distance: 82, from_label: 'Munich', to_label: 'Augsburg' }), may: [] })
+
+		expect(wrapper.find('button').exists()).toBe(false)
+		expect(wrapper.find('.row__open').text()).toBe('Munich → Augsburg')
+		await wrapper.find('.row').trigger('click')
+		expect(wrapper.emitted('open')).toBeUndefined()
+	})
+
+	/** On a vehicle others use, the server names who entered each row (TimelineService::withEnteredBy()). */
+	it('says who entered it when the server names them', () => {
+		expect(row({ ...counter({ value: 120500 }), entered_by: 'Ben Fahrer' }).text()).toContain('Entered by Ben Fahrer')
+		expect(row(cost('maintenance', { title: 'Wipers', cost: null }, { readings: [], entered_by: 'erased-k3x9' })).text()).toContain('Entered by erased-k3x9')
+	})
+
+	/** A vehicle nobody else uses looks as it did before access existed. */
+	it('names nobody when the server names nobody', () => {
+		expect(row({ ...counter({ value: 120500 }), entered_by: null }).text()).not.toContain('Entered by')
+	})
+
+	/** Closing a Gap writes a trip, which takes `log`; the Gap is said to anyone. */
+	it('offers closing a Gap only to someone who logs', () => {
+		const gap = { trip: 't-1', distance: 40, from_at: 1, from_at_off: 0, to_at: 2, to_at_off: 0 }
+		const wrapper = mount(TimelineRow, {
+			props: { entry: journey({ distance: 82 }), vehicle: { ...VEHICLE, logbook_mode: true, may: ['view'] }, gap },
+		})
+
+		expect(wrapper.text()).toContain('40 km unaccounted before this trip')
+		expect(wrapper.find('.row__gap button').exists()).toBe(false)
+	})
+
 	/** The Gap's own button is a second target on the same row, and it opens nothing else. */
 	it('closes a Gap without opening the trip', async () => {
 		const wrapper = row(journey({ distance: 82 }), { ...VEHICLE, logbook_mode: true })
@@ -310,6 +352,18 @@ describe('the papers on a row', () => {
 		expect(clip.attributes('aria-label')).toBe('Open invoice.pdf')
 		await clip.trigger('click')
 		expect(wrapper.emitted('open')).toBeUndefined()
+		expect(savePaper).toHaveBeenCalledWith('v-1', invoice)
+	})
+
+	/** Followed, a refusal would replace the app with a page of JSON (src/utils/papers.js). */
+	it('says on the row why a paper was not saved', async () => {
+		vi.mocked(savePaper).mockResolvedValueOnce('This document is gone: it was removed, or its file was deleted from Files.')
+		const wrapper = mount(TimelineRow, { props: { entry: work, vehicle: VEHICLE, papers: [invoice] } })
+
+		await wrapper.get('.row__papers a').trigger('click')
+		await flushPromises()
+
+		expect(wrapper.get('.row__papers').text()).toContain('This document is gone')
 	})
 
 	/** A deleted file has no link to follow, and the row says so rather than offering a dead one. */

@@ -10,6 +10,7 @@ namespace OCA\NextFleet\Controller;
 
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Exception\AccessDeniedException;
+use OCA\NextFleet\Exception\BookingConflictException;
 use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\TripService;
 use OCP\AppFramework\Controller;
@@ -26,6 +27,8 @@ use OCP\IUserSession;
  * check.
  */
 class TripController extends Controller {
+	use RequestValues;
+
 	public function __construct(
 		string $appName,
 		IRequest $request,
@@ -64,13 +67,8 @@ class TripController extends Controller {
 	#[NoAdminRequired]
 	#[UserRateLimit(limit: 60, period: 60)]
 	public function update(string $uuid, string $trip): DataResponse {
-		$token = $this->token();
-		if ($token === null) {
-			return $this->refuse('updated_at is missing, so this write cannot be checked');
-		}
-
 		return $this->answer(
-			fn (): Trip => $this->service->update($this->userId(), $uuid, $trip, $token, $this->request->getParams()),
+			fn (): Trip => $this->service->update($this->userId(), $uuid, $trip, $this->token(), $this->request->getParams()),
 		);
 	}
 
@@ -83,12 +81,7 @@ class TripController extends Controller {
 	#[NoAdminRequired]
 	#[UserRateLimit(limit: 60, period: 60)]
 	public function delete(string $uuid, string $trip): DataResponse {
-		$token = $this->token();
-		if ($token === null) {
-			return $this->refuse('updated_at is missing, so this write cannot be checked');
-		}
-
-		return $this->answer(fn (): Trip => $this->service->delete($this->userId(), $uuid, $trip, $token));
+		return $this->answer(fn (): Trip => $this->service->delete($this->userId(), $uuid, $trip, $this->token()));
 	}
 
 	/**
@@ -97,12 +90,7 @@ class TripController extends Controller {
 	#[NoAdminRequired]
 	#[UserRateLimit(limit: 60, period: 60)]
 	public function restore(string $uuid, string $trip): DataResponse {
-		$token = $this->token();
-		if ($token === null) {
-			return $this->refuse('updated_at is missing, so this write cannot be checked');
-		}
-
-		return $this->answer(fn (): Trip => $this->service->restore($this->userId(), $uuid, $trip, $token));
+		return $this->answer(fn (): Trip => $this->service->restore($this->userId(), $uuid, $trip, $this->token()));
 	}
 
 	/**
@@ -116,15 +104,8 @@ class TripController extends Controller {
 	#[NoAdminRequired]
 	#[UserRateLimit(limit: 60, period: 60)]
 	public function reconcile(string $uuid, string $trip): DataResponse {
-		$distance = $this->whole('distance');
-		$fromAt = $this->whole('from_at');
-		$toAt = $this->whole('to_at');
-		if ($distance === null || $fromAt === null || $toAt === null) {
-			return $this->refuse('distance, from_at and to_at name the gap being closed');
-		}
-
 		return $this->answer(
-			fn (): Trip => $this->service->reconcile($this->userId(), $uuid, $trip, $distance, $fromAt, $toAt),
+			fn (): Trip => $this->service->reconcile($this->userId(), $uuid, $trip, ...$this->gap()),
 			Http::STATUS_CREATED,
 		);
 	}
@@ -142,6 +123,9 @@ class TripController extends Controller {
 			return new DataResponse(['message' => 'No such vehicle'], Http::STATUS_NOT_FOUND);
 		} catch (AccessDeniedException) {
 			return new DataResponse(['message' => 'Not yours'], Http::STATUS_FORBIDDEN);
+		} catch (BookingConflictException $e) {
+			// A trip logged from a booking not back yet, or logged already: EntryAnswers' answer.
+			return new DataResponse(['message' => $e->getMessage(), 'booking' => $e->booking], Http::STATUS_CONFLICT);
 		} catch (StaleUpdateException) {
 			// `conflict` is what tells this apart from Nextcloud's own failed CSRF check, which
 			// is a 412 as well (docs/architecture.md#concurrency).
@@ -150,28 +134,8 @@ class TripController extends Controller {
 				Http::STATUS_PRECONDITION_FAILED,
 			);
 		} catch (\InvalidArgumentException $e) {
-			return $this->refuse($e->getMessage());
+			return new DataResponse(['message' => $e->getMessage()], Http::STATUS_BAD_REQUEST);
 		}
-	}
-
-	private function refuse(string $message): DataResponse {
-		return new DataResponse(['message' => $message], Http::STATUS_BAD_REQUEST);
-	}
-
-	/**
-	 * The `updated_at` the client read, which the write is checked against
-	 * (docs/architecture.md#concurrency). A DELETE has no body, so it travels in the query
-	 * string; a PUT carries it in the body beside the fields. Both arrive as request parameters.
-	 */
-	private function token(): ?int {
-		return $this->whole('updated_at');
-	}
-
-	/** One whole number from the request, or null when it is absent or is not one. */
-	private function whole(string $name): ?int {
-		$number = filter_var($this->request->getParams()[$name] ?? null, FILTER_VALIDATE_INT);
-
-		return $number === false ? null : $number;
 	}
 
 	private function userId(): string {

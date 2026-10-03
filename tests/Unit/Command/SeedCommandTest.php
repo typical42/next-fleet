@@ -11,15 +11,21 @@ namespace OCA\NextFleet\Tests\Unit\Command;
 use OCA\NextFleet\Command\SeedCommand;
 use OCA\NextFleet\Command\SeedPapers;
 use OCA\NextFleet\Db\AuditMapper;
+use OCA\NextFleet\Db\BookingMapper;
 use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Db\ReminderMapper;
 use OCA\NextFleet\Db\ReminderRecipientMapper;
+use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
+use OCA\NextFleet\Service\BookingNotices;
+use OCA\NextFleet\Service\BookingService;
 use OCA\NextFleet\Service\DocumentService;
 use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\ExpenseService;
+use OCA\NextFleet\Service\GrantNotices;
+use OCA\NextFleet\Service\GrantService;
 use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\NotificationService;
 use OCA\NextFleet\Service\OdometerService;
@@ -32,6 +38,7 @@ use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\IConfig;
 use OCP\IDBConnection;
 use OCP\IUserManager;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Console\Tester\CommandTester;
@@ -42,6 +49,7 @@ use Symfony\Component\Console\Tester\CommandTester;
  */
 class SeedCommandTest extends TestCase {
 	private const OWNER = 'alice';
+	private const DRIVER = 'bob';
 
 	/** The vehicles the mapper was handed, in the order the command wrote them. @var list<Vehicle> */
 	private array $written = [];
@@ -67,17 +75,23 @@ class SeedCommandTest extends TestCase {
 	private MaintenanceService&MockObject $maintenance;
 	private ExpenseService&MockObject $expenses;
 	private ReminderService&MockObject $reminders;
+	private TripService&MockObject $trips;
+	private GrantService&MockObject $grants;
+	private BookingService&MockObject $bookings;
+	/** Every trip the command wrote: who entered it, on which plate, and the fields. @var list<array{by: string, plate: string, fields: array<string, mixed>}> */
+	private array $driven = [];
 
 	protected function setUp(): void {
 		$this->written = [];
 		$this->recorded = [];
 		$this->planned = [];
 		$this->costs = [];
+		$this->driven = [];
 		$this->nextId = 1;
 
 		$this->users = $this->createMock(IUserManager::class);
 		$this->users->method('userExists')->willReturnCallback(
-			static fn (string $userId): bool => $userId === self::OWNER,
+			static fn (string $userId): bool => in_array($userId, [self::OWNER, self::DRIVER], true),
 		);
 
 		$this->mapper = $this->createMock(VehicleMapper::class);
@@ -114,6 +128,16 @@ class SeedCommandTest extends TestCase {
 				return $fields;
 			},
 		);
+		$this->trips = $this->createMock(TripService::class);
+		$this->trips->method('record')->willReturnCallback(
+			function (string $userId, string $uuid, array $fields): Trip {
+				$this->driven[] = ['by' => $userId, 'plate' => $this->plateOf($uuid), 'fields' => $fields];
+
+				return new Trip();
+			},
+		);
+		$this->grants = $this->createMock(GrantService::class);
+		$this->bookings = $this->createMock(BookingService::class);
 	}
 
 	/** @return \Closure(string, string, array<string, mixed>): array<string, mixed> */
@@ -189,6 +213,11 @@ class SeedCommandTest extends TestCase {
 			$this->createMock(ReminderRecipientMapper::class),
 			$this->createMock(ReminderMapper::class),
 			$this->createMock(NotificationService::class),
+			$this->createMock(GrantNotices::class),
+			$this->createMock(BookingNotices::class),
+			$this->createMock(BookingMapper::class),
+			$time,
+			$this->users,
 		);
 
 		return new CommandTester(new SeedCommand(
@@ -199,7 +228,9 @@ class SeedCommandTest extends TestCase {
 			$this->maintenance,
 			$this->expenses,
 			$this->reminders,
-			$this->createMock(TripService::class),
+			$this->trips,
+			$this->grants,
+			$this->bookings,
 			$this->createMock(DocumentService::class),
 			// SeedTest reads the trips and the papers back for real.
 			$this->createMock(SeedPapers::class),
@@ -217,7 +248,9 @@ class SeedCommandTest extends TestCase {
 			$this->maintenance,
 			$this->expenses,
 			$this->reminders,
-			$this->createMock(TripService::class),
+			$this->trips,
+			$this->grants,
+			$this->bookings,
 			$this->createMock(DocumentService::class),
 			$this->createMock(SeedPapers::class),
 			$this->createMock(ITimeFactory::class),
@@ -236,6 +269,83 @@ class SeedCommandTest extends TestCase {
 
 		$this->assertSame(1, $tester->execute(['user' => 'nobody']));
 		$this->assertStringContainsString('nobody', $tester->getDisplay());
+	}
+
+	/** Without an account to give access to, the fleet is the owner's alone. */
+	public function testWithoutAnAccountToGrantNobodyIsGranted(): void {
+		$this->grants->expects($this->never())->method('grant');
+		$this->bookings->expects($this->never())->method('book');
+
+		$this->assertSame(0, $this->tester()->execute(['user' => self::OWNER]));
+		$this->assertSame([self::OWNER], array_values(array_unique(array_column($this->driven, 'by'))));
+	}
+
+	/**
+	 * `--grant-to` makes the Passat a car two people use: the account drives it, and one of its
+	 * trips is theirs, so the timeline and the Fahrtenbuch have somebody else to name.
+	 */
+	public function testTheAccountItIsAskedToGrantDrivesThePassat(): void {
+		$tester = $this->tester();
+		$this->grants->expects($this->once())->method('grant')->willReturnCallback(
+			function (string $userId, string $uuid, array $fields): array {
+				$this->assertSame(self::OWNER, $userId);
+				$this->assertSame('NF-DE 100', $this->plateOf($uuid));
+				$this->assertSame(['grantee' => self::DRIVER, 'grantee_type' => 'user', 'role' => 'driver'], $fields);
+
+				return [];
+			},
+		);
+
+		$this->assertSame(0, $tester->execute(['user' => self::OWNER, '--grant-to' => self::DRIVER]), $tester->getDisplay());
+
+		$theirs = array_values(array_filter($this->driven, static fn (array $trip): bool => $trip['by'] === self::DRIVER));
+		$this->assertCount(1, $theirs);
+		$this->assertSame('NF-DE 100', $theirs[0]['plate']);
+		// It sets off where the owner's last Reading left the counter, so no Gap opens before it.
+		$this->assertSame(max(array_column($this->readOn('NF-DE 100'), 'value')), $theirs[0]['fields']['start_odo']);
+		$this->assertStringContainsString(self::DRIVER, $tester->getDisplay());
+	}
+
+	/**
+	 * And a booking of theirs, so the Bookings section and the overview have a pool to show: the
+	 * Passat tomorrow from 09:00 to 12:00 in Berlin. The clock reads 01:00 on 2026-01-01 there
+	 * (CET, +60 minutes), so tomorrow 09:00 is 08:00 UTC on the 2nd.
+	 */
+	public function testTheAccountItIsAskedToGrantBooksThePassatTomorrowMorning(): void {
+		$tester = $this->tester();
+		$this->bookings->expects($this->once())->method('book')->willReturnCallback(
+			function (string $userId, string $uuid, array $fields): array {
+				$this->assertSame(self::DRIVER, $userId);
+				$this->assertSame('NF-DE 100', $this->plateOf($uuid));
+				$this->assertSame(1767340800, $fields['starts_at']);
+				$this->assertSame(60, $fields['starts_at_off']);
+				$this->assertSame(1767351600, $fields['ends_at']);
+				$this->assertSame(60, $fields['ends_at_off']);
+
+				return [];
+			},
+		);
+
+		$this->assertSame(0, $tester->execute(['user' => self::OWNER, '--grant-to' => self::DRIVER]), $tester->getDisplay());
+	}
+
+	/**
+	 * Nobody, or the owner, whom GrantService refuses: either would stop the run with the fleet
+	 * half written, so it is refused before anything is.
+	 */
+	#[DataProvider('accountsNobodyCanBeGranted')]
+	public function testAnAccountThatCannotBeGrantedIsRefusedBeforeAnythingIsWritten(string $account): void {
+		$this->mapper->expects($this->never())->method('insert');
+
+		$tester = $this->tester();
+
+		$this->assertSame(1, $tester->execute(['user' => self::OWNER, '--grant-to' => $account]));
+		$this->assertStringContainsString($account, $tester->getDisplay());
+	}
+
+	/** @return array<string, array{string}> */
+	public static function accountsNobodyCanBeGranted(): array {
+		return ['no such account' => ['nobody'], 'the owner' => [self::OWNER]];
 	}
 
 	/**

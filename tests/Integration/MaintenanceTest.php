@@ -221,6 +221,7 @@ class MaintenanceTest extends TestCase {
 		$back = $this->maintenance->restore(self::OWNER, $uuid, $written['uuid'], $deleted['updated_at']);
 
 		$this->assertNull($back['deleted_at']);
+		$this->assertGreaterThan($deleted['updated_at'], $back['updated_at']);
 		$this->assertCount(1, $this->odometer->list(self::OWNER, $uuid));
 		$this->assertSame(120450, $this->vehicles->find(self::OWNER, $uuid)->getOdoValue());
 	}

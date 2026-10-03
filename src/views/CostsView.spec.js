@@ -37,7 +37,7 @@ function answer(year = {}) {
 
 	return {
 		year: { consumption: [], wall_side: null, cost: cost({ total: 12000, energy: 9000, maintenance: 3000, value: 1200, energy_value: 900, tco: 3500, ...year }), hours: null },
-		co2: { grams: 109630, unstated: false, source: 'https://example.org/fuels', grid: null },
+		co2: { grams: 109630, unstated: false, source: 'https://example.org/fuels', year: null, grid: null },
 		months: Array.from({ length: 12 }, (_, i) => ({ month: i + 1, from: 0, to: 0, cost: i === 2 ? march : EMPTY })),
 	}
 }

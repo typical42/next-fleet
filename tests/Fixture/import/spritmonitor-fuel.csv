@@ -1,0 +1,6 @@
+Datum;Km-Stand;Teil-Km;Spritmenge;Kosten;Währung;Tankart;Reifen;Strecken;Fahrweise;Kraftstoff;Bemerkung;Verbrauch
+14.03.2026;52000;610;42,15;71,61;EUR;1;1;1;2;2;Autobahn\; A8;6,91
+28.03.2026;52480;480;30,02;52,10;EUR;2;1;3;2;2;;
+02.04.2026;52890;410;40,00;70,00;EUR;3;1;3;2;2;;
+09.04.2026;53300;410;38,50;66,00;EUR;0;1;3;2;2;;
+16.04.2026;53700;400;37,00;61,90;CHF;1;1;3;2;2;Zürich;

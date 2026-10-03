@@ -13,6 +13,7 @@ import { computed, onMounted, ref } from 'vue'
 import CompleteHint from '../components/CompleteHint.vue'
 import { listFleetReminders } from '../services/api.js'
 import { formatOdometer, nameOf, subtitleOf } from '../utils/format.js'
+import { holderWords } from '../utils/pool.js'
 import { dueWords, fleetByUrgency, light, reminderTitle, stateWord } from '../utils/reminders.js'
 
 const props = defineProps({
@@ -26,7 +27,10 @@ const emit = defineEmits(['new', 'select'])
 const reminders = ref([])
 const failure = ref('')
 
-const ordered = computed(() => fleetByUrgency(props.vehicles, reminders.value))
+// Overdue is read off the clock when the list is worked out; the screen is mounted again on
+// every visit, as the reminders are read.
+const ordered = computed(() => fleetByUrgency(props.vehicles, reminders.value)
+	.map((row) => ({ ...row, holder: holderWords(row.vehicle) })))
 
 // Read once per visit: a reminder moves on the vehicle's own screen, and coming back here mounts
 // the overview again.
@@ -68,7 +72,7 @@ useHotKey('n', () => emit('new'))
 			{{ t('nextfleet', 'The reminders could not be read: {reason}', { reason: failure }) }}
 		</p>
 		<ul class="overview__list">
-			<NcListItem v-for="{ vehicle, next } in ordered"
+			<NcListItem v-for="{ vehicle, next, holder } in ordered"
 				:key="vehicle.uuid"
 				:name="nameOf(vehicle)"
 				:details="formatOdometer(vehicle)"
@@ -77,6 +81,18 @@ useHotKey('n', () => emit('new'))
 					<!-- The colour repeats the word, never replaces it (docs/ui.md). -->
 					<span class="overview__light" :class="`overview__light--${light(next)}`">
 						{{ next ? stateWord(next.state) : t('nextfleet', 'Nothing due') }}
+					</span>
+					<!-- First after the light: the line truncates at 320 px, and who has the car
+					     now is what somebody about to take it opens the app for. -->
+					<span v-if="holder"
+						class="overview__holder"
+						:class="{ 'overview__holder--overdue': holder.overdue }">
+						{{ holder.words }}
+					</span>
+					<!-- Before what comes due: whose car it is outranks the next reminder, which
+					     the vehicle's own screen shows again. -->
+					<span v-if="vehicle.owned_by" class="overview__owner">
+						{{ t('nextfleet', 'Owned by {name}', { name: vehicle.owned_by }) }}
 					</span>
 					<span v-if="next" class="overview__next">
 						{{ reminderTitle(next) }} · {{ dueWords(next, vehicle.odo_unit) }}
@@ -128,6 +144,14 @@ useHotKey('n', () => emit('new'))
 	color: var(--color-element-success, var(--color-success));
 }
 
+.overview__holder--overdue {
+	/* Text, so the text token: the element one is a fill and fails contrast as a letter colour. */
+	color: var(--color-warning-text);
+	font-weight: bold;
+}
+
+.overview__holder,
+.overview__owner,
 .overview__next,
 .overview__made {
 	margin-inline-start: calc(var(--default-grid-baseline) * 2);

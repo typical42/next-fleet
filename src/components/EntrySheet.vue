@@ -16,8 +16,9 @@ import NcTextArea from '@nextcloud/vue/components/NcTextArea'
 import NcTextField from '@nextcloud/vue/components/NcTextField'
 import { computed, ref, useId, watch } from 'vue'
 
-import { ConflictError, energyPrefill, expensePrefill, listReminders, maintenancePrefill, readEntry, tripPrefill } from '../services/api.js'
+import { BookingConflictError, ConflictError, energyPrefill, expensePrefill, listReminders, maintenancePrefill, readEntry, tripPrefill } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
+import { may } from '../utils/access.js'
 import { CATEGORIES, EXPENSE_CATEGORIES, MAINTENANCE_TYPES, categoryWord, energyWord, expenseWord, formatDecimal, maintenanceWord, parseDecimal, parseWhole } from '../utils/format.js'
 import { closedByDefault, openByUrgency, reminderTitle } from '../utils/reminders.js'
 
@@ -33,6 +34,20 @@ const props = defineProps({
 	entry: { type: Object, default: null },
 	/** The uuid of a reminder a new Maintenance Record is to close: "Done" in the due banner. */
 	closes: { type: String, default: null },
+	/**
+	 * A returned booking whose trip this is: the sheet opens on its `trip_draft`, and the trip is
+	 * tied to it (docs/ui.md, the Bookings section).
+	 *
+	 * @type {import('vue').PropType<import('../services/api.js').Booking|null>}
+	 */
+	booking: { type: Object, default: null },
+	/**
+	 * A file from the inbox this new cost is logged from: the sheet opens on that kind, dated when
+	 * the file was saved, and stays it, since only a cost takes a receipt (docs/ui.md, the Inbox).
+	 *
+	 * @type {import('vue').PropType<{kind: 'energy'|'maintenance'|'expense', at: number}|null>}
+	 */
+	receipt: { type: Object, default: null },
 })
 
 // Two things, because the screen behind needs them apart: `saved` is what happened to the vehicle,
@@ -44,7 +59,7 @@ const store = useVehiclesStore()
 // A journey is what a logbook is for and what a driver enters daily; the counter on its own is the
 // escape hatch for everything not otherwise recorded (docs/ui.md). An Entry opened from its row is
 // of its own kind and stays it.
-const kind = ref(props.entry?.type ?? (props.closes === null ? 'trip' : 'maintenance'))
+const kind = ref(props.entry?.type ?? props.receipt?.kind ?? (props.closes === null ? 'trip' : 'maintenance'))
 
 /**
  * The Entry as it was last read, and the token its next write is checked against - null for a new
@@ -103,7 +118,8 @@ const partnerList = useId()
 // Maintenance Record, the counters. Those are never prefilled, like a trip's: the counter at the pump or the workshop is
 // the one fact consumption is measured against, and the vehicle's cached one is not that fact
 // (docs/architecture.md#odometer-rules).
-const costAt = ref(new Date())
+// A receipt's file was saved where the money was paid, which is the best guess the sheet has.
+const costAt = ref(props.receipt === null ? new Date() : new Date(props.receipt.at * 1000))
 const vatRate = ref('')
 const entryOdo = ref('')
 const entrySecond = ref('')
@@ -227,8 +243,10 @@ const failure = ref('')
 const categories = computed(() => CATEGORIES.map((id) => ({ id, label: categoryWord(id) })))
 
 // The category the logbook exists for: a business trip is the one Germany asks the questions about
-// (docs/features.md#logbook-mode), so it is the one the sheet offers to answer them for.
-const category = ref(categories.value[0])
+// (docs/features.md#logbook-mode), so it is the one the sheet offers to answer them for. Not on a
+// booking's trip: the handover is evidence of the drive, and calling it business would be the app
+// inventing the claim the logbook is there to record.
+const category = ref(props.booking === null ? categories.value[0] : null)
 
 // Under Logbook Mode a trip is voided rather than deleted (docs/features.md#logbook-mode), and the
 // button says what the click does.
@@ -273,34 +291,40 @@ function save() {
 		const fields = ({ trip, energy: fillUp, maintenance: work, odometer: reading, expense: spending })[kind.value]()
 		if (editing) {
 			await store.revise(props.vehicle.uuid, kind.value, await current(), fields)
-		} else {
-			await CREATES[kind.value](props.vehicle.uuid, fields)
+			return undefined
 		}
+
+		return CREATES[kind.value](props.vehicle.uuid, fields)
 	}, 'save')
 }
 
 /** Nothing asks "are you sure?": the way back is the undo toast (docs/ui.md). */
 function remove() {
-	return attempt(async () => store.strike(props.vehicle.uuid, kind.value, await current()), 'delete')
+	return attempt(async () => {
+		await store.strike(props.vehicle.uuid, kind.value, await current())
+	}, 'delete')
 }
 
 /**
  * One attempt at a write. A refusal leaves the sheet open with every value intact and offers the
  * retry - nothing is written anywhere else, because the open sheet is the queue (docs/ui.md).
  *
- * @param {() => Promise<void>} work - the write to try
+ * @param {() => Promise<unknown>} work - the write to try; a create answers the Entry it wrote
  * @param {'save'|'delete'} which - which write it is, for the message a refusal gets
  */
 async function attempt(work, which) {
 	saving.value = true
 	failure.value = ''
 	try {
-		await work()
-		emit('saved')
+		// A new Entry goes with `saved`: the Inbox screen files the receipt on it.
+		emit('saved', await work())
 		emit('close')
 	} catch (error) {
 		if (error instanceof ConflictError) {
 			refused.value = which
+		} else if (error instanceof BookingConflictError && error.booking.state === 'returned') {
+			// The row offered the trip, so it was logged meanwhile, in another tab or by a manager.
+			failure.value = t('nextfleet', 'This booking was logged as a trip already.')
 		} else {
 			failure.value = error.message
 		}
@@ -504,7 +528,8 @@ async function prefill() {
 
 let asked = 0
 // An expense's category is asked about too: some carry no VAT (IRateProvider::vatFreeCategories()).
-watch([kind, costAt, spentOn], prefill)
+// At once as well, for a sheet that opens on a cost: from a receipt, or closing a reminder.
+watch([kind, costAt, spentOn], prefill, { immediate: true })
 
 /**
  * A station the vehicle has filled up at before prefills the price it last charged for this
@@ -559,18 +584,22 @@ function trip() {
 	const lost = t('nextfleet', 'A trip carries the moment it set off and the moment it arrived.')
 	const setOff = stated(departure.value, lost)
 	const arrived = stated(arrival.value, lost)
+	if (category.value === null) {
+		throw new Error(t('nextfleet', 'Choose a category for the trip.'))
+	}
 
 	return {
 		started_at: seconds(setOff),
 		started_at_off: offset(setOff),
 		ended_at: seconds(arrived),
 		ended_at_off: offset(arrived),
-		category: category.value?.id ?? '',
+		category: category.value.id,
 		from_label: fromLabel.value,
 		to_label: toLabel.value,
 		purpose: purpose.value,
 		partner: partner.value,
 		...counted(),
+		...(props.booking === null ? {} : { booking_uuid: props.booking.uuid }),
 	}
 }
 
@@ -750,6 +779,17 @@ if (props.entry !== null) {
 	seed(props.entry)
 }
 
+// The handover's counters are the claim gap detection measures, made by the driver at the car, so
+// a booking's trip is the one new trip that opens with them filled in.
+const draft = props.booking?.trip_draft
+if (draft) {
+	departure.value = new Date(draft.started_at * 1000)
+	arrival.value = new Date(draft.ended_at * 1000)
+	startOdo.value = text(draft.start_odo)
+	endOdo.value = text(draft.end_odo)
+	purpose.value = text(draft.purpose)
+}
+
 /**
  * @param {unknown} value - a column as the API stated it
  * @return {string} it as a field holds it; an absent column is an empty field
@@ -801,8 +841,9 @@ function requestClose() {
 				:type="note.type"
 				:text="note.text" />
 
-			<!-- An Entry opened from its row keeps its kind: a fill-up does not become an expense. -->
-			<NcRadioGroup v-if="entry === null"
+			<!-- An Entry opened from its row keeps its kind: a fill-up does not become an expense. A
+			     booking's is a trip, a receipt's the cost it was logged as. -->
+			<NcRadioGroup v-if="entry === null && booking === null && receipt === null"
 				v-model="kind"
 				class="sheet__wide"
 				:label="t('nextfleet', 'Entry type')">
@@ -1093,7 +1134,7 @@ function requestClose() {
 		</div>
 
 		<template #actions>
-			<NcButton v-if="entry !== null"
+			<NcButton v-if="entry !== null && may(entry, 'delete')"
 				variant="error"
 				:disabled="saving"
 				@click="remove">

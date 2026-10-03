@@ -341,6 +341,7 @@ class EnergyTest extends TestCase {
 		$back = $this->energy->restore(self::OWNER, $uuid, $written['uuid'], $deleted['updated_at']);
 
 		$this->assertNull($back['deleted_at']);
+		$this->assertGreaterThan($deleted['updated_at'], $back['updated_at']);
 		$this->assertSame(
 			[300000, 5120],
 			array_map(static fn (OdoReading $reading): int => $reading->getValue(), $this->odometer->list(self::OWNER, $uuid)),

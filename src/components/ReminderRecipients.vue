@@ -25,9 +25,9 @@ const props = defineProps({
 const cadence = defineModel('cadence', { type: String, default: 'weekly' })
 
 /**
- * The list as the server last answered, or null while it is unread or was refused. Only someone
- * who may edit the vehicle reads it, so a refusal is how a driver or viewer is told apart, and
- * they see neither control.
+ * The list as the server last answered, or null while it is unread or was refused. The sheet
+ * mounts this only for `edit` (src/components/VehicleSheet.vue); a refusal still shows neither
+ * control rather than an empty list.
  *
  * @type {import('vue').Ref<import('../services/api.js').Recipient[]|null>}
  */

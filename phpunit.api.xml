@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<!--
+  - SPDX-FileCopyrightText: 2026 Johannes Kolb
+  - SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         cacheDirectory=".phpunit.cache"
+         colors="true"
+         executionOrder="depends,defects"
+         beStrictAboutOutputDuringTests="true"
+         failOnRisky="true"
+         failOnWarning="true">
+  <!--
+    - A client's view: HTTP and an app password, no server classes loaded. It needs a running
+    - server and its occ, so it runs where the integration suite runs - see
+    - docs/development.md#testing.
+  -->
+  <testsuites>
+    <testsuite name="api">
+      <directory>tests/Api</directory>
+    </testsuite>
+  </testsuites>
+</phpunit>

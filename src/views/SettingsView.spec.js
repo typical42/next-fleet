@@ -3,6 +3,8 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+import { FilePickerClosed, getFilePickerBuilder } from '@nextcloud/dialogs'
+import NcButton from '@nextcloud/vue/components/NcButton'
 import NcCheckboxRadioSwitch from '@nextcloud/vue/components/NcCheckboxRadioSwitch'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import NcSelect from '@nextcloud/vue/components/NcSelect'
@@ -10,15 +12,30 @@ import NcTextField from '@nextcloud/vue/components/NcTextField'
 import { flushPromises, shallowMount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { getPreferences, savePreferences } from '../services/api.js'
+import { getPreferences, readInbox, savePreferences } from '../services/api.js'
 import SettingsView from './SettingsView.vue'
 
 // The network is the api client's own seam (api.spec.js); what is under test here is what the
-// screen does with the two answers it can get.
+// screen does with the answers it can get.
 vi.mock('../services/api.js', () => ({
 	getPreferences: vi.fn(),
+	readInbox: vi.fn(),
 	savePreferences: vi.fn(),
 }))
+
+// Nextcloud's picker is the library's own; what the screen decides is what it does with the folder.
+vi.mock('@nextcloud/dialogs', () => ({
+	FilePickerClosed: class extends Error {},
+	getFilePickerBuilder: vi.fn(),
+}))
+
+/** What the picker hands back next, or the close it rejects with. */
+let picked = /** @type {Promise<any>} */ (Promise.resolve([]))
+/** Whether the picker was asked for folders. */
+let folders = false
+
+const INBOX = { folder: { file_id: 7, path: '/Belege' }, files: [], count: 0 }
+const NO_INBOX = { folder: null, files: [], count: 0 }
 
 // @nextcloud/l10n is left alone: no page registers a catalogue in a spec, so `t()` answers with
 // the source string - and @nextcloud/vue's own components load the module too, so a mock of it
@@ -27,7 +44,7 @@ vi.mock('../services/api.js', () => ({
 const settings = {
 	// The whole envelope, dismissed hints included: this screen reads only the jurisdiction, but
 	// what the route answers with is one shape (lib/Service/PreferencesService.php).
-	preferences: { jurisdiction: 'de', dismissed_hints: [], reclaim_vat: false, kpi_period: 'last-12', grid_factor: null },
+	preferences: { jurisdiction: 'de', dismissed_hints: [], reclaim_vat: false, kpi_period: 'last-12', grid_factor: null, inbox_folder: null },
 	jurisdictions: [
 		{ key: 'de', name: 'Germany', logbook_export: true, mileage_claim: true, grid_factor: { grams: 363, year: 2024, source: 'https://example.org/grid' } },
 		{ key: 'generic', name: 'Generic', logbook_export: false, mileage_claim: false, grid_factor: null },
@@ -43,7 +60,7 @@ async function screen() {
 	const wrapper = shallowMount(SettingsView, {
 		// shallowMount renders no stub's slots, and everything this screen shows sits inside the
 		// section - so that one component is rendered and the rest stay stubs.
-		global: { stubs: { NcSettingsSection: { template: '<div><slot /></div>' } } },
+		global: { renderStubDefaultSlot: true, stubs: { NcSettingsSection: { template: '<div><slot /></div>' } } },
 	})
 	await flushPromises()
 
@@ -87,6 +104,15 @@ function note(wrapper) {
 	return card.exists() ? card.props('text') ?? '' : ''
 }
 
+/**
+ * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted screen
+ * @param {string} text - the button's words
+ * @return {any} the button
+ */
+function button(wrapper, text) {
+	return wrapper.findAllComponents(NcButton).find((one) => one.text() === text)
+}
+
 beforeEach(() => {
 	vi.resetAllMocks()
 	vi.mocked(getPreferences).mockResolvedValue(settings)
@@ -94,6 +120,19 @@ beforeEach(() => {
 		async (/** @type {Partial<import('../services/api.js').Settings['preferences']>} */ fields) =>
 			({ ...settings, preferences: { ...settings.preferences, ...fields } }),
 	)
+	vi.mocked(readInbox).mockResolvedValue(NO_INBOX)
+	folders = false
+	const builder = {
+		setMultiSelect: () => builder,
+		allowDirectories: (/** @type {boolean} */ allowed) => {
+			folders = allowed
+			return builder
+		},
+		setMimeTypeFilter: () => builder,
+		setButtonFactory: () => builder,
+		build: () => ({ pickNodes: () => picked }),
+	}
+	vi.mocked(getFilePickerBuilder).mockReturnValue(/** @type {any} */ (builder))
 })
 
 describe('settings screen', () => {
@@ -231,6 +270,85 @@ describe('settings screen', () => {
 
 		expect(savePreferences).not.toHaveBeenCalled()
 		expect(gridField(wrapper).props('error')).toBe(true)
+	})
+
+	/** The preference holds an id; the path is the inbox's own label for it (docs/architecture.md#the-inbox). */
+	it('names the inbox folder by its path in Files', async () => {
+		vi.mocked(getPreferences).mockResolvedValue({ ...settings, preferences: { ...settings.preferences, inbox_folder: 7 } })
+		vi.mocked(readInbox).mockResolvedValue(INBOX)
+
+		const wrapper = await screen()
+
+		expect(wrapper.find('.inbox__folder').text()).toBe('/Belege')
+		expect(button(wrapper, 'Stop using it')).toBeDefined()
+	})
+
+	it('says how to use an inbox while none is chosen', async () => {
+		const wrapper = await screen()
+
+		expect(wrapper.find('.inbox__folder').text()).toBe('None chosen')
+		expect(wrapper.text()).toContain('auto-upload')
+		expect(button(wrapper, 'Stop using it')).toBeUndefined()
+	})
+
+	/** A folder deleted in Files is still the preference; the screen says it is gone instead of naming nothing. */
+	it('says the chosen folder is gone', async () => {
+		vi.mocked(getPreferences).mockResolvedValue({ ...settings, preferences: { ...settings.preferences, inbox_folder: 7 } })
+
+		const wrapper = await screen()
+
+		expect(wrapper.find('.inbox__folder').text()).toBe('The folder is gone, or no longer yours alone')
+	})
+
+	/** Nextcloud's own picker in folder mode, and a pick saves as every setting here does. */
+	it('saves the folder picked, and names it', async () => {
+		picked = Promise.resolve([{ fileid: 7, basename: 'Belege' }])
+		const wrapper = await screen()
+		vi.mocked(readInbox).mockResolvedValue(INBOX)
+
+		await button(wrapper, 'Choose folder').vm.$emit('click')
+		await flushPromises()
+
+		expect(folders).toBe(true)
+		expect(savePreferences).toHaveBeenCalledWith({ inbox_folder: 7 })
+		expect(wrapper.find('.inbox__folder').text()).toBe('/Belege')
+	})
+
+	/** A shared folder is refused (docs/architecture.md#the-inbox); the server's words say why. */
+	it('keeps the folder it had when the pick is refused', async () => {
+		picked = Promise.resolve([{ fileid: 8, basename: 'Shared' }])
+		vi.mocked(savePreferences).mockRejectedValue(new Error('inbox_folder is a folder of your own'))
+		const wrapper = await screen()
+
+		await button(wrapper, 'Choose folder').vm.$emit('click')
+		await flushPromises()
+
+		expect(note(wrapper)).toBe('inbox_folder is a folder of your own')
+		expect(wrapper.find('.inbox__folder').text()).toBe('None chosen')
+	})
+
+	it('asks nothing when the picker is closed', async () => {
+		const wrapper = await screen()
+		// Made after the mount: a rejection nobody awaits yet is reported as unhandled.
+		picked = Promise.reject(new FilePickerClosed())
+
+		await button(wrapper, 'Choose folder').vm.$emit('click')
+		await flushPromises()
+
+		expect(savePreferences).not.toHaveBeenCalled()
+		expect(note(wrapper)).toBe('')
+	})
+
+	it('stops using the folder; the files in it stay where they are', async () => {
+		vi.mocked(getPreferences).mockResolvedValue({ ...settings, preferences: { ...settings.preferences, inbox_folder: 7 } })
+		vi.mocked(readInbox).mockResolvedValue(INBOX)
+		const wrapper = await screen()
+
+		await button(wrapper, 'Stop using it').vm.$emit('click')
+		await flushPromises()
+
+		expect(savePreferences).toHaveBeenCalledWith({ inbox_folder: null })
+		expect(wrapper.find('.inbox__folder').text()).toBe('None chosen')
 	})
 
 	/** A settings page that cannot be read says why, rather than showing an empty dropdown. */

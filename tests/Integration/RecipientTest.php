@@ -16,6 +16,7 @@ use OCA\NextFleet\Exception\AccessDeniedException;
 use OCA\NextFleet\Service\RecipientService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\IDBConnection;
+use OCP\IUserManager;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -24,15 +25,26 @@ use PHPUnit\Framework\TestCase;
  * It writes to the instance it runs against (docs/development.md#testing).
  */
 class RecipientTest extends TestCase {
+	use Accounts;
+
 	/** Not Nextcloud accounts: `user_id` and `grantee` are string columns with no key on them. */
 	private const OWNER = 'nextfleet-test-alice';
 	private const MANAGER = 'nextfleet-test-dave';
 	private const DRIVER = 'nextfleet-test-erin';
-	/** A real account, which a recipient added through the sheet has to be. Every instance has it. */
-	private const ADMIN = 'admin';
+	/** A real account, which a recipient added through the sheet has to be. */
+	private const RECIPIENT = 'nextfleet-test-recipient';
 
 	private RecipientService $recipients;
 	private VehicleService $vehicles;
+
+	public static function setUpBeforeClass(): void {
+		self::deleteAccounts([self::RECIPIENT]);
+		\OCP\Server::get(IUserManager::class)->createUser(self::RECIPIENT, bin2hex(random_bytes(16)));
+	}
+
+	public static function tearDownAfterClass(): void {
+		self::deleteAccounts([self::RECIPIENT]);
+	}
 
 	protected function setUp(): void {
 		$container = (new Application())->getContainer();
@@ -67,12 +79,12 @@ class RecipientTest extends TestCase {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
 		$this->grant($vehicle, self::MANAGER, 'manager');
 
-		$added = $this->recipients->add(self::MANAGER, $vehicle->getUuid(), self::ADMIN);
+		$added = $this->recipients->add(self::MANAGER, $vehicle->getUuid(), self::RECIPIENT);
 		$left = $this->recipients->remove(self::MANAGER, $vehicle->getUuid(), self::OWNER);
 
-		$this->assertSame([self::OWNER, self::ADMIN], array_column($added, 'user_id'));
-		$this->assertSame([self::ADMIN], array_column($left, 'user_id'));
-		$this->assertSame([self::ADMIN], $this->userIds($vehicle));
+		$this->assertSame([self::OWNER, self::RECIPIENT], array_column($added, 'user_id'));
+		$this->assertSame([self::RECIPIENT], array_column($left, 'user_id'));
+		$this->assertSame([self::RECIPIENT], $this->userIds($vehicle));
 	}
 
 	/**
@@ -82,22 +94,22 @@ class RecipientTest extends TestCase {
 	public function testSomebodyRemovedCanBeAddedAgainAndAddingTwiceIsOnce(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
 
-		$this->recipients->add(self::OWNER, $vehicle->getUuid(), self::ADMIN);
-		$this->recipients->remove(self::OWNER, $vehicle->getUuid(), self::ADMIN);
-		$this->recipients->add(self::OWNER, $vehicle->getUuid(), self::ADMIN);
-		$this->recipients->add(self::OWNER, $vehicle->getUuid(), self::ADMIN);
+		$this->recipients->add(self::OWNER, $vehicle->getUuid(), self::RECIPIENT);
+		$this->recipients->remove(self::OWNER, $vehicle->getUuid(), self::RECIPIENT);
+		$this->recipients->add(self::OWNER, $vehicle->getUuid(), self::RECIPIENT);
+		$this->recipients->add(self::OWNER, $vehicle->getUuid(), self::RECIPIENT);
 
-		$this->assertSame([self::OWNER, self::ADMIN], $this->userIds($vehicle));
+		$this->assertSame([self::OWNER, self::RECIPIENT], $this->userIds($vehicle));
 	}
 
 	/** The user backend finds an account in any case, so the list must hold its one spelling. */
 	public function testAnAccountIsStoredAsTheInstanceSpellsIt(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
 
-		$this->recipients->add(self::OWNER, $vehicle->getUuid(), self::ADMIN);
-		$this->recipients->add(self::OWNER, $vehicle->getUuid(), strtoupper(self::ADMIN));
+		$this->recipients->add(self::OWNER, $vehicle->getUuid(), self::RECIPIENT);
+		$this->recipients->add(self::OWNER, $vehicle->getUuid(), strtoupper(self::RECIPIENT));
 
-		$this->assertSame([self::OWNER, self::ADMIN], $this->userIds($vehicle));
+		$this->assertSame([self::OWNER, self::RECIPIENT], $this->userIds($vehicle));
 	}
 
 	/** A name the instance does not know would be a recipient nothing can ever reach. */
@@ -115,7 +127,7 @@ class RecipientTest extends TestCase {
 
 		foreach ([
 			fn () => $this->recipients->list(self::DRIVER, $vehicle->getUuid()),
-			fn () => $this->recipients->add(self::DRIVER, $vehicle->getUuid(), self::ADMIN),
+			fn () => $this->recipients->add(self::DRIVER, $vehicle->getUuid(), self::RECIPIENT),
 			fn () => $this->recipients->remove(self::DRIVER, $vehicle->getUuid(), self::OWNER),
 		] as $call) {
 			try {

@@ -55,10 +55,11 @@ class FahrtenbuchRendererTest extends TestCase {
 	/**
 	 * @param list<array{trip: Trip, missing: list<string>, late: list<LateChange>}> $trips
 	 * @param list<array{from: int, to: ?int}> $periods
+	 * @param ?array<string, string> $enteredBy
 	 */
-	private function render(array $trips, array $periods = [], ?string $source = self::SOURCE): \DOMXPath {
+	private function render(array $trips, array $periods = [], ?string $source = self::SOURCE, ?array $enteredBy = null): \DOMXPath {
 		$vehicle = Vehicle::fromRow(['id' => 7, 'plate' => 'B-XY 123', 'manufacturer' => 'VW', 'model' => 'Caddy', 'jurisdiction' => 'de']);
-		$html = (new De\FahrtenbuchRenderer())->render(new LogbookReport($vehicle, 2026, $trips, $periods, $source));
+		$html = (new De\FahrtenbuchRenderer())->render(new LogbookReport($vehicle, 2026, $trips, $periods, $source, $enteredBy));
 
 		$document = new \DOMDocument();
 		$this->assertTrue($document->loadHTML($html, LIBXML_NOERROR));
@@ -119,6 +120,21 @@ class FahrtenbuchRendererTest extends TestCase {
 			'Erfasst (UTC)' => '02.03.2026',
 			'Vermerk' => '',
 		]], $rows);
+	}
+
+	/**
+	 * On a vehicle others were given access to, each line says who entered it, by name; an account
+	 * the core could not name - one erased to a pseudonym - reads as its id. Before the note, which
+	 * stays the last column.
+	 */
+	public function testALineSaysWhoEnteredItWhenTheCoreNamesThem(): void {
+		$rows = $this->rows($this->render([
+			['trip' => $this->trip(), 'missing' => [], 'late' => []],
+			['trip' => $this->trip(['created_by' => 'erased-k3x9']), 'missing' => [], 'late' => []],
+		], enteredBy: ['alice' => 'Alice Muster', 'erased-k3x9' => 'erased-k3x9']));
+
+		$this->assertSame(['Alice Muster', 'erased-k3x9'], array_column($rows, 'Eingetragen von'));
+		$this->assertSame(['Eingetragen von', 'Vermerk'], array_slice(array_keys($rows[0]), -2));
 	}
 
 	/**

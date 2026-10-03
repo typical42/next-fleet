@@ -15,7 +15,7 @@ namespace OCA\NextFleet\Jurisdiction;
  * Internal seam, not a public API - see docs/contributing.md. A jurisdiction that sets none has
  * no provider at all and says so with a null (`IJurisdiction::rates()`).
  *
- * @psalm-type GridAverage = array{grams: int, year: int, source: string}
+ * @psalm-import-type NextFleetGridAverage from \OCA\NextFleet\ResponseDefinitions as GridAverage
  */
 interface IRateProvider {
 	/**
@@ -45,6 +45,12 @@ interface IRateProvider {
 
 	/** Where the fuel factors are written down. */
 	public function emissionSourceUrl(): string;
+
+	/**
+	 * The year that source came out, named beside it as the grid factor's year is; null where it
+	 * is not stated. Not the year a factor applies from: those go back to 1990.
+	 */
+	public function emissionSourceYear(): ?int;
 
 	/**
 	 * What one business kilometre in a `$vehicleType` is worth on the day `$when` falls on, in

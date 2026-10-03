@@ -9,8 +9,9 @@ There is **no plugin system, no registry, no separate app to install**.
 That is a deliberate decision, and it costs us something. Writing it down so nobody re-litigates it
 by accident:
 
-- No public API to keep stable forever, no versioned contract, no event to dispatch. Fewer moving
-  parts than a runtime seam that would carry two implementations at most.
+- No plugin API to keep stable forever, no event to dispatch. Fewer moving parts than a runtime
+  seam that would carry two implementations at most. The one versioned contract is the
+  [OCS API](api.md), for clients outside the app, not for code inside it.
 - Third-party code that runs inside our app would run unsandboxed under our name and our release
   signature. A merge request is reviewed before it gets that.
 - **The price: every merged country is ours to maintain.** See "What a country owes us" below.
@@ -27,7 +28,7 @@ The interfaces stay — as ordinary internal seams, not as public API:
 | Inspection regime | `IInspectionScheme` — the inspection as a reminder template, its cadence and first-due rule by vehicle type. Reached through `IJurisdiction::inspectionScheme()` | HU/AU (24 months, 12 for trucks and tractors, 36 for new cars) |
 | Rates over time | `IRateProvider` — mileage allowance, VAT, emission factors, **each valid from a date**; and the expense categories that carry no VAT. Reached through `IJurisdiction::rates()` | German VAT (M3), 0,30 €/km by car, German grid factor |
 | Report renderer | `IReportRenderer` and `IClaimRenderer` — what the core read in, printable HTML out ([ADR 0005](adr/0005-no-pdf-library.md)) | Fahrtenbuch, mileage claim, the generic plain logbook |
-| Importer | `IImporter` — foreign CSV in, our records out | Drivvo, Spritmonitor, LubeLogger |
+| Importer | `IImporter` in `lib/Import/` — another tool's CSV export in, proposals out; `CsvReader` reads the file for it, under the bounds in [security](security.md) | LubeLogger, Spritmonitor |
 | Service templates | `IServiceTemplates` — intervals by market or manufacturer. No law sets them, so no jurisdiction hands them out | Generic (oil, brake fluid, tyres) |
 
 A country is `lib/Jurisdiction/<Cc>/`, wired up in one registration list — `Jurisdictions::PROFILES`,
@@ -60,7 +61,8 @@ that it does.
   `IRateProvider::vatRateAt(DateTimeInterface $when)` and its siblings, never a constant. Same for VAT and emission
   factors. This is the detail that quietly invalidates reports when it is skipped. The one exception
   is the grid average (`gridFactor()`): it is published years late, so it is the newest figure with
-  its year shown, and a person can replace it with their own.
+  its year shown, and a person can replace it with their own. The fuel factors' source names its
+  year too (`emissionSourceYear()`), or null until it is read off the publication.
 - **Store canonical, display local.** Kilometres, millilitres, cents, UTC in the database — always,
   including for a UK vehicle. Conversion happens at the edges.
 - **Jurisdiction is per vehicle**, not per instance: a fleet crosses borders, and a leased car

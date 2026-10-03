@@ -24,9 +24,11 @@ use OCP\IUserSession;
 /**
  * The vehicle routes the web UI uses. Every rule lives in VehicleService, so what happens here
  * is the translation between a request and an answer
- * (docs/adr/0006-one-api-surface-in-v1.md).
+ * (docs/adr/0009-the-ocs-api-v1-is-the-public-contract.md).
  */
 class VehicleController extends Controller {
+	use RequestValues;
+
 	public function __construct(
 		string $appName,
 		IRequest $request,
@@ -58,36 +60,21 @@ class VehicleController extends Controller {
 	#[NoAdminRequired]
 	#[UserRateLimit(limit: 60, period: 60)]
 	public function update(string $uuid): DataResponse {
-		$token = $this->token();
-		if ($token === null) {
-			return $this->refuse('updated_at is missing, so this write cannot be checked');
-		}
-
 		return $this->answer(
-			fn (): Vehicle => $this->service->update($this->userId(), $uuid, $token, $this->request->getParams()),
+			fn (): Vehicle => $this->service->update($this->userId(), $uuid, $this->token(), $this->request->getParams()),
 		);
 	}
 
 	#[NoAdminRequired]
 	#[UserRateLimit(limit: 60, period: 60)]
 	public function delete(string $uuid): DataResponse {
-		$token = $this->token();
-		if ($token === null) {
-			return $this->refuse('updated_at is missing, so this write cannot be checked');
-		}
-
-		return $this->answer(fn (): Vehicle => $this->service->delete($this->userId(), $uuid, $token));
+		return $this->answer(fn (): Vehicle => $this->service->delete($this->userId(), $uuid, $this->token()));
 	}
 
 	#[NoAdminRequired]
 	#[UserRateLimit(limit: 60, period: 60)]
 	public function restore(string $uuid): DataResponse {
-		$token = $this->token();
-		if ($token === null) {
-			return $this->refuse('updated_at is missing, so this write cannot be checked');
-		}
-
-		return $this->answer(fn (): Vehicle => $this->service->restore($this->userId(), $uuid, $token));
+		return $this->answer(fn (): Vehicle => $this->service->restore($this->userId(), $uuid, $this->token()));
 	}
 
 	/**
@@ -111,23 +98,8 @@ class VehicleController extends Controller {
 				Http::STATUS_PRECONDITION_FAILED,
 			);
 		} catch (\InvalidArgumentException $e) {
-			return $this->refuse($e->getMessage());
+			return new DataResponse(['message' => $e->getMessage()], Http::STATUS_BAD_REQUEST);
 		}
-	}
-
-	private function refuse(string $message): DataResponse {
-		return new DataResponse(['message' => $message], Http::STATUS_BAD_REQUEST);
-	}
-
-	/**
-	 * The `updated_at` the client read, which the write is checked against
-	 * (docs/architecture.md#concurrency). A DELETE has no body, so it travels in the query
-	 * string; both arrive as request parameters.
-	 */
-	private function token(): ?int {
-		$token = filter_var($this->request->getParams()['updated_at'] ?? null, FILTER_VALIDATE_INT);
-
-		return $token === false ? null : $token;
 	}
 
 	private function userId(): string {

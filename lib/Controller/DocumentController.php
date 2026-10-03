@@ -66,6 +66,15 @@ class DocumentController extends Controller {
 	}
 
 	/**
+	 * @param string $document the document's uuid
+	 */
+	#[NoAdminRequired]
+	#[UserRateLimit(limit: 60, period: 60)]
+	public function restore(string $uuid, string $document): DataResponse {
+		return $this->answer(fn (): DataResponse => new DataResponse($this->service->restore($this->userId(), $uuid, $document)));
+	}
+
+	/**
 	 * The file behind one paper, to save. Always an attachment and under a CSP that runs nothing,
 	 * since the content is whatever somebody put in Files (docs/security.md#hostile-content). No
 	 * CSRF token, because it is a link and a navigation carries none; it writes nothing.

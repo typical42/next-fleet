@@ -120,22 +120,28 @@ describe('the CO₂ estimate', () => {
 	const GRID = 'https://example.org/grid'
 
 	it('states the kilograms as an estimate, and cites the fuel factors', () => {
-		const co2 = co2Of({ grams: 109630, unstated: false, source: FUELS, grid: null }, 'en')
+		const co2 = co2Of({ grams: 109630, unstated: false, source: FUELS, year: null, grid: null }, 'en')
 
 		expect(co2.figure).toBe('≈ 110 kg')
 		expect(co2.notes).toEqual(['An estimate: what was tanked or charged, times its emission factor'])
 		expect(co2.sources).toEqual([{ label: 'Fuel factors', href: FUELS }])
 	})
 
+	it('names the fuel factors\' year in their citation, as the grid factor\'s', () => {
+		const co2 = co2Of({ grams: 109630, unstated: false, source: FUELS, year: 2022, grid: null }, 'en')
+
+		expect(co2.sources).toEqual([{ label: 'Fuel factors 2022', href: FUELS }])
+	})
+
 	it('names the grid factor with its year and cites it', () => {
-		const co2 = co2Of({ grams: 3630, unstated: false, source: FUELS, grid: { grams: 363, year: 2024, source: GRID } }, 'en')
+		const co2 = co2Of({ grams: 3630, unstated: false, source: FUELS, year: null, grid: { grams: 363, year: 2024, source: GRID } }, 'en')
 
 		expect(co2.notes).toContain('Electricity at 363 g/kWh, the average of 2024')
 		expect(co2.sources).toEqual([{ label: 'Fuel factors', href: FUELS }, { label: 'Grid factor 2024', href: GRID }])
 	})
 
 	it('says when electricity was read at the reader\'s own grid factor, which cites nothing', () => {
-		const co2 = co2Of({ grams: 1200, unstated: false, source: FUELS, grid: { grams: 120, year: null, source: null } }, 'en')
+		const co2 = co2Of({ grams: 1200, unstated: false, source: FUELS, year: null, grid: { grams: 120, year: null, source: null } }, 'en')
 
 		expect(co2.notes).toContain('Electricity at 120 g/kWh, your own figure from the settings')
 		expect(co2.sources).toEqual([{ label: 'Fuel factors', href: FUELS }])
@@ -143,20 +149,20 @@ describe('the CO₂ estimate', () => {
 
 	/** Null is "not stated", never zero. */
 	it('says it left out what has no factor', () => {
-		expect(co2Of({ grams: 1000, unstated: true, source: FUELS, grid: null }, 'en').notes)
+		expect(co2Of({ grams: 1000, unstated: true, source: FUELS, year: null, grid: null }, 'en').notes)
 			.toContain('Leaves out fill-ups of an energy with no emission factor')
 	})
 
 	/** A CNG-only year had fill-ups; none of them has a factor. */
 	it('says the figure is not stated when every fill-up lacks a factor', () => {
-		const co2 = co2Of({ grams: null, unstated: true, source: FUELS, grid: null }, 'en')
+		const co2 = co2Of({ grams: null, unstated: true, source: FUELS, year: null, grid: null }, 'en')
 
 		expect(co2.figure).toBe('Not stated')
 		expect(co2.notes).toContain('Leaves out fill-ups of an energy with no emission factor')
 	})
 
 	it('has no figure for a year with nothing burnt', () => {
-		expect(co2Of({ grams: null, unstated: false, source: FUELS, grid: null }, 'en').figure).toBe('No fill-ups')
+		expect(co2Of({ grams: null, unstated: false, source: FUELS, year: null, grid: null }, 'en').figure).toBe('No fill-ups')
 	})
 
 	it('is unavailable, not zero, where the country states no factors', () => {
