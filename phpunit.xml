@@ -14,9 +14,8 @@
          failOnWarning="true">
   <!--
     - One suite per bootstrap. The country kit asks profiles questions and needs no more server
-    - than a unit test does, so it runs here; tests/Integration and tests/Api need one and get
-    - their own config when their first test lands - declaring an empty suite here would trip
-    - failOnWarning.
+    - than a unit test does, so it runs here; tests/Integration and tests/Api need one and have
+    - their own config.
   -->
   <testsuites>
     <testsuite name="unit">

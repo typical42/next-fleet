@@ -20,6 +20,8 @@ use OCP\IUserManager;
  * Who a vehicle's reminders go to (docs/architecture.md#reminder-engine). Reading the list takes
  * EDIT as writing it does: who gets told is the managers' business, and the sheet shows the list
  * to whoever may change it and to nobody else.
+ *
+ * @psalm-import-type NextFleetRecipient from \OCA\NextFleet\ResponseDefinitions
  */
 class RecipientService {
 	use TTransactional;
@@ -34,7 +36,7 @@ class RecipientService {
 	}
 
 	/**
-	 * @return list<array{user_id: string, display_name: string}>
+	 * @return list<NextFleetRecipient>
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not edit this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCP\DB\Exception
@@ -48,7 +50,7 @@ class RecipientService {
 	 * plate and the title, and Vehicle Access decides what its link opens. Adding somebody already
 	 * on it changes nothing.
 	 *
-	 * @return list<array{user_id: string, display_name: string}> the list as it now stands
+	 * @return list<NextFleetRecipient> the list as it now stands
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not edit this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \InvalidArgumentException if the instance has no such account
@@ -87,7 +89,7 @@ class RecipientService {
 	 * Takes one account off the list, the owner's included; nothing keeps the list from ending up
 	 * empty, which sends nothing. Somebody not on it is already off it.
 	 *
-	 * @return list<array{user_id: string, display_name: string}> the list as it now stands
+	 * @return list<NextFleetRecipient> the list as it now stands
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not edit this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCP\DB\Exception
@@ -103,7 +105,7 @@ class RecipientService {
 	}
 
 	/**
-	 * @return list<array{user_id: string, display_name: string}>
+	 * @return list<NextFleetRecipient>
 	 * @throws \OCP\DB\Exception
 	 */
 	private function of(Vehicle $vehicle): array {

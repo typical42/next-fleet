@@ -5,7 +5,7 @@
 
 import { expect, test } from '@playwright/test'
 
-import { api, appPage, login } from './app.js'
+import { api, appPage, login, logout } from './app.js'
 
 // The fixture is `occ nextfleet:seed`, run against both majors before the suite
 // (.github/workflows/ci.yml). Nothing here writes: the point of the demo fleet is the rows that
@@ -18,9 +18,15 @@ const hours = { plate: `${demo}LW 300`, made: 'Fendt 313 Vario', counter: '1,668
 const trailer = { plate: `${demo}AH 400`, made: 'Humbaur HA 752513' }
 const disposed = `${demo}XY 500`
 
+// The one spec on the stack's admin, whose fleet the seed writes: it only reads, and signs out so
+// its session leaves no token behind.
 test.beforeEach(async ({ page }) => {
-	await login(page)
+	await login(page, 'admin', 'admin')
 	await page.goto(appPage)
+})
+
+test.afterEach(async ({ page }) => {
+	await logout(page)
 })
 
 test('the demo fleet is on screen with the rows that are awkward on purpose', async ({ page }) => {

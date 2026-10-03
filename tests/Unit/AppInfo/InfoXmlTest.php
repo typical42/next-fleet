@@ -85,6 +85,34 @@ class InfoXmlTest extends TestCase {
 	}
 
 	/**
+	 * docs/legal.md: another project's name never stands alone, as a feature or a selling point.
+	 * It only says what a file is, as the import screen labels it.
+	 */
+	public function testNamesOtherProjectsOnlyToSayWhatAFileIs(): void {
+		$info = simplexml_load_file(self::ROOT . '/appinfo/info.xml');
+		$this->assertNotFalse($info);
+
+		foreach ($info->description as $description) {
+			$bare = preg_replace('/\bCSV\s+\((LubeLogger|Spritmonitor)(\s+format|-Format)\)/', '', (string)$description);
+			$this->assertDoesNotMatchRegularExpression('/Drivvo|LubeLogger|Spritmonitor/i', (string)$bare);
+		}
+	}
+
+	/** The German listing is a translation, not a second, shorter one. */
+	public function testBothLanguagesListTheSameFeatures(): void {
+		$info = simplexml_load_file(self::ROOT . '/appinfo/info.xml');
+		$this->assertNotFalse($info);
+
+		$bullets = [];
+		foreach ($info->description as $description) {
+			$bullets[(string)($description['lang'] ?? 'en')] = preg_match_all('/^- \*\*/m', (string)$description);
+		}
+
+		$this->assertSame(['en', 'de'], array_keys($bullets));
+		$this->assertSame($bullets['en'], $bullets['de']);
+	}
+
+	/**
 	 * The store fetches each screenshot from `main` by URL, so one named here and never taken
 	 * is a broken image on the listing, and nothing on our side fails.
 	 */

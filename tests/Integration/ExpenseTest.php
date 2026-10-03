@@ -174,6 +174,7 @@ class ExpenseTest extends TestCase {
 
 		$back = $this->expenses->restore(self::OWNER, $uuid, $written['uuid'], $deleted['updated_at']);
 		$this->assertNull($back['deleted_at']);
+		$this->assertGreaterThan($deleted['updated_at'], $back['updated_at']);
 		$this->assertSame(64000, $back['amount']);
 	}
 

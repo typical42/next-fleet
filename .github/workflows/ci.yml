@@ -45,6 +45,13 @@ jobs:
       - run: composer run lint
       - run: composer audit --locked
 
+      # openapi.json is generated from the OCS controllers and committed as the client's
+      # contract (docs/api.md), so a change that forgets to regenerate it fails here.
+      - name: openapi.json is current
+        run: |
+          composer run openapi
+          git diff --exit-code -- openapi.json
+
   frontend:
     name: eslint, stylelint, tsc, vitest, build
     runs-on: ubuntu-24.04
@@ -260,3 +267,17 @@ jobs:
         env:
           NEXTCLOUD_ROOT: ${{ github.workspace }}
         run: composer run test:integration
+
+      # The API suite is a client, and a checkout is no web server. PHP's own is enough for one
+      # client calling in turn; it lives until the job ends. status.php answers once it listens.
+      - name: Serve Nextcloud
+        run: |
+          php -S localhost:8080 > "$RUNNER_TEMP/php-server.log" 2>&1 &
+          timeout 30 sh -c 'until curl -fsS http://localhost:8080/status.php > /dev/null; do sleep 1; done'
+
+      - name: Test as a client
+        working-directory: apps/nextfleet
+        env:
+          NEXTCLOUD_ROOT: ${{ github.workspace }}
+          NEXTFLEET_API_URL: http://localhost:8080
+        run: composer run test:api

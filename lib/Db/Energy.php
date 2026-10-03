@@ -40,6 +40,8 @@ use OCP\DB\Types;
  * @method void setStation(?string $station)
  * @method string|null getLocationKind()
  * @method void setLocationKind(?string $locationKind)
+ *
+ * @psalm-import-type NextFleetEnergyEntry from \OCA\NextFleet\ResponseDefinitions
  */
 class Energy extends BaseEntity implements \JsonSerializable {
 	protected int $vehicleId = 0;
@@ -108,7 +110,7 @@ class Energy extends BaseEntity implements \JsonSerializable {
 	/**
 	 * The wire form is the column names, as it is for every entity.
 	 *
-	 * @return array<string, mixed>
+	 * @return NextFleetEnergyEntry
 	 */
 	public function jsonSerialize(): array {
 		return [

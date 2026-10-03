@@ -65,4 +65,17 @@ class GrantController extends Controller {
 	public function delete(string $uuid, string $grant): DataResponse {
 		return $this->answer(fn (): DataResponse => new DataResponse($this->service->revoke($this->userId(), $uuid, $grant)));
 	}
+
+	/** What the caller holds themselves, rather than the owner's list. */
+	#[NoAdminRequired]
+	public function held(string $uuid): DataResponse {
+		return $this->answer(fn (): DataResponse => new DataResponse($this->service->held($this->userId(), $uuid)));
+	}
+
+	/** Gives back the caller's own grant, and answers with what they still hold. */
+	#[NoAdminRequired]
+	#[UserRateLimit(limit: 60, period: 60)]
+	public function leave(string $uuid): DataResponse {
+		return $this->answer(fn (): DataResponse => new DataResponse($this->service->leave($this->userId(), $uuid)));
+	}
 }

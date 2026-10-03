@@ -63,6 +63,7 @@ class TimelineService {
 		private Completeness $completeness,
 		private Gaps $gaps,
 		private ConsumptionService $consumption,
+		private EnteredBy $enteredBy,
 	) {
 	}
 
@@ -87,7 +88,9 @@ class TimelineService {
 	 * A row names its kind and the moment it happened, and carries the Entry itself under that
 	 * kind's key. A trip, fill-up or maintenance record carries the Readings it left on the counter
 	 * as well, so the screen shows one row for them; a trip also carries the fields its
-	 * jurisdiction requires that it leaves unstated, and a fill-up what it is flagged for.
+	 * jurisdiction requires that it leaves unstated, and a fill-up what it is flagged for. Every row
+	 * says what the reader may do to it, as `may`, and on a vehicle others use who entered it, as
+	 * `entered_by`.
 	 *
 	 * @param ?string $type one of TYPES, or null for all of them
 	 * @param ?string $cursor what a previous page answered with, or null for the newest rows
@@ -117,7 +120,7 @@ class TimelineService {
 		$last = end($page);
 
 		return [
-			'rows' => $this->dressed($vehicle, array_column($page, 'row')),
+			'rows' => $this->dressed($userId, $vehicle, array_column($page, 'row')),
 			// The cursor names the kind rather than its rank: it is read back by the next request,
 			// and a number would pin the ranking into every client's scroll position.
 			'next' => count($keyed) > self::PAGE
@@ -152,7 +155,7 @@ class TimelineService {
 			throw new DoesNotExistException('reading ' . $entryUuid . ' is not an Odometer Entry');
 		}
 
-		return $this->dressed($vehicle, [$this->row($type, $entry)['row']])[0];
+		return $this->dressed($userId, $vehicle, [$this->row($type, $entry)['row']])[0];
 	}
 
 	/**
@@ -216,8 +219,41 @@ class TimelineService {
 	 * @return list<array<string, mixed>>
 	 * @throws \OCP\DB\Exception
 	 */
-	private function dressed(Vehicle $vehicle, array $rows): array {
-		return $this->withClosing((int)$vehicle->getId(), $this->withConsumption($vehicle, $this->withFlags($vehicle, $this->withMissing($vehicle, $this->withReadings((int)$vehicle->getId(), $rows)))));
+	private function dressed(string $userId, Vehicle $vehicle, array $rows): array {
+		return $this->withEnteredBy($vehicle, $this->withMay($userId, $vehicle, $this->withClosing((int)$vehicle->getId(), $this->withConsumption($vehicle, $this->withFlags($vehicle, $this->withMissing($vehicle, $this->withReadings((int)$vehicle->getId(), $rows)))))));
+	}
+
+	/**
+	 * The name of whoever entered each Entry on the page, as `entered_by`, or null on every row of
+	 * a vehicle nobody else was ever given access to (EnteredBy).
+	 *
+	 * @param list<array<string, mixed>> $rows
+	 * @return list<array<string, mixed>>
+	 * @throws \OCP\DB\Exception
+	 */
+	private function withEnteredBy(Vehicle $vehicle, array $rows): array {
+		$names = $this->enteredBy->names($vehicle, array_map(static fn (array $row): string => $row[$row['type']]->getCreatedBy(), $rows));
+		foreach ($rows as $index => $row) {
+			$rows[$index]['entered_by'] = $names[$row[$row['type']]->getCreatedBy()] ?? null;
+		}
+
+		return $rows;
+	}
+
+	/**
+	 * What the reader may do to each Entry on the page, `edit` and `delete` or neither
+	 * (VehicleService::changes()). Read off the `may` the gate left on the vehicle, so it asks
+	 * nothing more.
+	 *
+	 * @param list<array<string, mixed>> $rows
+	 * @return list<array<string, mixed>>
+	 */
+	private function withMay(string $userId, Vehicle $vehicle, array $rows): array {
+		foreach ($rows as $index => $row) {
+			$rows[$index]['may'] = $this->fleet->changes($userId, $vehicle, $row[$row['type']]->getCreatedBy());
+		}
+
+		return $rows;
 	}
 
 	/**
@@ -304,6 +340,10 @@ class TimelineService {
 				continue;
 			}
 			$found = $bySource[$kind][(int)$row[$kind]->getId()] ?? [];
+			// The row is the Entry, so no lookup names it (OdoReadingMapper::nameSources()).
+			foreach ($found as $reading) {
+				$reading->setSourceUuid($row[$kind]->getUuid());
+			}
 			if ($kind === self::TRIP) {
 				$rows[$index]['reading'] = $found[0] ?? null;
 			} else {

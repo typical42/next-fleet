@@ -5,7 +5,7 @@
 
 import { flushPromises, shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import CompleteHint from '../components/CompleteHint.vue'
 import { listFleetReminders } from '../services/api.js'
@@ -15,8 +15,14 @@ vi.mock('../services/api.js', async (original) => ({
 	...await original(),
 	listFleetReminders: vi.fn(),
 }))
+vi.mock('@nextcloud/auth', async (original) => ({
+	...await original(),
+	getCurrentUser: () => ({ uid: 'me' }),
+}))
 
 const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', lifecycle: 'active' }
+/** 2026-10-02 16:00 UTC: Friday 18:00 at +02:00. */
+const FRIDAY_SIX_PM = 1790956800
 
 /**
  * The rows rendered with what they hold: the list item's own markup is the library's, so a stand-in
@@ -64,6 +70,12 @@ function press(at, key) {
 beforeEach(() => {
 	setActivePinia(createPinia())
 	vi.mocked(listFleetReminders).mockResolvedValue([])
+	// Only the clock: timers stay real, so flushPromises() and the hot key keep working.
+	vi.useFakeTimers({ toFake: ['Date'] })
+})
+
+afterEach(() => {
+	vi.useRealTimers()
 })
 
 describe('the overview', () => {
@@ -125,6 +137,51 @@ describe('the overview', () => {
 		expect(listed[0].text()).toContain('148,320 km')
 		expect(listed[1].find('.overview__light--green').text()).toBe('Planned')
 		expect(listed[1].text()).toContain('Tyre swap')
+	})
+
+	/**
+	 * A vehicle reached through a grant sorts among the reader's own and names its owner; their
+	 * own name nobody. The server decides which is which (`owned_by`), never the browser.
+	 */
+	it('names the owner of a vehicle somebody else owns, and nobody on the reader\'s own', async () => {
+		vi.mocked(listFleetReminders).mockResolvedValue(/** @type {any} */ ([
+			{ uuid: 'r-1', vehicle: 'v-2', template_key: null, title: 'Insurance renewal', mode: 'date', due_date: '2026-09-01', due_odo: null, state: 'overdue', estimate: null },
+		]))
+		const wrapper = rows([{ ...VEHICLE, owned_by: null }, { ...VEHICLE, uuid: 'v-2', plate: 'M-AB 1', owned_by: 'Anna Adler' }])
+		await flushPromises()
+
+		const listed = wrapper.findAll('.overview__list li')
+		expect(listed.map((row) => row.find('b').text())).toEqual(['M-AB 1', 'B-XY 123'])
+		expect(listed[0].find('.overview__owner').text()).toBe('Owned by Anna Adler')
+		expect(listed[1].find('.overview__owner').exists()).toBe(false)
+	})
+
+	/** A car that is out says with whom and until when; the reader's own says "you". */
+	it('says who has a car that is out, and until when', async () => {
+		vi.setSystemTime(new Date('2026-10-02T12:00:00Z'))
+		const wrapper = rows([
+			{ ...VEHICLE, out_with: { user_id: 'anna', user_name: 'Anna Adler', ends_at: FRIDAY_SIX_PM, ends_at_off: 120 } },
+			{ ...VEHICLE, uuid: 'v-2', plate: 'M-AB 1', out_with: { user_id: 'me', user_name: 'Me', ends_at: FRIDAY_SIX_PM, ends_at_off: 120 } },
+			{ ...VEHICLE, uuid: 'v-3', plate: 'M-AB 2', out_with: null },
+		])
+		await flushPromises()
+
+		const holders = wrapper.findAll('.overview__list li').map((row) => row.find('.overview__holder'))
+		// The test run's locale is American English.
+		expect(holders[0].text()).toBe('With Anna Adler until Fri, 10/02, 06:00 PM')
+		expect(holders[1].text()).toBe('With you until Fri, 10/02, 06:00 PM')
+		expect(holders[2].exists()).toBe(false)
+	})
+
+	/** Not given back by its end: the row says so in words, not by colour alone. */
+	it('says a car still out past its end is overdue', async () => {
+		vi.setSystemTime(new Date('2026-10-03T08:00:00Z'))
+		const wrapper = rows([{ ...VEHICLE, out_with: { user_id: 'anna', user_name: 'Anna Adler', ends_at: FRIDAY_SIX_PM, ends_at_off: 120 } }])
+		await flushPromises()
+
+		const holder = wrapper.find('.overview__holder')
+		expect(holder.text()).toBe('With Anna Adler, overdue since Fri, 10/02, 06:00 PM')
+		expect(holder.classes()).toContain('overview__holder--overdue')
 	})
 
 	/** Status is never colour alone (docs/ui.md), green included. */

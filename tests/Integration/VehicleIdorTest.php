@@ -9,12 +9,16 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Tests\Integration;
 
 use OCA\NextFleet\AppInfo\Application;
+use OCA\NextFleet\Controller\BookingController;
 use OCA\NextFleet\Controller\DocumentController;
 use OCA\NextFleet\Controller\EnergyController;
 use OCA\NextFleet\Controller\ExpenseController;
 use OCA\NextFleet\Controller\GrantController;
+use OCA\NextFleet\Controller\ImportController;
+use OCA\NextFleet\Controller\InboxController;
 use OCA\NextFleet\Controller\KpiController;
 use OCA\NextFleet\Controller\MaintenanceController;
+use OCA\NextFleet\Controller\Ocs;
 use OCA\NextFleet\Controller\OdometerController;
 use OCA\NextFleet\Controller\PreferencesController;
 use OCA\NextFleet\Controller\RecipientController;
@@ -25,13 +29,20 @@ use OCA\NextFleet\Controller\TripController;
 use OCA\NextFleet\Controller\VehicleController;
 use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
+use OCA\NextFleet\Db\BookingMapper;
+use OCA\NextFleet\Db\Document;
+use OCA\NextFleet\Db\DocumentMapper;
+use OCA\NextFleet\Db\EnergyMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
+use OCA\NextFleet\Service\BookingService;
 use OCA\NextFleet\Service\DocumentService;
 use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\ExpenseService;
 use OCA\NextFleet\Service\ExportService;
 use OCA\NextFleet\Service\GrantService;
+use OCA\NextFleet\Service\ImportService;
+use OCA\NextFleet\Service\InboxService;
 use OCA\NextFleet\Service\KpiService;
 use OCA\NextFleet\Service\LogbookExport;
 use OCA\NextFleet\Service\MaintenanceService;
@@ -40,15 +51,18 @@ use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\PreferencesService;
 use OCA\NextFleet\Service\RecipientService;
 use OCA\NextFleet\Service\ReminderService;
+use OCA\NextFleet\Service\SyncService;
 use OCA\NextFleet\Service\TimelineService;
 use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\DataResponse;
 use OCP\AppFramework\Http\Response;
+use OCP\AppFramework\OCS\OCSException;
 use OCP\IDBConnection;
 use OCP\IRequest;
 use OCP\IUser;
+use OCP\IUserManager;
 use OCP\IUserSession;
 use PHPUnit\Framework\TestCase;
 
@@ -60,6 +74,8 @@ use PHPUnit\Framework\TestCase;
  * It writes to the instance it runs against (docs/development.md#testing).
  */
 class VehicleIdorTest extends TestCase {
+	use Accounts;
+
 	/** Not Nextcloud accounts: `user_id` and `grantee` are string columns with no key on them. */
 	private const OWNER = 'nextfleet-test-alice';
 	private const STRANGER = 'nextfleet-test-bob';
@@ -74,6 +90,8 @@ class VehicleIdorTest extends TestCase {
 		'viewer' => self::VIEWER,
 		'stranger' => self::STRANGER,
 	];
+	/** A real account, which a grantee and a recipient have to be, so no refusal is that 400. */
+	private const ACCOUNT = 'nextfleet-test-idor-real';
 	private const PLATE = 'B-XY 123';
 	/** An Entry uuid nothing wrote: the refusal must come before the lookup that would miss it. */
 	private const NO_SUCH_ENTRY = '0195e2f1-1111-4000-8000-00000000dead';
@@ -90,12 +108,17 @@ class VehicleIdorTest extends TestCase {
 		'expense' => ['spent_at' => 1750000000, 'spent_at_off' => 120, 'amount' => 64000],
 	];
 
+	/** A preview or an import as the screen sends it, of a file nobody here has. */
+	private const IMPORT_BODY = ['file_id' => 1, 'importer' => 'lubelogger', 'record_type' => 'fuel', 'units' => ['distance' => 'km', 'volume' => 'l'], 'tz' => 'Europe/Berlin', 'etag' => 'e'];
+	/** An undo of an import whose one entry is not there. */
+	private const UNDO_BODY = ['created' => [['type' => 'energy', 'uuid' => self::NO_SUCH_ENTRY]]];
+
 	/**
 	 * The routes that reach no vehicle by identity, so a stranger gets an answer rather than a
 	 * refusal - their own fleet, their own settings. Listed rather than inferred: a route added
 	 * here is a claim that nothing in its answer belongs to anybody else.
 	 */
-	private const NAMES_NO_VEHICLE = ['vehicle#index', 'vehicle#create', 'reminder#fleet', 'preferences#index', 'preferences#update'];
+	private const NAMES_NO_VEHICLE = ['vehicle#index', 'vehicle#create', 'reminder#fleet', 'preferences#index', 'preferences#update', 'inbox#index', 'sync#index'];
 
 	private VehicleService $service;
 	private OdometerService $odometry;
@@ -107,14 +130,29 @@ class VehicleIdorTest extends TestCase {
 	private RecipientService $recipients;
 	private GrantService $access;
 	private DocumentService $papers;
+	private ImportService $imports;
 	private TimelineService $history;
 	private KpiService $figures;
 	private LogbookExport $logbook;
 	private MileageClaimExport $claim;
 	private ExportService $csv;
 	private PreferencesService $settings;
+	private InboxService $inbox;
+	private BookingService $pool;
+	private SyncService $syncing;
 	private AccessMapper $grants;
 	private Vehicle $vehicle;
+	/** Which door a route is walked through: the internal routes, or their OCS twins. */
+	private bool $ocs = false;
+
+	public static function setUpBeforeClass(): void {
+		self::deleteAccounts([self::ACCOUNT]);
+		\OCP\Server::get(IUserManager::class)->createUser(self::ACCOUNT, bin2hex(random_bytes(16)));
+	}
+
+	public static function tearDownAfterClass(): void {
+		self::deleteAccounts([self::ACCOUNT]);
+	}
 
 	protected function setUp(): void {
 		$container = (new Application())->getContainer();
@@ -128,12 +166,16 @@ class VehicleIdorTest extends TestCase {
 		$this->recipients = $container->get(RecipientService::class);
 		$this->access = $container->get(GrantService::class);
 		$this->papers = $container->get(DocumentService::class);
+		$this->imports = $container->get(ImportService::class);
 		$this->history = $container->get(TimelineService::class);
 		$this->figures = $container->get(KpiService::class);
 		$this->logbook = $container->get(LogbookExport::class);
 		$this->claim = $container->get(MileageClaimExport::class);
 		$this->csv = $container->get(ExportService::class);
 		$this->settings = $container->get(PreferencesService::class);
+		$this->inbox = $container->get(InboxService::class);
+		$this->pool = $container->get(BookingService::class);
+		$this->syncing = $container->get(SyncService::class);
 		$this->grants = $container->get(AccessMapper::class);
 
 		$this->forgetTestRows();
@@ -160,7 +202,7 @@ class VehicleIdorTest extends TestCase {
 		$qb->executeStatement();
 
 		// `fleet_access` again: a grant the owner gave to a real account names nobody above.
-		foreach (['fleet_access', 'fleet_odo_readings', 'fleet_trips', 'fleet_energy', 'fleet_maintenance', 'fleet_expenses', 'fleet_reminders', 'fleet_reminder_recipients'] as $table) {
+		foreach (['fleet_access', 'fleet_odo_readings', 'fleet_trips', 'fleet_energy', 'fleet_maintenance', 'fleet_expenses', 'fleet_reminders', 'fleet_reminder_recipients', 'fleet_bookings', 'fleet_documents'] as $table) {
 			$qb = $db->getQueryBuilder();
 			$qb->delete($table)
 				->where($qb->expr()->in('created_by', $qb->createNamedParameter($people, $qb::PARAM_STR_ARRAY)));
@@ -169,13 +211,37 @@ class VehicleIdorTest extends TestCase {
 	}
 
 	/**
-	 * The controller as a route reaches it: the real service, and a session that is whoever is
-	 * asking.
+	 * The controller as a route reaches it through the door under test: the real service, and a
+	 * session that is whoever is asking. Through the OCS door it is the twin of the same name
+	 * under `Ocs\`, built alike (tests/Unit/OcsRoutesTest.php).
 	 *
+	 * @param class-string $class the internal controller
 	 * @param array<string, mixed> $params
 	 */
-	private function controller(string $userId, array $params): VehicleController {
-		return new VehicleController(Application::APP_ID, $this->request($params), $this->service, $this->session($userId));
+	private function door(string $class, object $service, string $userId, array $params): object {
+		$class = $this->ocs ? str_replace('\\Controller\\', '\\Controller\\Ocs\\', $class) : $class;
+
+		return new $class(Application::APP_ID, $this->request($params), $service, $this->session($userId));
+	}
+
+	/**
+	 * An answer from either door as one Response: an OCS refusal is an exception the framework
+	 * turns into the envelope's status, so it stands here as that status.
+	 *
+	 * @param \Closure(): Response $call
+	 */
+	private function through(\Closure $call): Response {
+		try {
+			return $call();
+		} catch (OCSException $e) {
+			return new DataResponse(['message' => $e->getMessage()], $e->getCode());
+		}
+	}
+
+	/** @param array<string, mixed> $params */
+	private function controller(string $userId, array $params): VehicleController|Ocs\VehicleController {
+		/** @var VehicleController|Ocs\VehicleController */
+		return $this->door(VehicleController::class, $this->service, $userId, $params);
 	}
 
 	/**
@@ -183,8 +249,9 @@ class VehicleIdorTest extends TestCase {
 	 *
 	 * @param array<string, mixed> $params
 	 */
-	private function odometer(string $userId, array $params): OdometerController {
-		return new OdometerController(Application::APP_ID, $this->request($params), $this->odometry, $this->session($userId));
+	private function odometer(string $userId, array $params): OdometerController|Ocs\OdometerController {
+		/** @var OdometerController|Ocs\OdometerController */
+		return $this->door(OdometerController::class, $this->odometry, $userId, $params);
 	}
 
 	/**
@@ -192,8 +259,9 @@ class VehicleIdorTest extends TestCase {
 	 *
 	 * @param array<string, mixed> $params
 	 */
-	private function trip(string $userId, array $params): TripController {
-		return new TripController(Application::APP_ID, $this->request($params), $this->journeys, $this->session($userId));
+	private function trip(string $userId, array $params): TripController|Ocs\TripController {
+		/** @var TripController|Ocs\TripController */
+		return $this->door(TripController::class, $this->journeys, $userId, $params);
 	}
 
 	/**
@@ -201,8 +269,9 @@ class VehicleIdorTest extends TestCase {
 	 *
 	 * @param array<string, mixed> $params
 	 */
-	private function energy(string $userId, array $params): EnergyController {
-		return new EnergyController(Application::APP_ID, $this->request($params), $this->fillUps, $this->session($userId));
+	private function energy(string $userId, array $params): EnergyController|Ocs\EnergyController {
+		/** @var EnergyController|Ocs\EnergyController */
+		return $this->door(EnergyController::class, $this->fillUps, $userId, $params);
 	}
 
 	/**
@@ -210,8 +279,9 @@ class VehicleIdorTest extends TestCase {
 	 *
 	 * @param array<string, mixed> $params
 	 */
-	private function maintenance(string $userId, array $params): MaintenanceController {
-		return new MaintenanceController(Application::APP_ID, $this->request($params), $this->workshop, $this->session($userId));
+	private function maintenance(string $userId, array $params): MaintenanceController|Ocs\MaintenanceController {
+		/** @var MaintenanceController|Ocs\MaintenanceController */
+		return $this->door(MaintenanceController::class, $this->workshop, $userId, $params);
 	}
 
 	/**
@@ -219,8 +289,9 @@ class VehicleIdorTest extends TestCase {
 	 *
 	 * @param array<string, mixed> $params
 	 */
-	private function expense(string $userId, array $params): ExpenseController {
-		return new ExpenseController(Application::APP_ID, $this->request($params), $this->spending, $this->session($userId));
+	private function expense(string $userId, array $params): ExpenseController|Ocs\ExpenseController {
+		/** @var ExpenseController|Ocs\ExpenseController */
+		return $this->door(ExpenseController::class, $this->spending, $userId, $params);
 	}
 
 	/**
@@ -228,8 +299,9 @@ class VehicleIdorTest extends TestCase {
 	 *
 	 * @param array<string, mixed> $params
 	 */
-	private function reminder(string $userId, array $params): ReminderController {
-		return new ReminderController(Application::APP_ID, $this->request($params), $this->reminders, $this->session($userId));
+	private function reminder(string $userId, array $params): ReminderController|Ocs\ReminderController {
+		/** @var ReminderController|Ocs\ReminderController */
+		return $this->door(ReminderController::class, $this->reminders, $userId, $params);
 	}
 
 	/**
@@ -237,8 +309,9 @@ class VehicleIdorTest extends TestCase {
 	 *
 	 * @param array<string, mixed> $params
 	 */
-	private function recipient(string $userId, array $params): RecipientController {
-		return new RecipientController(Application::APP_ID, $this->request($params), $this->recipients, $this->session($userId));
+	private function recipient(string $userId, array $params): RecipientController|Ocs\RecipientController {
+		/** @var RecipientController|Ocs\RecipientController */
+		return $this->door(RecipientController::class, $this->recipients, $userId, $params);
 	}
 
 	/**
@@ -246,8 +319,9 @@ class VehicleIdorTest extends TestCase {
 	 *
 	 * @param array<string, mixed> $params
 	 */
-	private function grantRoute(string $userId, array $params): GrantController {
-		return new GrantController(Application::APP_ID, $this->request($params), $this->access, $this->session($userId));
+	private function grantRoute(string $userId, array $params): GrantController|Ocs\GrantController {
+		/** @var GrantController|Ocs\GrantController */
+		return $this->door(GrantController::class, $this->access, $userId, $params);
 	}
 
 	/**
@@ -255,8 +329,40 @@ class VehicleIdorTest extends TestCase {
 	 *
 	 * @param array<string, mixed> $params
 	 */
-	private function document(string $userId, array $params): DocumentController {
-		return new DocumentController(Application::APP_ID, $this->request($params), $this->papers, $this->session($userId));
+	private function document(string $userId, array $params): DocumentController|Ocs\DocumentController {
+		/** @var DocumentController|Ocs\DocumentController */
+		return $this->door(DocumentController::class, $this->papers, $userId, $params);
+	}
+
+	/**
+	 * And for an import.
+	 *
+	 * @param array<string, mixed> $params
+	 */
+	private function importRoute(string $userId, array $params): ImportController|Ocs\ImportController {
+		/** @var ImportController|Ocs\ImportController */
+		return $this->door(ImportController::class, $this->imports, $userId, $params);
+	}
+
+	/**
+	 * And for the bookings.
+	 *
+	 * @param array<string, mixed> $params
+	 */
+	private function booking(string $userId, array $params): BookingController|Ocs\BookingController {
+		/** @var BookingController|Ocs\BookingController */
+		return $this->door(BookingController::class, $this->pool, $userId, $params);
+	}
+
+	/**
+	 * A span a day from now, or `days` from now, which a booking may take.
+	 *
+	 * @return array<string, int>
+	 */
+	private static function tomorrow(int $days = 1): array {
+		$start = time() + $days * 86400;
+
+		return ['starts_at' => $start, 'starts_at_off' => 120, 'ends_at' => $start + 3 * 3600, 'ends_at_off' => 120];
 	}
 
 	/**
@@ -264,8 +370,9 @@ class VehicleIdorTest extends TestCase {
 	 *
 	 * @param array<string, mixed> $params
 	 */
-	private function timeline(string $userId, array $params): TimelineController {
-		return new TimelineController(Application::APP_ID, $this->request($params), $this->history, $this->session($userId));
+	private function timeline(string $userId, array $params): TimelineController|Ocs\TimelineController {
+		/** @var TimelineController|Ocs\TimelineController */
+		return $this->door(TimelineController::class, $this->history, $userId, $params);
 	}
 
 	/**
@@ -273,8 +380,9 @@ class VehicleIdorTest extends TestCase {
 	 *
 	 * @param array<string, mixed> $params
 	 */
-	private function kpis(string $userId, array $params): KpiController {
-		return new KpiController(Application::APP_ID, $this->request($params), $this->figures, $this->session($userId));
+	private function kpis(string $userId, array $params): KpiController|Ocs\KpiController {
+		/** @var KpiController|Ocs\KpiController */
+		return $this->door(KpiController::class, $this->figures, $userId, $params);
 	}
 
 	/**
@@ -292,8 +400,19 @@ class VehicleIdorTest extends TestCase {
 	 *
 	 * @param array<string, mixed> $params
 	 */
-	private function preferences(string $userId, array $params): PreferencesController {
-		return new PreferencesController(Application::APP_ID, $this->request($params), $this->settings, $this->session($userId));
+	private function preferences(string $userId, array $params): PreferencesController|Ocs\PreferencesController {
+		/** @var PreferencesController|Ocs\PreferencesController */
+		return $this->door(PreferencesController::class, $this->settings, $userId, $params);
+	}
+
+	/**
+	 * And for the inbox.
+	 *
+	 * @param array<string, mixed> $params
+	 */
+	private function inboxRoute(string $userId, array $params): InboxController|Ocs\InboxController {
+		/** @var InboxController|Ocs\InboxController */
+		return $this->door(InboxController::class, $this->inbox, $userId, $params);
 	}
 
 	/** @param array<string, mixed> $params */
@@ -323,9 +442,22 @@ class VehicleIdorTest extends TestCase {
 	private function uuidsIn(Response $response): array {
 		$data = $response instanceof DataResponse ? $response->getData() : null;
 		$uuids = [];
+		// A sync names vehicles in each of its parts.
+		if (is_array($data) && is_array($data['vehicles'] ?? null) && is_array($data['changes'] ?? null) && is_array($data['unreachable'] ?? null)) {
+			$uuids = [...array_column($data['vehicles'], 'uuid'), ...array_values($data['unreachable'])];
+			foreach ($data['changes'] as $items) {
+				$uuids = [...$uuids, ...array_column((array)$items, 'vehicle_uuid')];
+			}
+
+			return array_values(array_filter($uuids, 'is_string'));
+		}
 		foreach (is_array($data) ? $data : [$data] as $item) {
 			if ($item instanceof Vehicle) {
 				$uuids[] = $item->getUuid();
+			}
+			// The OCS door answers a vehicle in its wire form.
+			if (is_array($item) && array_key_exists('plate', $item) && is_string($item['uuid'] ?? null)) {
+				$uuids[] = $item['uuid'];
 			}
 			// A fleet-wide row names the vehicle it hangs off.
 			if (is_array($item) && is_string($item['vehicle'] ?? null)) {
@@ -343,7 +475,8 @@ class VehicleIdorTest extends TestCase {
 	 *
 	 * @dataProvider fleetRoutes
 	 */
-	public function testAStrangerReachesNothingThroughAnyRoute(string $route): void {
+	public function testAStrangerReachesNothingThroughAnyRoute(string $route, bool $ocs): void {
+		$this->ocs = $ocs;
 		$uuid = $this->vehicle->getUuid();
 		$params = [
 			'uuid' => $uuid,
@@ -360,7 +493,7 @@ class VehicleIdorTest extends TestCase {
 			'category' => 'business',
 		];
 
-		$response = match ($route) {
+		$response = $this->through(fn (): Response => match ($route) {
 			'vehicle#index' => $this->controller(self::STRANGER, $params)->index(),
 			'vehicle#create' => $this->controller(self::STRANGER, $params)->create(),
 			'vehicle#show' => $this->controller(self::STRANGER, $params)->show($uuid),
@@ -420,22 +553,37 @@ class VehicleIdorTest extends TestCase {
 			'reminder#snooze' => $this->reminder(self::STRANGER, $params + ['until' => '2036-05-01'])->snooze($uuid, self::NO_SUCH_ENTRY),
 			'reminder#dismiss' => $this->reminder(self::STRANGER, $params)->dismiss($uuid, self::NO_SUCH_ENTRY),
 			'recipient#index' => $this->recipient(self::STRANGER, $params)->index($uuid),
-			// A real account, so the refusal cannot be the unknown user's 400.
-			'recipient#create' => $this->recipient(self::STRANGER, $params + ['user_id' => 'admin'])->create($uuid),
+			'recipient#create' => $this->recipient(self::STRANGER, $params + ['user_id' => self::ACCOUNT])->create($uuid),
 			'recipient#delete' => $this->recipient(self::STRANGER, $params)->delete($uuid, self::OWNER),
 			'grant#index' => $this->grantRoute(self::STRANGER, $params)->index($uuid),
-			// A real account again, for the same reason.
-			'grant#create' => $this->grantRoute(self::STRANGER, $params + ['grantee' => 'admin', 'grantee_type' => 'user', 'role' => 'manager'])->create($uuid),
+			'grant#create' => $this->grantRoute(self::STRANGER, $params + ['grantee' => self::ACCOUNT, 'grantee_type' => 'user', 'role' => 'manager'])->create($uuid),
 			// Walked against a grant that is not there, for the reason the trip's are.
 			'grant#update' => $this->grantRoute(self::STRANGER, $params + ['role' => 'manager'])->update($uuid, self::NO_SUCH_ENTRY),
 			'grant#delete' => $this->grantRoute(self::STRANGER, $params)->delete($uuid, self::NO_SUCH_ENTRY),
+			'grant#held' => $this->grantRoute(self::STRANGER, $params)->held($uuid),
+			'grant#leave' => $this->grantRoute(self::STRANGER, $params)->leave($uuid),
 			'document#index' => $this->document(self::STRANGER, $params)->index($uuid),
 			// The access check runs before the file is looked up, so this is the 403 whatever file 1 is.
 			'document#create' => $this->document(self::STRANGER, $params + ['file_id' => 1, 'kind' => 'receipt'])->create($uuid),
 			// Walked against a document that is not there, for the reason the trip's are.
 			'document#delete' => $this->document(self::STRANGER, $params)->delete($uuid, self::NO_SUCH_ENTRY),
+			'document#restore' => $this->document(self::STRANGER, $params)->restore($uuid, self::NO_SUCH_ENTRY),
 			// The same; DocumentTest walks a stranger against a real paper.
-			'document#download' => $this->document(self::STRANGER, $params)->download($uuid, self::NO_SUCH_ENTRY),
+			// The download has no OCS twin (docs/api.md#downloads), so this is the internal door.
+			'document#download' => (new DocumentController(Application::APP_ID, $this->request($params), $this->papers, $this->session(self::STRANGER)))
+				->download($uuid, self::NO_SUCH_ENTRY),
+			// The access check runs before the file is looked up, as a paper's does.
+			'import#preview' => $this->importRoute(self::STRANGER, $params + self::IMPORT_BODY)->preview($uuid),
+			'import#import' => $this->importRoute(self::STRANGER, $params + self::IMPORT_BODY)->import($uuid),
+			// Walked against an entry that is not there, for the reason the trip's are.
+			'import#undo' => $this->importRoute(self::STRANGER, $params + self::UNDO_BODY)->undo($uuid),
+			'booking#index' => $this->booking(self::STRANGER, $params)->index($uuid),
+			'booking#create' => $this->booking(self::STRANGER, self::tomorrow() + $params)->create($uuid),
+			// Walked against a booking that is not there, for the reason the trip's are.
+			'booking#update' => $this->booking(self::STRANGER, self::tomorrow() + $params)->update($uuid, self::NO_SUCH_ENTRY),
+			'booking#delete' => $this->booking(self::STRANGER, $params)->delete($uuid, self::NO_SUCH_ENTRY),
+			'booking#check_out' => $this->booking(self::STRANGER, $params + ['odo' => 999999, 'at_off' => 120])->checkOut($uuid, self::NO_SUCH_ENTRY),
+			'booking#check_in' => $this->booking(self::STRANGER, $params + ['odo' => 999999, 'at_off' => 120])->checkIn($uuid, self::NO_SUCH_ENTRY),
 			'timeline#index' => $this->timeline(self::STRANGER, $params)->index($uuid),
 			'timeline#gaps' => $this->timeline(self::STRANGER, $params)->gaps($uuid),
 			'timeline#show' => $this->timeline(self::STRANGER, $params)->show($uuid, 'trip', self::NO_SUCH_ENTRY),
@@ -446,8 +594,12 @@ class VehicleIdorTest extends TestCase {
 			'report#csv' => $this->report(self::STRANGER, $params)->csv($uuid, '2026', 'trips'),
 			'preferences#index' => $this->preferences(self::STRANGER, $params)->index(),
 			'preferences#update' => $this->preferences(self::STRANGER, $params)->update(),
+			// The stranger is no account and has no inbox; InboxTest walks real ones.
+			'inbox#index' => $this->inboxRoute(self::STRANGER, $params)->index(),
+			// The client's alone, so only through OCS (docs/api.md#sync).
+			'sync#index' => (new Ocs\SyncController(Application::APP_ID, $this->request($params), $this->syncing, $this->session(self::STRANGER)))->index(),
 			default => $this->fail($route . ' is a route the IDOR sweep has never been through'),
-		};
+		});
 
 		// A route that names a vehicle refuses. The ones that name none still answer - a stranger
 		// has their own fleet and their own settings - so what they must not do is hand this
@@ -468,19 +620,48 @@ class VehicleIdorTest extends TestCase {
 		$this->assertSame([self::OWNER], array_column($this->recipients->list(self::OWNER, $uuid), 'user_id'));
 		$this->assertSame([], $this->papers->list(self::OWNER, $uuid));
 		$this->assertSame([], $this->access->list(self::OWNER, $uuid));
+		$this->assertSame([], $this->pool->list(self::OWNER, $uuid, []));
 	}
 
 	/**
-	 * Every route but the page itself, by its `controller#method` name.
+	 * Every route but the page itself, by its `controller#method` name, and every OCS route as the
+	 * internal twin it answers for, walked through the OCS door.
 	 *
-	 * @return iterable<string, array{string}>
+	 * @return iterable<string, array{string, bool}>
 	 */
 	public static function fleetRoutes(): iterable {
-		/** @var array{routes: list<array{name: string, url: string}>} $routes */
 		$routes = require __DIR__ . '/../../appinfo/routes.php';
 		foreach ($routes['routes'] as $route) {
 			if (!str_starts_with($route['name'], 'page#')) {
-				yield $route['name'] => [$route['name']];
+				yield $route['name'] => [$route['name'], false];
+			}
+		}
+		foreach ($routes['ocs'] as $route) {
+			yield $route['name'] => [self::twinOf($route['name']), true];
+		}
+	}
+
+	/** `Ocs\Vehicle#index` answers for `vehicle#index`. */
+	private static function twinOf(string $ocsName): string {
+		[$controller, $method] = explode('#', $ocsName);
+
+		return lcfirst(substr($controller, strlen('Ocs\\'))) . '#' . $method;
+	}
+
+	/**
+	 * Each case as given, and again through the OCS door wherever its route, the case's first
+	 * value, has a twin there. The OCS arms are these cases, not a copy of them, so a twin is held
+	 * to its internal route's answer by role.
+	 *
+	 * @param iterable<string, list<mixed>> $cases
+	 * @return iterable<string, list<mixed>>
+	 */
+	private static function throughBothDoors(iterable $cases): iterable {
+		$twinned = array_map(self::twinOf(...), array_column((require __DIR__ . '/../../appinfo/routes.php')['ocs'], 'name'));
+		foreach ($cases as $label => $case) {
+			yield $label => [...$case, false];
+			if (in_array($case[0], $twinned, true)) {
+				yield "$label, through OCS" => [...$case, true];
 			}
 		}
 	}
@@ -508,8 +689,8 @@ class VehicleIdorTest extends TestCase {
 	}
 
 	/**
-	 * Nothing writes this table yet, so a word from an import or a later migration is how one
-	 * arrives, and the column takes any. A role that covers nothing must widen nothing either:
+	 * Granting takes only the roles we have, so a later migration that drops one is how another
+	 * word arrives, and the column takes any. A role that covers nothing must widen nothing either:
 	 * the overview carries the plate, the VIN and the price of every row in it, so listing a
 	 * vehicle `show` then refuses would hand over most of it anyway.
 	 */
@@ -530,7 +711,8 @@ class VehicleIdorTest extends TestCase {
 	 *
 	 * @dataProvider roleMatrix
 	 */
-	public function testEachRoleReachesWhatItCoversThroughEveryRoute(string $route, string $role, int $status, bool $deletedAfter): void {
+	public function testEachRoleReachesWhatItCoversThroughEveryRoute(string $route, string $role, int $status, bool $deletedAfter, bool $ocs): void {
+		$this->ocs = $ocs;
 		$uuid = $this->vehicle->getUuid();
 		$this->grantEveryRole();
 		$who = self::HOLDERS[$role];
@@ -543,30 +725,36 @@ class VehicleIdorTest extends TestCase {
 			$token = $this->service->delete(self::OWNER, $uuid, (int)$token)->getUpdatedAt();
 		}
 
-		$response = match ($route) {
+		$response = $this->through(fn (): Response => match ($route) {
 			'vehicle#delete' => $this->controller($who, ['updated_at' => $token])->delete($uuid),
 			'vehicle#restore' => $this->controller($who, ['updated_at' => $token])->restore($uuid),
 			'grant#index' => $this->grantRoute($who, [])->index($uuid),
-			// A real account: a grantee has to exist, and the refusal must not be that 400.
-			'grant#create' => $this->grantRoute($who, ['grantee' => 'admin', 'grantee_type' => 'user', 'role' => 'manager'])->create($uuid),
+			'grant#create' => $this->grantRoute($who, ['grantee' => self::ACCOUNT, 'grantee_type' => 'user', 'role' => 'manager'])->create($uuid),
 			// A manager must not promote anybody, themselves included.
 			'grant#update' => $this->grantRoute($who, ['role' => 'manager'])->update($uuid, $viewers),
 			'grant#delete' => $this->grantRoute($who, [])->delete($uuid, $viewers),
+			'grant#held' => $this->grantRoute($who, [])->held($uuid),
+			'grant#leave' => $this->grantRoute($who, [])->leave($uuid),
 			default => $this->fail($route . ' has no arm in the role matrix'),
-		};
+		});
 
 		$this->assertSame($status, $response->getStatus());
 		$after = \OCP\Server::get(VehicleMapper::class)->findAnyByUuid($uuid);
 		$this->assertSame($deletedAfter, $after->getDeletedAt() !== null);
-		if ($status === Http::STATUS_FORBIDDEN && !$deletedAfter) {
+		if ($status !== Http::STATUS_OK && !$deletedAfter) {
 			$this->assertSame($grants, $this->access->list(self::OWNER, $uuid));
 		}
+	}
+
+	/** @return iterable<string, list<mixed>> */
+	public static function roleMatrix(): iterable {
+		return self::throughBothDoors(self::roleCases());
 	}
 
 	/**
 	 * @return iterable<string, array{string, string, int, bool}>
 	 */
-	public static function roleMatrix(): iterable {
+	private static function roleCases(): iterable {
 		// The car is the owner's: deleting and restoring it is theirs alone, a manager included.
 		foreach (array_keys(self::HOLDERS) as $role) {
 			$owner = $role === 'owner';
@@ -576,6 +764,10 @@ class VehicleIdorTest extends TestCase {
 			foreach (['grant#index', 'grant#create', 'grant#update', 'grant#delete'] as $route) {
 				yield "$route by the $role" => [$route, $role, $owner ? Http::STATUS_OK : Http::STATUS_FORBIDDEN, false];
 			}
+			// What you hold yourself is yours to read and to leave; the owner holds no grant.
+			$grantee = $role !== 'owner' && $role !== 'stranger';
+			yield "grant#held by the $role" => ['grant#held', $role, $role === 'stranger' ? Http::STATUS_FORBIDDEN : Http::STATUS_OK, false];
+			yield "grant#leave by the $role" => ['grant#leave', $role, $grantee ? Http::STATUS_OK : ($owner ? Http::STATUS_NOT_FOUND : Http::STATUS_FORBIDDEN), false];
 		}
 	}
 
@@ -586,7 +778,8 @@ class VehicleIdorTest extends TestCase {
 	 *
 	 * @dataProvider entryMatrix
 	 */
-	public function testEachRoleChangesTheEntriesItMay(string $route, string $role, string $author, int $status): void {
+	public function testEachRoleChangesTheEntriesItMay(string $route, string $role, string $author, int $status, bool $ocs): void {
+		$this->ocs = $ocs;
 		$uuid = $this->vehicle->getUuid();
 		$this->grantEveryRole();
 		$who = self::HOLDERS[$role];
@@ -596,7 +789,7 @@ class VehicleIdorTest extends TestCase {
 			: $this->entered($kind, self::HOLDERS[$author], $action === 'restore');
 		$params = self::ENTRY_BODIES[$kind] + ['updated_at' => $token];
 
-		$response = match ($route) {
+		$response = $this->through(fn (): Response => match ($route) {
 			'odometer#create' => $this->odometer($who, $params)->create($uuid),
 			'odometer#update' => $this->odometer($who, $params)->update($uuid, $entry),
 			'odometer#delete' => $this->odometer($who, $params)->delete($uuid, $entry),
@@ -625,15 +818,20 @@ class VehicleIdorTest extends TestCase {
 			'expense#delete' => $this->expense($who, $params)->delete($uuid, $entry),
 			'expense#restore' => $this->expense($who, $params)->restore($uuid, $entry),
 			default => $this->fail($route . ' has no arm in the Entry matrix'),
-		};
+		});
 
 		$this->assertSame($status, $response->getStatus());
+	}
+
+	/** @return iterable<string, list<mixed>> */
+	public static function entryMatrix(): iterable {
+		return self::throughBothDoors(self::entryCases());
 	}
 
 	/**
 	 * @return iterable<string, array{string, string, string, int}>
 	 */
-	public static function entryMatrix(): iterable {
+	private static function entryCases(): iterable {
 		$writers = ['owner', 'manager', 'driver'];
 		foreach (array_keys(self::ENTRY_BODIES) as $kind) {
 			$adds = ["$kind#create" => Http::STATUS_CREATED];
@@ -693,6 +891,243 @@ class VehicleIdorTest extends TestCase {
 	}
 
 	/**
+	 * The booking routes by role and by whose booking it is: seeing takes `view`, booking `log`,
+	 * changing, cancelling or handing over your own `log` and anybody's `edit` (CONTEXT.md, Pool).
+	 * The booking is real, so a refusal is the gate's and not a lookup that missed.
+	 *
+	 * @dataProvider bookingMatrix
+	 */
+	public function testEachRoleActsOnTheBookingsItMay(string $route, string $role, string $booker, int $status, bool $ocs): void {
+		$this->ocs = $ocs;
+		$uuid = $this->vehicle->getUuid();
+		$this->grantEveryRole();
+		$who = self::HOLDERS[$role];
+		$booking = $this->pool->book(self::HOLDERS[$booker], $uuid, self::tomorrow());
+		$handover = ['odo' => 52000, 'at_off' => 120];
+		if ($route === 'booking#check_in' || $route === 'trip#create') {
+			$booking = $this->pool->checkOut(self::HOLDERS[$booker], $uuid, $booking['uuid'], $handover);
+		}
+		if ($route === 'trip#create') {
+			$booking = $this->pool->checkIn(self::HOLDERS[$booker], $uuid, $booking['uuid'], $handover);
+		}
+		$params = ['updated_at' => $booking['updated_at']];
+		// After the one booked above, so a create cannot be the 409 of a span taken.
+		$later = self::tomorrow(2);
+
+		$response = $this->through(fn (): Response => match ($route) {
+			'booking#index' => $this->booking($who, [])->index($uuid),
+			'booking#create' => $this->booking($who, $later)->create($uuid),
+			'booking#update' => $this->booking($who, $later + $params)->update($uuid, $booking['uuid']),
+			'booking#delete' => $this->booking($who, $params)->delete($uuid, $booking['uuid']),
+			'booking#check_out' => $this->booking($who, $handover)->checkOut($uuid, $booking['uuid']),
+			'booking#check_in' => $this->booking($who, $handover)->checkIn($uuid, $booking['uuid']),
+			// The trip logged from the booking, which takes the booking's rule on top of `log`.
+			'trip#create' => $this->trip($who, self::ENTRY_BODIES['trip'] + ['booking_uuid' => $booking['uuid']])->create($uuid),
+			default => $this->fail($route . ' has no arm in the booking matrix'),
+		});
+
+		$this->assertSame($status, $response->getStatus());
+		if ($status === Http::STATUS_FORBIDDEN) {
+			$this->assertSame([$booking], $this->pool->list(self::HOLDERS[$booker], $uuid, []));
+		}
+	}
+
+	/** @return iterable<string, list<mixed>> */
+	public static function bookingMatrix(): iterable {
+		return self::throughBothDoors(self::bookingCases());
+	}
+
+	/**
+	 * @return iterable<string, array{string, string, string, int}>
+	 */
+	private static function bookingCases(): iterable {
+		foreach (array_keys(self::HOLDERS) as $role) {
+			yield "booking#index by the $role" => ['booking#index', $role, 'owner', $role === 'stranger' ? Http::STATUS_FORBIDDEN : Http::STATUS_OK];
+			$logs = in_array($role, ['owner', 'manager', 'driver'], true);
+			yield "booking#create by the $role" => ['booking#create', $role, 'owner', $logs ? Http::STATUS_CREATED : Http::STATUS_FORBIDDEN];
+			foreach (['booking#update', 'booking#delete', 'booking#check_out', 'booking#check_in'] as $route) {
+				foreach (['owner', 'driver'] as $booker) {
+					$may = $role === 'owner' || $role === 'manager' || $role === $booker;
+					yield "$route by the $role on the {$booker}'s" => [$route, $role, $booker, $may ? Http::STATUS_OK : Http::STATUS_FORBIDDEN];
+				}
+			}
+			foreach (['owner', 'driver'] as $booker) {
+				$may = $role === 'owner' || $role === 'manager' || $role === $booker;
+				yield "trip#create from the {$booker}'s booking by the $role" => ['trip#create', $role, $booker, $may ? Http::STATUS_CREATED : Http::STATUS_FORBIDDEN];
+			}
+		}
+	}
+
+	/**
+	 * The paper routes by role and by the row the paper hangs on: the vehicle's own papers take
+	 * `edit`, a paper on an entry or a booking that row's rule (DocumentService::keeps()). Nobody
+	 * here has Files, so an attach the rule lets through fails at the file, where a real account
+	 * would get a 404: the refusal comes first. The detached paper is a real row.
+	 *
+	 * @dataProvider documentMatrix
+	 */
+	public function testEachRoleKeepsThePapersItMay(string $route, string $role, string $on, int $status, bool $ocs): void {
+		$this->ocs = $ocs;
+		$uuid = $this->vehicle->getUuid();
+		$vehicleId = (int)$this->vehicle->getId();
+		$this->grantEveryRole();
+		$who = self::HOLDERS[$role];
+		[$type, $author] = $on === 'vehicle' ? [null, null] : explode(' of the ', $on);
+		$linked = match ($type) {
+			null => null,
+			'booking' => $this->pool->book(self::HOLDERS[$author], $uuid, self::tomorrow())['uuid'],
+			default => $this->entered($type, self::HOLDERS[$author], false)[0],
+		};
+		$link = $type === null ? [] : ['linked_type' => $type, 'linked_uuid' => $linked];
+		$paper = new Document();
+		$paper->setVehicleId($vehicleId);
+		$paper->setFileId(1);
+		$paper->setKind('receipt');
+		$paper->setLinkedType($type);
+		$rows = $type === 'booking' ? \OCP\Server::get(BookingMapper::class) : \OCP\Server::get(EnergyMapper::class);
+		$paper->setLinkedId($type === null ? null : (int)$rows->findOnVehicle($vehicleId, (string)$linked)->getId());
+		$paper->setCreatedBy(self::OWNER);
+		// A restore needs a detached paper to bring back.
+		$paper->setDeletedAt($route === 'document#restore' ? time() : null);
+		$paper = \OCP\Server::get(DocumentMapper::class)->insert($paper);
+
+		try {
+			$response = $this->through(fn (): Response => match ($route) {
+				'document#create' => $this->document($who, ['file_id' => 1, 'kind' => 'receipt'] + $link)->create($uuid),
+				'document#delete' => $this->document($who, [])->delete($uuid, $paper->getUuid()),
+				'document#restore' => $this->document($who, [])->restore($uuid, $paper->getUuid()),
+				default => $this->fail($route . ' has no arm in the paper matrix'),
+			});
+		} catch (\Exception $e) {
+			// A private class, so by name: the server has no Files for a holder who is no account.
+			$this->assertSame([Http::STATUS_NOT_FOUND, 'OC\User\NoUserException'], [$status, $e::class]);
+			return;
+		}
+
+		$this->assertSame($status, $response->getStatus());
+		// A refused write leaves the paper as it was: live for a detach, detached for a restore.
+		$live = $route === 'document#restore' ? $status === Http::STATUS_OK : !($route === 'document#delete' && $status === Http::STATUS_OK);
+		$this->assertCount($live ? 1 : 0, $this->papers->list(self::OWNER, $uuid));
+	}
+
+	/**
+	 * Importing is `edit`: it writes many entries at once, other people's history among them, so a
+	 * driver's `log` does not cover it. Nobody here has Files, so whoever passes the gate fails at
+	 * the file, as an attach does in the paper matrix; ImportTest walks real accounts.
+	 *
+	 * @dataProvider importMatrix
+	 */
+	public function testOnlyAnEditorMayImport(string $route, string $role, int $status, bool $ocs): void {
+		$this->ocs = $ocs;
+		$this->grantEveryRole();
+
+		try {
+			$response = $this->through(fn (): Response => match ($route) {
+				'import#preview' => $this->importRoute(self::HOLDERS[$role], self::IMPORT_BODY)->preview($this->vehicle->getUuid()),
+				'import#import' => $this->importRoute(self::HOLDERS[$role], self::IMPORT_BODY)->import($this->vehicle->getUuid()),
+				'import#undo' => $this->importRoute(self::HOLDERS[$role], self::UNDO_BODY)->undo($this->vehicle->getUuid()),
+				default => $this->fail($route . ' has no arm in the import matrix'),
+			});
+		} catch (\Exception $e) {
+			$this->assertSame([Http::STATUS_NOT_FOUND, 'OC\User\NoUserException'], [$status, $e::class]);
+			return;
+		}
+
+		$this->assertSame($status, $response->getStatus());
+	}
+
+	/**
+	 * An undo reads no file: whoever passes the gate meets the entry that is not there, a 409.
+	 *
+	 * @return iterable<string, list<mixed>>
+	 */
+	public static function importMatrix(): iterable {
+		return self::throughBothDoors((static function (): iterable {
+			foreach (['import#preview' => Http::STATUS_NOT_FOUND, 'import#import' => Http::STATUS_NOT_FOUND, 'import#undo' => Http::STATUS_CONFLICT] as $route => $passed) {
+				foreach (array_keys(self::HOLDERS) as $role) {
+					$edits = $role === 'owner' || $role === 'manager';
+					yield "$route by the $role" => [$route, $role, $edits ? $passed : Http::STATUS_FORBIDDEN];
+				}
+			}
+		})());
+	}
+
+	/** @return iterable<string, list<mixed>> */
+	public static function documentMatrix(): iterable {
+		return self::throughBothDoors(self::documentCases());
+	}
+
+	/**
+	 * @return iterable<string, array{string, string, string, int}>
+	 */
+	private static function documentCases(): iterable {
+		foreach (array_keys(self::HOLDERS) as $role) {
+			$manages = $role === 'owner' || $role === 'manager';
+			foreach (['vehicle', 'energy of the owner', 'energy of the driver', 'booking of the owner', 'booking of the driver'] as $on) {
+				$may = $manages || str_ends_with($on, "of the $role");
+				yield "document#create on the $on by the $role" => ['document#create', $role, $on, $may ? Http::STATUS_NOT_FOUND : Http::STATUS_FORBIDDEN];
+				yield "document#delete on the $on by the $role" => ['document#delete', $role, $on, $may ? Http::STATUS_OK : Http::STATUS_FORBIDDEN];
+				yield "document#restore on the $on by the $role" => ['document#restore', $role, $on, $may ? Http::STATUS_OK : Http::STATUS_FORBIDDEN];
+			}
+		}
+	}
+
+	/**
+	 * A booking logged twice is a 409 naming it; one on another vehicle is not found, the way a
+	 * trip's uuid on another vehicle is, so the answer tells nobody which bookings exist.
+	 */
+	public function testATripFromABookingIsTiedOnceAndOnlyOnItsVehicle(): void {
+		$uuid = $this->vehicle->getUuid();
+		$handover = ['odo' => 52000, 'at_off' => 120];
+		$booking = $this->pool->book(self::OWNER, $uuid, self::tomorrow());
+		$this->pool->checkOut(self::OWNER, $uuid, $booking['uuid'], $handover);
+		$this->pool->checkIn(self::OWNER, $uuid, $booking['uuid'], $handover);
+		$body = self::ENTRY_BODIES['trip'] + ['booking_uuid' => $booking['uuid']];
+		$this->assertSame(Http::STATUS_CREATED, $this->trip(self::OWNER, $body)->create($uuid)->getStatus());
+
+		$again = $this->trip(self::OWNER, $body)->create($uuid);
+
+		$this->assertSame(Http::STATUS_CONFLICT, $again->getStatus());
+		$this->assertSame($booking['uuid'], $again->getData()['booking']['uuid']);
+		$other = $this->service->create(self::OWNER, ['plate' => 'HH-ZZ 10']);
+		$this->assertSame(Http::STATUS_NOT_FOUND, $this->trip(self::OWNER, $body)->create($other->getUuid())->getStatus());
+	}
+
+	/**
+	 * A booking over another is a 409 that names who has the car and when, so the sheet can say so
+	 * without a second read.
+	 */
+	public function testABookingOverAnotherIsAConflictNamingIt(): void {
+		$uuid = $this->vehicle->getUuid();
+		$this->grantEveryRole();
+		$held = $this->pool->book(self::CODRIVER, $uuid, self::tomorrow());
+
+		$response = $this->booking(self::OWNER, self::tomorrow())->create($uuid);
+
+		$this->assertSame(Http::STATUS_CONFLICT, $response->getStatus());
+		$this->assertSame($held['uuid'], $response->getData()['booking']['uuid']);
+		$this->assertSame(self::CODRIVER, $response->getData()['booking']['user_name']);
+		$this->assertSame('booked', $response->getData()['booking']['state']);
+	}
+
+	/** Taking a car that is still out is a 409 naming who has it: "still with …". */
+	public function testACheckOutWhileTheCarIsOutIsAConflictNamingWhoHasIt(): void {
+		$uuid = $this->vehicle->getUuid();
+		$this->grantEveryRole();
+		$handover = ['odo' => 52000, 'at_off' => 120];
+		$theirs = $this->pool->book(self::CODRIVER, $uuid, self::tomorrow());
+		$this->pool->checkOut(self::CODRIVER, $uuid, $theirs['uuid'], $handover);
+		$mine = $this->pool->book(self::OWNER, $uuid, self::tomorrow(2));
+
+		$response = $this->booking(self::OWNER, $handover)->checkOut($uuid, $mine['uuid']);
+
+		$this->assertSame(Http::STATUS_CONFLICT, $response->getStatus());
+		$this->assertSame($theirs['uuid'], $response->getData()['booking']['uuid']);
+		$this->assertSame(self::CODRIVER, $response->getData()['booking']['user_name']);
+		$this->assertSame('out', $response->getData()['booking']['state']);
+	}
+
+	/**
 	 * The vehicle JSON says what each role may, on the single route and the list alike, so the
 	 * screen can hide by it; a stranger gets neither.
 	 */
@@ -700,9 +1135,9 @@ class VehicleIdorTest extends TestCase {
 		$uuid = $this->vehicle->getUuid();
 		$this->grantEveryRole();
 		$expected = [
-			'owner' => ['view', 'log', 'edit', 'delete', 'own'],
-			'manager' => ['view', 'log', 'edit', 'delete'],
-			'driver' => ['view', 'log'],
+			'owner' => ['view', 'log', 'edit', 'delete', 'own', 'book'],
+			'manager' => ['view', 'log', 'edit', 'delete', 'book'],
+			'driver' => ['view', 'log', 'book'],
 			'viewer' => ['view'],
 		];
 
@@ -723,6 +1158,50 @@ class VehicleIdorTest extends TestCase {
 		$stranger = $this->controller(self::STRANGER, []);
 		$this->assertSame(Http::STATUS_FORBIDDEN, $stranger->show($uuid)->getStatus());
 		$this->assertNotContains($uuid, $this->uuidsIn($stranger->index()));
+	}
+
+	/** A laid-up car takes no booking, so nobody is offered one; the rest of `may` stands. */
+	public function testALaidUpVehicleSaysNobodyBooksIt(): void {
+		$uuid = $this->vehicle->getUuid();
+		$this->grantEveryRole();
+		$laidUp = $this->service->update(self::OWNER, $uuid, $this->vehicle->getUpdatedAt(), ['lifecycle' => 'laid_up']);
+		$this->assertSame(['view', 'log', 'edit', 'delete', 'own'], $laidUp->jsonSerialize()['may']);
+
+		$controller = $this->controller(self::HOLDERS['driver'], []);
+		$shown = $controller->show($uuid)->getData();
+		$this->assertInstanceOf(Vehicle::class, $shown);
+		$this->assertSame(['view', 'log'], $shown->jsonSerialize()['may']);
+	}
+
+	/**
+	 * Each timeline row says what the reader may do to that Entry, on the page and on the single
+	 * read alike, so the screen offers edit and delete only where the server would take them.
+	 */
+	public function testEachTimelineRowSaysWhatTheReaderMayDoToIt(): void {
+		$uuid = $this->vehicle->getUuid();
+		$this->grantEveryRole();
+		$entries = [
+			'owner' => $this->entered('expense', self::OWNER, false)[0],
+			'driver' => $this->entered('expense', self::CODRIVER, false)[0],
+		];
+		$both = ['edit', 'delete'];
+		$expected = [
+			'owner' => ['owner' => $both, 'driver' => $both],
+			'manager' => ['owner' => $both, 'driver' => $both],
+			'driver' => ['owner' => [], 'driver' => $both],
+			'viewer' => ['owner' => [], 'driver' => []],
+		];
+
+		foreach ($expected as $role => $byAuthor) {
+			$timeline = $this->timeline(self::HOLDERS[$role], []);
+			$rows = json_decode((string)json_encode($timeline->index($uuid)->getData()['rows']), true);
+			$mayOf = array_column(array_map(static fn (array $row): array => [$row['expense']['uuid'], $row['may']], $rows), 1, 0);
+			foreach ($byAuthor as $author => $may) {
+				$this->assertSame($may, $mayOf[$entries[$author]] ?? null, "page, $role on the {$author}'s");
+				$one = json_decode((string)json_encode($timeline->show($uuid, 'expense', $entries[$author])->getData()), true);
+				$this->assertSame($may, $one['may'], "show, $role on the {$author}'s");
+			}
+		}
 	}
 
 	private function grantEveryRole(): void {

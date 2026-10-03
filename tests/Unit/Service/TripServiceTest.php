@@ -23,6 +23,7 @@ use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Jurisdiction\IJurisdiction;
 use OCA\NextFleet\Jurisdiction\ILogbookRules;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
+use OCA\NextFleet\Service\BookingService;
 use OCA\NextFleet\Service\Gaps;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\TripService;
@@ -351,6 +352,7 @@ class TripServiceTest extends TestCase {
 			$this->clock(),
 			new Gaps($this->tripMapper, $this->readingMapper),
 			$this->vehicles,
+			$this->createMock(BookingService::class),
 			$this->db,
 		);
 	}

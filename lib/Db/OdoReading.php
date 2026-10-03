@@ -31,6 +31,8 @@ use OCP\DB\Types;
  * @method void setSourceType(string $sourceType)
  * @method int|null getSourceId()
  * @method void setSourceId(?int $sourceId)
+ *
+ * @psalm-import-type NextFleetReading from \OCA\NextFleet\ResponseDefinitions
  */
 class OdoReading extends BaseEntity implements \JsonSerializable {
 	/**
@@ -60,6 +62,13 @@ class OdoReading extends BaseEntity implements \JsonSerializable {
 	protected string $sourceType = '';
 	protected ?int $sourceId = null;
 	protected ?string $counter = null;
+
+	/**
+	 * The uuid of the Entry `source_id` names, so a client can tie the Reading to it. Not a
+	 * column: looked up for a page at once (OdoReadingMapper::nameSources()), and private so the
+	 * entity's magic setter never marks it for an INSERT. Null for an Odometer Entry.
+	 */
+	private ?string $sourceUuid = null;
 
 	public function __construct() {
 		parent::__construct();
@@ -99,11 +108,20 @@ class OdoReading extends BaseEntity implements \JsonSerializable {
 		$this->setter('flagged', [$flagged]);
 	}
 
+	public function getSourceUuid(): ?string {
+		return $this->sourceUuid;
+	}
+
+	public function setSourceUuid(?string $sourceUuid): void {
+		$this->sourceUuid = $sourceUuid;
+	}
+
 	/**
-	 * The wire form is the column names, as it is for a vehicle. `flagged` goes out as a real
-	 * boolean: the timeline asks the follow-up question off it (docs/ui.md).
+	 * The wire form is the column names, as it is for a vehicle, and `source_uuid` beside them.
+	 * `flagged` goes out as a real boolean: the timeline asks the follow-up question off it
+	 * (docs/ui.md).
 	 *
-	 * @return array<string, mixed>
+	 * @return NextFleetReading
 	 */
 	public function jsonSerialize(): array {
 		return [
@@ -116,6 +134,7 @@ class OdoReading extends BaseEntity implements \JsonSerializable {
 			'flagged' => $this->getFlagged(),
 			'source_type' => $this->sourceType,
 			'source_id' => $this->sourceId,
+			'source_uuid' => $this->sourceUuid,
 			'counter' => $this->getCounter(),
 			'created_at' => $this->createdAt,
 			'updated_at' => $this->updatedAt,

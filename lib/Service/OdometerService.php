@@ -34,6 +34,13 @@ class OdometerService {
 	 */
 	private const READING = 'reading';
 
+	/**
+	 * The chains a batch() has written to and not settled yet; null outside one.
+	 *
+	 * @var array<OdoReading::MAIN|OdoReading::SECOND, true>|null
+	 */
+	private ?array $unsettled = null;
+
 	public function __construct(
 		private OdoReadingMapper $readings,
 		private VehicleMapper $vehicles,
@@ -54,28 +61,62 @@ class OdometerService {
 	public function record(string $userId, string $vehicleUuid, array $fields): OdoReading {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
+		// Retried for the reason TripService::record() gives. The replay builds a fresh row.
+		return $this->atomicRetry(function () use ($vehicle, $userId, $fields): OdoReading {
+			// Held before the distance is counted from the chain, as settle() asks.
+			$this->vehicles->hold((int)$vehicle->getId());
+
+			return $this->add($vehicle, $userId, $fields);
+		}, $this->db);
+	}
+
+	/**
+	 * What record() writes, for a caller that has reached the vehicle and holds it, as
+	 * EnergyService::add() is.
+	 *
+	 * @param array<string, mixed> $fields
+	 * @throws \InvalidArgumentException if a field is not what its column holds
+	 * @throws \OCP\DB\Exception
+	 */
+	public function add(Vehicle $vehicle, string $userId, array $fields): OdoReading {
 		$readAt = Field::count('read_at', $fields['read_at'] ?? null);
 		$readAtOff = Field::offset('read_at_off', $fields['read_at_off'] ?? null);
 		$counter = self::counterOf($vehicle, $fields['counter'] ?? null);
+		[$value, $origin] = $this->valueOf((int)$vehicle->getId(), $counter, $readAt, $fields);
 
-		// Retried for the reason TripService::record() gives. The replay builds a fresh row.
-		return $this->atomicRetry(function () use ($vehicle, $userId, $readAt, $readAtOff, $counter, $fields): OdoReading {
-			// Held before the distance is counted from the chain, as settle() asks.
-			$this->vehicles->hold((int)$vehicle->getId());
-			[$value, $origin] = $this->valueOf((int)$vehicle->getId(), $counter, $readAt, $fields);
+		return $this->write($vehicle, $userId, $readAt, $readAtOff, $value, $origin, $counter, OdoReading::MANUAL, null);
+	}
 
-			return $this->write(
-				$vehicle,
-				$userId,
-				$readAt,
-				$readAtOff,
-				$value,
-				$origin,
-				$counter,
-				OdoReading::MANUAL,
-				null,
-			);
-		}, $this->db);
+	/**
+	 * Runs many add() and followEntry() writes on one vehicle and settles each chain they touched
+	 * once, after the last (docs/architecture.md#import). The Readings handed back meanwhile are as
+	 * inserted, their flags not yet decided; update() and restore() cannot run inside, since they
+	 * pick their row out of a settled chain.
+	 *
+	 * Inside the transaction that holds the vehicle, so nobody reads a chain left unsettled. A
+	 * write that throws settles nothing; the rollback takes it.
+	 *
+	 * @template T
+	 * @param \Closure(): T $writes
+	 * @return T
+	 * @throws \OCP\DB\Exception
+	 */
+	public function batch(Vehicle $vehicle, \Closure $writes): mixed {
+		$this->unsettled = [];
+		try {
+			$done = $writes();
+			// Filled by the writes, which Psalm does not follow into the closure.
+			/** @var array<OdoReading::MAIN|OdoReading::SECOND, true> $unsettled */
+			$unsettled = $this->unsettled;
+			$chains = array_keys($unsettled);
+		} finally {
+			$this->unsettled = null;
+		}
+		foreach ($chains as $counter) {
+			$this->settle($vehicle, $counter);
+		}
+
+		return $done;
 	}
 
 	/**
@@ -137,11 +178,24 @@ class OdometerService {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$reading = self::entry($this->readings->findOnVehicle((int)$vehicle->getId(), $readingUuid));
 			$this->fleet->change($userId, VehicleAccess::DELETE, $vehicle, $reading->getCreatedBy());
-			$deleted = $this->readings->softDelete($reading, $expectedUpdatedAt);
-			$this->settle($vehicle, $deleted->getCounter());
 
-			return $deleted;
+			return $this->remove($vehicle, $reading, $expectedUpdatedAt);
 		}, $this->db);
+	}
+
+	/**
+	 * What delete() writes, for a caller that holds the vehicle and found the Odometer Entry on it,
+	 * as add() is. Inside a batch() too: unlike restore(), it picks nothing out of the chain.
+	 *
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException if the Reading is no Odometer Entry
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if it has changed since
+	 * @throws \OCP\DB\Exception
+	 */
+	public function remove(Vehicle $vehicle, OdoReading $reading, int $expectedUpdatedAt): OdoReading {
+		$deleted = $this->readings->softDelete(self::entry($reading), $expectedUpdatedAt);
+		$this->settle($vehicle, $deleted->getCounter());
+
+		return $deleted;
 	}
 
 	/**
@@ -417,6 +471,11 @@ class OdometerService {
 		$reading->setCounter($counter);
 
 		$written = $this->readings->insert($reading);
+		if ($this->unsettled !== null) {
+			$this->unsettled[$counter] = true;
+
+			return $written;
+		}
 
 		return $this->restate($vehicle, $counter, $written->getUuid());
 	}
@@ -451,7 +510,8 @@ class OdometerService {
 	}
 
 	/**
-	 * One vehicle's odometer, oldest first - the order the timeline reads in (docs/ui.md).
+	 * One vehicle's odometer, oldest first - the order the timeline reads in (docs/ui.md) - each
+	 * Reading naming the Entry that wrote it.
 	 *
 	 * @return list<OdoReading>
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not see this vehicle
@@ -460,8 +520,10 @@ class OdometerService {
 	 */
 	public function list(string $userId, string $vehicleUuid): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::VIEW, $vehicleUuid);
+		$readings = $this->readings->findAllForVehicle((int)$vehicle->getId());
+		$this->readings->nameSources($readings);
 
-		return $this->readings->findAllForVehicle((int)$vehicle->getId());
+		return $readings;
 	}
 
 	/**
@@ -497,6 +559,8 @@ class OdometerService {
 	 * its neighbours goes with it. One indexed query per entry is what a vehicle's lifetime of
 	 * readings costs.
 	 *
+	 * Inside a batch() it only notes the chain, which the batch settles at its end.
+	 *
 	 * What is settled is the flags and the cache, never a value: a derived row whose base has just
 	 * been voided keeps the number it was counted with, because rule 6 corrects no derived value
 	 * and a recomputed one would be a counter nobody ever read. The kilometres that journey
@@ -507,6 +571,11 @@ class OdometerService {
 	 * @throws \OCP\DB\Exception
 	 */
 	private function settle(Vehicle $vehicle, string $counter): array {
+		if ($this->unsettled !== null) {
+			$this->unsettled[$counter] = true;
+
+			return [];
+		}
 		$readings = $this->readings->findChain((int)$vehicle->getId(), $counter);
 
 		foreach ($this->flags($readings) as $index => $flagged) {

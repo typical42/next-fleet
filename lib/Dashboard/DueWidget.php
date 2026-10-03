@@ -12,6 +12,7 @@ use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\Reminder;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Notification\ReminderWords;
+use OCA\NextFleet\Notification\VehicleWords;
 use OCA\NextFleet\Service\ReminderService;
 use OCP\Dashboard\IAPIWidgetV2;
 use OCP\Dashboard\IIconWidget;
@@ -89,18 +90,11 @@ class DueWidget implements IAPIWidgetV2, IIconWidget {
 	private function item(Vehicle $vehicle, array $reminder): WidgetItem {
 		/** @var array{template_key: ?string, title: ?string, state: string} $reminder */
 		return new WidgetItem(
-			$this->l->t('%1$s: %2$s', [$this->nameOf($vehicle),ReminderWords::title($this->l, $reminder)]),
+			$this->l->t('%1$s: %2$s', [VehicleWords::name($this->l, $vehicle), ReminderWords::title($this->l, $reminder)]),
 			$this->stateWord($reminder['state']),
 			$this->urls->linkToRouteAbsolute('nextfleet.page.index', ['vehicle' => $vehicle->getUuid()]),
 			$this->image('light-' . self::light($reminder['state']) . '.svg'),
 		);
-	}
-
-	/** src/utils/format.js `nameOf`. */
-	private function nameOf(Vehicle $vehicle): string {
-		$made = trim(($vehicle->getManufacturer() ?? '') . ' ' . ($vehicle->getModel() ?? ''));
-
-		return ($vehicle->getPlate() ?? '') !== '' ? (string)$vehicle->getPlate() : ($made !== '' ? $made : $this->l->t('Unnamed vehicle'));
 	}
 
 	/** src/utils/reminders.js `light`. */

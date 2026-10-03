@@ -1,0 +1,5 @@
+Date,Odometer,FuelConsumed,Cost,FuelEconomy,IsFillToFull,MissedFuelUp,StartingSoc,EndingSoc,Notes,Tags,ExtraFields,Files
+3/14/2026 12:00:00 AM,52000,10.5,42.50,,True,False,,,Highway,roadtrip,,
+3/28/2026 12:00:00 AM,52310,9.8,39.20,31.6,False,False,,,,,,
+4/2/2026 12:00:00 AM,52600,,40.00,,True,False,,,,,,
+4/31/2026 12:00:00 AM,52900,10.1,41.00,,True,True,,,,,,

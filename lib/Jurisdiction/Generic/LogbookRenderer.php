@@ -123,7 +123,9 @@ class LogbookRenderer implements IReportRenderer {
 			$this->l->t('To'),
 			$this->l->t('Purpose'), $this->l->t('Odometer start'), $this->l->t('Odometer end'),
 			$this->unit($report) === 'h' ? $this->l->t('Hours') : $this->l->t('Kilometres'),
-			$this->l->t('Category'), $this->l->t('Note')];
+			$this->l->t('Category'),
+			...($report->enteredBy === null ? [] : [$this->l->t('Entered by')]),
+			$this->l->t('Note')];
 		$html = '<table><thead><tr>';
 		foreach ($columns as $column) {
 			$html .= '<th scope="col">' . $this->text($column) . '</th>';
@@ -136,13 +138,14 @@ class LogbookRenderer implements IReportRenderer {
 		}
 
 		foreach ($report->trips as $line) {
-			$html .= $this->line($line['trip']);
+			$html .= $this->line($line['trip'], $report->enteredBy);
 		}
 
 		return $html . '</tbody></table>';
 	}
 
-	private function line(Trip $trip): string {
+	/** @param ?array<string, string> $enteredBy */
+	private function line(Trip $trip, ?array $enteredBy): string {
 		$started = $this->local($trip->getStartedAt(), $trip->getStartedAtOff());
 		$ended = $this->local($trip->getEndedAt(), $trip->getEndedAtOff());
 		$sameDay = $this->date($started) === $this->date($ended);
@@ -157,6 +160,7 @@ class LogbookRenderer implements IReportRenderer {
 			['number', $this->count($trip->getEndOdo())],
 			['number', $this->count($trip->kilometres())],
 			['', $this->text($this->category($trip->getCategory()))],
+			...($enteredBy === null ? [] : [['', $this->text($enteredBy[$trip->getCreatedBy()] ?? $trip->getCreatedBy())]]),
 			['note', $this->notes($trip)],
 		];
 

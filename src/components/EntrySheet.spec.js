@@ -17,7 +17,7 @@ import { flushPromises, shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ConflictError, deleteEntry, energyPrefill, expensePrefill, getVehicle, listReminders, maintenancePrefill, readEntry, recordEnergy, recordExpense, recordMaintenance, recordReading, recordTrip, tripPrefill, updateEntry } from '../services/api.js'
+import { BookingConflictError, ConflictError, deleteEntry, energyPrefill, expensePrefill, getVehicle, listReminders, maintenancePrefill, readEntry, recordEnergy, recordExpense, recordMaintenance, recordReading, recordTrip, tripPrefill, updateEntry } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
 import EntrySheet from './EntrySheet.vue'
 
@@ -1008,7 +1008,7 @@ describe('the entry sheet on an Entry from the timeline', () => {
 		is_dc: false,
 		location_kind: null,
 	}
-	const FILL_ROW = { type: 'energy', occurred_at: 1788391800, occurred_at_off: 120, energy: FILL, readings: [], flags: [] }
+	const FILL_ROW = { type: 'energy', occurred_at: 1788391800, occurred_at_off: 120, energy: FILL, readings: [], flags: [], may: ['edit', 'delete'] }
 
 	/**
 	 * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted sheet
@@ -1136,6 +1136,14 @@ describe('the entry sheet on an Entry from the timeline', () => {
 		expect(wrapper.emitted('close')).toHaveLength(1)
 	})
 
+	/** The row says what the reader may do to it (TimelineService::withMay()); the sheet offers no more. */
+	it('offers no delete on a row that does not carry it', () => {
+		const wrapper = sheet(TRUCK, { ...FILL_ROW, may: ['edit'] })
+
+		expect(button(wrapper, 'Delete')).toBeUndefined()
+		expect(saveButton(wrapper)).toBeDefined()
+	})
+
 	/**
 	 * Under Logbook Mode a trip is voided, not deleted (docs/features.md#logbook-mode); the button
 	 * says what the click does. The journey opens as it was stated - here, as a distance.
@@ -1157,7 +1165,7 @@ describe('the entry sheet on an Entry from the timeline', () => {
 			partner: 'ACME',
 			category: 'private',
 		}
-		const wrapper = sheet({ ...VEHICLE, logbook_mode: true }, { type: 'trip', occurred_at: 1788391800, occurred_at_off: 120, trip, reading: null })
+		const wrapper = sheet({ ...VEHICLE, logbook_mode: true }, { type: 'trip', occurred_at: 1788391800, occurred_at_off: 120, trip, reading: null, may: ['edit', 'delete'] })
 
 		expect(button(wrapper, 'Void trip')).toBeDefined()
 		expect(button(wrapper, 'Delete')).toBeUndefined()
@@ -1165,5 +1173,144 @@ describe('the entry sheet on an Entry from the timeline', () => {
 		expect(field(wrapper, 'Distance').props('modelValue')).toBe('82')
 		expect(field(wrapper, 'Destination').props('modelValue')).toBe('Augsburg')
 		expect(dropdown(wrapper, 'Category').props('modelValue').id).toBe('private')
+	})
+})
+
+describe('the entry sheet on a returned booking', () => {
+	const BACK = {
+		uuid: 'b-8',
+		state: 'returned',
+		purpose: 'Client visit',
+		trip_draft: { started_at: 1790935200, started_at_off: 120, ended_at: 1790940000, ended_at_off: 120, start_odo: 52000, end_odo: 52140, purpose: 'Client visit' },
+		may: ['log_trip'],
+	}
+
+	/**
+	 * @return {import('@vue/test-utils').VueWrapper} the sheet, opened on the trip of BACK
+	 */
+	function fromBooking() {
+		return shallowMount(EntrySheet, {
+			props: { vehicle: VEHICLE, booking: BACK },
+			global: {
+				renderStubDefaultSlot: true,
+				stubs: { NcDialog: { template: '<div><slot /><slot name="actions" /></div>' } },
+			},
+		})
+	}
+
+	/**
+	 * The handover is the trip's evidence; whether it was business is the driver's word, so the
+	 * category is the one thing not chosen for them (docs/features.md#logbook-mode).
+	 */
+	it('opens on the trip the handover describes, and leaves the category to the driver', () => {
+		const wrapper = fromBooking()
+
+		expect(chooser(wrapper, 'Entry type')).toBeUndefined()
+		expect(moment(wrapper, 'Departure').props('modelValue')).toEqual(new Date(1790935200 * 1000))
+		expect(moment(wrapper, 'Arrival').props('modelValue')).toEqual(new Date(1790940000 * 1000))
+		expect(field(wrapper, 'Start counter').props('modelValue')).toBe('52000')
+		expect(field(wrapper, 'End counter').props('modelValue')).toBe('52140')
+		expect(field(wrapper, 'Purpose').props('modelValue')).toBe('Client visit')
+		expect(dropdown(wrapper, 'Category').props('modelValue')).toBeNull()
+	})
+
+	it('asks for the category before it writes', async () => {
+		const wrapper = fromBooking()
+
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(recordTrip).not.toHaveBeenCalled()
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toContain('category')
+	})
+
+	it('writes the trip tied to the booking', async () => {
+		const wrapper = fromBooking()
+
+		await dropdown(wrapper, 'Category').vm.$emit('update:modelValue', { id: 'business', label: 'Business' })
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(recordTrip).toHaveBeenCalledWith('v-1', expect.objectContaining({
+			booking_uuid: 'b-8',
+			started_at: 1790935200,
+			ended_at: 1790940000,
+			start_odo: 52000,
+			end_odo: 52140,
+			category: 'business',
+		}))
+		expect(wrapper.emitted('close')?.length).toBe(1)
+	})
+
+	/** Logged meanwhile, in another tab or by a manager: the second trip is refused, and the sheet says why. */
+	it('says so when the booking has its trip already', async () => {
+		vi.mocked(recordTrip).mockRejectedValue(new BookingConflictError('the booking has its trip already', /** @type {any} */ ({ uuid: 'b-8', state: 'returned' })))
+		const wrapper = fromBooking()
+
+		await dropdown(wrapper, 'Category').vm.$emit('update:modelValue', { id: 'private', label: 'Private' })
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toContain('logged as a trip already')
+		expect(wrapper.emitted('close')).toBeUndefined()
+	})
+
+	/** Not back yet is not something the row offers the trip for; the server's words say what happened. */
+	it('passes on any other refusal of the booking as the server words it', async () => {
+		vi.mocked(recordTrip).mockRejectedValue(new BookingConflictError('only a booking whose car is back is logged as a trip', /** @type {any} */ ({ uuid: 'b-8', state: 'out' })))
+		const wrapper = fromBooking()
+
+		await dropdown(wrapper, 'Category').vm.$emit('update:modelValue', { id: 'private', label: 'Private' })
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('only a booking whose car is back is logged as a trip')
+	})
+})
+
+describe('the entry sheet on a receipt from the inbox', () => {
+	/** When the phone saved the photo: 15 January 2026, 08:30 local. */
+	const SAVED = Math.floor(new Date(2026, 0, 15, 8, 30).getTime() / 1000)
+
+	/**
+	 * @param {'energy'|'maintenance'|'expense'} kind - the cost the receipt is logged as
+	 * @return {import('@vue/test-utils').VueWrapper} the sheet, opened from that receipt
+	 */
+	function fromReceipt(kind) {
+		return shallowMount(EntrySheet, {
+			props: { vehicle: TRUCK, receipt: { kind, at: SAVED } },
+			global: {
+				renderStubDefaultSlot: true,
+				stubs: { NcDialog: { template: '<div><slot /><slot name="actions" /></div>' } },
+			},
+		})
+	}
+
+	it('opens on the cost it was asked for, dated when the file was saved', () => {
+		const wrapper = fromReceipt('maintenance')
+
+		expect(chooser(wrapper, 'Entry type')).toBeUndefined()
+		expect(field(wrapper, 'Title')).toBeDefined()
+		expect(moment(wrapper, 'Date').props('modelValue')).toEqual(new Date(SAVED * 1000))
+	})
+
+	/** The VAT rate is the one on the receipt's day, not today's. */
+	it('asks for the prefill of that day', async () => {
+		fromReceipt('energy')
+		await flushPromises()
+
+		expect(energyPrefill).toHaveBeenCalledWith('v-1', SAVED, -new Date(SAVED * 1000).getTimezoneOffset())
+	})
+
+	/** The screen behind attaches the file to it, so it is told which one was written. */
+	it('tells which entry it wrote', async () => {
+		vi.mocked(recordExpense).mockResolvedValue({ uuid: 'x-5', amount: 4250 })
+		const wrapper = fromReceipt('expense')
+
+		await field(wrapper, 'Amount').vm.$emit('update:modelValue', '42,50')
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(wrapper.emitted('saved')).toEqual([[{ uuid: 'x-5', amount: 4250 }]])
 	})
 })

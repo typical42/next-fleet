@@ -27,6 +27,7 @@ use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCA\NextFleet\Service\Completeness;
 use OCA\NextFleet\Service\ConsumptionService;
 use OCA\NextFleet\Service\EnergyService;
+use OCA\NextFleet\Service\EnteredBy;
 use OCA\NextFleet\Service\Gaps;
 use OCA\NextFleet\Service\TimelineService;
 use OCA\NextFleet\Service\VehicleAccess;
@@ -217,6 +218,8 @@ class TimelineServiceTest extends TestCase {
 			$this->completeness(),
 			new Gaps($this->trips, $this->readings),
 			new ConsumptionService($this->energy, $this->readings),
+			// Who entered a row is TimelineTest's: it reads accounts and grants.
+			$this->createMock(EnteredBy::class),
 		);
 	}
 

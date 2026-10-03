@@ -19,6 +19,7 @@ use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\ReminderService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Utility\ITimeFactory;
+use OCP\IUserManager;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Console\Tester\CommandTester;
 
@@ -26,11 +27,12 @@ use Symfony\Component\Console\Tester\CommandTester;
  * The demo fleet, written through the real services and read back as the vehicle header reads
  * it: the costs it seeds have to add up to the figures the screenshots and the E2E expect.
  *
- * It seeds `admin`, the account the E2E logs in as, so it leaves the fleet the suite would
- * otherwise have to put back (docs/development.md#testing).
+ * It seeds an account of its own, which a real one has to be: the papers go into its Files.
  */
 class SeedTest extends TestCase {
-	private const USER = 'admin';
+	use Accounts;
+
+	private const USER = 'nextfleet-test-seed';
 
 	/** @var array<string, array<string, mixed>> the header's figures over the last year, by plate */
 	private static array $kpis = [];
@@ -42,6 +44,8 @@ class SeedTest extends TestCase {
 	private static string $today = '';
 
 	public static function setUpBeforeClass(): void {
+		self::deleteAccounts([self::USER]);
+		\OCP\Server::get(IUserManager::class)->createUser(self::USER, bin2hex(random_bytes(16)));
 		$container = (new Application())->getContainer();
 		$tester = new CommandTester($container->get(SeedCommand::class));
 		self::assertSame(0, $tester->execute(['user' => self::USER]), $tester->getDisplay());
@@ -65,6 +69,10 @@ class SeedTest extends TestCase {
 			));
 			self::$reminders[$plate] = $reminders->list(self::USER, $vehicle->getUuid());
 		}
+	}
+
+	public static function tearDownAfterClass(): void {
+		self::deleteAccounts([self::USER]);
 	}
 
 	/**

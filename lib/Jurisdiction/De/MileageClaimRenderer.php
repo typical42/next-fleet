@@ -13,7 +13,8 @@ use OCA\NextFleet\Jurisdiction\MileageClaim;
 
 /**
  * The business kilometres of one year at the flat rate, as the browser prints them: one line per
- * trip, the sum beneath, and the statute the rate comes from.
+ * trip, the sum beneath, and the statute the rate comes from. The trips are the reader's own, and
+ * the page says so, since on a shared car the Fahrtenbuch holds more.
  *
  * Written in German whatever the reader's language, for the reason `FahrtenbuchRenderer` gives.
  */
@@ -50,7 +51,7 @@ class MileageClaimRenderer implements IClaimRenderer {
 			. '<header><h1>Fahrtkosten für Dienstfahrten ' . $claim->year . '</h1><dl>'
 			. '<dt>Kennzeichen</dt><dd>' . $this->text($vehicle->getPlate()) . '</dd>'
 			. ($name === '' ? '' : '<dt>Fahrzeug</dt><dd>' . $this->text($name) . '</dd>')
-			. '</dl></header>'
+			. '</dl><p>Nur Fahrten, die Sie eingetragen haben.</p></header>'
 			. $this->table($claim)
 			. $this->notes($claim)
 			. $this->footer($claim)
@@ -67,7 +68,7 @@ class MileageClaimRenderer implements IClaimRenderer {
 		$html .= '</tr></thead><tbody>';
 
 		if ($claim->lines === []) {
-			return $html . '<tr><td colspan="' . count($columns) . '">Keine Dienstfahrten in ' . $claim->year . '.</td></tr></tbody></table>';
+			return $html . '<tr><td colspan="' . count($columns) . '">Keine Dienstfahrten in ' . $claim->year . ', die Sie eingetragen haben.</td></tr></tbody></table>';
 		}
 
 		foreach ($claim->lines as $line) {

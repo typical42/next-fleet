@@ -180,20 +180,55 @@ class CiWorkflowTest extends TestCase {
 	}
 
 	/**
-	 * The server job is the only one with a database, so both suites belong to it: without
-	 * the second the migration is never measured against a real schema, and postgres and
-	 * sqlite are never exercised at all.
+	 * The server job is the only one with a database, so every server suite belongs to it:
+	 * without the integration suite the migration is never measured against a real schema, and
+	 * postgres and sqlite are never exercised at all; without the API suite nothing signs in
+	 * with an app password the way a client does.
 	 */
-	public function testTheServerJobRunsBothTestSuites(): void {
-		$script = '';
-		foreach ((array)$this->job('server')['steps'] as $step) {
-			$script .= (string)($step['run'] ?? '') . "\n";
-		}
+	public function testTheServerJobRunsEveryTestSuite(): void {
+		$script = $this->script('server');
 
 		// The suite, not a prefix of the other one: `composer run test:integration` alone
 		// satisfies a bare `composer run test`.
 		$this->assertMatchesRegularExpression('/^composer run test$/m', $script);
 		$this->assertMatchesRegularExpression('/^composer run test:integration$/m', $script);
+		$this->assertMatchesRegularExpression('/^composer run test:api$/m', $script);
+	}
+
+	/**
+	 * The API suite speaks HTTP, and a checkout of the server is not a web server. The one it is
+	 * given must be up before the suite runs, or every case fails on a refused connection.
+	 */
+	public function testTheServerJobServesNextcloudBeforeTheApiSuite(): void {
+		$script = $this->script('server');
+
+		$serve = strpos($script, 'php -S localhost:8080');
+		$this->assertIsInt($serve, 'the server job starts no web server');
+		$this->assertLessThan(strpos($script, 'composer run test:api'), $serve);
+	}
+
+	/**
+	 * openapi.json is the contract a client is built against (docs/api.md). Generated from the
+	 * code, it drifts the moment somebody forgets to regenerate it, so CI regenerates it and fails
+	 * on any difference from the committed one.
+	 */
+	public function testTheStaticJobFailsOnAStaleOpenApiDocument(): void {
+		$script = $this->script('static');
+
+		$generate = strpos($script, "composer run openapi\n");
+		$this->assertIsInt($generate, 'the static job does not regenerate openapi.json');
+		$compare = strpos($script, 'git diff --exit-code -- openapi.json');
+		$this->assertIsInt($compare, 'the static job does not compare openapi.json');
+		$this->assertLessThan($compare, $generate);
+	}
+
+	private function script(string $job): string {
+		$script = '';
+		foreach ((array)$this->job($job)['steps'] as $step) {
+			$script .= (string)($step['run'] ?? '') . "\n";
+		}
+
+		return $script;
 	}
 
 	/**

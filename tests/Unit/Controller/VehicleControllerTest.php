@@ -23,9 +23,9 @@ use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The controller carries no rules (docs/adr/0006-one-api-surface-in-v1.md), so what is worth
- * testing is the translation: who is asking, what the request says, and which status the answer
- * gets.
+ * The controller carries no rules (docs/adr/0009-the-ocs-api-v1-is-the-public-contract.md), so
+ * what is worth testing is the translation: who is asking, what the request says, and which status
+ * the answer gets.
  */
 class VehicleControllerTest extends TestCase {
 	private const UUID = '0195e2f1-0000-4000-8000-000000000001';

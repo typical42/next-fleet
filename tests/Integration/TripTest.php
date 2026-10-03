@@ -353,6 +353,37 @@ class TripTest extends TestCase {
 	}
 
 	/**
+	 * A late restore under Logbook Mode moves the token like any restore - the trip's and its
+	 * Reading's, which a client asking what changed would otherwise never see come back - and the
+	 * void's token is spent. The trail still calls it late.
+	 */
+	public function testALateRestoreMovesTheTokenOfTheTripAndItsReading(): void {
+		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 131']);
+		$uuid = $vehicle->getUuid();
+		$this->underLogbookMode($vehicle);
+		$trip = $this->record($uuid, 1750000000, ['end_odo' => 120450]);
+		$voided = $this->service->delete(self::AUTHOR, $uuid, $trip->getUuid(), $trip->getUpdatedAt());
+		$spent = $voided->getUpdatedAt();
+
+		$back = $this->service->restore(self::AUTHOR, $uuid, $trip->getUuid(), $spent);
+
+		$this->assertGreaterThan($spent, $back->getUpdatedAt());
+		[$reading] = $this->odometer->list(self::AUTHOR, $uuid);
+		$this->assertGreaterThan($spent, $reading->getUpdatedAt());
+		$trail = $this->audit->findForEntity(Audit::TRIP, (int)$trip->getId());
+		$this->assertTrue(end($trail)->getDiffJson()['late']);
+		$this->expectException(StaleUpdateException::class);
+		$this->service->update(self::AUTHOR, $uuid, $trip->getUuid(), $spent, [
+			'started_at' => 1750000000,
+			'started_at_off' => 0,
+			'ended_at' => 1750005400,
+			'ended_at_off' => 0,
+			'end_odo' => 120460,
+			'category' => Trip::BUSINESS,
+		]);
+	}
+
+	/**
 	 * The trail of a trip that was voided and brought back: three rows, in the order they happened,
 	 * as the JSON column gave them back. An auditor reading the last one knows the trip stands.
 	 */

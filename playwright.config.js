@@ -18,8 +18,13 @@ const majors = [
 	{ name: 'nc31', baseURL: process.env.NEXTFLEET_URL_NC31 ?? 'http://localhost:8081', grepInvert: only34 },
 ]
 
+// The run's account (tests/e2e/accounts.js). Every worker loads this file again, so the runner
+// names it once and the workers inherit it with the environment.
+process.env.NEXTFLEET_E2E_USER ??= `nextfleet-e2e-${Date.now()}`
+
 export default defineConfig({
 	testDir: './tests/e2e',
+	globalSetup: './tests/e2e/accounts.js',
 	forbidOnly: Boolean(process.env.CI),
 	reporter: 'list',
 	// A freshly installed Nextcloud with an empty opcache, serving four browsers at once, takes

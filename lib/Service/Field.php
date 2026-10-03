@@ -120,4 +120,18 @@ final class Field {
 
 		return $minutes;
 	}
+
+	/**
+	 * An IANA zone. The backward-compatible names count too: browsers still report some zones by
+	 * them.
+	 *
+	 * @throws \InvalidArgumentException
+	 */
+	public static function zone(string $column, mixed $value): \DateTimeZone {
+		if (!is_string($value) || !in_array($value, \DateTimeZone::listIdentifiers(\DateTimeZone::ALL_WITH_BC), true)) {
+			throw new \InvalidArgumentException($column . ' is an IANA time zone');
+		}
+
+		return new \DateTimeZone($value);
+	}
 }

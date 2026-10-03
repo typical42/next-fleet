@@ -5,7 +5,7 @@
 
 import { expect, test } from '@playwright/test'
 
-import { api, appPage, audit, choice, login, open, opened, removeVehicles } from './app.js'
+import { api, appPage, audit, choice, login, open, opened, removeVehicles, tile } from './app.js'
 
 // Disjoint from every other file's prefix, as a substring too (tests/e2e/m2-slice.spec.js says why).
 const plates = 'M3-E2E-'
@@ -48,15 +48,6 @@ function fillUp(page, vehicle, fill) {
 		path: `/api/vehicles/${vehicle.uuid}/energy`,
 		body: { energy: vehicle.energy_types[0], filled_at_off: 0, total: 5100, vat_rate: 1900, full_tank: true, ...fill },
 	})
-}
-
-/**
- * @param {import('@playwright/test').Page} page - a page showing a vehicle
- * @param {string} label - the tile's term
- * @return {import('@playwright/test').Locator} the header tile of that name
- */
-function tile(page, label) {
-	return page.locator('.kpis .tile').filter({ has: page.getByRole('term').getByText(label, { exact: true }) })
 }
 
 test('a fill-up entered in the sheet moves the header', async ({ page }) => {

@@ -63,6 +63,11 @@ class RateProvider implements IRateProvider {
 		return 'https://www.umweltbundesamt.de/publikationen/co2-emissionsfaktoren-fuer-fossile-brennstoffe-0';
 	}
 
+	/** "Climate Change 28/2022", published June 2022 — read off the publication page 2026-10-03. */
+	public function emissionSourceYear(): ?int {
+		return 2022;
+	}
+
 	public function mileageRateAt(string $vehicleType, \DateTimeInterface $when): ?int {
 		return self::on(self::MILEAGE[$vehicleType] ?? [], $when);
 	}

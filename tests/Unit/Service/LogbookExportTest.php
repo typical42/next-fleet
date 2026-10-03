@@ -20,6 +20,7 @@ use OCA\NextFleet\Jurisdiction\IReportRenderer;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCA\NextFleet\Jurisdiction\LogbookReport;
 use OCA\NextFleet\Service\Completeness;
+use OCA\NextFleet\Service\EnteredBy;
 use OCA\NextFleet\Service\LogbookExport;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
@@ -141,7 +142,8 @@ class LogbookExportTest extends TestCase {
 			$this->logged[] = [(string)$message, $context];
 		});
 
-		return new LogbookExport($fleet, $trips, $audit, new Completeness($jurisdictions), $jurisdictions, $logger);
+		// Who entered what is tests/Integration/LogbookExportTest.php's: it reads accounts and grants.
+		return new LogbookExport($fleet, $trips, $audit, new Completeness($jurisdictions), $jurisdictions, $this->createMock(EnteredBy::class), $logger);
 	}
 
 	/** @param array<string, mixed> $row */

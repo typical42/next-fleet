@@ -12,11 +12,22 @@ import { add, api, appPage, audit, choice, login, open, opened, removeVehicles, 
 const plates = 'E2E-'
 
 // What the create sheet fills in, and what the vehicle screen must then say back. The grouping is
-// the admin session's locale rather than the app's choice (docs/ui.md#languages), and a run
+// the session's locale rather than the app's choice (docs/ui.md#languages), and a run
 // against a German session would read 148.500.
 const starting = '120000'
 const recorded = '148 500'
 const counter = '148,500 km'
+
+/**
+ * The overview, with a fleet or without one. The run's account holds only what the specs make, so
+ * the vehicle a test takes away may be its last, and an empty fleet has no "Vehicles" heading.
+ *
+ * @param {import('@playwright/test').Page} page - the app page
+ * @return {import('@playwright/test').Locator} the heading, or the empty state in its place
+ */
+function overview(page) {
+	return page.getByRole('heading', { name: 'Vehicles' }).or(page.getByText('No vehicles yet'))
+}
 
 test.beforeEach(async ({ page }) => {
 	await login(page)
@@ -108,7 +119,7 @@ test('a vehicle is edited from its own screen, and disposing of it takes it off 
 
 	// A disposed vehicle leaves the fleet, and its own screen has to go with it: the shell falls
 	// back to the overview rather than leaving a screen with nothing to leave it by (src/App.vue).
-	await expect(page.getByRole('heading', { name: 'Vehicles' })).toBeVisible()
+	await expect(overview(page)).toBeVisible()
 	await expect(row(page, plate)).toHaveCount(0)
 
 	// Four of the twenty writable columns, through the screen and back out of the database. The
@@ -193,7 +204,7 @@ test('a deleted vehicle comes back from the undo toast', async ({ page }) => {
 	// outlive both - it hangs beside the screens rather than under one (src/App.vue).
 	const toast = page.locator('.toast')
 	await expect(toast).toContainText(`${plate} was deleted.`)
-	await expect(page.getByRole('heading', { name: 'Vehicles' })).toBeVisible()
+	await expect(overview(page)).toBeVisible()
 	await expect(row(page, plate)).toHaveCount(0)
 
 	// The undo is checked against the token the delete answered with, and no other one is accepted.

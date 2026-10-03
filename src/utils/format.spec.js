@@ -4,7 +4,7 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { categoryWord, formatConsumption, formatCount, formatDecimal, formatDay, formatEnergyAmount, formatMoney, formatWallSide, fullMoment, formatMonth, formatOdometer, isoInstant, monthKey, nameOf, parseDay, parseDecimal, parseWhole, shortDate, subtitleOf } from './format.js'
+import { categoryWord, formatConsumption, formatCount, formatDecimal, formatDay, formatEnergyAmount, formatMoney, formatWallSide, fullMoment, formatMonth, formatOdometer, formatSpan, formatWhen, isoInstant, monthKey, nameOf, parseDay, parseDecimal, parseWhole, shortDate, subtitleOf } from './format.js'
 
 vi.mock('@nextcloud/l10n', () => ({
 	getCanonicalLocale: () => 'en-GB',
@@ -266,6 +266,32 @@ describe('an instant on screen', () => {
 		expect(formatMonth(BERLIN_FIRST.at, BERLIN_FIRST.off, 'de-DE')).toBe('September 2026')
 		expect(monthKey(BERLIN_FIRST.at, BERLIN_FIRST.off)).toBe('2026-09')
 		expect(monthKey(BERLIN_FIRST.at, 0)).toBe('2026-08')
+	})
+})
+
+describe('formatSpan', () => {
+	/** A booking is looked at within days of it: the weekday says more than the year would. */
+	it('names a span within one day once, with both clock times', () => {
+		expect(formatSpan(1790942400, 120, 1790956800, 120, 'en-GB')).toBe('Fri 02/10, 14:00–18:00')
+		expect(formatSpan(1790942400, 120, 1790956800, 120, 'de-DE')).toBe('Fr., 02.10., 14:00–18:00 Uhr')
+	})
+
+	/** Each end is the wall clock of its own offset: a night that leaves summer time still ends at 10:00. */
+	it('reads each end at its own offset', () => {
+		expect(formatSpan(1792879200, 120, 1792918800, 60, 'en-GB')).toBe('Sun 25/10, 00:00–10:00')
+	})
+
+	// Intl sets the dash between thin spaces here.
+	it('names both days when it runs over midnight', () => {
+		expect(formatSpan(1790942400, 120, 1790942400 + 2 * 86400, 120, 'en-GB')).toBe('Fri 02/10, 14:00 – Sun 04/10, 14:00')
+	})
+})
+
+describe('formatWhen', () => {
+	/** One end of a span, worded as formatSpan() words both. */
+	it('names the weekday, the day and the clock time at the moment\'s own offset', () => {
+		expect(formatWhen(1790956800, 120, 'en-GB')).toBe('Fri 02/10, 18:00')
+		expect(formatWhen(1790956800, 120, 'de-DE')).toBe('Fr., 02.10., 18:00')
 	})
 })
 

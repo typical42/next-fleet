@@ -45,6 +45,8 @@ use OCP\DB\Types;
  * @method void setPartner(?string $partner)
  * @method string getCategory()
  * @method void setCategory(string $category)
+ *
+ * @psalm-import-type NextFleetTrip from \OCA\NextFleet\ResponseDefinitions
  */
 class Trip extends BaseEntity implements \JsonSerializable {
 	public const BUSINESS = 'business';
@@ -116,7 +118,7 @@ class Trip extends BaseEntity implements \JsonSerializable {
 	 * The wire form is the column names, as it is for a vehicle and a reading. `reconciled` goes
 	 * out as a real boolean: the timeline marks a Reconciliation Trip as one.
 	 *
-	 * @return array<string, mixed>
+	 * @return NextFleetTrip
 	 */
 	public function jsonSerialize(): array {
 		return [

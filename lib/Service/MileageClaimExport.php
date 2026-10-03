@@ -16,8 +16,8 @@ use OCA\NextFleet\Jurisdiction\MileageClaim;
 use Psr\Log\LoggerInterface;
 
 /**
- * One vehicle's mileage claim for one year: its business trips, each valued at its jurisdiction's
- * rate on the day it set off (docs/architecture.md#the-mileage-claim). What is valued and how is
+ * One reader's mileage claim on one vehicle for one year: the business trips they entered, each
+ * valued at its jurisdiction's rate on the day it set off (docs/architecture.md#the-mileage-claim). What is valued and how is
  * decided here; the country only lays it out (`IClaimRenderer`).
  */
 class MileageClaimExport {
@@ -57,11 +57,13 @@ class MileageClaimExport {
 
 		[$start, $end] = LocalYear::window($year);
 		// Voided trips were not driven as far as a claim goes, and a commute is a different
-		// deduction under different rules: a sum mixing them is wrong where nobody can see it.
+		// deduction under different rules: a sum mixing them is wrong where nobody can see it. A
+		// claim is personal, so on a shared car the owner's must not carry the partner's trips.
 		$trips = array_filter(
 			$this->trips->findAnyStartedBetween((int)$vehicle->getId(), $start, $end),
 			static fn (Trip $trip): bool => $trip->getDeletedAt() === null
 				&& $trip->getCategory() === Trip::BUSINESS
+				&& $trip->getCreatedBy() === $userId
 				&& LocalYear::holds($year, $trip->getStartedAt(), $trip->getStartedAtOff()),
 		);
 

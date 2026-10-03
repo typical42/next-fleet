@@ -7,8 +7,9 @@ import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import { computed, ref, watch } from 'vue'
 
+import { ChangedError } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
-import { nameOf } from '../utils/format.js'
+import { formatCount, nameOf } from '../utils/format.js'
 
 const store = useVehiclesStore()
 
@@ -22,19 +23,41 @@ const undoing = ref(false)
 
 // A refusal is about the row it was refused for. The next delete is a different row and a
 // different token, so it gets an offer that has not already failed.
-watch([() => store.deleted, () => store.struck], () => {
+watch([() => store.deleted, () => store.struck, () => store.imported, () => store.detached], () => {
 	failure.value = ''
 })
 
-const offered = computed(() => store.deleted !== null || store.struck !== null)
+const offered = computed(() => store.deleted !== null || store.struck !== null || store.imported !== null || store.detached !== null)
 
 const message = computed(() => {
+	// The import's result is this toast (docs/ui.md, "Importing"). Counts as "label: number",
+	// because the catalogue has no plurals.
+	if (store.imported !== null) {
+		if (failure.value) {
+			return failure.value
+		}
+		const { new: fresh, creates, duplicate, unreadable } = store.imported.counts
+		// Duplicates the request included were created, not skipped.
+		const skipped = fresh + duplicate - creates
+		return [
+			t('nextfleet', 'Entries imported: {count}.', { count: formatCount(creates) }),
+			skipped > 0 ? t('nextfleet', 'Rows already there, skipped: {count}.', { count: formatCount(skipped) }) : '',
+			unreadable > 0 ? t('nextfleet', 'Rows not readable: {count}.', { count: formatCount(unreadable) }) : '',
+		].filter(Boolean).join(' ')
+	}
+
 	if (store.deleted !== null) {
 		const name = nameOf(store.deleted)
 
 		return failure.value
 			? t('nextfleet', '{name} could not be brought back: {reason}', { name, reason: failure.value })
 			: t('nextfleet', '{name} was deleted.', { name })
+	}
+
+	if (store.detached !== null) {
+		return failure.value
+			? t('nextfleet', 'The document could not be brought back: {reason}', { reason: failure.value })
+			: t('nextfleet', 'The document was removed.')
 	}
 
 	// An Entry has no name of its own the way a vehicle has, and its row is gone with it.
@@ -70,6 +93,11 @@ async function undo() {
 		// The row moved on since the delete, so the token matches nothing and the row is still
 		// deleted. Closing here would claim an undo that did not happen.
 		failure.value = error.message
+		if (store.imported !== null) {
+			failure.value = error instanceof ChangedError
+				? t('nextfleet', 'This import can no longer be undone as a whole, because some of its entries were deleted since. Delete the rest one by one instead.')
+				: t('nextfleet', 'The import could not be undone: {reason}', { reason: error.message })
+		}
 	} finally {
 		undoing.value = false
 	}
@@ -92,8 +120,9 @@ function dismiss() {
 				{{ message }}
 			</p>
 			<!-- A refused undo is refused for the row's sake and not for the click's, so the same
-			     click would be refused the same way: only the way out is left. -->
-			<NcButton v-if="!failure"
+			     click would be refused the same way: only the way out is left. An import that
+			     created nothing has nothing to take back. -->
+			<NcButton v-if="!failure && store.imported?.created.length !== 0"
 				variant="tertiary"
 				:disabled="undoing"
 				@click="undo">

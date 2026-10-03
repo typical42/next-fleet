@@ -9,19 +9,27 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Tests\Integration;
 
 use OCA\NextFleet\AppInfo\Application;
+use OCA\NextFleet\Controller\DocumentController;
 use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Exception\AccessDeniedException;
+use OCA\NextFleet\Service\BookingService;
 use OCA\NextFleet\Service\DocumentService;
+use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Db\DoesNotExistException;
+use OCP\AppFramework\Http;
+use OCP\AppFramework\Http\DataResponse;
 use OCP\Constants;
 use OCP\Files\Folder;
 use OCP\Files\IRootFolder;
 use OCP\IDBConnection;
+use OCP\IRequest;
+use OCP\IUser;
 use OCP\IUserManager;
+use OCP\IUserSession;
 use OCP\Share\IManager as IShareManager;
 use OCP\Share\IShare;
 use PHPUnit\Framework\TestCase;
@@ -42,13 +50,15 @@ class DocumentTest extends TestCase {
 	 * mounts up once per process, so a share made later would not show.
 	 */
 	private const SHAREE = 'nextfleet-test-doc-sharee';
-	/** Not an account: a grant is a string column, and reading the list needs no Files. */
+	/** An account: a receipt they attach to their own fill-up is a file in their own Files. */
 	private const DRIVER = 'nextfleet-test-doc-driver';
-	private const ACCOUNTS = [self::OWNER, self::OTHER, self::SHAREE];
+	private const ACCOUNTS = [self::OWNER, self::OTHER, self::SHAREE, self::DRIVER];
 
 	private DocumentService $documents;
 	private VehicleService $vehicles;
 	private MaintenanceService $workshop;
+	private EnergyService $fillUps;
+	private BookingService $pool;
 	/** @var list<int> */
 	private array $vehicleIds = [];
 
@@ -57,6 +67,8 @@ class DocumentTest extends TestCase {
 		$this->documents = $container->get(DocumentService::class);
 		$this->vehicles = $container->get(VehicleService::class);
 		$this->workshop = $container->get(MaintenanceService::class);
+		$this->fillUps = $container->get(EnergyService::class);
+		$this->pool = $container->get(BookingService::class);
 	}
 
 	/**
@@ -91,7 +103,7 @@ class DocumentTest extends TestCase {
 	private function forget(): void {
 		$db = \OCP\Server::get(IDBConnection::class);
 		if ($this->vehicleIds !== []) {
-			foreach (['fleet_documents', 'fleet_maintenance', 'fleet_expenses', 'fleet_odo_readings', 'fleet_access', 'fleet_reminder_recipients'] as $table) {
+			foreach (['fleet_documents', 'fleet_maintenance', 'fleet_energy', 'fleet_expenses', 'fleet_odo_readings', 'fleet_access', 'fleet_reminder_recipients', 'fleet_bookings'] as $table) {
 				$qb = $db->getQueryBuilder();
 				$qb->delete($table)->where($qb->expr()->in('vehicle_id', $qb->createNamedParameter($this->vehicleIds, $qb::PARAM_INT_ARRAY)));
 				$qb->executeStatement();
@@ -227,15 +239,20 @@ class DocumentTest extends TestCase {
 		$this->assertSame([], $this->documents->list(self::OWNER, $mine->getUuid()));
 	}
 
-	/** Access follows the vehicle, not the file: a driver sees papers in the owner's Files. */
-	public function testADriverReadsTheListButNeitherAttachesNorDetaches(): void {
+	/**
+	 * Access follows the vehicle, not the file: a driver sees papers in the owner's Files. The
+	 * vehicle's own papers - registration, insurance - stay a manager's to keep.
+	 */
+	public function testADriverReadsTheListButNeitherAttachesNorDetachesTheVehiclesOwnPapers(): void {
 		$vehicle = $this->vehicle(self::OWNER);
 		$this->grant($vehicle, self::DRIVER, 'driver');
 		$uuid = $this->documents->attach(self::OWNER, $vehicle->getUuid(), ['file_id' => $this->file(self::OWNER, 'Police.pdf'), 'kind' => 'insurance'])[0]['uuid'];
 
-		$this->assertSame(['Police.pdf'], array_column($this->documents->list(self::DRIVER, $vehicle->getUuid()), 'name'));
+		$listed = $this->documents->list(self::DRIVER, $vehicle->getUuid());
+		$this->assertSame(['Police.pdf'], array_column($listed, 'name'));
+		$this->assertSame([], $listed[0]['may']);
 		foreach ([
-			fn () => $this->documents->attach(self::DRIVER, $vehicle->getUuid(), ['file_id' => 1, 'kind' => 'manual']),
+			fn () => $this->documents->attach(self::DRIVER, $vehicle->getUuid(), ['file_id' => $this->file(self::DRIVER, 'Handbuch.pdf'), 'kind' => 'manual']),
 			fn () => $this->documents->detach(self::DRIVER, $vehicle->getUuid(), $uuid),
 		] as $call) {
 			try {
@@ -245,6 +262,95 @@ class DocumentTest extends TestCase {
 			}
 		}
 		$this->assertCount(1, $this->documents->list(self::OWNER, $vehicle->getUuid()));
+	}
+
+	/** Done when: a driver attaches a receipt to an entry they entered, and may take it off again. */
+	public function testADriverKeepsTheReceiptOfTheirOwnFillUp(): void {
+		$vehicle = $this->vehicle(self::OWNER);
+		$this->grant($vehicle, self::DRIVER, 'driver');
+		$fillUp = $this->fillUp($vehicle, self::DRIVER);
+
+		$listed = $this->documents->attach(self::DRIVER, $vehicle->getUuid(), [
+			'file_id' => $this->file(self::DRIVER, 'Tankbeleg.pdf'),
+			'kind' => 'receipt',
+			'linked_type' => 'energy',
+			'linked_uuid' => $fillUp,
+		]);
+
+		$this->assertSame('energy', $listed[0]['linked_type']);
+		$this->assertSame($fillUp, $listed[0]['linked_uuid']);
+		$this->assertSame(['detach'], $listed[0]['may']);
+		$this->assertSame(['detach'], $this->documents->list(self::OWNER, $vehicle->getUuid())[0]['may']);
+		$this->assertSame([], $this->documents->detach(self::DRIVER, $vehicle->getUuid(), $listed[0]['uuid']));
+	}
+
+	/** Somebody else's entry is theirs, or a manager's, to file papers on. */
+	public function testADriverAttachesNothingToSomebodyElsesEntry(): void {
+		$vehicle = $this->vehicle(self::OWNER);
+		$this->grant($vehicle, self::DRIVER, 'driver');
+		$fillUp = $this->fillUp($vehicle, self::OWNER);
+
+		try {
+			$this->documents->attach(self::DRIVER, $vehicle->getUuid(), [
+				'file_id' => $this->file(self::DRIVER, 'Tankbeleg.pdf'),
+				'kind' => 'receipt',
+				'linked_type' => 'energy',
+				'linked_uuid' => $fillUp,
+			]);
+			$this->fail('a driver filed a paper on the owner\'s fill-up');
+		} catch (AccessDeniedException) {
+		}
+		$this->assertSame([], $this->documents->list(self::OWNER, $vehicle->getUuid()));
+	}
+
+	/**
+	 * Detaching takes the rule of the row the paper hangs on, not of who attached it: a receipt the
+	 * owner filed on the driver's fill-up is the driver's to take off, as the fill-up is theirs to
+	 * change.
+	 */
+	public function testDetachingFollowsTheEntryThePaperBelongsTo(): void {
+		$vehicle = $this->vehicle(self::OWNER);
+		$this->grant($vehicle, self::DRIVER, 'driver');
+		$theirs = $this->fillUp($vehicle, self::DRIVER);
+		$mine = $this->fillUp($vehicle, self::OWNER);
+		$paper = fn (string $fillUp, string $name): string => array_column($this->documents->attach(self::OWNER, $vehicle->getUuid(), [
+			'file_id' => $this->file(self::OWNER, $name), 'kind' => 'receipt', 'linked_type' => 'energy', 'linked_uuid' => $fillUp,
+		]), 'uuid', 'linked_uuid')[$fillUp];
+		$onTheirs = $paper($theirs, 'Theirs.pdf');
+		$onMine = $paper($mine, 'Mine.pdf');
+
+		$mayOf = array_column($this->documents->list(self::DRIVER, $vehicle->getUuid()), 'may', 'uuid');
+		$this->assertSame(['detach'], $mayOf[$onTheirs]);
+		$this->assertSame([], $mayOf[$onMine]);
+		try {
+			$this->documents->detach(self::DRIVER, $vehicle->getUuid(), $onMine);
+			$this->fail('a driver took a paper off the owner\'s fill-up');
+		} catch (AccessDeniedException) {
+		}
+		$this->assertSame([$onMine], array_column($this->documents->detach(self::DRIVER, $vehicle->getUuid(), $onTheirs), 'uuid'));
+	}
+
+	/** Done when: handover photos attach to the booking, under the booking's rule. */
+	public function testAHandoverPhotoBelongsToTheBooking(): void {
+		$vehicle = $this->vehicle(self::OWNER);
+		$this->grant($vehicle, self::DRIVER, 'driver');
+		$booking = $this->pool->book(self::DRIVER, $vehicle->getUuid(), self::tomorrow())['uuid'];
+		$photo = [
+			'kind' => 'photo',
+			'linked_type' => 'booking',
+			'linked_uuid' => $booking,
+		];
+
+		$listed = $this->documents->attach(self::DRIVER, $vehicle->getUuid(), $photo + ['file_id' => $this->file(self::DRIVER, 'Kratzer.jpg')]);
+
+		$this->assertSame('booking', $listed[0]['linked_type']);
+		$this->assertSame($booking, $listed[0]['linked_uuid']);
+		$this->assertSame(['detach'], $listed[0]['may']);
+		$this->expectException(AccessDeniedException::class);
+		$this->documents->attach(self::DRIVER, $vehicle->getUuid(), [
+			'linked_uuid' => $this->pool->book(self::OWNER, $vehicle->getUuid(), self::tomorrow(2))['uuid'],
+			'file_id' => $this->file(self::DRIVER, 'Delle.jpg'),
+		] + $photo);
 	}
 
 	/** Detaching leaves the file where it is: it was never ours. */
@@ -346,6 +452,108 @@ class DocumentTest extends TestCase {
 		$this->documents->download(self::OWNER, $vehicle->getUuid(), $uuid);
 	}
 
+	/**
+	 * The screen fetches a paper rather than following its link, and says the refusal by its status
+	 * (src/utils/papers.js): a removed paper and a deleted file are each a 404 with a message, a
+	 * stranger a 403, never an empty body a tab would show.
+	 */
+	public function testARefusedDownloadAnswersAStatusTheScreenCanSay(): void {
+		$vehicle = $this->vehicle(self::OWNER);
+		$fileId = $this->file(self::OWNER, 'Foto.jpg');
+		$removed = $this->documents->attach(self::OWNER, $vehicle->getUuid(), ['file_id' => $this->file(self::OWNER, 'Handbuch.pdf'), 'kind' => 'manual'])[0]['uuid'];
+		$this->documents->detach(self::OWNER, $vehicle->getUuid(), $removed);
+		$gone = $this->documents->attach(self::OWNER, $vehicle->getUuid(), ['file_id' => $fileId, 'kind' => 'photo'])[0]['uuid'];
+		\OCP\Server::get(IRootFolder::class)->getUserFolder(self::OWNER)->getFirstNodeById($fileId)?->delete();
+
+		$answers = [];
+		foreach ([[self::OWNER, $removed], [self::OWNER, $gone], [self::OTHER, $gone]] as [$who, $paper]) {
+			$response = $this->door($who)->download($vehicle->getUuid(), $paper);
+			$this->assertInstanceOf(DataResponse::class, $response);
+			$answers[] = [$response->getStatus(), $response->getData()];
+		}
+
+		$this->assertSame([
+			[Http::STATUS_NOT_FOUND, ['message' => 'No such document']],
+			[Http::STATUS_NOT_FOUND, ['message' => 'No such document']],
+			[Http::STATUS_FORBIDDEN, ['message' => 'Not yours']],
+		], $answers);
+	}
+
+	/** The undo after *Remove*: the same paper, same uuid, back on the vehicle. */
+	public function testRestoringBringsADetachedPaperBack(): void {
+		$vehicle = $this->vehicle(self::OWNER);
+		$uuid = $this->documents->attach(self::OWNER, $vehicle->getUuid(), ['file_id' => $this->file(self::OWNER, 'Handbuch.pdf'), 'kind' => 'manual'])[0]['uuid'];
+		$this->documents->detach(self::OWNER, $vehicle->getUuid(), $uuid);
+
+		$this->assertSame([$uuid], array_column($this->documents->restore(self::OWNER, $vehicle->getUuid(), $uuid), 'uuid'));
+		$this->assertSame([$uuid], array_column($this->documents->list(self::OWNER, $vehicle->getUuid()), 'uuid'));
+	}
+
+	/** Whoever may not take a paper off may not put it back either: the vehicle's own take `edit`. */
+	public function testRestoringFollowsTheRuleDetachingTakes(): void {
+		$vehicle = $this->vehicle(self::OWNER);
+		$this->grant($vehicle, self::DRIVER, 'driver');
+		$uuid = $this->documents->attach(self::OWNER, $vehicle->getUuid(), ['file_id' => $this->file(self::OWNER, 'Schein.pdf'), 'kind' => 'registration'])[0]['uuid'];
+		$this->documents->detach(self::OWNER, $vehicle->getUuid(), $uuid);
+
+		try {
+			$this->documents->restore(self::DRIVER, $vehicle->getUuid(), $uuid);
+			$this->fail('a driver restored the vehicle\'s own paper');
+		} catch (AccessDeniedException) {
+		}
+		$this->assertSame([], $this->documents->list(self::OWNER, $vehicle->getUuid()));
+	}
+
+	/**
+	 * Attached again before the undo: the file is on that place once already, and a second paper
+	 * for it would break "the same file twice is one". A paper that is live is left as it is.
+	 */
+	public function testRestoringWhatIsAlreadyThereChangesNothing(): void {
+		$vehicle = $this->vehicle(self::OWNER);
+		$fields = ['file_id' => $this->file(self::OWNER, 'Schein.pdf'), 'kind' => 'registration'];
+		$first = $this->documents->attach(self::OWNER, $vehicle->getUuid(), $fields)[0]['uuid'];
+		$this->documents->detach(self::OWNER, $vehicle->getUuid(), $first);
+		$second = $this->documents->attach(self::OWNER, $vehicle->getUuid(), $fields)[0]['uuid'];
+
+		$this->assertSame([$second], array_column($this->documents->restore(self::OWNER, $vehicle->getUuid(), $first), 'uuid'));
+		$this->assertSame([$second], array_column($this->documents->restore(self::OWNER, $vehicle->getUuid(), $second), 'uuid'));
+	}
+
+	/** A paper comes back only onto a live row, as attaching it would: a deleted fill-up takes none. */
+	public function testAPaperIsNotRestoredOntoADeletedEntry(): void {
+		$vehicle = $this->vehicle(self::OWNER);
+		$fillUp = $this->fillUps->record(self::OWNER, $vehicle->getUuid(), [
+			'filled_at' => 1750000000, 'filled_at_off' => 120, 'energy' => 'diesel', 'amount' => 42000,
+		]);
+		$uuid = $this->documents->attach(self::OWNER, $vehicle->getUuid(), [
+			'file_id' => $this->file(self::OWNER, 'Tankbeleg.pdf'), 'kind' => 'receipt', 'linked_type' => 'energy', 'linked_uuid' => $fillUp['uuid'],
+		])[0]['uuid'];
+		$this->documents->detach(self::OWNER, $vehicle->getUuid(), $uuid);
+		$this->fillUps->delete(self::OWNER, $vehicle->getUuid(), $fillUp['uuid'], $fillUp['updated_at']);
+
+		try {
+			$this->documents->restore(self::OWNER, $vehicle->getUuid(), $uuid);
+			$this->fail('restored a paper onto a deleted fill-up');
+		} catch (DoesNotExistException) {
+		}
+		$this->assertSame([], $this->documents->list(self::OWNER, $vehicle->getUuid()));
+	}
+
+	/** A detached paper's uuid names a row on its own vehicle, and on no other. */
+	public function testAnotherVehiclesDetachedPaperIsNotRestoredThroughMine(): void {
+		$mine = $this->vehicle(self::OWNER);
+		$theirs = $this->vehicle(self::OTHER);
+		$uuid = $this->documents->attach(self::OTHER, $theirs->getUuid(), ['file_id' => $this->file(self::OTHER, 'Schein.pdf'), 'kind' => 'registration'])[0]['uuid'];
+		$this->documents->detach(self::OTHER, $theirs->getUuid(), $uuid);
+
+		try {
+			$this->documents->restore(self::OWNER, $mine->getUuid(), $uuid);
+			$this->fail('restored another vehicle\'s paper');
+		} catch (DoesNotExistException) {
+		}
+		$this->assertSame([], $this->documents->list(self::OTHER, $theirs->getUuid()));
+	}
+
 	/** Picking the same file twice for the same place is one paper. */
 	public function testAttachingTheSameFileTwiceIsOnce(): void {
 		$vehicle = $this->vehicle(self::OWNER);
@@ -360,6 +568,33 @@ class DocumentTest extends TestCase {
 		return $this->workshop->record($vehicle->getUserId(), $vehicle->getUuid(), [
 			'done_at' => 1750000000, 'done_at_off' => 120, 'title' => 'Inspektion',
 		])['uuid'];
+	}
+
+	private function fillUp(Vehicle $vehicle, string $driver): string {
+		return $this->fillUps->record($driver, $vehicle->getUuid(), [
+			'filled_at' => 1750000000, 'filled_at_off' => 120, 'energy' => 'diesel', 'amount' => 42000,
+		])['uuid'];
+	}
+
+	/**
+	 * A span a day from now, or `days` from now, which a booking may take.
+	 *
+	 * @return array<string, int>
+	 */
+	private static function tomorrow(int $days = 1): array {
+		$start = time() + $days * 86400;
+
+		return ['starts_at' => $start, 'starts_at_off' => 120, 'ends_at' => $start + 3 * 3600, 'ends_at_off' => 120];
+	}
+
+	/** The internal download route, as the framework hands `$userId` to it. */
+	private function door(string $userId): DocumentController {
+		$user = $this->createMock(IUser::class);
+		$user->method('getUID')->willReturn($userId);
+		$session = $this->createMock(IUserSession::class);
+		$session->method('getUser')->willReturn($user);
+
+		return new DocumentController(Application::APP_ID, $this->createMock(IRequest::class), $this->documents, $session);
 	}
 
 	private function vehicle(string $owner): Vehicle {

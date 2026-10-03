@@ -20,7 +20,7 @@ vi.mock('../services/api.js', async (original) => ({
 	reminderTemplates: vi.fn(),
 }))
 
-const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', odo_unit: 'km', odo_value: 148320, jurisdiction: 'de', vehicle_type: 'car' }
+const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', odo_unit: 'km', odo_value: 148320, jurisdiction: 'de', vehicle_type: 'car', may: ['view', 'log', 'edit', 'delete', 'own'] }
 
 /** @type {any[]} */
 const TEMPLATES = [
@@ -61,11 +61,12 @@ const INSURANCE = reminder({ uuid: 'r-ins', title: 'Insurance renewal', due_date
 const DONE = reminder({ uuid: 'r-done', title: 'Old', due_date: '2026-01-01', state: 'dismissed' })
 
 /**
+ * @param {string[]} [may] - what the session may do on the vehicle
  * @return {Promise<import('@vue/test-utils').VueWrapper>} the banner, past its first read
  */
-async function banner() {
+async function banner(may = VEHICLE.may) {
 	const wrapper = shallowMount(DueBanner, {
-		props: { vehicle: VEHICLE },
+		props: { vehicle: { ...VEHICLE, may } },
 		global: { renderStubDefaultSlot: true },
 	})
 	await flushPromises()
@@ -156,6 +157,28 @@ describe('the due banner', () => {
 
 		expect(wrapper.emitted('done')).toEqual([['r-hu']])
 		expect(wrapper.findComponent(ReminderSheet).exists()).toBe(false)
+	})
+
+	/**
+	 * Reminders take `edit`. A driver's maintenance record closes one as anybody's does, so Done
+	 * stays; a viewer reads the list and nothing more.
+	 */
+	it('offers a driver Done and a viewer nothing, and neither the sheet', async () => {
+		vi.mocked(listReminders).mockResolvedValue([OIL])
+		const buttons = (/** @type {import('@vue/test-utils').VueWrapper} */ wrapper) => wrapper.findAllComponents(NcButton).map((one) => one.text())
+
+		const driver = await banner(['view', 'log'])
+		expect(rows(driver)).toHaveLength(1)
+		expect(driver.find('.due__row button').exists()).toBe(false)
+		expect(buttons(driver)).toEqual(['Done'])
+
+		const viewer = await banner(['view'])
+		expect(rows(viewer)).toHaveLength(1)
+		expect(viewer.find('.due__row button').exists()).toBe(false)
+		expect(buttons(viewer)).toEqual([])
+		// No HU/AU question either: its answer is a new reminder.
+		expect(viewer.findComponent(InspectionSticker).exists()).toBe(false)
+		expect(reminderTemplates).not.toHaveBeenCalled()
 	})
 
 	/** Only the list carries the estimate and today's state, so a write is followed by a read. */

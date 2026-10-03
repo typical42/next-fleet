@@ -326,27 +326,27 @@ class BaseMapperTest extends TestCase {
 
 		$restored = $this->mapper()->restoreChecked($thing, self::NOW - 60);
 
-		$this->assertSame(['deleted_at' => null], $this->row());
+		$this->assertSame(['deleted_at' => null, 'updated_at' => self::NOW], $this->row());
 		$this->assertSame([
 			'id = 7',
 			'updated_at = ' . (self::NOW - 60),
 			'deleted_at IS NOT NULL',
 		], $this->conditions());
 		$this->assertNull($restored->getDeletedAt());
+		$this->assertSame(self::NOW, $restored->getUpdatedAt());
 	}
 
 	/**
-	 * The undo toast holds one token, the one the delete answered with, and the restore puts the
-	 * row back into the state that token already names - so the statement leaves it where it is.
-	 * Advancing it would refuse the second half of every undo.
+	 * A restore is a change like any other: a client that asks what changed since its last look
+	 * finds it by `updated_at`, and an edit still holding the delete's token is refused.
 	 */
-	public function testRestoreLeavesTheTokenWhereTheDeleteLeftIt(): void {
-		$thing = $this->deleted(self::NOW - 60);
+	public function testRestoreMovesTheTokenEvenInTheDeletesSecond(): void {
+		$thing = $this->deleted(self::NOW);
 
-		$this->mapper()->restoreChecked($thing, self::NOW - 60);
+		$this->mapper()->restoreChecked($thing, self::NOW);
 
-		$this->assertArrayNotHasKey('updated_at', $this->row());
-		$this->assertSame(self::NOW - 60, $thing->getUpdatedAt());
+		$this->assertSame(self::NOW + 1, $this->row()['updated_at']);
+		$this->assertSame(self::NOW + 1, $thing->getUpdatedAt());
 	}
 
 	/**

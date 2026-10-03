@@ -39,6 +39,8 @@ use OCP\DB\Types;
  * @method void setNotes(?string $notes)
  * @method int|null getReminderId()
  * @method void setReminderId(?int $reminderId)
+ *
+ * @psalm-import-type NextFleetMaintenanceEntry from \OCA\NextFleet\ResponseDefinitions
  */
 class Maintenance extends BaseEntity implements \JsonSerializable {
 	protected int $vehicleId = 0;
@@ -74,7 +76,7 @@ class Maintenance extends BaseEntity implements \JsonSerializable {
 	/**
 	 * The wire form is the column names, as it is for every entity.
 	 *
-	 * @return array<string, mixed>
+	 * @return NextFleetMaintenanceEntry
 	 */
 	public function jsonSerialize(): array {
 		return [

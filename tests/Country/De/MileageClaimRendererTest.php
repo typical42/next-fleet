@@ -150,7 +150,17 @@ class MileageClaimRendererTest extends TestCase {
 	public function testAYearWithoutBusinessTripsSaysSo(): void {
 		$page = $this->render([], null, null);
 
-		$this->assertSame('Keine Dienstfahrten in 2026.', self::text($page, '//table/tbody/tr'));
+		$this->assertSame('Keine Dienstfahrten in 2026, die Sie eingetragen haben.', self::text($page, '//table/tbody/tr'));
+	}
+
+	/**
+	 * The claim lists only the reader's trips, and says so: on a shared car the logbook holds more,
+	 * and a reader comparing the two must not think trips went missing.
+	 */
+	public function testItSaysTheTripsAreTheReadersOwn(): void {
+		$page = $this->render([$this->line(120, 300, 3600)], 3600, 120);
+
+		$this->assertStringContainsString('Nur Fahrten, die Sie eingetragen haben.', self::text($page, '//header'));
 	}
 
 	/**

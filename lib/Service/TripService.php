@@ -92,16 +92,20 @@ class TripService {
 		private ITimeFactory $time,
 		private Gaps $gaps,
 		private VehicleMapper $vehicles,
+		private BookingService $bookings,
 		private IDBConnection $db,
 	) {
 	}
 
 	/**
-	 * Writes one trip and the Reading it left on the counter.
+	 * Writes one trip and the Reading it left on the counter, and ties it to the booking it was
+	 * logged from when `booking_uuid` names one (BookingService::tie()).
 	 *
 	 * @param array<string, mixed> $fields
-	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not log on this vehicle
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not log on this vehicle,
+	 *                                                        or the booking is not theirs to log
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
+	 * @throws \OCA\NextFleet\Exception\BookingConflictException if the booking is not back or has its trip
 	 * @throws \InvalidArgumentException if a field is not what its column holds
 	 * @throws \OCP\DB\Exception
 	 */
@@ -112,6 +116,7 @@ class TripService {
 		$trip->setVehicleId((int)$vehicle->getId());
 		$trip->setCreatedBy($userId);
 		$this->apply($trip, $fields);
+		$booking = $this->read('booking_uuid', 'text', 64, $fields['booking_uuid'] ?? null);
 
 		// The two rows are one fact. A trip whose Reading did not land is a logbook that disagrees
 		// with the counter it is measured against, and nothing later can tell which of the two is
@@ -121,7 +126,7 @@ class TripService {
 		// from outside this service - would otherwise be a 500 that loses the trip the driver
 		// typed. The replay inserts the id the rolled-back attempt was given, which auto-increment
 		// never hands out again.
-		return $this->atomicRetry(function () use ($userId, $vehicle, $trip): Trip {
+		return $this->atomicRetry(function () use ($userId, $vehicle, $trip, $booking): Trip {
 			// Before anything is read or written: the Reading settles the vehicle's whole chain,
 			// and a second writer on the same vehicle has to wait and settle on this one's
 			// (VehicleMapper::hold()).
@@ -129,6 +134,9 @@ class TripService {
 			$written = $this->trips->insert($trip);
 			$this->trail($vehicle, $written, $userId, self::CREATED, $this->stated($written));
 			$this->odometer->fromTrip($vehicle, $written);
+			if (is_string($booking)) {
+				$this->bookings->tie($userId, $vehicle, $booking, $written);
+			}
 
 			return $written;
 		}, $this->db);

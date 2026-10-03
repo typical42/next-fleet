@@ -52,6 +52,7 @@ class MailService {
 		private IUserManager $users,
 		private IFactory $l10n,
 		private IConfig $config,
+		private UserZone $zones,
 		private IURLGenerator $urls,
 		private ITimeFactory $time,
 		private IDBConnection $db,
@@ -97,7 +98,7 @@ class MailService {
 			return;
 		}
 		$now = $this->time->now();
-		$local = $now->setTimezone($this->zone($userId));
+		$local = $now->setTimezone($this->zones->of($userId));
 		if ((int)$local->format('G') < self::HOUR) {
 			return;
 		}
@@ -134,19 +135,6 @@ class MailService {
 			Vehicle::MAIL_MONTHLY => $local->format('j') === '1',
 			default => false,
 		};
-	}
-
-	/** The recipient's own zone, else the server's. */
-	private function zone(string $userId): \DateTimeZone {
-		$zone = $this->config->getUserValue($userId, 'core', 'timezone', '');
-		if ($zone === '') {
-			$zone = $this->config->getSystemValueString('default_timezone', 'UTC');
-		}
-		try {
-			return new \DateTimeZone($zone);
-		} catch (\Exception) {
-			return new \DateTimeZone('UTC');
-		}
 	}
 
 	/**

@@ -351,6 +351,25 @@ class VehicleTest extends TestCase {
 	}
 
 	/**
+	 * A restore is a write: it answers a token of its own, and the one the delete answered is spent.
+	 * An edit still holding it is the same 412 a stale update gets.
+	 */
+	public function testARestoreMovesTheTokenAndAnEditWithTheDeletesIsRefused(): void {
+		$vehicle = $this->service->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$deleted = $this->service->delete(self::OWNER, $vehicle->getUuid(), $vehicle->getUpdatedAt());
+		$spent = $deleted->getUpdatedAt();
+
+		$restored = $this->service->restore(self::OWNER, $vehicle->getUuid(), $spent);
+
+		$this->assertGreaterThan($spent, $restored->getUpdatedAt());
+		$this->assertSame($restored->getUpdatedAt(), $this->service->find(self::OWNER, $vehicle->getUuid())->getUpdatedAt());
+		$response = $this->controller(self::OWNER, ['updated_at' => $spent, 'plate' => 'B-XY 999'])->update($vehicle->getUuid());
+		$this->assertSame(Http::STATUS_PRECONDITION_FAILED, $response->getStatus());
+		$this->assertTrue($response->getData()['conflict']);
+		$this->assertSame('B-XY 123', $this->service->find(self::OWNER, $vehicle->getUuid())->getPlate());
+	}
+
+	/**
 	 * The token the vehicle carried before the delete is not the one the delete left behind, so an
 	 * undo wearing it is refused - and through the controller that is the same 412 a stale update
 	 * gets, named by the body rather than by the status.

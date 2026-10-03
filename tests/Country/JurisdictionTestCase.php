@@ -201,6 +201,8 @@ abstract class JurisdictionTestCase extends TestCase {
 
 		// Grams per litre, or null for "not stated"; electricity is the grid's, never a fuel's.
 		$this->assertMatchesRegularExpression('#^https://\S+$#', $rates->emissionSourceUrl(), 'the emission source is not a URL');
+		$year = $rates->emissionSourceYear();
+		$this->assertTrue($year === null || ($year >= 1990 && $year <= (int)date('Y')), var_export($year, true) . ' is not the year a source came out');
 		foreach (VehicleService::ENERGIES as $energy) {
 			$factor = $rates->emissionFactorAt($energy, new \DateTimeImmutable('2026-01-01T12:00:00Z'));
 			$this->assertTrue($factor === null || $factor > 0, $energy . ' burns at no factor');

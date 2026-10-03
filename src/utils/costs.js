@@ -132,7 +132,10 @@ export function co2Of(co2, locale = getCanonicalLocale()) {
 
 	const kilograms = new Intl.NumberFormat(locale, { style: 'unit', unit: 'kilogram', maximumFractionDigits: 0 })
 	const notes = [t('nextfleet', 'An estimate: what was tanked or charged, times its emission factor')]
-	const sources = [{ label: t('nextfleet', 'Fuel factors'), href: co2.source }]
+	const sources = [{
+		label: co2.year === null ? t('nextfleet', 'Fuel factors') : t('nextfleet', 'Fuel factors {year}', { year: co2.year }),
+		href: co2.source,
+	}]
 	const { grid } = co2
 	if (grid !== null && grid.year !== null && grid.source !== null) {
 		notes.push(t('nextfleet', 'Electricity at {grams} g/kWh, the average of {year}', { grams: grid.grams, year: grid.year }))

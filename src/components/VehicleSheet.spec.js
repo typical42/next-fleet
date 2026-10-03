@@ -19,6 +19,7 @@ import { useVehiclesStore } from '../store/index.js'
 import { formatDay } from '../utils/format.js'
 import InspectionSticker from './InspectionSticker.vue'
 import ReminderRecipients from './ReminderRecipients.vue'
+import VehicleGrants from './VehicleGrants.vue'
 import VehicleSheet from './VehicleSheet.vue'
 
 // The network is the api client's own seam (api.spec.js), and the store is left real: this sheet
@@ -62,7 +63,10 @@ const VEHICLE = {
 	retention_months: 120,
 	color: 'blue',
 	notes: 'two rows of seats',
+	may: ['view', 'log', 'edit', 'delete', 'own'],
 }
+/** What a manager holds: everything but the vehicle's existence and its access. */
+const MANAGED = { ...VEHICLE, may: ['view', 'log', 'edit', 'delete'] }
 
 /**
  * The sheet, mounted and past whatever it reads on the way up.
@@ -160,7 +164,7 @@ beforeEach(() => {
 	setActivePinia(createPinia())
 	vi.resetAllMocks()
 	vi.mocked(getPreferences).mockResolvedValue({
-		preferences: { jurisdiction: 'de', dismissed_hints: [], reclaim_vat: false, kpi_period: 'last-12', grid_factor: null },
+		preferences: { jurisdiction: 'de', dismissed_hints: [], reclaim_vat: false, kpi_period: 'last-12', grid_factor: null, inbox_folder: null },
 		jurisdictions: [{ key: 'de', name: 'Germany', logbook_export: true, mileage_claim: true, grid_factor: null }, { key: 'generic', name: 'Generic', logbook_export: false, mileage_claim: false, grid_factor: null }],
 	})
 	// No inspection unless a case asks for one (the HU/AU cases below).
@@ -181,6 +185,36 @@ beforeEach(() => {
 		origin: 'observed',
 		flagged: false,
 		counter: 'main',
+	})
+})
+
+describe('the vehicle sheet, importing', () => {
+	/** Importing is `edit` (docs/architecture.md#import); the screen opens the import itself. */
+	it('asks for an import from a file', async () => {
+		const wrapper = await sheet(MANAGED)
+
+		await button(wrapper, 'Import from a file…').vm.$emit('click')
+
+		expect(wrapper.emitted('import')).toHaveLength(1)
+	})
+
+	/** The import takes this sheet's place, so what is typed here would be lost: save it first. */
+	it('holds the import while the sheet has changes', async () => {
+		const wrapper = await sheet(MANAGED)
+
+		await field(wrapper, 'Colour').vm.$emit('update:modelValue', 'red')
+
+		expect(button(wrapper, 'Import from a file…').props('disabled')).toBe(true)
+		expect(wrapper.text()).toContain('Save or cancel your changes first.')
+
+		await field(wrapper, 'Colour').vm.$emit('update:modelValue', 'blue')
+		expect(button(wrapper, 'Import from a file…').props('disabled')).toBe(false)
+	})
+
+	/** A disposed vehicle takes no import, and a vehicle not yet created has nothing to take it. */
+	it('offers no import to a disposed vehicle, nor while creating one', async () => {
+		expect(button(await sheet({ ...VEHICLE, lifecycle: 'disposed' }), 'Import from a file…')).toBeUndefined()
+		expect(button(await sheet(), 'Import from a file…')).toBeUndefined()
 	})
 })
 
@@ -339,10 +373,36 @@ describe('the vehicle sheet, editing', () => {
 		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ reminder_mail: 'monthly' }))
 	})
 
+	/** The list takes `edit` (docs/ui.md); the section shows by `may`, not by a refused read. */
+	it('has no recipients section for someone who may not edit the vehicle', async () => {
+		const wrapper = await sheet({ ...VEHICLE, may: ['view', 'log'] })
+
+		expect(wrapper.findComponent(ReminderRecipients).exists()).toBe(false)
+	})
+
 	it('has no recipients section while creating', async () => {
 		const wrapper = await sheet()
 
 		expect(wrapper.findComponent(ReminderRecipients).exists()).toBe(false)
+		expect(wrapper.findComponent(VehicleGrants).exists()).toBe(false)
+	})
+
+	/**
+	 * Revoking takes whoever no longer sees the vehicle off its recipients, server side, so the
+	 * recipients section reads its list again. The cadence is the sheet's and survives that.
+	 */
+	it('reads the recipients again once a grant was revoked', async () => {
+		const wrapper = await sheet(VEHICLE)
+		const before = wrapper.findComponent(ReminderRecipients).vm
+		await /** @type {any} */ (wrapper.findComponent(ReminderRecipients)).vm.$emit('update:cadence', 'monthly')
+
+		const grants = /** @type {any} */ (wrapper.findComponent(VehicleGrants))
+		expect(grants.props('vehicle')).toMatchObject({ uuid: 'v-1' })
+		await grants.vm.$emit('revoked')
+
+		const after = /** @type {any} */ (wrapper.findComponent(ReminderRecipients))
+		expect(after.vm).not.toBe(before)
+		expect(after.props('cadence')).toBe('monthly')
 	})
 
 	/** The unit a Reading was counted in is what its number means, so a counted vehicle keeps it. */
@@ -724,6 +784,14 @@ describe('the vehicle sheet, editing', () => {
 		expect(store.list).toEqual([])
 		expect(store.deleted?.updated_at).toBe(1700000800)
 		expect(wrapper.emitted('saved')).toBeUndefined()
+	})
+
+	/** Deleting takes `own`: a manager edits the car and the car stays the owner's. */
+	it('offers a manager no delete', async () => {
+		const wrapper = await sheet(MANAGED)
+
+		expect(button(wrapper, 'Delete vehicle')).toBeUndefined()
+		expect(wrapper.findComponent(ReminderRecipients).exists()).toBe(true)
 	})
 
 	/**

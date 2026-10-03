@@ -10,10 +10,12 @@ namespace OCA\NextFleet\Tests\Integration;
 
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\Trip;
+use OCA\NextFleet\Service\GrantService;
 use OCA\NextFleet\Service\MileageClaimExport;
 use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\IDBConnection;
+use OCP\IUserManager;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -26,16 +28,30 @@ use PHPUnit\Framework\TestCase;
 class MileageClaimTest extends TestCase {
 	/** Not a Nextcloud account: `created_by` is a string column with no key on it. */
 	private const AUTHOR = 'nextfleet-test-alice';
+	/** An account, since a grantee has to exist on the instance. */
+	private const DRIVER = 'nextfleet-test-claim-ben';
 
 	private MileageClaimExport $claim;
 	private TripService $trips;
 	private VehicleService $vehicles;
+	private GrantService $grants;
+
+	public static function setUpBeforeClass(): void {
+		$users = \OCP\Server::get(IUserManager::class);
+		$users->get(self::DRIVER)?->delete();
+		$users->createUser(self::DRIVER, bin2hex(random_bytes(16)));
+	}
+
+	public static function tearDownAfterClass(): void {
+		\OCP\Server::get(IUserManager::class)->get(self::DRIVER)?->delete();
+	}
 
 	protected function setUp(): void {
 		$container = (new Application())->getContainer();
 		$this->claim = $container->get(MileageClaimExport::class);
 		$this->trips = $container->get(TripService::class);
 		$this->vehicles = $container->get(VehicleService::class);
+		$this->grants = $container->get(GrantService::class);
 
 		$this->forgetTestRows();
 	}
@@ -47,16 +63,23 @@ class MileageClaimTest extends TestCase {
 	/** The rows this suite invents, gone for real - a soft delete would outlive the run. */
 	private function forgetTestRows(): void {
 		$db = \OCP\Server::get(IDBConnection::class);
-		foreach (['fleet_trips' => 'created_by', 'fleet_audit' => 'created_by', 'fleet_odo_readings' => 'created_by', 'fleet_vehicles' => 'user_id'] as $table => $column) {
+		$tables = [
+			'fleet_trips' => 'created_by',
+			'fleet_audit' => 'created_by',
+			'fleet_odo_readings' => 'created_by',
+			'fleet_access' => 'created_by',
+			'fleet_vehicles' => 'user_id',
+		];
+		foreach ($tables as $table => $column) {
 			$qb = $db->getQueryBuilder();
-			$qb->delete($table)->where($qb->expr()->eq($column, $qb->createNamedParameter(self::AUTHOR)));
+			$qb->delete($table)->where($qb->expr()->in($column, $qb->createNamedParameter([self::AUTHOR, self::DRIVER], $qb::PARAM_STR_ARRAY)));
 			$qb->executeStatement();
 		}
 	}
 
 	/** @param array<string, mixed> $fields */
-	private function trip(string $vehicle, int $startedAt, array $fields): Trip {
-		return $this->trips->record(self::AUTHOR, $vehicle, $fields + [
+	private function trip(string $vehicle, int $startedAt, array $fields, string $author = self::AUTHOR): Trip {
+		return $this->trips->record($author, $vehicle, $fields + [
 			'started_at' => $startedAt,
 			'started_at_off' => 60,
 			'ended_at' => $startedAt + 3600,
@@ -108,6 +131,29 @@ class MileageClaimTest extends TestCase {
 		$this->assertStringContainsString('9,90 €', $lines[1]);
 		$this->assertStringContainsString('45,90 €', (string)$page->evaluate('string(//table/tfoot)'));
 		$this->assertSame('https://www.gesetze-im-internet.de/estg/__9.html', (string)$page->evaluate('string(//footer//a/@href)'));
+	}
+
+	/** On a shared car each reader's claim holds the business trips they entered, and says so. */
+	public function testEachReadersClaimHoldsTheTripsTheyEntered(): void {
+		$uuid = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 133', 'jurisdiction' => 'de', 'vehicle_type' => 'car'])->getUuid();
+		$this->grants->grant(self::AUTHOR, $uuid, ['grantee' => self::DRIVER, 'grantee_type' => 'user', 'role' => 'driver']);
+		$day = gmmktime(7, 0, 0, 3, 4, 2024);
+		$this->trip($uuid, $day, ['start_odo' => 1000, 'end_odo' => 1120, 'purpose' => 'Kunde A']);
+		$this->trip($uuid, $day + 86400, ['start_odo' => 1120, 'end_odo' => 1150, 'purpose' => 'Kunde B'], self::DRIVER);
+
+		$claims = [];
+		foreach ([self::AUTHOR, self::DRIVER] as $reader) {
+			$document = new \DOMDocument();
+			$this->assertTrue($document->loadHTML((string)$this->claim->year($reader, $uuid, 2024), LIBXML_NOERROR));
+			$page = new \DOMXPath($document);
+			$this->assertStringContainsString('Nur Fahrten, die Sie eingetragen haben.', (string)$page->evaluate('string(//header)'));
+			$claims[$reader] = $this->lines($page);
+		}
+
+		$this->assertCount(1, $claims[self::AUTHOR]);
+		$this->assertStringContainsString('Kunde A', $claims[self::AUTHOR][0]);
+		$this->assertCount(1, $claims[self::DRIVER]);
+		$this->assertStringContainsString('Kunde B', $claims[self::DRIVER][0]);
 	}
 
 	/** Under `generic` there is no rate, so there is no claim - not one of 0,00 €. */

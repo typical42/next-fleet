@@ -6,7 +6,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
-import { createReminder, createVehicle, deleteEntry, deleteVehicle, getVehicle, listVehicles, recordEnergy, recordExpense, recordMaintenance, recordReading, recordTrip, restoreEntry, restoreVehicle, updateEntry, updateVehicle } from '../services/api.js'
+import { createReminder, createVehicle, deleteEntry, deleteVehicle, detachDocument, getVehicle, leaveVehicle, listVehicles, recordEnergy, recordExpense, recordMaintenance, recordReading, recordTrip, restoreDocument, restoreEntry, restoreVehicle, runImport, undoImport, updateEntry, updateVehicle } from '../services/api.js'
 
 /** @typedef {import('../services/api.js').Vehicle} Vehicle */
 /** @typedef {import('../services/api.js').Reading} Reading */
@@ -45,7 +45,32 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	const struck = ref(null)
 
 	/**
-	 * How many Entries an undo has brought back. The toast that makes the undo lives in the app
+	 * What the last import created - the way back for an import (docs/architecture.md#import),
+	 * held for the reason `deleted` is: the sheet that asked for it has closed. The list is the
+	 * import's identity; the undo names it and nothing else.
+	 *
+	 * @type {import('vue').Ref<{vehicle: string, counts: import('../services/api.js').ImportCounts, created: {type: string, uuid: string}[]}|null>}
+	 */
+	const imported = ref(null)
+
+	/**
+	 * The paper the last *Remove* took off, and its vehicle - the way back for a paper, held for the
+	 * reason `deleted` is. No token: nothing edits a document (docs/architecture.md#documents).
+	 *
+	 * @type {import('vue').Ref<{vehicle: string, document: string}|null>}
+	 */
+	const detached = ref(null)
+
+	/**
+	 * The list the last paper's undo answered, for the papers section to show: the toast that makes
+	 * the undo knows no section, as with `restored`.
+	 *
+	 * @type {import('vue').Ref<{vehicle: string, list: import('../services/api.js').Document[]}|null>}
+	 */
+	const refiled = ref(null)
+
+	/**
+	 * How many undos have brought Entries back or taken an import's away. The toast that makes the undo lives in the app
 	 * shell and knows no timeline; a timeline watches this and reads itself again.
 	 */
 	const restored = ref(0)
@@ -126,7 +151,34 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	async function remove(vehicle) {
 		deleted.value = await deleteVehicle(vehicle)
 		struck.value = null
+		imported.value = null
+		detached.value = null
 		byUuid.value.delete(vehicle.uuid)
+	}
+
+	/**
+	 * Give back the session's own grant on a vehicle. With no group still reaching it, it leaves
+	 * the fleet as a deleted one does, but with no way back: only the owner grants again. With one,
+	 * it stays, and is read again for what that group allows. That read may fail on its own, for
+	 * the reason counted() gives; the vehicle then shows what it allowed before until the next load,
+	 * and the server refuses the rest. A refused leave is not caught, as with `save()`.
+	 *
+	 * @param {string} uuid - the vehicle
+	 * @return {Promise<import('../services/api.js').Held>} what the session still holds on it
+	 */
+	async function leave(uuid) {
+		const held = await leaveVehicle(uuid)
+		if (held.groups.length === 0) {
+			byUuid.value.delete(uuid)
+			return held
+		}
+		try {
+			upsert(await getVehicle(uuid))
+		} catch {
+			// See above: the leave stands.
+		}
+
+		return held
 	}
 
 	/**
@@ -142,7 +194,46 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	async function strike(uuid, type, entry) {
 		const left = await moving(uuid, type, () => deleteEntry(uuid, type, entry))
 		deleted.value = null
+		imported.value = null
+		detached.value = null
 		struck.value = { vehicle: uuid, type, entry: left }
+	}
+
+	/**
+	 * Take a paper off a vehicle and hold the way back, as strike() does for an Entry. A refusal is
+	 * not caught, as with `save()`.
+	 *
+	 * @param {string} uuid - the vehicle
+	 * @param {import('../services/api.js').Document} paper - the one to take off
+	 * @return {Promise<import('../services/api.js').Document[]>} the list as it now stands
+	 */
+	async function detach(uuid, paper) {
+		const list = await detachDocument(uuid, paper.uuid)
+		deleted.value = null
+		struck.value = null
+		imported.value = null
+		detached.value = { vehicle: uuid, document: paper.uuid }
+
+		return list
+	}
+
+	/**
+	 * Import a file: every row the preview with the same answers counted, in one write, and the
+	 * way back held as a delete's is. Its fill-ups and records are Readings, so the vehicle is
+	 * read back. A refusal is not caught, as with `save()`.
+	 *
+	 * @param {string} uuid - the vehicle
+	 * @param {import('../services/api.js').ImportAsked & {etag: string}} asked - the preview's request and its etag
+	 * @return {Promise<import('../services/api.js').ImportResult>} what the import answered
+	 */
+	async function bring(uuid, asked) {
+		const result = await counted(uuid, () => runImport(uuid, asked))
+		deleted.value = null
+		struck.value = null
+		detached.value = null
+		imported.value = { vehicle: uuid, counts: result.counts, created: result.created }
+
+		return result
 	}
 
 	/**
@@ -153,12 +244,29 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	 * Nothing deleted is nothing to undo, and no request: the toast is the only caller and it is
 	 * only up while there is an offer, so this is the state after a page load, not a failure.
 	 *
-	 * @return {Promise<void>} when the vehicle or the Entry is back
+	 * An import is undone as the list it answered, all of it or nothing.
+	 *
+	 * @return {Promise<void>} when the vehicle, the Entry or the paper is back, or the import's entries gone
 	 */
 	async function restore() {
 		if (deleted.value !== null) {
 			upsert(await restoreVehicle(deleted.value))
 			deleted.value = null
+			return
+		}
+
+		const brought = imported.value
+		if (brought !== null) {
+			await counted(brought.vehicle, () => undoImport(brought.vehicle, brought.created))
+			imported.value = null
+			restored.value++
+			return
+		}
+
+		const paper = detached.value
+		if (paper !== null) {
+			refiled.value = { vehicle: paper.vehicle, list: await restoreDocument(paper.vehicle, paper.document) }
+			detached.value = null
 			return
 		}
 
@@ -190,6 +298,8 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	function forget() {
 		deleted.value = null
 		struck.value = null
+		imported.value = null
+		detached.value = null
 	}
 
 	/**
@@ -317,14 +427,25 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	 */
 	async function counted(uuid, write) {
 		const written = await write()
-		try {
-			upsert(await getVehicle(uuid))
-		} catch {
-			// See above: the write stands, only this view of it is behind.
-		}
+		await refresh(uuid)
 
 		return written
 	}
 
-	return { byUuid, create, deleted, fill, forget, list, load, log, maintain, record, remind, reminded, remove, restore, restored, revise, save, spend, strike, struck, upsert, visible }
+	/**
+	 * Read one vehicle again after a write moved what it carries: its counter, or who has it. A
+	 * failed read leaves it stale until the next load, for the reason counted() gives.
+	 *
+	 * @param {string} uuid - the vehicle
+	 * @return {Promise<void>} when it is read, or the read failed
+	 */
+	async function refresh(uuid) {
+		try {
+			upsert(await getVehicle(uuid))
+		} catch {
+			// See counted(): the write stands, only this view of it is behind.
+		}
+	}
+
+	return { bring, byUuid, create, deleted, detach, detached, fill, imported, forget, leave, list, load, log, maintain, record, refiled, refresh, remind, reminded, remove, restore, restored, revise, save, spend, strike, struck, upsert, visible }
 })

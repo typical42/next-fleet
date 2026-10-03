@@ -11,6 +11,7 @@ import InspectionSticker from './InspectionSticker.vue'
 import ReminderSheet from './ReminderSheet.vue'
 import { listReminders, reminderTemplates } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
+import { may } from '../utils/access.js'
 import { dayWords, dueWords, INSPECTION, inspectionOf, light, openByUrgency, reminderTitle, stateWord } from '../utils/reminders.js'
 
 const props = defineProps({
@@ -35,6 +36,9 @@ const failure = ref('')
 const opened = ref(undefined)
 
 const open = computed(() => openByUrgency(reminders.value))
+
+/** Reminders take `edit`; anyone else reads the list and opens no sheet on it. */
+const edits = computed(() => may(props.vehicle, 'edit'))
 
 /**
  * Whether `reminders` is this vehicle's list. Until it is, the sticker question would be asked
@@ -62,7 +66,7 @@ watch([() => props.vehicle.uuid, () => props.vehicle.odo_value, () => store.rest
 	reload()
 })
 // Whether an inspection is required turns on the country and the type (IInspectionScheme).
-watch([() => props.vehicle.uuid, () => props.vehicle.jurisdiction, () => props.vehicle.vehicle_type], offer)
+watch([() => props.vehicle.uuid, () => props.vehicle.jurisdiction, () => props.vehicle.vehicle_type, edits], offer)
 
 /**
  * The last read asked for. An answer to an older one is for a vehicle or a counter this banner
@@ -95,6 +99,10 @@ async function offer() {
 	const mine = ++offered
 	// The last answer was for another country, type or vehicle.
 	inspection.value = null
+	// The answer to the question is a new reminder.
+	if (!edits.value) {
+		return
+	}
 	let found = null
 	try {
 		found = (await reminderTemplates(props.vehicle.uuid)).find((one) => one.key === INSPECTION) ?? null
@@ -142,7 +150,10 @@ function estimateWords(reminder) {
 		     (docs/ui.md). -->
 		<ul v-if="open.length > 0" class="due__list">
 			<li v-for="reminder in open" :key="reminder.uuid" class="due__row">
-				<button type="button" class="due__open" @click="opened = reminder">
+				<component :is="edits ? 'button' : 'div'"
+					:type="edits ? 'button' : undefined"
+					class="due__open"
+					@click="edits && (opened = reminder)">
 					<!-- The colour repeats the word, never replaces it (docs/ui.md). -->
 					<span class="due__state" :class="`due__state--${light(reminder)}`">
 						{{ stateWord(reminder.state) }}
@@ -150,10 +161,12 @@ function estimateWords(reminder) {
 					<span class="due__title">{{ reminderTitle(reminder) }}</span>
 					<span class="due__when">{{ dueWords(reminder, vehicle.odo_unit) }}</span>
 					<span v-if="estimateWords(reminder)" class="due__estimate">{{ estimateWords(reminder) }}</span>
-				</button>
+				</component>
 				<!-- Done is a Maintenance Record, which closes the reminder and schedules the next
-				     from the work itself (docs/architecture.md#reminder-engine, rule 4). -->
-				<NcButton class="due__done"
+				     from the work itself (docs/architecture.md#reminder-engine, rule 4) - so it takes
+				     `log`, as any entry does. -->
+				<NcButton v-if="may(vehicle, 'log')"
+					class="due__done"
 					variant="tertiary"
 					:aria-label="t('nextfleet', 'Done: {title}', { title: { value: reminderTitle(reminder), escape: false } })"
 					@click="emit('done', reminder.uuid)">
@@ -168,7 +181,7 @@ function estimateWords(reminder) {
 			class="due__sticker"
 			:vehicle="vehicle"
 			:template="inspection" />
-		<div class="due__actions">
+		<div v-if="edits" class="due__actions">
 			<NcButton variant="tertiary" @click="opened = null">
 				{{ t('nextfleet', '+ Reminder') }}
 			</NcButton>
@@ -224,8 +237,9 @@ function estimateWords(reminder) {
 	text-align: start;
 }
 
-.due__open:hover,
-.due__open:focus-visible {
+/* Only where the row opens something; a row that opens nothing does not light up as if it did. */
+button.due__open:hover,
+button.due__open:focus-visible {
 	background-color: var(--color-background-hover);
 }
 

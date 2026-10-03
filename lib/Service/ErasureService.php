@@ -8,9 +8,11 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Service;
 
+use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\AuditMapper;
 use OCA\NextFleet\Db\BaseMapper;
+use OCA\NextFleet\Db\BookingMapper;
 use OCA\NextFleet\Db\DocumentMapper;
 use OCA\NextFleet\Db\EnergyMapper;
 use OCA\NextFleet\Db\ExpenseMapper;
@@ -22,12 +24,14 @@ use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCP\AppFramework\Db\TTransactional;
+use OCP\IAppConfig;
 use OCP\IDBConnection;
 use OCP\Security\ISecureRandom;
 
 /**
  * What a deleted account leaves behind (docs/adr/0008-erasing-a-driver-pseudonymises.md): its
- * uid replaced on every row and no row deleted, except the reminder lists it was on.
+ * uid replaced on every row and no row deleted, except the reminder lists it was on. Every sync
+ * cursor handed out before it starts over (SyncService::EPOCH).
  */
 class ErasureService {
 	use TTransactional;
@@ -50,8 +54,10 @@ class ErasureService {
 		ReminderReceiptMapper $receipts,
 		DocumentMapper $documents,
 		AuditMapper $audit,
+		BookingMapper $bookings,
+		private IAppConfig $config,
 	) {
-		$this->tables = [$vehicles, $access, $readings, $trips, $energy, $maintenance, $expenses, $reminders, $receipts, $recipients, $documents, $audit];
+		$this->tables = [$vehicles, $access, $readings, $trips, $energy, $maintenance, $expenses, $reminders, $receipts, $recipients, $documents, $audit, $bookings];
 	}
 
 	/**
@@ -70,5 +76,8 @@ class ErasureService {
 				$table->pseudonymise($uid, $pseudonym);
 			}
 		}, $this->db);
+
+		// After the commit: a client reset before it would be handed the uid again, and keep it.
+		$this->config->setValueString(Application::APP_ID, SyncService::EPOCH, $this->random->generate(16, ISecureRandom::CHAR_ALPHANUMERIC));
 	}
 }

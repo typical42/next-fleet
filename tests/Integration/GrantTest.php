@@ -15,6 +15,7 @@ use OCA\NextFleet\Service\GrantService;
 use OCA\NextFleet\Service\RecipientService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Db\DoesNotExistException;
+use OCP\IConfig;
 use OCP\IDBConnection;
 use OCP\IGroupManager;
 use OCP\IUserManager;
@@ -34,6 +35,10 @@ class GrantTest extends TestCase {
 	private const BEN = 'nextfleet-test-grant-ben';
 	private const ACCOUNTS = [self::ANNA, self::BEN];
 	private const GROUP = 'nextfleet-test-grant-crew';
+	/** Deleted and made again by one case. */
+	private const GONE = 'nextfleet-test-grant-gone';
+	/** An account one case makes and deletes. */
+	private const EXCLUDED = 'nextfleet-test-grant-excluded';
 
 	private GrantService $grants;
 	private VehicleService $vehicles;
@@ -60,7 +65,9 @@ class GrantTest extends TestCase {
 		foreach (self::ACCOUNTS as $uid) {
 			$users->get($uid)?->delete();
 		}
-		\OCP\Server::get(IGroupManager::class)->get(self::GROUP)?->delete();
+		foreach ([self::GROUP, self::GONE] as $gid) {
+			\OCP\Server::get(IGroupManager::class)->get($gid)?->delete();
+		}
 	}
 
 	protected function setUp(): void {
@@ -78,8 +85,11 @@ class GrantTest extends TestCase {
 
 	/** The rows this suite invents, gone for real - a soft delete would outlive the run. */
 	private function forgetTestRows(): void {
+		$this->forgetRowsOf(self::OWNER, ...self::ACCOUNTS);
+	}
+
+	private function forgetRowsOf(string ...$people): void {
 		$db = \OCP\Server::get(IDBConnection::class);
-		$people = [self::OWNER, ...self::ACCOUNTS];
 		foreach (['fleet_vehicles' => 'user_id', 'fleet_access' => 'created_by', 'fleet_reminder_recipients' => 'created_by'] as $table => $column) {
 			$qb = $db->getQueryBuilder();
 			$qb->delete($table)->where($qb->expr()->in($column, $qb->createNamedParameter($people, $qb::PARAM_STR_ARRAY)));
@@ -169,6 +179,118 @@ class GrantTest extends TestCase {
 		$this->assertSame([], $this->grants->list(self::ANNA, $vehicle->getUuid()));
 	}
 
+	/**
+	 * Whom the admin lets a user share with is whom they may grant: the picker offers no one else
+	 * (core's autocomplete), and the server holds the same line. Ben is in the crew, Anna in no
+	 * group.
+	 */
+	public function testUnderGroupMembersOnlyAGranteeSharesAGroupWithTheOwner(): void {
+		$annas = $this->vehicles->create(self::ANNA, ['plate' => 'B-GR 2']);
+		$bens = $this->vehicles->create(self::BEN, ['plate' => 'B-GR 3']);
+
+		$this->underSharingRules(['shareapi_only_share_with_group_members' => 'yes'], function () use ($annas, $bens): void {
+			$this->assertRefused(self::ANNA, $annas, ['grantee' => self::BEN, 'grantee_type' => 'user', 'role' => 'viewer']);
+			$this->assertRefused(self::ANNA, $annas, ['grantee' => self::GROUP, 'grantee_type' => 'group', 'role' => 'viewer']);
+			$this->assertSame([self::GROUP], array_column(
+				$this->grants->grant(self::BEN, $bens->getUuid(), ['grantee' => self::GROUP, 'grantee_type' => 'group', 'role' => 'viewer']),
+				'grantee',
+			));
+		});
+	}
+
+	/** A group the admin exempts from "members only" is no common ground, as core's sharing reads it. */
+	public function testAnExemptGroupIsNoCommonGround(): void {
+		$annas = $this->vehicles->create(self::ANNA, ['plate' => 'B-GR 2']);
+		$groups = \OCP\Server::get(IGroupManager::class);
+		$anna = \OCP\Server::get(IUserManager::class)->get(self::ANNA) ?? throw new \RuntimeException('no ' . self::ANNA);
+		$groups->get(self::GROUP)?->addUser($anna);
+		$grantBen = ['grantee' => self::BEN, 'grantee_type' => 'user', 'role' => 'viewer'];
+
+		try {
+			$this->underSharingRules([
+				'shareapi_only_share_with_group_members' => 'yes',
+				'shareapi_only_share_with_group_members_exclude_group_list' => json_encode([self::GROUP]),
+			], fn () => $this->assertRefused(self::ANNA, $annas, $grantBen));
+			$this->underSharingRules(['shareapi_only_share_with_group_members' => 'yes'], function () use ($annas, $grantBen): void {
+				$this->assertSame([self::BEN], array_column($this->grants->grant(self::ANNA, $annas->getUuid(), $grantBen), 'grantee'));
+			});
+		} finally {
+			$groups->get(self::GROUP)?->removeUser($anna);
+		}
+	}
+
+	/** Whoever may not share at all grants nobody either. */
+	public function testWithTheShareApiOffNobodyIsGranted(): void {
+		$annas = $this->vehicles->create(self::ANNA, ['plate' => 'B-GR 2']);
+
+		$this->underSharingRules(['shareapi_enabled' => 'no'], fn () => $this->assertRefused(
+			self::ANNA, $annas, ['grantee' => self::BEN, 'grantee_type' => 'user', 'role' => 'viewer'],
+		));
+	}
+
+	/**
+	 * An owner in groups excluded from sharing grants nobody. Their own account: core keeps that
+	 * answer per account for the rest of the process.
+	 */
+	public function testAnOwnerExcludedFromSharingGrantsNobody(): void {
+		$users = \OCP\Server::get(IUserManager::class);
+		$users->get(self::EXCLUDED)?->delete();
+		$excluded = $users->createUser(self::EXCLUDED, bin2hex(random_bytes(16))) ?: throw new \RuntimeException('no ' . self::EXCLUDED);
+		\OCP\Server::get(IGroupManager::class)->get(self::GROUP)?->addUser($excluded);
+		try {
+			$theirs = $this->vehicles->create(self::EXCLUDED, ['plate' => 'B-GR 4']);
+			$this->underSharingRules([
+				'shareapi_exclude_groups' => 'yes',
+				'shareapi_exclude_groups_list' => json_encode([self::GROUP]),
+			], fn () => $this->assertRefused(
+				self::EXCLUDED, $theirs, ['grantee' => self::ANNA, 'grantee_type' => 'user', 'role' => 'viewer'],
+			));
+		} finally {
+			$this->forgetRowsOf(self::EXCLUDED);
+			$excluded->delete();
+		}
+	}
+
+	public function testWithoutGroupSharingNoGroupIsGranted(): void {
+		$bens = $this->vehicles->create(self::BEN, ['plate' => 'B-GR 3']);
+
+		$this->underSharingRules(['shareapi_allow_group_sharing' => 'no'], fn () => $this->assertRefused(
+			self::BEN, $bens, ['grantee' => self::GROUP, 'grantee_type' => 'group', 'role' => 'viewer'],
+		));
+	}
+
+	/**
+	 * Runs `$test` under core's sharing settings, then puts back what the instance had: the test
+	 * servers are dev servers, and their admin's settings are not ours to reset.
+	 *
+	 * @param array<string, string> $values
+	 */
+	private function underSharingRules(array $values, \Closure $test): void {
+		$config = \OCP\Server::get(IConfig::class);
+		$before = [];
+		foreach ($values as $key => $value) {
+			$before[$key] = $config->getAppValue('core', $key, "\0unset");
+			$config->setAppValue('core', $key, $value);
+		}
+		try {
+			$test();
+		} finally {
+			foreach ($before as $key => $value) {
+				$value === "\0unset" ? $config->deleteAppValue('core', $key) : $config->setAppValue('core', $key, $value);
+			}
+		}
+	}
+
+	/** @param array<string, mixed> $fields */
+	private function assertRefused(string $owner, Vehicle $vehicle, array $fields): void {
+		try {
+			$this->grants->grant($owner, $vehicle->getUuid(), $fields);
+			$this->fail('The grant went through');
+		} catch (\InvalidArgumentException) {
+		}
+		$this->assertSame([], $this->grants->list($owner, $vehicle->getUuid()));
+	}
+
 	public function testTheOwnerChangesTheRoleOfAGrant(): void {
 		$vehicle = $this->vehicle();
 		[$grant] = $this->grants->grant(self::OWNER, $vehicle->getUuid(), ['grantee' => self::ANNA, 'grantee_type' => 'user', 'role' => 'viewer']);
@@ -255,6 +377,114 @@ class GrantTest extends TestCase {
 
 		$this->grants->revoke(self::OWNER, $uuid, $byGrantee[self::GROUP]);
 		$this->assertSame([self::OWNER], $this->recipientIds($vehicle));
+	}
+
+	/** Their own grant goes, the vehicle leaves their overview, and so do its reminders. */
+	public function testADirectGranteeLeaves(): void {
+		$vehicle = $this->vehicle();
+		$uuid = $vehicle->getUuid();
+		$this->grants->grant(self::OWNER, $uuid, ['grantee' => self::ANNA, 'grantee_type' => 'user', 'role' => 'driver']);
+		$this->grants->grant(self::OWNER, $uuid, ['grantee' => self::BEN, 'grantee_type' => 'user', 'role' => 'viewer']);
+		$this->recipients->add(self::OWNER, $uuid, self::ANNA);
+
+		$this->assertSame(['role' => null, 'groups' => []], $this->grants->leave(self::ANNA, $uuid));
+
+		$this->assertSame([self::BEN], array_column($this->grants->list(self::OWNER, $uuid), 'grantee'));
+		$this->assertNotContains($uuid, array_map(static fn (Vehicle $one): string => $one->getUuid(), $this->vehicles->list(self::ANNA)));
+		$this->assertSame([self::OWNER], $this->recipientIds($vehicle));
+	}
+
+	/** Through a group there is nothing of theirs to leave: they are told which group, and it stays. */
+	public function testAGroupGranteeIsToldWhichGroupAndCannotLeave(): void {
+		$vehicle = $this->vehicle();
+		$uuid = $vehicle->getUuid();
+		$this->grants->grant(self::OWNER, $uuid, ['grantee' => self::GROUP, 'grantee_type' => 'group', 'role' => 'viewer']);
+		$before = $this->grants->list(self::OWNER, $uuid);
+
+		$held = ['role' => null, 'groups' => [['grantee' => self::GROUP, 'display_name' => 'The Crew', 'role' => 'viewer']]];
+		$this->assertSame($held, $this->grants->held(self::BEN, $uuid));
+		try {
+			$this->grants->leave(self::BEN, $uuid);
+			$this->fail('Left a group grant');
+		} catch (DoesNotExistException) {
+		}
+		$this->assertSame($before, $this->grants->list(self::OWNER, $uuid));
+	}
+
+	/** Leaving their own grant leaves the group's standing, and with it the vehicle and its reminders. */
+	public function testLeavingKeepsWhatAGroupGives(): void {
+		$vehicle = $this->vehicle();
+		$uuid = $vehicle->getUuid();
+		$this->grants->grant(self::OWNER, $uuid, ['grantee' => self::BEN, 'grantee_type' => 'user', 'role' => 'manager']);
+		$this->grants->grant(self::OWNER, $uuid, ['grantee' => self::GROUP, 'grantee_type' => 'group', 'role' => 'viewer']);
+		$this->recipients->add(self::OWNER, $uuid, self::BEN);
+		$this->assertSame('manager', $this->grants->held(self::BEN, $uuid)['role']);
+
+		$held = $this->grants->leave(self::BEN, $uuid);
+
+		$this->assertSame(['role' => null, 'groups' => [['grantee' => self::GROUP, 'display_name' => 'The Crew', 'role' => 'viewer']]], $held);
+		$this->assertSame(['view'], $this->vehicles->find(self::BEN, $uuid)->getMay());
+		$this->assertSame([self::OWNER, self::BEN], $this->recipientIds($vehicle));
+	}
+
+	/**
+	 * A deleted group's grants go with it, recipients included: a group made later under the same
+	 * id would otherwise inherit the car.
+	 */
+	public function testADeletedGroupsGrantsAreRevokedAndItsIdReusedReachesNothing(): void {
+		$vehicle = $this->vehicle();
+		$uuid = $vehicle->getUuid();
+		$groups = \OCP\Server::get(IGroupManager::class);
+		$ben = \OCP\Server::get(IUserManager::class)->get(self::BEN) ?? throw new \RuntimeException('no ' . self::BEN);
+		$groups->createGroup(self::GONE)?->addUser($ben);
+		$this->grants->grant(self::OWNER, $uuid, ['grantee' => self::GONE, 'grantee_type' => 'group', 'role' => 'driver']);
+		$this->grants->grant(self::OWNER, $uuid, ['grantee' => self::ANNA, 'grantee_type' => 'user', 'role' => 'viewer']);
+		$this->recipients->add(self::OWNER, $uuid, self::BEN);
+
+		$groups->get(self::GONE)?->delete();
+		$groups->createGroup(self::GONE)?->addUser($ben);
+
+		$this->assertSame([self::ANNA], array_column($this->grants->list(self::OWNER, $uuid), 'grantee'));
+		$this->assertSame([self::OWNER], $this->recipientIds($vehicle));
+		$this->expectException(AccessDeniedException::class);
+		$this->vehicles->find(self::BEN, $uuid);
+	}
+
+	/** The owner holds the car, not a grant on it. */
+	public function testTheOwnerHoldsNoGrantToLeave(): void {
+		$vehicle = $this->vehicle();
+		$uuid = $vehicle->getUuid();
+		$this->grants->grant(self::OWNER, $uuid, ['grantee' => self::ANNA, 'grantee_type' => 'user', 'role' => 'driver']);
+
+		$this->assertSame(['role' => null, 'groups' => []], $this->grants->held(self::OWNER, $uuid));
+		$this->expectException(DoesNotExistException::class);
+		$this->grants->leave(self::OWNER, $uuid);
+	}
+
+	/**
+	 * A grantee's overview names whose vehicle it is, on the list and the single read alike; the
+	 * owner's own carries no name. An owner with no account reads as the uid the row carries.
+	 */
+	public function testAVehicleReachedThroughAGrantNamesItsOwner(): void {
+		\OCP\Server::get(IUserManager::class)->get(self::ANNA)?->setDisplayName('Anna Adler');
+		$annas = $this->vehicles->create(self::ANNA, ['plate' => 'B-GR 2']);
+		$this->grants->grant(self::ANNA, $annas->getUuid(), ['grantee' => self::BEN, 'grantee_type' => 'user', 'role' => 'driver']);
+		$nobodys = $this->vehicle();
+		$this->grants->grant(self::OWNER, $nobodys->getUuid(), ['grantee' => self::GROUP, 'grantee_type' => 'group', 'role' => 'viewer']);
+		$bens = $this->vehicles->create(self::BEN, ['plate' => 'B-GR 3']);
+
+		$owners = [];
+		foreach ($this->vehicles->list(self::BEN) as $one) {
+			$owners[$one->getUuid()] = $one->jsonSerialize()['owned_by'];
+		}
+
+		$this->assertSame([
+			$annas->getUuid() => 'Anna Adler',
+			$nobodys->getUuid() => self::OWNER,
+			$bens->getUuid() => null,
+		], array_intersect_key($owners, [$annas->getUuid() => 1, $nobodys->getUuid() => 1, $bens->getUuid() => 1]));
+		$this->assertSame('Anna Adler', $this->vehicles->find(self::BEN, $annas->getUuid())->jsonSerialize()['owned_by']);
+		$this->assertNull($this->vehicles->find(self::ANNA, $annas->getUuid())->jsonSerialize()['owned_by']);
 	}
 
 	/** @return list<string> */

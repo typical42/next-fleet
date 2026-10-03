@@ -39,6 +39,37 @@ class DocumentMapper extends BaseMapper {
 	}
 
 	/**
+	 * The file ids live papers reference on the vehicles one user reaches: the ones they own, and
+	 * the granted ones VehicleAccess has resolved to ids. Not narrowed to a folder's files, since
+	 * a fleet's papers are fewer than a folder's photos and an IN () that long breaks on Oracle.
+	 *
+	 * @param list<int> $grantedIds
+	 * @return list<int>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findAttachedFileIds(string $userId, array $grantedIds): array {
+		$qb = $this->db->getQueryBuilder();
+		$mine = $qb->expr()->eq('v.user_id', $qb->createNamedParameter($userId));
+		// An empty IN () is not a predicate any of the three databases accepts.
+		$reachable = $grantedIds === [] ? $mine : $qb->expr()->orX(
+			$mine,
+			$qb->expr()->in('v.id', $qb->createNamedParameter($grantedIds, IQueryBuilder::PARAM_INT_ARRAY)),
+		);
+		$qb->selectDistinct('d.file_id')
+			->from($this->tableName, 'd')
+			->innerJoin('d', 'fleet_vehicles', 'v', $qb->expr()->eq('v.id', 'd.vehicle_id'))
+			->where($reachable)
+			->andWhere($qb->expr()->isNull('d.deleted_at'))
+			->andWhere($qb->expr()->isNull('v.deleted_at'));
+
+		$result = $qb->executeQuery();
+		$ids = array_map('intval', $result->fetchAll(\PDO::FETCH_COLUMN));
+		$result->closeCursor();
+
+		return $ids;
+	}
+
+	/**
 	 * The papers one entry carries. The vehicle is asked for too, so a link can never reach
 	 * across to another vehicle's documents.
 	 *

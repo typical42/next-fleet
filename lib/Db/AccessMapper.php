@@ -41,8 +41,7 @@ class AccessMapper extends BaseMapper {
 
 	/**
 	 * Every live grant on one vehicle, in the order they were given: the owner's list of who
-	 * else may use it. No index on `vehicle_id` - a vehicle has a handful of grants, and an index
-	 * would be a migration, which only a version bump runs.
+	 * else may use it.
 	 *
 	 * @return list<Access>
 	 * @throws \OCP\DB\Exception
@@ -56,6 +55,43 @@ class AccessMapper extends BaseMapper {
 			->orderBy('id');
 
 		return $this->findEntities($qb);
+	}
+
+	/**
+	 * Every live grant to one group, on any vehicle, one in the trash included: a vehicle
+	 * restored brings its grants back with it.
+	 *
+	 * @return list<Access>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findByGroup(string $groupId): array {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->tableName)
+			->where($qb->expr()->eq('grantee_type', $qb->createNamedParameter(Access::GROUP)))
+			->andWhere($qb->expr()->eq('grantee', $qb->createNamedParameter($groupId)))
+			->andWhere($qb->expr()->isNull('deleted_at'));
+
+		return $this->findEntities($qb);
+	}
+
+	/**
+	 * Whether anybody was ever given access to one vehicle, revoked grants included: the trips
+	 * they entered stay on it after the revoke.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	public function everGranted(int $vehicleId): bool {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('id')
+			->from($this->tableName)
+			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
+			->setMaxResults(1);
+		$result = $qb->executeQuery();
+		$found = $result->fetch() !== false;
+		$result->closeCursor();
+
+		return $found;
 	}
 
 	/**

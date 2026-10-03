@@ -23,7 +23,7 @@ import { mkdir } from 'node:fs/promises'
 
 import { chromium } from '@playwright/test'
 
-import { appPage, login } from '../tests/e2e/app.js'
+import { appPage, login, logout } from '../tests/e2e/app.js'
 
 const baseURL = process.env.NEXTFLEET_URL_NC34 ?? 'http://localhost:8080'
 const out = 'design/screenshots'
@@ -59,7 +59,7 @@ await page.addInitScript(() => document.addEventListener('DOMContentLoaded', () 
 }))
 
 await mkdir(out, { recursive: true })
-await login(page)
+await login(page, 'admin', 'admin')
 await page.goto(appPage)
 
 // The overview: every seeded vehicle in one list, counters included.
@@ -118,4 +118,5 @@ await page.getByRole('main').getByRole('listitem').first().waitFor()
 await page.addStyleTag({ content: '#nextfleet .hint { display: none; }' })
 await shoot(page, 'overview-thumb')
 
+await logout(page)
 await browser.close()

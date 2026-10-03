@@ -34,6 +34,15 @@ class PackageTest extends TestCase {
 		}
 	}
 
+	/**
+	 * The contract of the version a server runs travels with it, where Nextcloud's OCS API viewer
+	 * looks for it; the tool that writes it does not.
+	 */
+	public function testItShipsTheApiDocumentAndNotItsGenerator(): void {
+		$this->assertContains('openapi.json', $this->listIn('SHIP'));
+		$this->assertContains('vendor-bin', $this->listIn('LEAVE'));
+	}
+
 	/** @return list<string> */
 	private function listIn(string $variable): array {
 		$script = (string)file_get_contents(self::ROOT . '/tools/package.sh');

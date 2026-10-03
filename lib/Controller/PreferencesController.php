@@ -19,8 +19,8 @@ use OCP\IUserSession;
 
 /**
  * The personal settings screen's two calls. Like every other controller here it carries no rules
- * (docs/adr/0006-one-api-surface-in-v1.md); a preference carries no `updated_at` either, because
- * a user's own setting has no second writer to lose a race against.
+ * (docs/adr/0009-the-ocs-api-v1-is-the-public-contract.md); a preference carries no `updated_at`
+ * either, because a user's own setting has no second writer to lose a race against.
  */
 class PreferencesController extends Controller {
 	public function __construct(

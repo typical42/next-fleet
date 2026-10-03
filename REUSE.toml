@@ -19,6 +19,7 @@ path = [
     "design/**.html",
     "design/screenshots/**.png",
     "psalm-baseline.xml",
+    "tests/Fixture/import/**.csv",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Johannes Kolb"

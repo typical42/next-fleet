@@ -61,15 +61,6 @@ class ExportService {
 			throw new \InvalidArgumentException('No such export');
 		}
 
-		// docs/security.md: the trip file is the most sensitive thing this app hands out.
-		$this->logger->info('CSV export', [
-			'app' => Application::APP_ID,
-			'user' => $userId,
-			'vehicle' => $vehicleUuid,
-			'year' => $year,
-			'table' => $table,
-		]);
-
 		$id = (int)$vehicle->getId();
 		[$start, $end] = LocalYear::window($year);
 		$rows = match ($table) {
@@ -78,10 +69,21 @@ class ExportService {
 			'maintenance' => array_map(static fn (Maintenance $row): ?array => self::record($vehicle, $year, $row), $this->maintenance->findBetween($id, $start, $end)),
 			'expenses' => array_map(static fn (Expense $row): ?array => self::expense($vehicle, $year, $row), $this->expenses->findBetween($id, $start, $end)),
 		};
+		$rows = array_values(array_filter($rows, static fn (?array $row): bool => $row !== null));
+
+		// docs/security.md#what-is-logged: the trip file is the most sensitive thing this app hands out.
+		$this->logger->info('CSV export', [
+			'app' => Application::APP_ID,
+			'user' => $userId,
+			'vehicle' => $vehicleUuid,
+			'year' => $year,
+			'table' => $table,
+			'rows' => count($rows),
+		]);
 
 		return [
 			'name' => self::fileName($vehicle, $year, $table),
-			'body' => Csv::of(self::HEADERS[$table], array_values(array_filter($rows, static fn (?array $row): bool => $row !== null))),
+			'body' => Csv::of(self::HEADERS[$table], $rows),
 		];
 	}
 

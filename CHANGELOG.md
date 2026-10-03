@@ -1,402 +1,204 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — not released
 
-- The dashboard widget lists only the reminders that are red or amber: overdue, due or coming up.
-  A planned or snoozed one waits on the vehicle screen.
+Share a car with the people who drive it, book it and hand it over, file receipts from a folder,
+and bring your history along from another app.
 
-- Only the owner deletes or restores a vehicle; a manager keeps everything else. A vehicle's JSON
-  carries `may`, the operations the caller holds on it (`view`, `log`, `edit`, `delete`, `own`).
+### Sharing a vehicle
 
-- A driver adds trips, fill-ups, readings, maintenance and expenses, and edits, voids or deletes
-  the ones they entered. Somebody else's take a manager or the owner.
+- The owner gives a user or a group access to a vehicle as viewer, driver or manager, in the
+  *Access* section of the Edit vehicle sheet, and changes the role or takes it back there.
+- A viewer reads. A driver also adds trips, fill-ups, readings, maintenance and expenses, and
+  changes or deletes the ones they entered. A manager changes everything else too: anybody's
+  entries, the vehicle, its reminders and its papers. Only the owner grants access and deletes the
+  vehicle. Each screen offers only what the role allows.
+- Granting follows the admin's sharing settings. With the Share API off, or the owner's groups
+  excluded from sharing, the owner grants nobody. Under "Restrict users to only share with users in
+  their groups" the owner grants only people who share a group with them, and only their own
+  groups. With group sharing off, no group can be granted.
+- The person granted is told in-app: "Anna gave you access to NF-DE 100 as a driver". Taking the
+  access back withdraws that notice and takes them off the vehicle's reminders. A role change, or
+  joining the group later, tells nobody. Nothing is mailed.
+- A shared vehicle sorts into the overview by urgency like your own, and names its owner: "Owned
+  by Anna Adler". Someone granted in person can leave it from its screen. Someone who reaches it
+  through a group is told which group.
+- Once anybody else has access, each timeline row says who entered it, and the logbook gains an
+  "Entered by" column (*Eingetragen von* in the Fahrtenbuch). The mileage claim lists only the
+  business trips its reader entered, and says so.
+- Deleting a group takes back its access, so a group made later under the same name reaches
+  nothing. Deleting an account pseudonymises its bookings too; the handover notes stay, as trips do.
 
-- The owner grants a user or a group viewer, driver or manager on a vehicle, changes the role and
-  revokes it, through `/api/vehicles/{uuid}/grants`. Revoking also takes anyone who no longer sees
-  the vehicle off its reminder recipients. No screen yet.
+### Bookings and handover
+
+- *Book* on the vehicle screen reserves the car for a time and a purpose. A booking over another
+  one is refused, naming whose it is and when. A driver books, changes and cancels their own; a
+  manager or the owner anybody's, and the booker is told when somebody else cancels.
+- *Take the car* and *Return the car* record the counter, the tank or battery level and a note as
+  the car changes hands, and handover photos attach to the booking. A car still out with somebody
+  else cannot be taken. A counter that runs backwards, or a car returned late, is flagged, never
+  refused. A car nobody holds right now offers *Take it now*.
+- Returning the car opens the trip, filled in from the handover; only the category is left to
+  choose. A returned booking without its trip offers *Log the trip*.
+- The overview and the vehicle header say who has the car: "With Anna until Fri 02/10, 18:00",
+  "With you", or overdue. The header also names your own next booking within seven days.
+- A laid-up or sold car cannot be booked.
+
+### Receipts and documents
+
+- The receipt inbox. Choose a folder of your own Files as *Inbox folder* in the personal settings,
+  and point the Nextcloud mobile app's auto-upload at it. *Inbox* then shows its images and PDFs
+  that are not attached yet. Two taps attach one to an entry, or it starts a new fill-up,
+  maintenance record or expense dated when the file was saved. Nothing is moved or renamed.
+- A driver attaches receipts to the entries they entered, and photos to their own bookings. The
+  registration and the insurance papers stay a manager's.
+- *Remove* on a document can be undone from the toast, as every other delete can.
+- *Belongs to* searches every fill-up, maintenance record, expense and booking of the vehicle by a
+  word of its title or purpose, or by its date, not only the newest. Dates there carry the year.
+- Tapping a document saves its file. When the file is gone or still being written, the screen says
+  so.
+- Papers, the inbox and the import take only files from your own home storage, never from a group
+  folder or an external storage. A vehicle would otherwise serve such a file past that folder's
+  own sharing rules.
+
+### Importing your history
+
+- *Import from a file…* in the vehicle sheet reads a CSV (LubeLogger format) or a CSV (Spritmonitor
+  format) file from your own Files: fill-ups, maintenance, expenses and odometer readings, never
+  trips. Pick the file, its format and its units. The preview shows each row as new, duplicate or
+  unreadable with the reason, and asks what the file leaves open. The import then writes all of it
+  or nothing, and the undo toast takes the whole import back.
+- LubeLogger files are read as an English or a German LubeLogger server writes them, with their
+  dates, currency signs and thousands marks. A negative cost, or a currency sign that is not the
+  vehicle's, makes the row unreadable.
+- Spritmonitor files are read with English or German headers, and the fuel and the cost type as
+  codes. Each cost type has a default meaning, which the preview shows and you may change. A
+  purchase price, a refund, AdBlue and hydrogen are never imported.
+- A file over 5 000 000 bytes or 20 000 rows, with a line over 64 KiB, or in an encoding other than
+  UTF-8 and Windows-1252 is refused with the reason.
+
+### Smaller changes
+
+- The dashboard widget lists only the reminders that are overdue, due or coming up. A planned or
+  snoozed one waits on the vehicle screen.
+- The entry sheet asks for a cost's VAT rate and the reminder it closes as soon as it opens, not
+  only after the date or the kind changes.
+- The CO₂ estimate names the year of its fuel factors' source, as it names the grid factor's.
+  Germany's are from 2022.
+
+### For apps, scripts and admins
+
+- An OCS API under `/ocs/v2.php/apps/nextfleet/api/v1` for apps such as a phone client. It signs in
+  with a Nextcloud app password, which a client gets through Login Flow v2. It does what the web UI
+  does, and a sync endpoint hands a client what changed since its last call. v1 only grows: a
+  change that would break a client fails the tests. `openapi.json` ships with the app, where
+  Nextcloud's OCS API viewer finds it. All of it is in `docs/api.md`.
+- `occ nextfleet:import <uid> <vehicle-uuid> <path>` runs the import for scripts, as that user and
+  through the same checks. `--dry-run` prints the preview.
+- `occ nextfleet:seed <user> --grant-to <uid>` shares the demo Passat with that account as a
+  driver, with a trip of theirs and a booking tomorrow.
+- The CSV export, each sync page and each import write one `info` line to the Nextcloud log: who, which
+  vehicle, what and how many rows. Set `loglevel` to 1 to see them
+  ([what is logged](docs/security.md#what-is-logged)).
+- `occ upgrade` from 0.2.0 runs one migration, a table for bookings and an index, and keeps every
+  row.
+  `tools/upgrade-check.sh` checks this on NC 31 and NC 34 before a release.
 
 ## 0.2.0 — not released
 
-v1 by scope, 0.x because it is new ([plan](plan.md#milestones)).
+v1 by scope, 0.x because it is new ([plan](plan.md#milestones)). For Nextcloud 31 to 34, in
+English and German, formal and informal.
 
-- The store listing names what shipped and no longer promises sharing, which has no screen before
-  M6. Its screenshots add the Costs and Reports screens.
+### Vehicles and the odometer
 
-- `tools/package.sh` builds the store tarball, `build/artifacts/nextfleet-<version>.tar.gz`, from a
-  fresh bundle and the app's own files only.
+- A vehicle is a car, van, truck, trailer, tractor or generator, with its plate, the energy it
+  takes, its country and its lifecycle: in service, laid up (reminders pause) or disposed
+  (reminders stop, the records stay). Its country sets the logbook rules, the VAT rates and the
+  inspection. A new vehicle takes the country from your personal settings.
+- The odometer is a history of readings, not a running total. A trip entered by its distance
+  derives the reading. A counter read off the dashboard wins over a derived one, and a reading it
+  contradicts is flagged, never rewritten. A reading lower than the one before is flagged, not
+  refused.
+- A vehicle can count engine hours instead of kilometres, as a tractor or a generator starts out
+  doing, or both, each on its own.
+- Two people saving the same thing at once cannot overwrite each other unseen: the later save is
+  told so. The entry sheet then offers *Save anyway*, which writes what is on its screen.
+- Deleting a vehicle, an entry or a reminder can be undone from the toast.
 
-- The vehicle sheet asks for the tank in litres, the battery in kWh and the purchase price and
-  residual value in the vehicle's currency, with either decimal mark, instead of millilitres,
-  watt-hours and cents. A value it cannot read is refused before anything is saved.
+### Trips and the logbook
 
-- Fixed on NC 34: the traffic lights on the overview and in the due banner were pale tints, because
-  NC 34 turned `--color-warning` and its kin into backgrounds. They take its element colours now.
-  They are drawn dots rather than a ● character, so they no longer change size with the font or
-  get read aloud.
+- The entry sheet takes a trip with the counter it ended on, or with the kilometres it covered,
+  whichever you know, and a category: business, private or commute. The start, the destination,
+  the purpose and the partner complete from the vehicle's earlier trips.
+- The vehicle screen's timeline lists every entry, newest first and by month, with chips to narrow
+  it to one kind. A tap opens the entry to change or delete it.
+- Logbook Mode, per vehicle. Trips become append-only: a delete voids the trip, which stays in the
+  export, and every write leaves an audit row. Switching it on locks nothing that came before. A
+  trip that lacks what the country requires is saved, flagged and names what is missing.
+- Gaps. Under Logbook Mode the timeline shows the kilometres no trip accounts for, per month, and
+  closes them one at a time with a private trip you confirm.
+- The Fahrtenbuch for a German vehicle: one year as a page the browser prints, with voided trips,
+  late edits and what they changed, and the periods the mode was on. A vehicle under the generic
+  country gets a plain logbook in your language. *Reports* in the navigation opens both.
+- The mileage claim: a year's business trips at the statutory rate of each trip's day, in Germany
+  0,30 € per km by car, van or truck since 2014, citing §9 EStG.
 
-- The app icon, a filled car. `img/app.svg` is white for the header, as Nextcloud's own are;
-  `img/app-dark.svg` is black for notifications, the dashboard widget and app management, which
-  invert it in dark mode. A search result shows the car on a blue tile, because Nextcloud never
-  inverts a result's thumbnail.
+### Fill-ups, maintenance and expenses
 
-- At 320 px the entry sheet and the timeline's filter chips no longer run off the right edge: the
-  entry types and chips wrap onto a second line. The vehicle screen's buttons move under its name
-  instead of squeezing it. A header figure now sits under its label on every width. The HU/AU
-  question's year field is a year wide.
+- Fill-ups and charging sessions, typed as the pump shows them, with either decimal mark. The
+  station and the price it last charged are prefilled. A plug-in hybrid takes petrol and
+  electricity; a charge says home or public.
+- Maintenance records (service, repair, inspection, tyres, upgrade) and expenses (insurance,
+  vehicle tax, toll, parking, fine, lease, other).
+- VAT is prefilled with the country's rate on the day: in Germany 19 %, and 16 % in the second half
+  of 2020. It stays empty for insurance, vehicle tax and fines, which carry none. *I reclaim VAT*
+  in the personal settings makes the figures net.
 
-- `occ nextfleet:seed` fills the Passat's year of costs to the current month, gives it a business
-  trip and a private one, and puts its Fahrzeugschein and HU/AU invoice in the seeding account's
-  Files under `Fleet demo/`, attached to the vehicle. A re-run overwrites the two files.
+### Figures and costs
 
-- A dashboard widget, *Vehicle reminders*: the open reminders of every vehicle you may
-  view, most urgent first, each with its traffic-light colour and its state as a word. An item opens
-  its vehicle.
+- Consumption from full tank to full tank, per energy. A plug-in hybrid shows two figures, and an
+  approximate wall-side kWh/100 km. A fill-up row states the figure of the stretch it closes.
+- The vehicle header: odometer, consumption, cost per 100 km, energy-only cost and the total cost
+  of ownership, for a period you pick, each compared with the period before.
+- The Costs screen: one year as a bar per month, stacked in energy, maintenance and expenses, and
+  the expenses by category beneath. A month with no rows says "No entries".
+- A CO₂ estimate on the Costs screen from the year's fill-ups, linked to its sources. Charging uses
+  the German grid average (344 g/kWh, 2025) unless your personal settings give your own. None under
+  the generic country.
+- CSV export of the year from the Costs screen, as four files: trips, fill-ups, maintenance and
+  expenses. Voided trips are marked, and a cell that would run as a formula starts with `'`.
 
-- A QR sticker per vehicle. *QR sticker* on the vehicle screen shows a code to print for the
-  glovebox. Scanning it opens the app on that vehicle with the entry sheet up, after a login if the
-  phone has no session. The code carries the address `…/apps/nextfleet/?vehicle=<uuid>&entry=new`
-  and nothing else.
+### Reminders
 
-- A vehicle's papers, server side. `GET`/`POST /api/vehicles/{uuid}/documents` lists and attaches
-  them, `DELETE …/documents/{document}` detaches one. Attaching takes a file you picked in Files,
-  optionally linked to a fill-up, maintenance record or expense of the same vehicle; it must be a
-  file in your own Files, not one shared with you. Anyone who may view the vehicle sees the list
-  and downloads the file from `GET /apps/nextfleet/vehicles/{uuid}/documents/{document}`, whoever
-  owns it. A file deleted in Files is a 404.
+- Reminders for HU/AU, oil change, brake fluid, tyre swap or a title of your own, by date, by km or
+  by whichever comes first, with warning points. A recurring one moves on from the work actually
+  done. A reminder by km shows an estimated date once there is enough driving to go on.
+- HU/AU from the sticker: the due banner asks for the month and year on it. Germany repeats it
+  every 24 months, every 12 for a truck or a tractor.
+- The due banner on the vehicle screen lists its reminders, most urgent first. *Done* opens a
+  maintenance record that closes the reminder. A reminder can be snoozed to a day, or one
+  occurrence skipped.
+- A Nextcloud notification at each warning point, when due and when overdue, to each of the
+  vehicle's recipients, in their language. A mail digest daily, weekly on Monday or monthly on the
+  1st, from 07:00 in their time zone. A laid-up vehicle sends nothing. No calendar events: Nextcloud
+  offers no way to change or remove one once the reminder is done.
+- The overview sorts vehicles by urgency, each with a traffic light, its km and its most urgent
+  reminder. The dashboard widget *Vehicle reminders* lists them across every vehicle.
 
-- The vehicle screen has a *Documents* section: the papers by kind, each a link to save it, and
-  *Add document*, which opens Nextcloud's file picker and asks what the file is and, optionally,
-  which fill-up, maintenance record or expense it belongs to. A linked paper shows as a paperclip
-  on its entry's timeline row and opens from there. A file deleted in Files says so instead of
-  linking nowhere.
+### Documents and more
 
-- Fixed on NC 31: the first lazily loaded part of the app (the file picker) mounted a second copy
-  of the app and dropped you back on the overview.
+- Papers from Files: attach the registration, the insurance or an invoice from your own Files to
+  the vehicle, or to one of its entries. Everyone who may see the vehicle opens it. A linked paper
+  shows as a paperclip on its timeline row.
+- A QR sticker per vehicle, for the glovebox, opens the entry sheet on that car.
+- Nextcloud's unified search finds a vehicle by its plate, with or without spaces and hyphens, its
+  manufacturer or its model.
+- `occ nextfleet:seed <user>` writes a demo fleet to try it on.
 
-- Nextcloud's unified search finds a vehicle by plate, manufacturer or model, and opens its screen.
-  A plate matches without its spaces and hyphens, so `bxy123` finds `B-XY 123`. It finds only the
-  vehicles you may view, and none you disposed of. Trips, notes and other entries are not searched.
+### Your data
 
-- A plain logbook for a vehicle under `generic`. *Open logbook* on the Reports screen prints its
-  trips for a year: date, time, route, purpose, counters, distance and category, the year's
-  distance per category, voided trips marked. It states no country's requirements and prints in your
-  language.
-
-- The mileage claim. *Open mileage claim* on the Reports screen prints one vehicle's business
-  trips for a year, each at the statutory rate of its day: in Germany 0,30 € per km by car, van
-  or truck since 2014, citing §9 EStG. Commutes and voided trips are not on it. A trip the rate
-  table does not cover says "nicht angegeben" and stays out of the sum. Under `generic`, or for a
-  vehicle counting hours, there is no claim. The page is at
-  `GET /apps/nextfleet/vehicles/{uuid}/mileage/{year}`.
-
-- CSV export. The Costs screen's *Export* menu saves the year on screen as four files: trips,
-  fill-ups, maintenance and expenses. `GET /apps/nextfleet/vehicles/{uuid}/csv/{year}/{table}`
-  answers each one. Voided trips are in the file, marked, and a cell that would run as a formula
-  starts with `'`. The format is in `docs/architecture.md#csv-export`.
-
-- A CO₂ estimate on the Costs screen: the year's fill-ups times their emission factor, linked to
-  its source. Electricity uses a grid factor, the German average (344 g/kWh, 2025) unless the
-  personal settings state your own. A fuel with no factor (CNG, entered in litres) is left out and
-  the screen says so. Under `generic` there is no estimate. The year's answer carries it as `co2`.
-
-- The Costs screen, opened by *Costs* on a vehicle's screen. One year at a time: the year's figures
-  including TCO, a bar per month stacked in energy, maintenance and expenses, and a table beneath
-  with the expenses by category. A month with no rows reads "No entries", not zero. Depreciation
-  stays in the TCO and out of the bars.
-
-- A year of costs for the Costs screen. `GET /api/vehicles/{uuid}/costs/{year}?tz=&net=` answers
-  the header's figures for the year and each month's cost, the months cut at midnight in `tz`, old
-  IANA aliases such as `Asia/Calcutta` included. A
-  cost now also states its maintenance total and its expenses by category, the header's included.
-  A month with no rows has no cost rather than zero.
-
-- Deleting a Nextcloud account pseudonymises its rows and deletes none (ADR 0008). Every row
-  that names it, as author, owner, grantee or notified user, carries one random `erased-…`
-  pseudonym instead, so a new account under the same uid inherits nothing. Its reminder-list
-  entries go. The vehicle sheet no longer asks for a retention period, since nothing purges yet;
-  `docs/legal.md` says so.
-
-- `fleet_documents`, M5's one migration: a vehicle's papers by Nextcloud file id, with a kind and
-  an optional link to one fill-up, maintenance record or expense. No route reads it yet. The app is
-  now 0.0.6, so `occ upgrade` creates the table.
-
-- Deleting a vehicle takes back the notifications its reminders sent. Before, one stayed in the
-  store for good, since the job no longer reads a deleted vehicle. An undo sends nothing back.
-
-- The M4 slice end to end. `tests/e2e/m4-slice.spec.js` enters a HU/AU from the sticker, adds a
-  German recipient and a daily mail in the vehicle sheet, and runs the job twice at a moved clock.
-  The recipient then has one notification and one digest. Next, an oil change is closed from the
-  banner, the next one shows, and the overview reorders. `tests/e2e/job.php` runs the job at a given
-  instant, inside the container, through the Docker socket, which `test:e2e:docker` now mounts. CI
-  starts Mailpit for it. `plan.md` gains decision 18 (recurrence from the work done) and the lossy
-  undo as a risk; `CONTEXT.md` gains the reminder terms.
-
-- Trip autocomplete. The entry sheet completes a trip's starting point, destination, purpose and
-  partner from this vehicle's own trips, latest first; both ends of the route share one list.
-  `GET /api/vehicles/{uuid}/trips/prefill` answers them. Voided trips are not offered.
-
-- Deleting a vehicle is a soft delete and nothing more; no code path purges a vehicle's rows yet.
-  `docs/architecture.md` says so.
-
-- The demo fleet has reminders. `occ nextfleet:seed` adds an HU/AU three weeks out on the hybrid,
-  an oil change by kilometres on the Passat — inside its lead, with a pace behind it, so the banner
-  shows an estimated date — and an HU/AU on the truck, which the German scheme recurs every 12
-  months rather than 24. Each states only when it is due; the interval is its template's. The demo
-  vehicles now state Germany as their jurisdiction instead of taking the seeding account's setting,
-  since a profile without an inspection scheme has no HU/AU to write.
-
-- The overview by urgency. Each vehicle shows a traffic light with its word, its km and its most
-  urgent open reminder; the most urgent vehicle comes first, then by plate, laid-up ones last.
-  `GET /api/reminders` lists the reminders of every vehicle the user may see in one read.
-
-- The mail digest. After the notifications, `ReminderJob` mails each recipient at most once a
-  day, from 07:00 in their time zone: every vehicle whose cadence falls that day (daily, weekly on
-  Monday, monthly on the 1st) and has a point not yet mailed to them, grouped by vehicle, in their
-  language. No news, no mail. A mail server that refuses it silences neither the notification nor
-  the next day's mail.
-
-- Reminders reach people. The hourly `ReminderJob` evaluates every reminder of every vehicle in
-  service, persists its state, and sends each recipient a Nextcloud notification once per warning
-  point, due and overdue, in their language; it opens the vehicle for whoever may see it. A newer
-  point replaces the older one; snoozing, dismissing, deleting or closing a reminder takes it back. A laid-up
-  vehicle sends nothing until it is back in service. The app is now 0.0.5, so `occ upgrade`
-  registers the job.
-
-- Who reminders go to. The edit sheet shows owner and managers a recipients picker and the mail
-  cadence (`reminder_mail`: no mail, daily, weekly on Monday, monthly on the 1st); drivers and
-  viewers see neither. `GET/POST …/recipients` and `DELETE …/recipients/{recipient}` read and
-  edit the list, and need edit rights to read too. A new vehicle starts with its owner as
-  recipient, as the migration gave every existing one.
-
-- A maintenance record closes a reminder. The entry sheet offers the vehicle's open reminders as
-  chips, and picks the most urgent one when the work is its kind; _Done_ in the due banner opens
-  the sheet with that reminder picked. `…/maintenance` takes and answers `closes` (a reminder
-  uuid), and the timeline states it. A recurring reminder moves on from the record's own day and
-  counter; a one-off is done. Editing or deleting the record takes that back and redoes it; the
-  reopened occurrence is due at the withdrawn work's day and km, since the planned due is not kept.
-
-- HU/AU from the sticker. Where the jurisdiction requires an inspection and the vehicle has no
-  open HU/AU reminder, the due banner asks for the month and year on the sticker; the reminder is
-  due on that month's last day. A vehicle before its first inspection is prefilled from its first
-  registration. The edit sheet sets the inspection interval (12 or 24 months) on that reminder,
-  or offers to add one. `…/reminder-templates` states `first_due_months` on the inspection.
-
-- The due banner on the vehicle screen lists its open reminders, most urgent first, each with its
-  state as a word, when it is due, and an estimate or "not enough data yet". _+ Reminder_ and a
-  tap on a row open the reminder sheet: a template or an own title, due by date, km or either,
-  warning points, recurrence; on an existing one also snooze, skip and delete with undo. Reminders
-  are not timeline rows. `…/reminders` now lists each state as it stands today rather than as
-  stored, and `GET …/reminder-templates` states what each template fills in.
-- A reminder by km, or by either, is listed with an `estimate`: the day the main chain's pace of
-  the last 90 days reaches its due km, or null with under 30 days or two Readings of pace. Flagged
-  Readings do not count, and an answered reset starts the pace again. It is display only.
-- Snooze and dismiss: `POST …/reminders/{reminder}/snooze` (with `until`, a day still to come) and
-  `…/dismiss`, owner and managers only. Dismissing moves a recurring reminder one recurrence on
-  from its planned due; one that does not recur stays dismissed. The state of a reminder at any day
-  and counter reading is now computed in one place (docs/architecture.md, "The state at an
-  instant"). By km a reminder is due and stays due; overdue is the date's.
-- Reminders on the server: `GET`/`POST /api/vehicles/{uuid}/reminders`, and `PUT`, `DELETE` and
-  `POST …/restore` on `…/reminders/{reminder}`. A reminder is made from a template the vehicle
-  offers, HU/AU only where its jurisdiction requires one, or under the user's own title. It is due
-  by date, by km or by either, with warning points and a recurrence. The owner and managers write;
-  drivers and viewers read. Nothing evaluates or sends them yet.
-- Reminder templates. `IServiceTemplates` offers oil change (12 months or 15 000 km, warned
-  1 000 km ahead), brake fluid (24 months) and tyre swap (6 months), the same everywhere. A
-  jurisdiction states its inspection (`IJurisdiction::inspectionScheme()`): Germany's is HU/AU,
-  every 12 months for a truck or tractor and 24 for the rest, first due after 36 months for a
-  car. The generic profile has none.
-- Reminders write no calendar event: public `OCP` on NC 31–34 cannot update or delete one, so a
-  changed or completed reminder would leave an event that still rings. The empty `CalendarService`
-  is gone; the in-app notification and the mail digest carry reminders.
-- The M4 schema: `fleet_reminders`, `fleet_reminder_receipts` (one row per point, occurrence,
-  channel and recipient, unique) and `fleet_reminder_recipients`, `reminder_id` on a maintenance
-  record and `reminder_mail` on the vehicle (default `weekly`). Every vehicle already there gets
-  its owner as its one recipient. The receipts table is not `fleet_reminder_notifications`, which
-  is one character over the 27 Nextcloud allows. No service writes them yet; a vehicle carries
-  `reminder_mail` on the wire.
-- The M3 schema: `fleet_energy`, `fleet_maintenance` and `fleet_expenses`, a `counter` on each
-  Reading (`main` or `second`; every existing Reading reads as `main`), and `second_unit` and
-  `second_value` on the vehicle for engine hours beside the kilometres. Nothing writes them yet.
-  A vehicle and a Reading now carry the new fields on the wire.
-- A vehicle can be a truck. The create sheet asks for the vehicle type and the counter unit beside
-  the counter; choosing a tractor or a generator switches the unit to engine hours, still
-  changeable, and never on a vehicle that already has Readings. The edit sheet's "Also counts engine
-  hours" switch, offered on a km vehicle, sets `second_unit`; switching it off keeps the hour
-  Readings. A vehicle counted in hours carries no second counter.
-- Engine hours are a chain of their own. An Odometer Entry on a vehicle with a second counter asks
-  which counter it read (`counter` on `POST …/readings`; `second` is refused on a vehicle without
-  one). Each chain is flagged and cached on its own, `second_value` for the hours; trips, Gaps and
-  the Fahrtenbuch read kilometres only. The timeline states an hour Reading in hours.
-- A jurisdiction states its VAT rate by date (`IJurisdiction::rates()`). Germany answers 19 %, and
-  16 % from 2020-07-01 to 2020-12-31, citing §12 UStG; nothing before 2007. The generic profile
-  states no rates. Nothing reads it yet.
-- A fill-up on the server: `POST /api/vehicles/{uuid}/energy`. Each counter given (`odo`,
-  `second_odo`) writes an Observed Reading at `filled_at` that accounts for no kilometre; none
-  given, none written. `second_odo` is refused on a vehicle without engine hours. `unit_price` is
-  derived from `total` and `amount` when not given. The answer carries `flags`: `foreign_energy`
-  for an energy outside `energy_types`, `no_price` for a missing total.
-- Energy in the entry sheet, offered on a vehicle with `energy_types` and only with those. Amount
-  (required) and total are typed as the pump shows them, with a comma or a point. VAT comes
-  prefilled with the jurisdiction's rate on the fill-up's day and clears to "not stated". The
-  station completes from this vehicle's history and prefills the price it last charged; that
-  price is sent only when there is no total or the driver changed it. A charge asks home or
-  public, and DC only in public. An empty counter says consumption needs it. The prefill is
-  `GET /api/vehicles/{uuid}/energy/prefill?at=&off=`.
-- Maintenance: `POST /api/vehicles/{uuid}/maintenance`, with a fill-up's counter rules. The entry
-  sheet offers it on every vehicle: title (required), cost, type (service, repair, inspection,
-  tyres or upgrade; none by default), date, vendor, VAT, counters and notes. The vendor completes
-  from this vehicle's history; VAT is prefilled as on a fill-up. The prefill is
-  `GET /api/vehicles/{uuid}/maintenance/prefill?at=&off=`. Date, VAT and counters are kept when
-  the sheet switches between Energy and Maintenance.
-- Expense: `POST /api/vehicles/{uuid}/expenses`. It writes no Reading. The entry sheet offers it
-  last on every vehicle: amount (required), category (insurance, vehicle tax, toll, parking, fine,
-  lease or other; none by default), date, VAT and notes. VAT is prefilled as on a fill-up; the
-  prefill is `GET /api/vehicles/{uuid}/expenses/prefill?at=&off=`.
-- Fill-ups, maintenance and expenses are in the timeline, with chips
-  `All · Trips · Odometer · Energy · Maintenance · Costs` (Costs is the expenses; `?type=energy`,
-  `maintenance`, `expense`). A fill-up row states its amount, a maintenance row its cost, an expense
-  row its amount. A row says in words what it is flagged for, whether a fill-up was partial or
-  missed the one before, and whether a counter it wrote is in question. A fill-up is now also
-  flagged `overfilled` when it exceeds `tank_ml` (or `battery_wh` for electricity).
-- Fill-ups, maintenance and expenses can be edited, deleted and restored on the server:
-  `PUT` and `DELETE /api/vehicles/{uuid}/{energy|maintenance|expenses}/{id}` and `POST …/restore`,
-  each checked against `updated_at` like a trip. A delete is a soft delete with undo and writes no
-  audit row, under Logbook Mode too. The Readings a fill-up or record wrote follow it in the same
-  transaction: an edit moves them, adds one for a counter now given and removes one for a counter
-  emptied; a delete takes them along and the undo brings them back.
-- Every timeline row opens its Entry in the entry sheet: trip, fill-up, maintenance, expense and
-  Odometer Entry. The sheet keeps the Entry's kind, saves the whole Entry back under the token it
-  was read with, and deletes it with the undo toast - a trip under Logbook Mode is voided, and the
-  button and the toast say so. An edit that lost a race says so and offers _Save anyway_, which
-  reads the Entry back and writes what is on screen. A rate the Entry was saved with, stated or
-  not, is never replaced by the jurisdiction's.
-- An Odometer Entry can be edited, deleted and restored: `PUT` and `DELETE
-  /api/vehicles/{uuid}/readings/{id}` and `POST …/restore`, on the token. An edit restates the
-  number, the moment and the counter, and settles both chains when the counter changed. A Reading
-  a trip, fill-up or maintenance record wrote is not found here: it follows its Entry.
-- `GET /api/vehicles/{uuid}/timeline/{type}/{id}` reads one Entry back as its timeline row.
-- Consumption, full tank to full tank, per energy: a fill-up closing a segment states it on its
-  timeline row (`6,1 l/100 km`, or `l/h` on a vehicle counted in hours) and carries it as
-  `consumption`. Partials count into the segment; a segment with a missed previous fill-up, a
-  flagged or derived Reading at either end, or an end without a counter states none. A plug-in
-  hybrid's petrol and electricity are measured apart, and engine hours never enter the figure.
-- A rolling wall-side kWh/100 km over every charge in a period, labelled approximate because
-  charging losses are in it (`ConsumptionService::wallSide()`).
-- Cost per 100 km (or per hour) for a period, and energy-only cost beside it
-  (`CostService::of()`). Net of each row's own rate for a person who reclaims VAT; a row without a
-  stated rate counts gross and the figure says so. Incomplete when a fill-up has no price, a
-  period total when no distance was driven, no figures without a currency.
-- TCO beside it: cost per 100 km plus purchase minus residual over every kilometre the vehicle has
-  run since its first Reading. Unset when either price is empty, as entered under "I reclaim VAT".
-- The vehicle header states them: odometer, consumption per energy (two for a plug-in hybrid, plus
-  the wall-side figure), cost, energy-only cost and TCO, and engine hours in the period on a vehicle
-  that counts them. A period picker offers the last 12 months, this year, last year or one month,
-  and every figure is compared with the period before. `GET /api/vehicles/{uuid}/kpis?from=&to=&net=`
-  answers one period.
-- "I reclaim VAT" on the personal settings page (off) makes the header's cost figures net. It and
-  the header's period are preferences: `reclaim_vat` and `kpi_period` on `GET|PUT /api/preferences`.
-- The "complete this vehicle" hint also asks for a currency when a vehicle has none, on every
-  vehicle, since a trailer has costs too.
-- `occ nextfleet:seed` writes a year of costs: fill-ups with a partial and a missed previous, the
-  hybrid's petrol and its charges at home and in public, maintenance, and expenses with and without
-  a stated VAT rate. It adds a truck with an hour chain (`NF-LK 700`) and a residual on the Passat.
-  The hybrid's cluster swap moved back to more than a year ago; its counter now ends at 23,740 km.
-- An insurance, vehicle tax or fine expense opens with the VAT field empty ("not stated") in
-  Germany, since none of them carries VAT; the other categories keep the day's rate. The
-  jurisdiction names the categories (`IRateProvider::vatFreeCategories()`), and the prefill takes
-  `category`. Such a row counts gross under "I reclaim VAT" and shows in the header's note on rows
-  without a rate. The seed's insurance, tax and fine rows state no rate either, instead of 0.
-- A fill-up edited from its row saves. `PUT …/energy/{energy}` looked the fill-up up by the body's
-  `energy` field, the fuel, and answered 404 on every edit; the placeholder is now `{fillUp}`, and a
-  unit test keeps placeholders apart from body fields. Delete and undo were not affected.
-- `tests/e2e/m3-slice.spec.js` drives the M3 slice on both majors: a fill-up moving the header, a
-  hybrid's two figures, an edit, a delete and its undo, the period picker, and an axe audit at
-  320 × 640 in the dark. The M1 and M2 slices find the odometer in the new header.
-- A period with no fill-up, maintenance record or expense has no cost: every sum in the KPIs' `cost`
-  is `null` rather than 0, TCO included, so its tile hides. The header still shows such a period as
-  zero but compares nothing with it, so a vehicle bought four months ago shows no swing against the
-  months before it existed.
-
-- Overview, at the top of the navigation. It leads back from a vehicle or from Reports without a
-  reload, and is marked whenever the overview is what shows.
-- Two writes on one vehicle at once no longer leave its kilometres on the older Reading. Every
-  Odometer Entry and trip write now holds the vehicle first, so the second waits for the first.
-  An Odometer Entry and its restating are now one transaction.
-- Reports, below the vehicles in the navigation. It opens the Fahrtenbuch for a vehicle and a year
-  in a tab of its own, prefilled with the first vehicle and this year. It offers only vehicles whose
-  country prints a logbook, sold ones included. `GET /api/preferences` now says which countries do
-  (`logbook_export`).
-- The Fahrtenbuch export: `GET /apps/nextfleet/vehicles/{uuid}/logbook/{year}` opens one vehicle's
-  logbook for one year as a page the browser prints, in German. Every trip that set off in the year
-  is a line, voided trips listed as voided. A trip that set off while Logbook Mode was on and lacks
-  a field is marked incomplete and names it; outside those periods nothing is marked. A trip edited,
-  voided or restored after the lock delay says when on its line: an edit with what each changed
-  field said before, a restore with since when the trip had been voided. The page
-  states the periods the mode was on, or that it was not, and cites the requirement in its footer.
-  A country without an export answers 404. The page loads nothing, and the export is rate-limited
-  and logged.
-- A Gap is closed one at a time. Under Logbook Mode the trip that opened it offers to close it, and
-  a confirmation naming the kilometres and the two moments writes one private distance trip marked
-  `reconciled`, whose Reading lands on the claim. `POST /api/vehicles/{uuid}/gaps/{trip}/close`
-  takes the Gap as the driver confirmed it and answers 412 `conflict` when it has moved since. Under
-  the mode its audit row is `created` with `derived: true`. It edits like any other trip, and
-  `reconciled` is never set or cleared by a request.
-- Gap detection: a trip that sets off above where the last trip left the counter leaves the
-  kilometres in between unaccounted. An Odometer Entry between the two accounts for none of them,
-  and one that is flagged or above the claim opens no Gap until it is answered. With no trip before,
-  the claim is measured against the newest Reading. `GET /api/vehicles/{uuid}/gaps` lists them for every vehicle, each with the two
-  moments that bracket it. Under Logbook Mode the timeline's month header states the month's total.
-- A trip can be edited: `PUT /api/vehicles/{uuid}/trips/{trip}` takes the whole trip and the token
-  it was read with, and rewrites the row in place. A field the request leaves out is emptied, so a
-  distance trip can become a counter trip. When the journey moves, its Reading moves with it in the
-  same transaction. Under Logbook Mode the edit leaves an `edited` audit row with what changed, and
-  an edit after the ruleset's lock delay is still allowed and marked `late`.
-- A trip missing a field its jurisdiction requires is saved and flagged, never refused. Under
-  Logbook Mode its timeline row says it is incomplete and names what is still missing, in the words
-  the sheets ask by. The timeline's trip rows carry `missing` for every vehicle.
-- Germany states what it requires of a logbook: a business trip names the plate, the date, both
-  counters, where it went, why and whom it visited; a commute states the journey and not its reason;
-  a private trip needs only the kilometres it already carries. An entry stays timely for seven days,
-  a record is kept for ten years, and the requirement is cited by URL. A country that requires no
-  logbook says so, and under it Logbook Mode still keeps trips append-only and audited.
-- A trip is deleted by voiding it: `DELETE /api/vehicles/{uuid}/trips/{trip}` stamps `deleted_at`,
-  the row survives, and the Reading the trip left on the counter goes with it, so the vehicle stands
-  where it did before the journey. `POST …/trips/{trip}/restore` brings both back on the token the
-  delete answered with. Under Logbook Mode each of the two leaves a `fleet_audit` row, in the same
-  transaction as the write.
-- Logbook Mode is switched on and off per vehicle, in the vehicle's edit sheet beside its lifecycle
-  and its country. Every flip leaves a `fleet_audit` row on the vehicle, in the same transaction as
-  the write, which is how an export later states the periods the mode was on. Switching off asks
-  first; switching on does not.
-- The vehicle sheet's two date pickers stop taking input while a save is in flight, like every field
-  beside them.
-- A vehicle under Logbook Mode keeps an audit trail: every trip written on it leaves a `fleet_audit`
-  row naming the trip and listing the fields it was written with, in the same transaction as the
-  trip itself. Off the mode nothing is recorded.
-- The vehicle screen shows its timeline: trips and counter readings as rows, newest first, the month
-  a sticky header above them and the next fifty loaded as the bottom comes into view. The chips
-  `All · Trips · Odometer` narrow it, and an entry saved in the sheet appears without a reload.
-- `GET /api/vehicles/{uuid}/timeline` answers with one vehicle's trips and counter readings in one
-  order, newest first, fifty rows at a time. `?type=` narrows it to one kind, `?cursor=` continues
-  where the last page stopped, and a trip carries the Reading it left on the counter so the two are
-  one row.
-- The entry sheet asks what is being entered — a trip or a counter reading — and opens on the trip.
-  A trip is entered with the counter it ended on or with the kilometres it covered, whichever the
-  driver knows. Neither of a trip's counters is prefilled: the one it set off on is a claim about
-  what the dashboard read, and the vehicle's own counter is not that claim.
-- A counter a trip actually ended on discredits the Readings the distance-only trips before it
-  counted: those rows are flagged and none of them is rewritten. A counter still below the last row
-  standing is flagged too, so both questions get asked.
-- A trip may carry the kilometres it covered instead of the counter it ended on. Its Reading is
-  counted from the newest one at or before the moment it set off, and marked derived. A trip that
-  carries both, or neither, is refused.
-- `POST /api/vehicles/{uuid}/trips` records a trip. The counter it ended on becomes one Reading at
-  `ended_at`, and the vehicle's kilometres move with it. `start_odo` stays a claim and writes no
-  Reading.
-- A second migration adds `fleet_trips` and `fleet_audit`, the two tables the logbook is made of.
-  It is the only schema change this milestone gets.
-- `fleet_trips` carries no `cost_center` and no `driver_uid`, and an audit row's author and instant
-  are the `created_by` and `created_at` every row has. `docs/architecture.md` said otherwise, and
-  `docs/legal.md` and ADR 0008 named `driver_uid` as what a driver's erasure pseudonymises.
-- Dismissing the *First registration* or *Disposed on* picker with `Esc` no longer closes the
-  vehicle sheet and loses what was typed into it.
+- Deleting a Nextcloud account pseudonymises every row that names it and deletes none
+  ([ADR 0008](docs/adr/0008-erasing-a-driver-pseudonymises.md)). A new account under the same name
+  inherits nothing.
+- Deleting a vehicle is a soft delete, and takes back the notifications its reminders sent. Nothing
+  purges a vehicle's rows yet.

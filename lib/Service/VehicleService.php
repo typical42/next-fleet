@@ -11,6 +11,8 @@ namespace OCA\NextFleet\Service;
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\Audit;
 use OCA\NextFleet\Db\AuditMapper;
+use OCA\NextFleet\Db\Booking;
+use OCA\NextFleet\Db\BookingMapper;
 use OCA\NextFleet\Db\ReminderMapper;
 use OCA\NextFleet\Db\ReminderRecipient;
 use OCA\NextFleet\Db\ReminderRecipientMapper;
@@ -21,8 +23,10 @@ use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Db\TTransactional;
+use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\IConfig;
 use OCP\IDBConnection;
+use OCP\IUserManager;
 
 /**
  * Everything a vehicle is written under, so the controller carries none of it: which columns a
@@ -103,6 +107,9 @@ class VehicleService {
 	 */
 	private const SWITCHED = 'switched';
 
+	/** How far ahead the reader's own next booking is named (docs/ui.md). */
+	private const WEEK = 7 * 86400;
+
 	public function __construct(
 		private VehicleMapper $mapper,
 		private VehicleAccess $access,
@@ -113,6 +120,11 @@ class VehicleService {
 		private ReminderRecipientMapper $recipients,
 		private ReminderMapper $reminders,
 		private NotificationService $notifications,
+		private GrantNotices $grantNotices,
+		private BookingNotices $bookingNotices,
+		private BookingMapper $bookings,
+		private ITimeFactory $time,
+		private IUserManager $users,
 	) {
 	}
 
@@ -207,12 +219,16 @@ class VehicleService {
 		$was = $vehicle->getLogbookMode() === true;
 		$this->apply($vehicle, $fields);
 
-		return $this->atomic(function () use ($userId, $vehicle, $expectedUpdatedAt, $was): Vehicle {
+		$written = $this->atomic(function () use ($userId, $vehicle, $expectedUpdatedAt, $was): Vehicle {
 			$written = $this->mapper->updateChecked($vehicle, $expectedUpdatedAt);
 			$this->trail($userId, $written, $was);
 
 			return $written;
 		}, $this->db);
+		// The screen replaces the vehicle it holds with this answer (src/store/index.js).
+		$this->pool($userId, [$written]);
+
+		return $written;
 	}
 
 	/**
@@ -251,8 +267,9 @@ class VehicleService {
 
 	/**
 	 * Takes back what the vehicle's reminders have sent: the job no longer reads a deleted
-	 * vehicle, so nothing else ever would. After the delete stands, the reason
-	 * NotificationService::sweep() gives. A restore sends nothing back; the next round tells
+	 * vehicle, so nothing else ever would. Its grants' and cancelled bookings' notices go too, as
+	 * litter of the same kind. After the delete stands, the reason NotificationService::sweep()
+	 * gives. A restore sends nothing back; the next round tells
 	 * whatever is still due.
 	 *
 	 * @param int $expectedUpdatedAt the `updated_at` the client read
@@ -269,6 +286,8 @@ class VehicleService {
 		foreach ($this->reminders->findByVehicle((int)$deleted->getId()) as $reminder) {
 			$this->notifications->withdraw($reminder);
 		}
+		$this->grantNotices->withdrawAll($deleted);
+		$this->bookingNotices->withdrawAll($deleted);
 
 		return $deleted;
 	}
@@ -285,10 +304,13 @@ class VehicleService {
 	 * @throws \OCP\DB\Exception
 	 */
 	public function restore(string $userId, string $uuid, int $expectedUpdatedAt): Vehicle {
-		return $this->mapper->restoreChecked(
+		$restored = $this->mapper->restoreChecked(
 			$this->permit($userId, VehicleAccess::OWN, $this->mapper->findAnyByUuid($uuid)),
 			$expectedUpdatedAt,
 		);
+		$this->pool($userId, [$restored]);
+
+		return $restored;
 	}
 
 	/**
@@ -297,7 +319,10 @@ class VehicleService {
 	 * @throws \OCP\DB\Exception
 	 */
 	public function find(string $userId, string $uuid): Vehicle {
-		return $this->reach($userId, VehicleAccess::VIEW, $uuid);
+		$vehicle = $this->reach($userId, VehicleAccess::VIEW, $uuid);
+		$this->pool($userId, [$vehicle]);
+
+		return $vehicle;
 	}
 
 	/**
@@ -327,6 +352,19 @@ class VehicleService {
 	}
 
 	/**
+	 * What change() would let through on one Entry, for its timeline row to carry as `may`: the
+	 * screen offers an edit or a delete by the same answer the second gate refuses by.
+	 *
+	 * @return list<string>
+	 */
+	public function changes(string $userId, Vehicle $vehicle, ?string $createdBy): array {
+		return array_values(array_filter(
+			[VehicleAccess::EDIT, VehicleAccess::DELETE],
+			fn (string $operation): bool => $this->access->mayChange($userId, $operation, $vehicle, $createdBy),
+		));
+	}
+
+	/**
 	 * The gate itself, once a row is in hand. Separate from reach() only because a restore looks
 	 * the row up differently and must still be refused by the same rule.
 	 *
@@ -341,6 +379,7 @@ class VehicleService {
 			throw new AccessDeniedException();
 		}
 		$vehicle->setMay($may);
+		$this->nameOwner($userId, $vehicle);
 
 		return $vehicle;
 	}
@@ -352,11 +391,69 @@ class VehicleService {
 	public function list(string $userId): array {
 		$reachable = $this->access->reachable($userId);
 		$vehicles = $this->mapper->findAllVisible($userId, array_keys($reachable));
+		// One lookup per owner rather than per vehicle: core does not promise to cache them.
+		$names = [];
 		foreach ($vehicles as $vehicle) {
 			$vehicle->setMay($this->access->listed($userId, $vehicle, $reachable));
+			$this->nameOwner($userId, $vehicle, $names);
 		}
+		$this->pool($userId, $vehicles, $names);
 
 		return $vehicles;
+	}
+
+	/**
+	 * Who has each car, and the reader's own next booking of it within a week (docs/ui.md), in
+	 * one query for the whole list rather than one per vehicle. A booking is seen with `view`,
+	 * which every vehicle handed out is.
+	 *
+	 * @param list<Vehicle> $vehicles
+	 * @param array<string, string> $names the names already looked up, by uid
+	 * @throws \OCP\DB\Exception
+	 */
+	private function pool(string $userId, array $vehicles, array &$names = []): void {
+		$byId = [];
+		foreach ($vehicles as $vehicle) {
+			$byId[(int)$vehicle->getId()] = $vehicle;
+		}
+		$now = $this->time->getTime();
+		foreach ($this->bookings->findPooled(array_keys($byId), $userId, $now, $now + self::WEEK) as $booking) {
+			$vehicle = $byId[$booking->getVehicleId()];
+			if ($booking->getState() === Booking::OUT) {
+				$booker = $booking->getUserId();
+				$names[$booker] ??= $this->users->getDisplayName($booker) ?? $booker;
+				$vehicle->setOutWith([
+					'user_id' => $booker,
+					'user_name' => $names[$booker],
+					'ends_at' => $booking->getEndsAt(),
+					'ends_at_off' => $booking->getEndsAtOff(),
+				]);
+			} elseif ($vehicle->getMyNextBooking() === null) {
+				// By start, so the first is the next.
+				$vehicle->setMyNextBooking([
+					'uuid' => $booking->getUuid(),
+					'starts_at' => $booking->getStartsAt(),
+					'starts_at_off' => $booking->getStartsAtOff(),
+					'ends_at' => $booking->getEndsAt(),
+					'ends_at_off' => $booking->getEndsAtOff(),
+				]);
+			}
+		}
+	}
+
+	/**
+	 * Whose vehicle a grantee is looking at. An owner with no account - an erased one's pseudonym
+	 * (docs/adr/0008-erasing-a-driver-pseudonymises.md) - reads as the uid the row carries.
+	 *
+	 * @param array<string, string> $names the names already looked up, by uid
+	 */
+	private function nameOwner(string $userId, Vehicle $vehicle, array &$names = []): void {
+		$owner = $vehicle->getUserId();
+		if ($owner === $userId) {
+			return;
+		}
+		$names[$owner] ??= $this->users->getDisplayName($owner) ?? $owner;
+		$vehicle->setOwnedBy($names[$owner]);
 	}
 
 	/**

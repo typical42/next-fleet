@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Tests\Integration;
 
 use OCA\NextFleet\AppInfo\Application;
+use OCA\NextFleet\Jurisdiction\De\RateProvider;
 use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\ExpenseService;
 use OCA\NextFleet\Service\KpiService;
@@ -170,6 +171,9 @@ class KpiTest extends TestCase {
 		$this->assertSame(106000 + 3440, $co2['grams'] ?? null);
 		$this->assertFalse($co2['unstated']);
 		$this->assertStringStartsWith('https://', $co2['source']);
+		// The fuel factors' year beside their source, as the grid's is.
+		$this->assertArrayHasKey('year', $co2);
+		$this->assertSame((new RateProvider())->emissionSourceYear(), $co2['year']);
 		$this->assertSame(344, $co2['grid']['grams'] ?? null);
 		$this->assertSame(2025, $co2['grid']['year'] ?? null);
 

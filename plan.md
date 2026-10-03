@@ -1,8 +1,8 @@
 # NextFleet — Plan
 
 A Nextcloud app for keeping a vehicle logbook. Backend: Nextcloud DB, user system,
-notifications, mail. Frontend: Nextcloud web UI. An Android client comes later and reuses the same
-services.
+notifications, mail. Frontend: Nextcloud web UI. An Android client comes later, built against the
+[OCS API](docs/api.md) over the same services.
 
 ## Documents
 
@@ -11,6 +11,7 @@ services.
 | [CONTEXT.md](CONTEXT.md) | The glossary. Read it first — the code, the UI and these docs use these words and no others |
 | [docs/adr/](docs/adr/) | Decisions that are hard to reverse, each with its reasoning. Where a document and an ADR disagree, the ADR wins |
 | [docs/architecture.md](docs/architecture.md) | Layers, data model, Nextcloud integration, the reminder engine, the maths |
+| [docs/api.md](docs/api.md) | The OCS API a client is built against: signing in, answers, tokens, sync, what v1 promises |
 | [docs/features.md](docs/features.md) | Prior art, the backlog, Logbook Mode |
 | [docs/contributing.md](docs/contributing.md) | How someone adds a jurisdiction, an importer or a report — by merge request |
 | [docs/ui.md](docs/ui.md) | Screens, the entry flow, English and German |
@@ -27,8 +28,8 @@ Nextcloud apps; the company fleet manager brings roles, pool bookings and employ
 waits behind v1.
 
 That choice decides the rest of this document. The features that justify switching apps are the
-tax-grade logbook, gap detection and the mileage claim — everything multi-driver is deferred, and
-what remains is sized for one person to finish.
+tax-grade logbook, gap detection and the mileage claim. v1 deferred everything multi-driver, and
+M6–M7 added only what two or three people sharing the owner's car need.
 
 ## Scope
 
@@ -36,8 +37,10 @@ what remains is sized for one person to finish.
 expenses, reminders by date or km with notification + mail, cost overview, CSV export,
 HTML/print reports.
 
-**Later:** shared vehicles with roles, bookings, handover protocols, import from other tools, the
-OCS API and the Android client.
+**Built after v1 (M6–M9), not released:** access for others with roles, bookings, handover
+protocols, the receipt inbox, the OCS API, import from LubeLogger and Spritmonitor CSV exports.
+
+**Later:** the Android client, and the rest of the [backlog](docs/features.md#feature-backlog).
 
 **Out of scope:** telematics/OBD hardware, GPS tracking, route planning, OCR of receipts.
 
@@ -57,11 +60,19 @@ directory that someone else can add by merge request ([contributing](docs/contri
 | M4 | Reminder engine, TimedJob, notifications, mail digest, recipients, HU/AU from the sticker, closing a reminder by maintenance record. No calendar (decision 16) | HU/AU due in 4 weeks reaches the phone |
 | M5 | Documents, the Costs screen with a CO₂ estimate, CSV export, the mileage claim, a plain logbook for the generic jurisdiction, dashboard widget, search, QR sticker | Feature-complete v1 as 0.2.0, not released |
 | M6 | Sharing: the owner grants a user or a group viewer, driver or manager; a driver logs their own entries; screens follow the caller's role | A partner or an employee logs trips in the owner's car and sees only what their role allows |
-| M7+ | Bookings, handover, the receipt inbox. Then the OCS API, `?since=` delta endpoint, app passwords, API docs | Multi-driver pool works; an Android client can be built against it |
+| M7 | The pool and the inbox: a grantee who may log books the vehicle, and the server refuses a second booking over it; check-out and check-in with the counter and the tank, the check-in prefilling the trip; who has the car on the overview; a receipt folder the mobile app's auto-upload fills, attached in two taps. No calendar (decision 16) | Two or three people share a car without phoning first, and a photographed receipt reaches its entry without the file picker |
+| M8 | The OCS API under `/api/v1`, signed in with an app password; a `sync` delta endpoint with tombstones; a generated `openapi.json` checked in CI; API docs | An Android client can be built against it |
+| M9 | Import: a LubeLogger or Spritmonitor CSV export picked from the caller's own Files, previewed with its columns, open questions, duplicates and unreadable rows, imported in one transaction through the entry services, undone as a whole; `occ nextfleet:import` for scripts. Never trips ([architecture](docs/architecture.md#import)) | Someone switching from LubeLogger or Spritmonitor brings their history along, and can take it back straight away |
+| M10 | Release-ready, nothing released: the importers checked against their formats' sources, `source_uuid` on Readings and `estimate` on synced reminders, export, sync and import logged alike, M5's small gaps closed, a security review of M6–M9, the package installed fresh and over 0.2.0 by [`tools/upgrade-check.sh`](tools/upgrade-check.sh), every suite green on NC 31 and NC 34 in one pass, and the [release checklist](docs/development.md#release) | The maintainer only commits, signs, tags and uploads |
+| Next | Not planned yet: the [feature backlog](docs/features.md#feature-backlog), which no milestone has claimed | — |
+
+**M0–M10 are built, and none is released.** M0–M5 are 0.2.0, M6–M10 are 0.3.0. 0.3.0 is the first
+release; 0.2.0 does not go out alone ([release](docs/development.md#release), step 2).
 
 **v1 is 0.2.0, and it is not released for now** (decided 2026-09-30). M5 is v1 by scope; the
 version tracks maturity, and a first release has none yet, so it stays on the 0.x line. Until a
-release, later milestones collect under the CHANGELOG's `## Unreleased`.
+release, later milestones collect under the CHANGELOG's open section — `## 0.3.0 — not released`
+since M7's migration raised the version, because Nextcloud runs a migration only after a rise.
 
 **M5 is v1 by scope, and M6 builds on it.** Maintenance records sit in M3 rather than M5 because
 they write odometer readings and close reminders — building the reminder engine against a record
@@ -69,7 +80,7 @@ type that does not exist yet is the wrong order.
 
 ## Decisions taken
 
-Dated 2026-09-03, revised 2026-09-04 and 2026-09-23. Where an ADR exists it carries the reasoning; this list is
+Dated 2026-09-03, revised 2026-09-04, 2026-09-23 and 2026-10-02. Where an ADR exists it carries the reasoning; this list is
 the index.
 
 **Shape of the product**
@@ -83,17 +94,19 @@ the index.
 4. **No plugin system; jurisdictions arrive as merge requests**
    ([contributing](docs/contributing.md)). One directory each, the core knows none of them, review
    is the gate.
-5. **v1 has one internal API** — [ADR 0006](docs/adr/0006-one-api-surface-in-v1.md).
+5. **The OCS API v1 is the public contract** —
+   [ADR 0009](docs/adr/0009-the-ocs-api-v1-is-the-public-contract.md), superseding ADR 0006. Two
+   doors, one rule: the web UI keeps its internal routes, and both call the same services.
 6. **Reports are HTML with a print stylesheet** — [ADR 0005](docs/adr/0005-no-pdf-library.md).
 
 **Data**
 
 7. **Access is our own table, checked in one place** —
-   [ADR 0001](docs/adr/0001-own-access-table.md). The sharing UI still waits for M6; the check does
-   not.
+   [ADR 0001](docs/adr/0001-own-access-table.md). The *Access* section of the Edit vehicle
+   sheet (M6) is its screen.
 8. **`uuid`, `updated_at`, `deleted_at`, `created_by` on every table**
    ([data model](docs/architecture.md#data-model)). `uuid` is identity, `updated_at` powers
-   optimistic concurrency today and sync later, `deleted_at` gives undo and gives GDPR erasure
+   optimistic concurrency and sync, `deleted_at` gives undo and gives GDPR erasure
    something explicit to purge.
 9. **Odometer readings are ordered by date, and a lower value is a flag, not an error**
    ([odometer rules](docs/architecture.md#odometer-rules)).
@@ -147,9 +160,10 @@ the index.
 - **Retroactive entries are the norm, not the exception.** People log trips days later. Every figure
   must be date-ordered and recomputable from the records; nothing may be incremented in place
   ([data model](docs/architecture.md#data-model)).
-- **Seven interfaces before two implementations.** They are internal seams now, not a promised API,
+- **Eight interfaces before two implementations.** They are internal seams now, not a promised API,
   so the cost of getting one wrong is a refactor rather than a breaking change. Only jurisdiction
-  and importer start with two implementations; the rest earn their shape when a second one turns up.
+  and, since M9, importer have two implementations; the rest earn their shape when a second one
+  turns up.
 - **We maintain every jurisdiction we merge.** One whose maintainer disappears becomes a wrong tax
   report with our name on it. `CODEOWNERS`, the country test kit, and the willingness to mark one
   experimental are the whole defence ([contributing](docs/contributing.md)).
@@ -157,6 +171,6 @@ the index.
   [data model](docs/architecture.md#data-model) is a design, not a migration plan: M1 ships
   vehicles, odometer readings and access, and every later table arrives with the feature that needs
   it. Columns written speculatively are columns nobody dares remove.
-- **Scope.** M0–M5 is still a lot for a side project. If time runs out, cut documents and the
-  dashboard widget — never the reminder engine. That is the one thing nothing else in
+- **Scope.** The backlog is longer than a side project can finish. Whatever is cut, never the
+  reminder engine. That is the one thing nothing else in
   [the prior art](docs/features.md#what-existing-tools-teach-us) offers.

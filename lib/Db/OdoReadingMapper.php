@@ -45,6 +45,40 @@ class OdoReadingMapper extends BaseMapper {
 	}
 
 	/**
+	 * @return list<OdoReading>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findBetween(int $vehicleId, int $from, int $to): array {
+		return $this->findEntities($this->between('read_at', $vehicleId, $from, $to));
+	}
+
+	/**
+	 * Which of these vehicles had a Reading written, deleted or restored after `$since`. A sync
+	 * sends such a vehicle's every live Reading, since settling a chain re-flags rows without
+	 * moving their token (OdometerService::settle()).
+	 *
+	 * @param list<int> $vehicleIds
+	 * @return list<int>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findVehiclesChangedSince(array $vehicleIds, int $since): array {
+		if ($vehicleIds === []) {
+			return [];
+		}
+		$qb = $this->db->getQueryBuilder();
+		$qb->selectDistinct('vehicle_id')
+			->from($this->tableName)
+			->where($qb->expr()->in('vehicle_id', $qb->createNamedParameter($vehicleIds, IQueryBuilder::PARAM_INT_ARRAY)))
+			->andWhere($qb->expr()->gt('updated_at', $qb->createNamedParameter($since, IQueryBuilder::PARAM_INT)));
+
+		$result = $qb->executeQuery();
+		$ids = array_map('intval', $result->fetchAll(\PDO::FETCH_COLUMN));
+		$result->closeCursor();
+
+		return $ids;
+	}
+
+	/**
 	 * One counter's chain, in findAllForVehicle()'s order. Every rule that compares a Reading with
 	 * its neighbours reads this, because a Reading in hours next to one in kilometres is no
 	 * contradiction (rule 4).
@@ -142,6 +176,43 @@ class OdoReadingMapper extends BaseMapper {
 			->orderBy('id', 'ASC');
 
 		return $this->findEntities($qb);
+	}
+
+	/**
+	 * Hangs on each Reading the uuid of the Entry that wrote it, one query per thousand Readings
+	 * rather than one per Reading. A thousand because Oracle refuses a longer `IN`. The Entry is
+	 * found deleted or not: a Reading outlives its Entry only as a tombstone, which names it still.
+	 *
+	 * @param list<OdoReading> $readings
+	 * @throws \OCP\DB\Exception
+	 */
+	public function nameSources(array $readings): void {
+		$byId = [];
+		foreach ($readings as $reading) {
+			if ($reading->getSourceType() !== OdoReading::MANUAL) {
+				$byId[(int)$reading->getId()] = $reading;
+			}
+		}
+
+		$sources = ['t' => ['fleet_trips', OdoReading::TRIP], 'e' => ['fleet_energy', OdoReading::ENERGY], 'm' => ['fleet_maintenance', OdoReading::MAINTENANCE]];
+		foreach (array_chunk(array_keys($byId), 1000) as $chunk) {
+			$qb = $this->db->getQueryBuilder();
+			$qb->select('r.id')->from($this->tableName, 'r');
+			foreach ($sources as $alias => [$table, $type]) {
+				$qb->selectAlias($alias . '.uuid', $alias . '_uuid')
+					->leftJoin('r', $table, $alias, $qb->expr()->andX(
+						$qb->expr()->eq('r.source_type', $qb->createNamedParameter($type)),
+						$qb->expr()->eq($alias . '.id', 'r.source_id'),
+					));
+			}
+			$qb->where($qb->expr()->in('r.id', $qb->createNamedParameter($chunk, IQueryBuilder::PARAM_INT_ARRAY)));
+
+			$result = $qb->executeQuery();
+			while (($row = $result->fetch()) !== false) {
+				$byId[(int)$row['id']]->setSourceUuid($row['t_uuid'] ?? $row['e_uuid'] ?? $row['m_uuid']);
+			}
+			$result->closeCursor();
+		}
 	}
 
 	/**

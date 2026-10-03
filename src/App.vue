@@ -11,21 +11,25 @@ import NcAppNavigationList from '@nextcloud/vue/components/NcAppNavigationList'
 import NcAppNavigationNew from '@nextcloud/vue/components/NcAppNavigationNew'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcContent from '@nextcloud/vue/components/NcContent'
+import NcCounterBubble from '@nextcloud/vue/components/NcCounterBubble'
 import NcEmptyContent from '@nextcloud/vue/components/NcEmptyContent'
 import { computed, onMounted, ref } from 'vue'
 
 import UndoToast from './components/UndoToast.vue'
 import VehicleList from './components/VehicleList.vue'
 import VehicleSheet from './components/VehicleSheet.vue'
+import { useInboxStore } from './store/inbox.js'
 import { useVehiclesStore } from './store/index.js'
 import { usePreferencesStore } from './store/preferences.js'
 import CostsView from './views/CostsView.vue'
+import InboxView from './views/InboxView.vue'
 import OverviewView from './views/OverviewView.vue'
 import ReportsView from './views/ReportsView.vue'
 import VehicleView from './views/VehicleView.vue'
 
 const store = useVehiclesStore()
 const preferences = usePreferencesStore()
+const inbox = useInboxStore()
 
 /**
  * The vehicle the content area shows; empty means the overview (docs/ui.md). A reminder
@@ -45,6 +49,8 @@ if (arrivedToEnter.value) {
 }
 /** Whether the content area shows the reports instead, which belong to no one vehicle. */
 const reporting = ref(false)
+/** Whether it shows the inbox, whose files belong to no vehicle yet. */
+const sorting = ref(false)
 /** Whether the selected vehicle's costs show instead of its screen; picking any vehicle ends it. */
 const costing = ref(false)
 const creating = ref(false)
@@ -56,7 +62,7 @@ const failure = ref('')
 const vehicle = computed(() => store.visible.find((one) => one.uuid === selected.value))
 // Read off what the content area shows, not off `selected`: a vehicle that left the fleet falls
 // back to the overview with its uuid still selected.
-const overview = computed(() => !reporting.value && !vehicle.value)
+const overview = computed(() => !reporting.value && !sorting.value && !vehicle.value)
 
 onMounted(load)
 
@@ -78,6 +84,15 @@ async function load() {
 	} catch {
 		// The hint asks nothing until it knows what was already answered.
 	}
+
+	// For the count in the navigation; silent for the same reason. The screen reads it again.
+	if (preferences.inboxFolder !== null) {
+		try {
+			await inbox.load()
+		} catch {
+			// The entry shows without a count.
+		}
+	}
 }
 
 /**
@@ -93,6 +108,7 @@ function open(created) {
  */
 function show(uuid) {
 	reporting.value = false
+	sorting.value = false
 	costing.value = false
 	arrivedToEnter.value = false
 	selected.value = uuid
@@ -101,7 +117,15 @@ function show(uuid) {
 /** No vehicle stays selected: a report picks its own, sold ones included. */
 function report() {
 	selected.value = ''
+	sorting.value = false
 	reporting.value = true
+}
+
+/** No vehicle stays selected: the sheet picks one per file. */
+function sort() {
+	selected.value = ''
+	reporting.value = false
+	sorting.value = true
 }
 </script>
 
@@ -115,6 +139,14 @@ function report() {
 				<NcAppNavigationItem :name="t('nextfleet', 'Overview')"
 					:active="overview"
 					@click="show('')" />
+				<NcAppNavigationItem v-if="preferences.inboxFolder !== null"
+					:name="t('nextfleet', 'Inbox')"
+					:active="sorting"
+					@click="sort">
+					<template #counter>
+						<NcCounterBubble v-if="inbox.count > 0" :count="inbox.count" />
+					</template>
+				</NcAppNavigationItem>
 				<VehicleList :vehicles="store.visible"
 					:selected="selected"
 					@select="show" />
@@ -142,6 +174,7 @@ function report() {
 			<!-- The whole fleet rather than the visible one: a sold vehicle's logbook is still kept
 			     (docs/features.md#logbook-mode). -->
 			<ReportsView v-else-if="reporting" :vehicles="store.list" />
+			<InboxView v-else-if="sorting" :vehicles="store.visible" />
 			<CostsView v-else-if="vehicle && costing" :vehicle="vehicle" @back="costing = false" />
 			<VehicleView v-else-if="vehicle"
 				:vehicle="vehicle"

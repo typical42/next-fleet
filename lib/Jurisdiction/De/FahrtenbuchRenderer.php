@@ -113,7 +113,9 @@ class FahrtenbuchRenderer implements IReportRenderer {
 	private function table(LogbookReport $report): string {
 		$columns = ['Datum', 'Zeit', self::WORDS['start_odo'], self::WORDS['end_odo'], self::WORDS['distance'],
 			self::WORDS['from_label'], self::WORDS['to_label'], self::WORDS['purpose'], self::WORDS['partner'],
-			self::WORDS['category'], 'Erfasst (UTC)', 'Vermerk'];
+			self::WORDS['category'], 'Erfasst (UTC)',
+			...($report->enteredBy === null ? [] : ['Eingetragen von']),
+			'Vermerk'];
 		$html = '<table><thead><tr>';
 		foreach ($columns as $column) {
 			$html .= '<th scope="col">' . $column . '</th>';
@@ -125,7 +127,7 @@ class FahrtenbuchRenderer implements IReportRenderer {
 		}
 
 		foreach ($report->trips as $line) {
-			$html .= $this->line($line['trip'], $line['missing'], $line['late']);
+			$html .= $this->line($line['trip'], $line['missing'], $line['late'], $report->enteredBy);
 		}
 
 		return $html . '</tbody></table>';
@@ -134,8 +136,9 @@ class FahrtenbuchRenderer implements IReportRenderer {
 	/**
 	 * @param list<string> $missing
 	 * @param list<LateChange> $late
+	 * @param ?array<string, string> $enteredBy
 	 */
-	private function line(Trip $trip, array $missing, array $late): string {
+	private function line(Trip $trip, array $missing, array $late, ?array $enteredBy): string {
 		$started = $trip->getStartedAt() + $trip->getStartedAtOff() * 60;
 		$ended = $trip->getEndedAt() + $trip->getEndedAtOff() * 60;
 		$sameDay = gmdate('Y-m-d', $started) === gmdate('Y-m-d', $ended);
@@ -155,6 +158,7 @@ class FahrtenbuchRenderer implements IReportRenderer {
 			// (docs/architecture.md#time). It has no offset, so the header says UTC - a local
 			// `Datum` beside an unlabelled UTC date can read as entered before driven.
 			['', gmdate('d.m.Y', $trip->getCreatedAt())],
+			...($enteredBy === null ? [] : [['', $this->text($enteredBy[$trip->getCreatedBy()] ?? $trip->getCreatedBy())]]),
 			['note', $this->notes($trip, $missing, $late)],
 		];
 

@@ -10,7 +10,8 @@ namespace OC\Hooks;
 
 /**
  * `OCP\Files\IRootFolder` extends this private server interface, and nextcloud/ocp does not ship
- * it. For psalm only (psalm.xml): the server brings the real one at runtime.
+ * it. For psalm (psalm.xml) and the unit suite (tests/bootstrap.php): the server brings the real
+ * one at runtime.
  */
 interface Emitter {
 	public function listen($scope, $method, callable $callback);

@@ -126,6 +126,7 @@ class MileageClaimExportTest extends TestCase {
 			'distance' => 100,
 			'purpose' => 'Abnahme',
 			'category' => Trip::BUSINESS,
+			'created_by' => self::OWNER,
 		]);
 		$this->tripRows[] = $trip;
 
@@ -220,6 +221,15 @@ class MileageClaimExportTest extends TestCase {
 
 		$this->assertCount(1, $claim->lines);
 		$this->assertSame('car 2026-01-01', $this->asked[0]);
+	}
+
+	/** A claim is personal: each reader's lists the trips they entered, and nobody else's. */
+	public function testItListsOnlyTheTripsTheReaderEntered(): void {
+		$this->trip('2026-03-02T08:00:00', ['distance' => 120]);
+		$this->trip('2026-03-03T08:00:00', ['distance' => 40, 'created_by' => self::DRIVER]);
+
+		$this->assertSame([3600], self::amounts($this->claim(self::OWNER)));
+		$this->assertSame([1200], self::amounts($this->claim(self::DRIVER)));
 	}
 
 	public function testADriverMayReadItAndAStrangerMayNot(): void {

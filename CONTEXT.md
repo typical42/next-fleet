@@ -45,8 +45,19 @@ Any money figure, whatever its source. Energy, maintenance and expenses are all 
 `fleet_expenses` rows are Expenses.
 
 **Document**:
-A Nextcloud file linked to a vehicle or to one of its entries. Referenced by `file_id`; its path is
-a label, exactly as a plate is.
+A Nextcloud file linked to a vehicle, to one of its entries, or to one of its bookings (a handover
+photo). Referenced by `file_id`; its path is a label, exactly as a plate is.
+
+**Inbox**:
+A folder of a user's own Files, chosen by them, whose images and PDFs that no Document references
+yet wait to be attached. The app only lists it; it never moves a file out of it.
+_Avoid_: Upload folder, queue
+
+**Import**:
+Entries written at once from another tool's CSV export, a file from the user's own Files, after a
+preview of what it would write. Energy Entries, Maintenance Records, Expenses and Odometer Entries;
+never a Trip. Undone as a whole, or Entry by Entry.
+_Avoid_: Upload, migration, sync
 
 **Engine**:
 A vehicle's drivetrain classification — petrol, diesel, lpg, cng, electric, hybrid. For display,
@@ -139,8 +150,14 @@ Our own permission to see or change a vehicle: owner, or a grant with role manag
 viewer. It comes as five operations: `view` (every role), `log` (driver and manager: add an Entry,
 change one you entered), `edit` and `delete` (manager: the vehicle's settings and anybody's
 Entries), and `own` (the owner alone: access, and whether the vehicle exists). Decided in one place,
-`VehicleAccess::may`.
+`VehicleAccess::may`. A grant ends when the owner revokes it, its grantee Leaves, or its group is
+deleted.
 _Avoid_: Share, permission, ACL
+
+**Leave**:
+A grantee giving back the grant in their own name. A group's grant is the owner's to change, so
+reaching a vehicle through a group there is nothing to leave.
+_Avoid_: Unshare, opt out
 
 **Share**:
 Nextcloud's concept, never ours. Reserved for file shares and `OCP\Share`.
@@ -148,6 +165,29 @@ Nextcloud's concept, never ours. Reserved for file shares and `OCP\Share`.
 **Owner**:
 The Nextcloud user a vehicle belongs to. Distinct from a Driver, who may be neither owner nor
 account holder.
+
+### Pool
+
+**Booking**:
+One person's plan to use a vehicle from one instant to another, `booked`, `out`, `returned` or
+`cancelled`. A plan, not an Entry: it writes no Reading and is on no timeline or report. Only a
+`booked` or `out` one holds the vehicle.
+_Avoid_: Reservation, appointment, event
+
+**Handover**:
+The two moments a Booking changes hands, Check-out and Check-in, each with the counter, the tank or
+battery level and a note. Columns of the Booking, not rows of their own.
+
+**Check-out**:
+Taking the car: the booker's Booking goes from `booked` to `out`, never while another Booking of
+the vehicle is `out`, nor early into another Booking's time.
+_Avoid_: Pick-up, start
+
+**Check-in**:
+Giving it back: `out` to `returned`. It offers the Trip, prefilled from the Handover; the Trip, not
+the Check-in, is the record. The driver logs it, choosing the category; a Booking becomes at most
+one Trip.
+_Avoid_: Drop-off, return (as the type name)
 
 ### Jurisdiction
 
@@ -182,8 +222,9 @@ entity.
 _Avoid_: Client, customer, contact
 
 **Mileage Claim**:
-One vehicle's business Trips of one year, each valued at its jurisdiction's statutory rate per km
-on its own day. Commutes are not on it.
+The business Trips one person entered on one vehicle in one year, each valued at its
+jurisdiction's statutory rate per km on its own day. Commutes are not on it, nor anyone else's
+Trips.
 _Avoid_: Mileage report, Reisekosten (in code)
 
 **CO₂ Estimate**:
