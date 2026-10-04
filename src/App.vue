@@ -3,7 +3,6 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
-import { t } from '@nextcloud/l10n'
 import NcAppContent from '@nextcloud/vue/components/NcAppContent'
 import NcAppNavigation from '@nextcloud/vue/components/NcAppNavigation'
 import NcAppNavigationItem from '@nextcloud/vue/components/NcAppNavigationItem'
@@ -13,6 +12,8 @@ import NcButton from '@nextcloud/vue/components/NcButton'
 import NcContent from '@nextcloud/vue/components/NcContent'
 import NcCounterBubble from '@nextcloud/vue/components/NcCounterBubble'
 import NcEmptyContent from '@nextcloud/vue/components/NcEmptyContent'
+import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
+import { generateUrl } from '@nextcloud/router'
 import { computed, onMounted, ref } from 'vue'
 
 import UndoToast from './components/UndoToast.vue'
@@ -26,6 +27,7 @@ import InboxView from './views/InboxView.vue'
 import OverviewView from './views/OverviewView.vue'
 import ReportsView from './views/ReportsView.vue'
 import VehicleView from './views/VehicleView.vue'
+import { t } from './utils/l10n.js'
 
 const store = useVehiclesStore()
 const preferences = usePreferencesStore()
@@ -55,6 +57,10 @@ const sorting = ref(false)
 const costing = ref(false)
 const creating = ref(false)
 const failure = ref('')
+/** Until the fleet is read, an empty store is no empty fleet, and the overview would say it is. */
+const loading = ref(true)
+/** The app's own settings are on the personal settings page (lib/Settings/). */
+const settingsUrl = generateUrl('/settings/user/additional')
 
 // Looked up in the fleet the navigation lists rather than in the whole store: a vehicle disposed
 // of in the edit sheet leaves that list (docs/ui.md), and its screen would otherwise stay open
@@ -69,10 +75,13 @@ onMounted(load)
 /** Reading the fleet is the one request the shell makes on its own, so it reports its own failure. */
 async function load() {
 	failure.value = ''
+	loading.value = true
 	try {
 		await store.load()
 	} catch (error) {
 		failure.value = error.message
+	} finally {
+		loading.value = false
 	}
 
 	// Read here rather than by the screen that asks about them, which would ask again on every
@@ -156,13 +165,15 @@ function sort() {
 					<NcAppNavigationItem :name="t('nextfleet', 'Reports')"
 						:active="reporting"
 						@click="report" />
+					<NcAppNavigationItem :name="t('nextfleet', 'Settings')" :href="settingsUrl" />
 				</NcAppNavigationList>
 			</template>
 		</NcAppNavigation>
 		<NcAppContent>
+			<NcLoadingIcon v-if="loading" class="app__loading" :size="64" />
 			<!-- A fleet that did not arrive is not an empty fleet: offering to create the first
 			     vehicle there teaches the wrong thing and hides the retry. -->
-			<NcEmptyContent v-if="failure"
+			<NcEmptyContent v-else-if="failure"
 				:name="t('nextfleet', 'The fleet could not be loaded')"
 				:description="failure">
 				<template #action>
@@ -191,3 +202,10 @@ function sort() {
 		<UndoToast />
 	</NcContent>
 </template>
+
+<style scoped>
+/* Where the overview's first line would start, so the screen does not jump when it arrives. */
+.app__loading {
+	margin-block-start: calc(var(--default-grid-baseline) * 16);
+}
+</style>

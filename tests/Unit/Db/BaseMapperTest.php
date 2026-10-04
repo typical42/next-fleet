@@ -8,6 +8,8 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Unit\Db;
 
+use OCA\NextFleet\Db\ReminderRecipient;
+use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Tests\Unit\Db\Fixture\Thing;
 use OCA\NextFleet\Tests\Unit\Db\Fixture\ThingMapper;
@@ -38,6 +40,10 @@ class BaseMapperTest extends TestCase {
 	private int $affectedRows = 1;
 	/** What a query finds. */
 	private array $rows = [];
+	/** SQL the mapper ran on the connection itself. */
+	private array $queries = [];
+	/** What an Oracle sequence hands out next. */
+	private const NEXTVAL = 42;
 
 	/**
 	 * Every column the mapper wrote, with the values it bound - the row as the database
@@ -77,17 +83,38 @@ class BaseMapperTest extends TestCase {
 		return $thing;
 	}
 
-	private function mapper(int $now = self::NOW, string $hex = 'ffffffffffffffffffffffffffffffff'): ThingMapper {
+	private function mapper(int $now = self::NOW, string $hex = 'ffffffffffffffffffffffffffffffff', string $provider = IDBConnection::PLATFORM_MYSQL): ThingMapper {
 		$time = $this->createMock(ITimeFactory::class);
 		$time->method('getTime')->willReturn($now);
 
 		$random = $this->createMock(ISecureRandom::class);
 		$random->method('generate')->willReturn($hex);
 
+		return new ThingMapper($this->connection($provider), $time, $random);
+	}
+
+	/** A real table whose name is long, against the same recording connection. */
+	private function recipientMapper(string $provider): ReminderRecipientMapper {
+		$random = $this->createMock(ISecureRandom::class);
+		$random->method('generate')->willReturn('ffffffffffffffffffffffffffffffff');
+
+		return new ReminderRecipientMapper($this->connection($provider), $this->createMock(ITimeFactory::class), $random);
+	}
+
+	private function connection(string $provider): IDBConnection {
 		$db = $this->createMock(IDBConnection::class);
 		$db->method('getQueryBuilder')->willReturn($this->queryBuilder());
+		$db->method('getDatabaseProvider')->willReturn($provider);
+		$db->method('executeQuery')->willReturnCallback(function (string $sql) {
+			// Core swaps the prefix into the statement, literals too.
+			$sql = str_replace('*PREFIX*', 'oc_', $sql);
+			$this->queries[] = $sql;
+			$result = $this->createMock(IResult::class);
+			$result->method('fetchOne')->willReturn($sql === "SELECT 'oc_' FROM DUAL" ? 'oc_' : self::NEXTVAL);
+			return $result;
+		});
 
-		return new ThingMapper($db, $time, $random);
+		return $db;
 	}
 
 	private function queryBuilder(): IQueryBuilder {
@@ -193,6 +220,38 @@ class BaseMapperTest extends TestCase {
 
 		$this->assertSame('', $this->row()['label'] ?? null, 'a column left at its default was dropped');
 		$this->assertArrayHasKey('deleted_at', $this->row());
+		$this->assertArrayNotHasKey('id', $this->row());
+	}
+
+	/**
+	 * Doctrine names an Oracle table's id sequence after the table, cut to 30 characters; core's
+	 * lastInsertId() asks for the uncut name, which does not exist. Seen on the Oracle stack.
+	 */
+	public function testOnOracleATableWithACutSequenceNameTakesItsIdFromThatSequence(): void {
+		$recipient = new ReminderRecipient();
+		$recipient->setVehicleId(1);
+		$recipient->setUserId('alice');
+		$recipient->setCreatedBy('alice');
+
+		$this->recipientMapper(IDBConnection::PLATFORM_ORACLE)->insert($recipient);
+
+		$this->assertSame('SELECT "oc_fleet_reminder_recipien_SEQ".NEXTVAL FROM DUAL', end($this->queries));
+		$this->assertSame(self::NEXTVAL, $this->row()['id'] ?? null);
+		$this->assertSame(self::NEXTVAL, $recipient->getId());
+	}
+
+	/** Where the name fits, and on the other databases, the database picks the id as before. */
+	public function testElsewhereTheDatabasePicksTheId(): void {
+		$recipient = new ReminderRecipient();
+		$recipient->setVehicleId(1);
+		$recipient->setUserId('alice');
+		$recipient->setCreatedBy('alice');
+		$this->recipientMapper(IDBConnection::PLATFORM_POSTGRES)->insert($recipient);
+		$thing = new Thing();
+		$thing->setCreatedBy('alice');
+		$this->mapper(provider: IDBConnection::PLATFORM_ORACLE)->insert($thing);
+
+		$this->assertSame([], preg_grep('/NEXTVAL/', $this->queries));
 		$this->assertArrayNotHasKey('id', $this->row());
 	}
 

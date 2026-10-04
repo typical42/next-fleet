@@ -114,7 +114,7 @@ describe('the Costs screen', () => {
 	it('states the year\'s figures, TCO included', async () => {
 		const wrapper = await screen()
 
-		expect(wrapper.findAll('.tile dt').map((one) => one.text())).toEqual(['Cost', 'Energy cost', 'TCO'])
+		expect(wrapper.findAll('.tile dt').map((one) => one.text())).toEqual(['Cost', 'Energy cost', 'Total cost of ownership'])
 	})
 
 	/** A spreadsheet's year is the one on screen, one file per table (docs/architecture.md#csv-export). */
@@ -173,7 +173,7 @@ describe('the Costs screen', () => {
 
 		expect(co2.find('h3').text()).toBe('CO₂ (estimate)')
 		expect(co2.text()).toContain('≈ 110 kg')
-		expect(co2.text()).toContain('An estimate: what was tanked or charged, times its emission factor')
+		expect(co2.text()).toContain('An estimate: what was filled up or charged, times its emission factor')
 		expect(co2.find('a').attributes()).toMatchObject({ href: 'https://example.org/fuels', rel: 'noreferrer noopener', target: '_blank' })
 	})
 

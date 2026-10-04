@@ -9,8 +9,10 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Tests\Unit\AppInfo;
 
 use OCA\NextFleet\AppInfo\Application;
+use OCA\NextFleet\UserMigration\FleetMigrator;
 use OCP\AppFramework\App;
 use OCP\AppFramework\Bootstrap\IBootstrap;
+use OCP\AppFramework\Bootstrap\IRegistrationContext;
 use PHPUnit\Framework\TestCase;
 
 class ApplicationTest extends TestCase {
@@ -32,5 +34,14 @@ class ApplicationTest extends TestCase {
 	public function testItIsTheAppTheFrameworkExpects(): void {
 		$this->assertTrue(is_subclass_of(Application::class, App::class));
 		$this->assertTrue(is_subclass_of(Application::class, IBootstrap::class));
+	}
+
+	/** The personal data export is reached through Nextcloud's user migration, which asks only what was registered. */
+	public function testItRegistersTheDataExport(): void {
+		$context = $this->createMock(IRegistrationContext::class);
+		$context->expects($this->once())->method('registerUserMigrator')->with(FleetMigrator::class);
+
+		// App's constructor wants a server; register() needs none of it.
+		(new \ReflectionClass(Application::class))->newInstanceWithoutConstructor()->register($context);
 	}
 }

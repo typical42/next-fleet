@@ -68,9 +68,15 @@ $clock = new class(new \DateTimeImmutable($argv[1])) implements ITimeFactory {
 	}
 };
 
+/**
+ * Registered on the app's container, which asks the server's only for what it lacks, so every
+ * service the job builds reads this clock. OCP offers no other way to replace a service once the
+ * app has booted, so the deprecated container stays here and nowhere else.
+ *
+ * @psalm-suppress DeprecatedInterface
+ */
 $container = (new Application())->getContainer();
-// Registered on the app's container, which asks the server's only for what it lacks, so every
-// service the job builds reads this clock.
+/** @psalm-suppress DeprecatedMethod */
 $container->registerService(ITimeFactory::class, static fn (): ITimeFactory => $clock);
 // Never scheduled, so it has no id: start() moves no last_run, and the real hourly run keeps
 // its own schedule.

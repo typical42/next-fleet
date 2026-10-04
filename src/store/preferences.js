@@ -17,6 +17,12 @@ export const usePreferencesStore = defineStore('preferences', () => {
 	/** The vehicles whose hint this user has answered. @type {import('vue').Ref<string[]>} */
 	const dismissed = ref([])
 
+	/** The vehicles whose Logbook Mode question this user has answered. @type {import('vue').Ref<string[]>} */
+	const dismissedLogbook = ref([])
+
+	/** The countries with a logbook ruleset, whose vehicles that question is for. @type {import('vue').Ref<string[]>} */
+	const ruled = ref([])
+
 	/**
 	 * Whether the preferences have been read at all. Not the same fact as an empty list: until the
 	 * answer is in, a screen cannot tell a hint nobody dismissed from one somebody did, and
@@ -49,6 +55,8 @@ export const usePreferencesStore = defineStore('preferences', () => {
 	/** @param {import('../services/api.js').Settings} settings - the server's answer */
 	function hold(settings) {
 		dismissed.value = settings.preferences.dismissed_hints
+		dismissedLogbook.value = settings.preferences.dismissed_logbook_hints
+		ruled.value = settings.jurisdictions.filter((one) => one.logbook_rules).map((one) => one.key)
 		inboxFolder.value = settings.preferences.inbox_folder
 		reclaimVat.value = settings.preferences.reclaim_vat
 		period.value = picked ?? settings.preferences.kpi_period
@@ -82,7 +90,19 @@ export const usePreferencesStore = defineStore('preferences', () => {
 	 * @return {Promise<void>} when it is stored
 	 */
 	function dismiss(uuid) {
-		writing = writing.catch(() => {}).then(() => store(uuid))
+		writing = writing.catch(() => {}).then(() => store('dismissed_hints', dismissed, uuid))
+
+		return writing
+	}
+
+	/**
+	 * Answer one vehicle's Logbook Mode question, as `dismiss()` answers its hint.
+	 *
+	 * @param {string} uuid - the vehicle whose question was answered
+	 * @return {Promise<void>} when it is stored
+	 */
+	function dismissLogbook(uuid) {
+		writing = writing.catch(() => {}).then(() => store('dismissed_logbook_hints', dismissedLogbook, uuid))
 
 		return writing
 	}
@@ -92,19 +112,21 @@ export const usePreferencesStore = defineStore('preferences', () => {
 	 * (lib/Service/PreferencesService.php), so a write off a list this session never saw would drop
 	 * every earlier dismissal.
 	 *
+	 * @param {string} key - the preference holding the list
+	 * @param {import('vue').Ref<string[]>} list - this store's copy of it
 	 * @param {string} uuid - the vehicle whose hint was answered
 	 * @return {Promise<void>} when it is stored
 	 */
-	async function store(uuid) {
+	async function store(key, list, uuid) {
 		if (!loaded.value) {
 			await load()
 		}
 
-		if (dismissed.value.includes(uuid)) {
+		if (list.value.includes(uuid)) {
 			return
 		}
 
-		hold(await savePreferences({ dismissed_hints: [...dismissed.value, uuid] }))
+		hold(await savePreferences({ [key]: [...list.value, uuid] }))
 	}
 
 	/**
@@ -131,12 +153,31 @@ export const usePreferencesStore = defineStore('preferences', () => {
 		return dismissed.value.includes(uuid)
 	}
 
+	/**
+	 * @param {string} uuid - the vehicle to ask about
+	 * @return {boolean} whether this user has answered its Logbook Mode question
+	 */
+	function isLogbookDismissed(uuid) {
+		return dismissedLogbook.value.includes(uuid)
+	}
+
+	/**
+	 * @param {string} jurisdiction - a vehicle's country
+	 * @return {boolean} whether it has a logbook ruleset (lib/Jurisdiction/ILogbookRules.php)
+	 */
+	function hasLogbookRules(jurisdiction) {
+		return ruled.value.includes(jurisdiction)
+	}
+
 	return {
 		choosePeriod,
 		dismiss,
+		dismissLogbook,
 		dismissed: computed(() => dismissed.value),
+		hasLogbookRules,
 		inboxFolder: computed(() => inboxFolder.value),
 		isDismissed,
+		isLogbookDismissed,
 		load,
 		loaded,
 		period: computed(() => period.value),

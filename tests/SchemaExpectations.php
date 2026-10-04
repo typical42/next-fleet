@@ -34,20 +34,21 @@ trait SchemaExpectations {
 	 * A column as the data model states it. Only a string's length is a fact about the column;
 	 * for the rest MariaDB reports 0 where Doctrine declared nothing.
 	 */
-	private function describe(Column $column): string {
+	private function describe(string $table, Column $column): string {
 		$type = Type::lookupName($column->getType());
 		$default = $column->getDefault();
+		$autoincrement = $this->autoincrements($table, $column);
 
 		// SQLite has one integer type, so it hands the key back as `integer` where every other
 		// platform says `bigint`. That is the platform talking, not the schema.
-		if ($column->getAutoincrement() && $type === Types::INTEGER) {
+		if ($autoincrement && $type === Types::INTEGER) {
 			$type = Types::BIGINT;
 		}
 
 		return implode(', ', array_filter([
 			$type === Types::STRING ? $type . '(' . $column->getLength() . ')' : $type,
 			$column->getNotnull() ? 'not null' : 'null',
-			$column->getAutoincrement() ? 'autoincrement' : '',
+			$autoincrement ? 'autoincrement' : '',
 			$default === null ? '' : 'default ' . var_export($type === Types::BOOLEAN ? (bool)$default : $default, true),
 		]));
 	}
@@ -56,11 +57,16 @@ trait SchemaExpectations {
 	private function columns(string $table): array {
 		$columns = [];
 		foreach ($this->table($table)->getColumns() as $column) {
-			$columns[$column->getName()] = $this->describe($column);
+			$columns[$column->getName()] = $this->describe($table, $column);
 		}
 		ksort($columns);
 
 		return $columns;
+	}
+
+	/** Whether the database numbers the column itself. Oracle reads back no such flag. */
+	protected function autoincrements(string $table, Column $column): bool {
+		return $column->getAutoincrement();
 	}
 
 	/**
@@ -75,8 +81,9 @@ trait SchemaExpectations {
 				continue;
 			}
 
+			// Oracle hands the columns back quoted, here and in the primary key.
 			$indexes[$index->getName()] = ($index->isUnique() ? 'unique(' : 'index(')
-				. implode(', ', $index->getColumns()) . ')';
+				. str_replace('"', '', implode(', ', $index->getColumns())) . ')';
 		}
 		ksort($indexes);
 
@@ -114,7 +121,7 @@ trait SchemaExpectations {
 
 		$primary = $this->table($table)->getPrimaryKey();
 		$this->assertNotNull($primary, $table . ' has no primary key');
-		$this->assertSame(['id'], $primary->getColumns());
+		$this->assertSame(['id'], str_replace('"', '', $primary->getColumns()));
 	}
 
 	public function testHoldsTheTablesTheMilestonesSoFarNeedAndNoOthers(): void {
@@ -386,8 +393,12 @@ trait SchemaExpectations {
 		], $this->indexes('fleet_vehicles'));
 
 		$this->assertSame([
+			'fleet_odo_creator_idx' => 'index(created_by)',
 			'fleet_odo_uuid_uniq' => 'unique(uuid)',
 			'fleet_odo_veh_read_idx' => 'index(vehicle_id, read_at)',
+			'fleet_odo_veh_src_idx' => 'index(vehicle_id, source_type, source_id)',
+			'fleet_odo_veh_src_read_idx' => 'index(vehicle_id, source_type, read_at)',
+			'fleet_odo_veh_upd_idx' => 'index(vehicle_id, updated_at, id)',
 		], $this->indexes('fleet_odo_readings'));
 
 		// Grants listed per vehicle, and a group's revoked across vehicles.
@@ -395,37 +406,48 @@ trait SchemaExpectations {
 			'fleet_acc_grantee_idx' => 'index(grantee)',
 			'fleet_acc_uuid_uniq' => 'unique(uuid)',
 			'fleet_acc_veh_idx' => 'index(vehicle_id)',
+			'fleet_acc_veh_upd_idx' => 'index(vehicle_id, updated_at, id)',
 		], $this->indexes('fleet_access'));
 
 		$this->assertSame([
+			'fleet_trip_creator_idx' => 'index(created_by)',
 			'fleet_trip_uuid_uniq' => 'unique(uuid)',
 			'fleet_trip_veh_start_idx' => 'index(vehicle_id, started_at)',
+			'fleet_trip_veh_upd_idx' => 'index(vehicle_id, updated_at, id)',
 		], $this->indexes('fleet_trips'));
 
 		$this->assertSame([
+			'fleet_aud_creator_idx' => 'index(created_by)',
 			'fleet_aud_entity_idx' => 'index(entity, entity_id)',
 			'fleet_aud_uuid_uniq' => 'unique(uuid)',
 		], $this->indexes('fleet_audit'));
 
 		$this->assertSame([
+			'fleet_nrg_creator_idx' => 'index(created_by)',
 			'fleet_nrg_uuid_uniq' => 'unique(uuid)',
 			'fleet_nrg_veh_fill_idx' => 'index(vehicle_id, filled_at)',
+			'fleet_nrg_veh_upd_idx' => 'index(vehicle_id, updated_at, id)',
 		], $this->indexes('fleet_energy'));
 
 		$this->assertSame([
+			'fleet_mnt_creator_idx' => 'index(created_by)',
 			'fleet_mnt_reminder_idx' => 'index(reminder_id)',
 			'fleet_mnt_uuid_uniq' => 'unique(uuid)',
 			'fleet_mnt_veh_done_idx' => 'index(vehicle_id, done_at)',
+			'fleet_mnt_veh_upd_idx' => 'index(vehicle_id, updated_at, id)',
 		], $this->indexes('fleet_maintenance'));
 
 		$this->assertSame([
+			'fleet_exp_creator_idx' => 'index(created_by)',
 			'fleet_exp_uuid_uniq' => 'unique(uuid)',
 			'fleet_exp_veh_spent_idx' => 'index(vehicle_id, spent_at)',
+			'fleet_exp_veh_upd_idx' => 'index(vehicle_id, updated_at, id)',
 		], $this->indexes('fleet_expenses'));
 
 		$this->assertSame([
 			'fleet_rem_uuid_uniq' => 'unique(uuid)',
 			'fleet_rem_veh_idx' => 'index(vehicle_id)',
+			'fleet_rem_veh_upd_idx' => 'index(vehicle_id, updated_at, id)',
 		], $this->indexes('fleet_reminders'));
 
 		// Unique, so a point sends once per occurrence, channel and recipient even when two runs
@@ -443,16 +465,39 @@ trait SchemaExpectations {
 
 		// A vehicle's papers, and the paperclip on an entry's timeline row.
 		$this->assertSame([
+			'fleet_doc_creator_idx' => 'index(created_by)',
 			'fleet_doc_linked_idx' => 'index(linked_type, linked_id)',
 			'fleet_doc_uuid_uniq' => 'unique(uuid)',
 			'fleet_doc_veh_idx' => 'index(vehicle_id)',
+			'fleet_doc_veh_upd_idx' => 'index(vehicle_id, updated_at, id)',
 		], $this->indexes('fleet_documents'));
 
 		// A vehicle's bookings by time, and the overlap check before each one.
 		$this->assertSame([
+			'fleet_bkg_creator_idx' => 'index(created_by)',
 			'fleet_bkg_uuid_uniq' => 'unique(uuid)',
 			'fleet_bkg_veh_start_idx' => 'index(vehicle_id, starts_at)',
+			'fleet_bkg_veh_state_idx' => 'index(vehicle_id, state)',
+			'fleet_bkg_veh_upd_idx' => 'index(vehicle_id, updated_at, id)',
 		], $this->indexes('fleet_bookings'));
+	}
+
+	/**
+	 * PostgreSQL and Oracle name an index in the schema, not in its table, so two tables with an
+	 * index of the same name cannot both exist there. MariaDB and SQLite would not notice.
+	 */
+	public function testNoTwoTablesShareAnIndexName(): void {
+		$seen = [];
+		foreach ($this->fleetTableNames() as $name) {
+			foreach ($this->table($name)->getIndexes() as $index) {
+				if ($index->isPrimary()) {
+					continue;
+				}
+
+				$this->assertArrayNotHasKey($index->getName(), $seen, $index->getName() . ' is on ' . ($seen[$index->getName()] ?? '') . ' too');
+				$seen[$index->getName()] = $name;
+			}
+		}
 	}
 
 	/**
@@ -497,6 +542,10 @@ trait SchemaExpectations {
 			}
 			foreach ($table->getIndexes() as $index) {
 				$names[] = $index->getName();
+				// Not a database limit: one rule, a table name's 27, for every name the app picks.
+				if (!$index->isPrimary()) {
+					$this->assertLessThanOrEqual(27, strlen($index->getName()), $index->getName() . ' is longer than 27');
+				}
 			}
 
 			foreach ($names as $identifier) {

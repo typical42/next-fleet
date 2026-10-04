@@ -3,7 +3,7 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
-import { getCanonicalLocale, t } from '@nextcloud/l10n'
+import { getCanonicalLocale } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import NcSelect from '@nextcloud/vue/components/NcSelect'
@@ -13,6 +13,7 @@ import { computed, ref } from 'vue'
 import { useVehiclesStore } from '../store/index.js'
 import { formatDay, parseWhole } from '../utils/format.js'
 import { INSPECTION, firstInspection, monthEnd } from '../utils/reminders.js'
+import { t } from '../utils/l10n.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */

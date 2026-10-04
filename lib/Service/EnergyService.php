@@ -43,13 +43,13 @@ class EnergyService {
 	 * @var array<string, array{string, string, int|list<string>|null}>
 	 */
 	private const WRITABLE = [
-		'filled_at' => ['setFilledAt', 'count', null],
+		'filled_at' => ['setFilledAt', 'count', Field::MOMENT],
 		'filled_at_off' => ['setFilledAtOff', 'offset', null],
 		'energy' => ['setEnergy', 'word', VehicleService::ENERGIES],
-		'amount' => ['setAmount', 'count', null],
-		'unit_price' => ['setUnitPrice', 'count', null],
-		'total' => ['setTotal', 'count', null],
-		'vat_rate' => ['setVatRate', 'count', null],
+		'amount' => ['setAmount', 'count', Field::AMOUNT],
+		'unit_price' => ['setUnitPrice', 'count', Field::MONEY],
+		'total' => ['setTotal', 'count', Field::MONEY],
+		'vat_rate' => ['setVatRate', 'count', Field::RATE],
 		'station' => ['setStation', 'text', 255],
 		'location_kind' => ['setLocationKind', 'word', ['home', 'public']],
 	];
@@ -97,13 +97,20 @@ class EnergyService {
 	 */
 	public function record(string $userId, string $vehicleUuid, array $fields): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
+		$once = Once::of(
+			$fields,
+			$this->energies,
+			static fn (Energy $row): bool => $row->getVehicleId() === (int)$vehicle->getId(),
+			static fn (Energy $row): array => self::wire($vehicle, $row),
+		);
 
 		// Retried for the reason TripService::record() gives. The replay builds a fresh row.
-		return $this->atomicRetry(function () use ($userId, $vehicle, $fields): array {
+		return $once->run(fn (): array => $this->atomicRetry(function () use ($userId, $vehicle, $fields, $once): array {
 			$this->vehicles->hold((int)$vehicle->getId());
+			$once->check();
 
-			return $this->add($vehicle, $userId, $fields);
-		}, $this->db);
+			return $this->add($vehicle, $userId, $fields, $once);
+		}, $this->db));
 	}
 
 	/**
@@ -111,17 +118,19 @@ class EnergyService {
 	 * writes many under one hold (ImportService).
 	 *
 	 * @param array<string, mixed> $fields
+	 * @param Once<Energy>|null $once the client's uuid for the row, if it sent one
 	 * @return NextFleetEnergy the row as written, in its wire form
 	 * @throws \InvalidArgumentException if a field is not what its column holds
 	 * @throws \OCP\DB\Exception
 	 */
-	public function add(Vehicle $vehicle, string $userId, array $fields): array {
+	public function add(Vehicle $vehicle, string $userId, array $fields, ?Once $once = null): array {
 		$energy = new Energy();
+		$once?->stamp($energy);
 		$energy->setVehicleId((int)$vehicle->getId());
 		$energy->setCreatedBy($userId);
 		$this->apply($vehicle, $energy, $fields);
 		$written = $this->energies->insert($energy);
-		$this->follow($vehicle, $userId, $written);
+		$this->follow($vehicle, $userId, $written, true);
 
 		return self::wire($vehicle, $written);
 	}
@@ -225,7 +234,7 @@ class EnergyService {
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException
 	 * @throws \OCP\DB\Exception
 	 */
-	private function follow(Vehicle $vehicle, string $userId, Energy $energy): void {
+	private function follow(Vehicle $vehicle, string $userId, Energy $energy, bool $fresh = false): void {
 		$this->odometer->followEntry(
 			$vehicle,
 			$userId,
@@ -236,6 +245,7 @@ class EnergyService {
 			$energy->getOdo(),
 			$energy->getSecondOdo(),
 			$energy->getDeletedAt() !== null,
+			$fresh,
 		);
 	}
 
@@ -259,7 +269,7 @@ class EnergyService {
 	 */
 	public function prefill(string $userId, string $vehicleUuid, array $fields): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
-		$at = Field::read('at', 'count', null, $fields['at'] ?? null);
+		$at = Field::read('at', 'count', Field::MOMENT, $fields['at'] ?? null);
 		$off = Field::read('off', 'offset', null, $fields['off'] ?? null);
 		if (!is_int($at) || !is_int($off)) {
 			throw new \InvalidArgumentException('at and off are the moment a prefill is for');

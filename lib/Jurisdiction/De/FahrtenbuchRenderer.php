@@ -24,8 +24,11 @@ use OCA\NextFleet\Jurisdiction\LogbookReport;
  * @psalm-import-type LateChange from LogbookReport
  */
 class FahrtenbuchRenderer implements IReportRenderer {
-	/** What each column is called, and so what a missing field is called on its line. */
-	private const WORDS = [
+	/**
+	 * What each column is called, and so what a missing field is called on its line - here and on
+	 * the mileage claim.
+	 */
+	public const WORDS = [
 		'plate' => 'Kennzeichen',
 		'started_at' => 'Datum',
 		'started_at_off' => 'Zeitzone Abfahrt',
@@ -41,11 +44,15 @@ class FahrtenbuchRenderer implements IReportRenderer {
 		'category' => 'Art',
 	];
 
+	/** The mileage claim's terms; a commute as § 9 (1) 3 Nr. 4 EStG names it. */
 	private const CATEGORIES = [
-		Trip::BUSINESS => 'Dienstlich',
+		Trip::BUSINESS => 'Geschäftlich',
 		Trip::PRIVATE => 'Privat',
-		Trip::COMMUTE => 'Wohnung – Arbeitsstätte',
+		Trip::COMMUTE => 'Wohnung – erste Tätigkeitsstätte',
 	];
+
+	/** The reader's time zone, which stamp() writes the server's instants in; render() sets it. */
+	private \DateTimeZone $zone;
 
 	/**
 	 * Landscape, because twelve columns do not fit upright, and the header repeated on every sheet.
@@ -70,6 +77,7 @@ class FahrtenbuchRenderer implements IReportRenderer {
 		CSS;
 
 	public function render(LogbookReport $report): string {
+		$this->zone = $report->zone;
 		$vehicle = $report->vehicle;
 		$name = trim(($vehicle->getManufacturer() ?? '') . ' ' . ($vehicle->getModel() ?? ''));
 
@@ -100,20 +108,36 @@ class FahrtenbuchRenderer implements IReportRenderer {
 				. 'Keine Fahrt dieses Jahres ist gegen unbemerkte Änderungen gesichert.</p></section>';
 		}
 
-		$html .= '<p>Eingeschaltet – Änderungen und Stornierungen wurden protokolliert:</p><ul>';
+		$html .= '<p>Eingeschaltet – Änderungen und Annullierungen wurden protokolliert:</p><ul>';
 		foreach ($report->periods as $period) {
 			$html .= '<li>' . ($period['to'] === null
-				? 'seit dem ' . $this->utc($period['from'])
-				: 'vom ' . $this->utc($period['from']) . ' bis zum ' . $this->utc($period['to'])) . '</li>';
+				? 'seit dem ' . $this->stamp($period['from'])
+				: 'vom ' . $this->stamp($period['from']) . ' bis zum ' . $this->stamp($period['to']))
+				. $this->plates($period['plates'] ?? []) . '</li>';
 		}
 
 		return $html . '</ul><p>Fahrten außerhalb dieser Zeiträume wurden ohne Änderungsprotokoll erfasst.</p></section>';
 	}
 
+	/**
+	 * The plates a period was kept under; the header's is today's, and the receipts carry the old one.
+	 *
+	 * @param list<array{plate: ?string, from: int}> $plates
+	 */
+	private function plates(array $plates): string {
+		$named = [];
+		foreach ($plates as $i => $plate) {
+			$named[] = ($i === 0 ? '' : 'ab dem ' . $this->stamp($plate['from']) . ' ')
+				. ($plate['plate'] === null || $plate['plate'] === '' ? 'ohne Kennzeichen' : $this->text($plate['plate']));
+		}
+
+		return $named === [] ? '' : ', Kennzeichen ' . implode(', ', $named);
+	}
+
 	private function table(LogbookReport $report): string {
 		$columns = ['Datum', 'Zeit', self::WORDS['start_odo'], self::WORDS['end_odo'], self::WORDS['distance'],
 			self::WORDS['from_label'], self::WORDS['to_label'], self::WORDS['purpose'], self::WORDS['partner'],
-			self::WORDS['category'], 'Erfasst (UTC)',
+			self::WORDS['category'], 'Erfasst',
 			...($report->enteredBy === null ? [] : ['Eingetragen von']),
 			'Vermerk'];
 		$html = '<table><thead><tr>';
@@ -127,7 +151,7 @@ class FahrtenbuchRenderer implements IReportRenderer {
 		}
 
 		foreach ($report->trips as $line) {
-			$html .= $this->line($line['trip'], $line['missing'], $line['late'], $report->enteredBy);
+			$html .= $this->line($line['trip'], $line['missing'], $line['late'], $line['unlogged'] ?? null, $report->enteredBy);
 		}
 
 		return $html . '</tbody></table>';
@@ -138,7 +162,7 @@ class FahrtenbuchRenderer implements IReportRenderer {
 	 * @param list<LateChange> $late
 	 * @param ?array<string, string> $enteredBy
 	 */
-	private function line(Trip $trip, array $missing, array $late, ?array $enteredBy): string {
+	private function line(Trip $trip, array $missing, array $late, ?int $unlogged, ?array $enteredBy): string {
 		$started = $trip->getStartedAt() + $trip->getStartedAtOff() * 60;
 		$ended = $trip->getEndedAt() + $trip->getEndedAtOff() * 60;
 		$sameDay = gmdate('Y-m-d', $started) === gmdate('Y-m-d', $ended);
@@ -155,11 +179,11 @@ class FahrtenbuchRenderer implements IReportRenderer {
 			['', $this->text($trip->getPartner())],
 			['', $this->text(self::CATEGORIES[$trip->getCategory()] ?? $trip->getCategory())],
 			// The server's instant, not the driver's: timeliness is the gap between the two
-			// (docs/architecture.md#time). It has no offset, so the header says UTC - a local
-			// `Datum` beside an unlabelled UTC date can read as entered before driven.
-			['', gmdate('d.m.Y', $trip->getCreatedAt())],
+			// (docs/architecture.md#time). With its offset - a bare date beside `Datum` in the
+			// trip's own offset can read as entered before driven.
+			['', $this->stamp($trip->getCreatedAt())],
 			...($enteredBy === null ? [] : [['', $this->text($enteredBy[$trip->getCreatedBy()] ?? $trip->getCreatedBy())]]),
-			['note', $this->notes($trip, $missing, $late)],
+			['note', $this->notes($trip, $missing, $late, $unlogged)],
 		];
 
 		$html = '<tr' . ($trip->getDeletedAt() === null ? '' : ' class="voided"') . '>';
@@ -174,13 +198,13 @@ class FahrtenbuchRenderer implements IReportRenderer {
 	 * @param list<string> $missing
 	 * @param list<LateChange> $late
 	 */
-	private function notes(Trip $trip, array $missing, array $late): string {
+	private function notes(Trip $trip, array $missing, array $late, ?int $unlogged): string {
 		$notes = [];
 		// A void made late is noted with the late changes, and it is the one the line shows.
 		$voidedLate = array_filter($late, static fn (array $change): bool => $change['change'] === 'voided'
 			&& ($change['fields']['deleted_at'][1] ?? null) === $trip->getDeletedAt()) !== [];
 		if ($trip->getDeletedAt() !== null && !$voidedLate) {
-			$notes[] = 'Storniert am ' . $this->utc($trip->getDeletedAt());
+			$notes[] = 'Annulliert am ' . $this->stamp($trip->getDeletedAt());
 		}
 		if ($missing !== []) {
 			$notes[] = 'Unvollständig, es fehlt: ' . $this->text(implode(', ', array_map(
@@ -193,6 +217,9 @@ class FahrtenbuchRenderer implements IReportRenderer {
 		}
 		foreach ($late as $change) {
 			$notes[] = $this->lateChange($change);
+		}
+		if ($unlogged !== null) {
+			$notes[] = 'Geändert ohne Protokoll am ' . $this->stamp($unlogged);
 		}
 
 		return implode('<br>', $notes);
@@ -208,11 +235,11 @@ class FahrtenbuchRenderer implements IReportRenderer {
 	private function lateChange(array $change): string {
 		$voidedAt = $change['fields']['deleted_at'][0] ?? null;
 		if ($change['change'] === 'voided') {
-			return 'Nachträglich storniert am ' . $this->utc($change['at']);
+			return 'Nachträglich annulliert am ' . $this->stamp($change['at']);
 		}
 		if ($change['change'] === 'restored') {
-			return 'Nachträglich wiederhergestellt am ' . $this->utc($change['at'])
-				. (is_int($voidedAt) ? '. Vorher: storniert am ' . $this->utc($voidedAt) : '');
+			return 'Nachträglich wiederhergestellt am ' . $this->stamp($change['at'])
+				. (is_int($voidedAt) ? '. Vorher: annulliert am ' . $this->stamp($voidedAt) : '');
 		}
 
 		$before = [];
@@ -220,7 +247,7 @@ class FahrtenbuchRenderer implements IReportRenderer {
 			$before[] = (self::WORDS[$field] ?? $this->text($field)) . ' ' . $this->before($field, $value, $change['offsets']);
 		}
 
-		return 'Nachträglich geändert am ' . $this->utc($change['at']) . '. Vorher: ' . implode('; ', $before);
+		return 'Nachträglich geändert am ' . $this->stamp($change['at']) . '. Vorher: ' . implode('; ', $before);
 	}
 
 	/**
@@ -268,9 +295,14 @@ class FahrtenbuchRenderer implements IReportRenderer {
 			. 'Zertifizierung; nicht rechtlich geprüft.</p></footer>';
 	}
 
-	/** A server instant, which carries no offset, so it says it is UTC. */
-	private function utc(int $instant): string {
-		return gmdate('d.m.Y, H:i', $instant) . ' UTC';
+	/**
+	 * A server instant, which carries no offset, in the reader's zone. The offset is written out:
+	 * the trips beside it are in their own offsets, which need not be the reader's.
+	 */
+	private function stamp(int $instant): string {
+		$at = (new \DateTimeImmutable('@' . $instant))->setTimezone($this->zone);
+
+		return $at->format('d.m.Y, H:i') . ' ' . $this->offset(intdiv($at->getOffset(), 60));
 	}
 
 	private function count(?int $value): string {

@@ -8,7 +8,6 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Integration;
 
-use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\EnergyService;
@@ -33,10 +32,9 @@ class EnergyTest extends TestCase {
 	private VehicleService $vehicles;
 
 	protected function setUp(): void {
-		$container = (new Application())->getContainer();
-		$this->energy = $container->get(EnergyService::class);
-		$this->odometer = $container->get(OdometerService::class);
-		$this->vehicles = $container->get(VehicleService::class);
+		$this->energy = \OCP\Server::get(EnergyService::class);
+		$this->odometer = \OCP\Server::get(OdometerService::class);
+		$this->vehicles = \OCP\Server::get(VehicleService::class);
 		$this->forgetTestRows();
 	}
 

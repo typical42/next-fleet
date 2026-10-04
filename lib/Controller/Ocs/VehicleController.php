@@ -80,7 +80,7 @@ class VehicleController extends OCSController {
 	 * @param string|null $plate the plate, a label and never the identity
 	 * @param string|null $manufacturer the make
 	 * @param string|null $model the model
-	 * @param string|null $vehicle_type car, van, truck, trailer, tractor or generator
+	 * @param string|null $vehicle_type car, motorcycle, van, truck, trailer, tractor or generator
 	 * @param string|null $engine petrol, diesel, lpg, cng, electric or hybrid
 	 * @param list<string>|null $energy_types what it fills up with: petrol, diesel, lpg, cng, electric
 	 * @param int|null $tank_ml the tank in millilitres
@@ -100,11 +100,13 @@ class VehicleController extends OCSController {
 	 * @param string|null $color a colour, as the owner names it
 	 * @param string|null $notes anything else
 	 * @param string|null $reminder_mail off, daily, weekly or monthly
-	 * @return DataResponse<Http::STATUS_CREATED, NextFleetVehicle, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
+	 * @param string|null $client_uuid a uuid of the client's for the new row: a retry under it answers that row
+	 * @return DataResponse<Http::STATUS_CREATED, NextFleetVehicle, array{}>|DataResponse<Http::STATUS_OK, NextFleetVehicle, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
 	 * @throws OCSForbiddenException never for a create; listed because every write can answer it
 	 * @throws OCSNotFoundException never for a create; listed because every write can answer it
 	 *
 	 * 201: the vehicle
+	 * 200: the vehicle an earlier create under the same `client_uuid` wrote
 	 * 400: a field is not what it holds; the message names it
 	 * 412: never for a create; listed because every write can answer it
 	 */
@@ -134,9 +136,10 @@ class VehicleController extends OCSController {
 		mixed $color = null,
 		mixed $notes = null,
 		mixed $reminder_mail = null,
+		mixed $client_uuid = null,
 	): DataResponse {
-		return $this->write(fn (): DataResponse => new DataResponse(
-			$this->service->create($this->userId(), $this->request->getParams())->jsonSerialize(),
+		return $this->write(fn (): DataResponse => $this->created(
+			fn (): array => $this->service->create($this->userId(), $this->request->getParams())->jsonSerialize(),
 			Http::STATUS_CREATED,
 		));
 	}
@@ -152,7 +155,7 @@ class VehicleController extends OCSController {
 	 * @param string|null $plate the plate, a label and never the identity
 	 * @param string|null $manufacturer the make
 	 * @param string|null $model the model
-	 * @param string|null $vehicle_type car, van, truck, trailer, tractor or generator
+	 * @param string|null $vehicle_type car, motorcycle, van, truck, trailer, tractor or generator
 	 * @param string|null $engine petrol, diesel, lpg, cng, electric or hybrid
 	 * @param list<string>|null $energy_types what it fills up with: petrol, diesel, lpg, cng, electric
 	 * @param int|null $tank_ml the tank in millilitres

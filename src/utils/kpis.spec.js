@@ -148,7 +148,7 @@ describe('the header tiles', () => {
 
 		expect(tile(tiles, 'Cost')?.figure).toBe('No currency')
 		expect(tile(tiles, 'Energy cost')).toBeUndefined()
-		expect(tile(tiles, 'TCO')).toBeUndefined()
+		expect(tile(tiles, 'Total cost of ownership')).toBeUndefined()
 	})
 
 	it('says what a cost figure leaves out', () => {
@@ -157,12 +157,12 @@ describe('the header tiles', () => {
 		expect(tile(tiles, 'Cost')?.notes).toEqual([
 			'Net of VAT',
 			'Incomplete: a fill-up in the period has no price',
-			'Rows without a VAT rate count gross',
+			'Entries without a VAT rate count gross',
 		])
 		expect(tile(tiles, 'Energy cost')?.notes).toEqual([
 			'Net of VAT',
 			'Incomplete: a fill-up in the period has no price',
-			'Rows without a VAT rate count gross',
+			'Entries without a VAT rate count gross',
 		])
 	})
 
@@ -170,15 +170,15 @@ describe('the header tiles', () => {
 	it('states the period\'s figures without the odometer', () => {
 		const tiles = periodTilesOf(CAR, kpis({ consumption: [DIESEL], cost: cost({ tco: 3500 }) }), null, 'en')
 
-		expect(tiles.map((one) => one.label)).toEqual(['Diesel consumption', 'Cost', 'Energy cost', 'TCO'])
+		expect(tiles.map((one) => one.label)).toEqual(['Diesel consumption', 'Cost', 'Energy cost', 'Total cost of ownership'])
 	})
 
 	it('shows the TCO only when there is one', () => {
-		expect(tile(tilesOf(CAR, kpis(), null, 'en'), 'TCO')).toBeUndefined()
+		expect(tile(tilesOf(CAR, kpis(), null, 'en'), 'Total cost of ownership')).toBeUndefined()
 
 		const tiles = tilesOf(CAR, kpis({ cost: cost({ tco: 3500 }) }), kpis({ cost: cost({ tco: 3000 }) }), 'en')
 
-		expect(tile(tiles, 'TCO')).toMatchObject({ figure: '€35.00/100 km', change: '+€5.00/100 km vs. the period before' })
+		expect(tile(tiles, 'Total cost of ownership')).toMatchObject({ figure: '€35.00/100 km', change: '+€5.00/100 km vs. the period before' })
 	})
 
 	it('states engine hours in the period on a two-counter vehicle, and what they mean for consumption', () => {

@@ -3,7 +3,6 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
-import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcDateTimePickerNative from '@nextcloud/vue/components/NcDateTimePickerNative'
 import NcDialog from '@nextcloud/vue/components/NcDialog'
@@ -14,6 +13,8 @@ import { computed, ref } from 'vue'
 
 import { BookingConflictError, checkIn, checkOut, createBooking } from '../services/api.js'
 import { formatCount, formatSpan, parseWhole } from '../utils/format.js'
+import { t } from '../utils/l10n.js'
+import { refusalWords, spanFault } from '../utils/pool.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -25,6 +26,11 @@ const props = defineProps({
 	 * @type {import('vue').PropType<import('../services/api.js').Booking|null>}
 	 */
 	booking: { type: Object, default: null },
+	/**
+	 * The counter the car last came back at, or null. No Reading holds it until somebody logs that
+	 * trip, so the vehicle's counter can be behind it.
+	 */
+	lastIn: { type: Number, default: null },
 })
 
 const emit = defineEmits(['close', 'saved'])
@@ -39,9 +45,11 @@ const soon = new Date()
 soon.setMinutes(60, 0, 0)
 const end = ref(new Date(soon.getTime() + 2 * HOUR))
 
-// Taking it, the vehicle's counter is the best guess and the dashboard corrects it. Giving it back,
-// a prefilled counter would be saved unread, so the field starts empty.
-const odo = ref(returning.value ? '' : String(props.vehicle.odo_value ?? ''))
+// Taking it, the furthest counter known is the best guess and the dashboard corrects it - the one
+// BookingService's `odo_below` measures against. Giving it back, a prefilled counter would be saved
+// unread, so the field starts empty.
+const known = [props.vehicle.odo_value, props.lastIn].filter((one) => one !== null && one !== undefined)
+const odo = ref(returning.value || known.length === 0 ? '' : String(Math.max(...known)))
 const level = ref('')
 const notes = ref('')
 
@@ -73,8 +81,8 @@ const taken = computed(() => returning.value
 
 const note = computed(() => {
 	if (clash.value !== null) {
-		const name = { value: clash.value.user_name, escape: false }
-		const span = { value: formatSpan(clash.value.starts_at, clash.value.starts_at_off, clash.value.ends_at, clash.value.ends_at_off), escape: false }
+		const name = clash.value.user_name
+		const span = formatSpan(clash.value.starts_at, clash.value.starts_at_off, clash.value.ends_at, clash.value.ends_at_off)
 
 		return clash.value.state === 'out'
 			? t('nextfleet', 'Still with {name}, booked {span}', { name, span })
@@ -119,9 +127,13 @@ function handover() {
 async function bookNow() {
 	const until = end.value
 	if (!(until instanceof Date) || Number.isNaN(until.getTime())) {
-		throw new Error(t('nextfleet', 'Say when the car is back.'))
+		throw new Error(t('nextfleet', 'When will the car be back?'))
 	}
 	const now = new Date()
+	const fault = spanFault(now, until)
+	if (fault !== null) {
+		throw new Error(fault)
+	}
 
 	return createBooking(props.vehicle.uuid, {
 		starts_at: Math.floor(now.getTime() / 1000),
@@ -148,7 +160,7 @@ async function save() {
 		if (error instanceof BookingConflictError) {
 			clash.value = error.booking
 		} else {
-			failure.value = error.message
+			failure.value = refusalWords(error.message) ?? error.message
 		}
 	} finally {
 		saving.value = false

@@ -22,8 +22,10 @@ use OCA\NextFleet\Jurisdiction\LogbookReport;
 use OCA\NextFleet\Service\Completeness;
 use OCA\NextFleet\Service\EnteredBy;
 use OCA\NextFleet\Service\LogbookExport;
+use OCA\NextFleet\Service\LogbookPeriods;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
+use OCP\IDateTimeZone;
 use PHPUnit\Framework\TestCase;
 use Psr\Container\ContainerInterface;
 use Psr\Log\LoggerInterface;
@@ -122,6 +124,7 @@ class LogbookExportTest extends TestCase {
 			static fn (string $category): array => $category === Trip::BUSINESS ? ['purpose', 'partner'] : [],
 		);
 		$rules->method('sourceUrl')->willReturn(self::SOURCE);
+		$rules->method('lockDelayDays')->willReturn(7);
 
 		$renderer = $this->createMock(IReportRenderer::class);
 		$renderer->method('render')->willReturnCallback(function (LogbookReport $report): string {
@@ -143,7 +146,10 @@ class LogbookExportTest extends TestCase {
 		});
 
 		// Who entered what is tests/Integration/LogbookExportTest.php's: it reads accounts and grants.
-		return new LogbookExport($fleet, $trips, $audit, new Completeness($jurisdictions), $jurisdictions, $this->createMock(EnteredBy::class), $logger);
+		$zone = $this->createMock(IDateTimeZone::class);
+		$zone->method('getTimeZone')->willReturn(new \DateTimeZone('America/New_York'));
+
+		return new LogbookExport($fleet, $trips, $audit, new Completeness($jurisdictions), $jurisdictions, $this->createMock(EnteredBy::class), $logger, new LogbookPeriods($audit), $zone);
 	}
 
 	/** @param array<string, mixed> $row */
@@ -161,6 +167,8 @@ class LogbookExportTest extends TestCase {
 			'purpose' => 'Abnahme',
 			'partner' => 'Muster GmbH',
 			'category' => Trip::BUSINESS,
+			// Entered as it ended, which is what a trip logged on arrival carries.
+			'created_at' => $startedAt + 3600,
 		]);
 		$this->tripRows[] = $trip;
 
@@ -199,6 +207,13 @@ class LogbookExportTest extends TestCase {
 		return $this->service()->year($userId, self::VEHICLE, $year);
 	}
 
+	/** @return list<array{from: int, to: ?int}> the periods printed, without the plates in each */
+	private function periods(): array {
+		$this->assertNotNull($this->printed, 'nothing was printed');
+
+		return array_map(static fn (array $period): array => ['from' => $period['from'], 'to' => $period['to']], $this->printed->periods);
+	}
+
 	/** @return list<string> */
 	private function printedTrips(): array {
 		$this->assertNotNull($this->printed, 'nothing was printed');
@@ -212,6 +227,14 @@ class LogbookExportTest extends TestCase {
 		$this->assertSame(2026, $this->printed->year);
 		$this->assertSame(self::VEHICLE, $this->printed->vehicle->getUuid());
 		$this->assertSame(self::SOURCE, $this->printed->sourceUrl);
+	}
+
+	/** The server's instants print in the reader's zone, as Nextcloud keeps it for them. */
+	public function testTheReportCarriesTheReadersZone(): void {
+		$this->export();
+
+		$this->assertNotNull($this->printed);
+		$this->assertSame('America/New_York', $this->printed->zone->getName());
 	}
 
 	/**
@@ -305,23 +328,97 @@ class LogbookExportTest extends TestCase {
 
 	/**
 	 * A time before a change is only readable with the offset in force then, and a later edit may
-	 * have moved it since - a timely one too. So each late change carries the offsets as they stood
-	 * before it, read back from the trip as it is now through every row after.
+	 * have moved it since. So each late change carries the offsets as they stood before it, read
+	 * back from the trip as it is now through every row after.
 	 */
 	public function testALateChangeCarriesTheOffsetsInForceBeforeIt(): void {
 		$this->logbookMode = true;
 		$trip = $this->trip(self::NEW_YEAR + 86400, 120);
 		$later = self::NEW_YEAR + 30 * 86400;
 		$this->changed($trip, $later, ['change' => 'edited', 'fields' => ['started_at' => [self::NEW_YEAR + 82800, self::NEW_YEAR + 86400]], 'late' => true]);
-		$this->changed($trip, $later + 60, ['change' => 'edited', 'fields' => ['started_at_off' => [60, 120]], 'late' => false]);
+		$this->changed($trip, $later + 60, ['change' => 'edited', 'fields' => ['started_at_off' => [60, 120]], 'late' => true]);
 		$this->changed($trip, $later + 120, ['change' => 'edited', 'fields' => ['ended_at_off' => [0, 120], 'purpose' => ['Besuch', 'Abnahme']], 'late' => true]);
 
 		$this->export();
 
 		$this->assertSame(
-			[['started_at_off' => 60, 'ended_at_off' => 0], ['started_at_off' => 120, 'ended_at_off' => 0]],
+			[['started_at_off' => 60, 'ended_at_off' => 0], ['started_at_off' => 60, 'ended_at_off' => 0], ['started_at_off' => 120, 'ended_at_off' => 0]],
 			array_column($this->printed?->trips[0]['late'] ?? [], 'offsets'),
 		);
+	}
+
+	/**
+	 * Late is the export's call, not the row's: the stored flag is ignored both ways, and the delay
+	 * runs from the earliest end the trail had stated by the time of each change, or from when the
+	 * trip was entered. A later edit that moves the end back accuses itself, not the changes before it.
+	 */
+	public function testLateIsMeasuredAgainstWhatTheTrailSaidByThen(): void {
+		$this->logbookMode = true;
+		$entered = self::NEW_YEAR + 20 * 86400;
+		$trip = $this->trip(self::NEW_YEAR + 86400, 60, ['created_at' => $entered]);
+		$this->changed($trip, $entered, ['change' => 'created', 'fields' => ['ended_at' => [null, $entered]]]);
+		$this->changed($trip, $entered + 2 * 86400, ['change' => 'edited', 'fields' => ['purpose' => ['Besuch', 'Abnahme']], 'late' => true]);
+		$this->changed($trip, $entered + 3 * 86400, ['change' => 'edited', 'fields' => ['ended_at' => [$entered, self::NEW_YEAR + 86400 + 3600]], 'late' => false]);
+		$far = $this->trip(self::NEW_YEAR + 2 * 86400, 60, ['ended_at' => self::NEXT_NEW_YEAR, 'created_at' => self::NEW_YEAR + 2 * 86400]);
+		$this->changed($far, self::NEW_YEAR + 40 * 86400, ['change' => 'voided', 'fields' => ['deleted_at' => [null, self::NEW_YEAR + 40 * 86400]], 'late' => false]);
+
+		$this->export();
+
+		$this->assertSame(
+			[[$entered + 3 * 86400], [self::NEW_YEAR + 40 * 86400]],
+			array_map(static fn (array $line): array => array_column($line['late'], 'at'), $this->printed?->trips ?? []),
+		);
+	}
+
+	/**
+	 * Defence in depth: a trip under the mode whose token is newer than its newest row was changed
+	 * by something that left no row, and the line says when. The row's own `updated_at` is the token
+	 * it left, and a trip with no row at all is measured from the token it was entered with. A row
+	 * written before rows carried the token says nothing either way: its `created_at` would accuse
+	 * every second save in the same second.
+	 */
+	public function testATripChangedAfterItsNewestRowIsMarked(): void {
+		$this->logbookMode = true;
+		$at = self::NEW_YEAR + 86400;
+		$kept = $this->trip($at, 60, ['created_at' => $at, 'updated_at' => $at + 2]);
+		$this->changed($kept, $at, ['change' => 'created', 'fields' => [], 'updated_at' => $at]);
+		$this->changed($kept, $at, ['change' => 'edited', 'fields' => [], 'late' => false, 'updated_at' => $at + 2]);
+		$changed = $this->trip($at, 60, ['created_at' => $at, 'updated_at' => $at + 500]);
+		$this->changed($changed, $at, ['change' => 'created', 'fields' => [], 'updated_at' => $at]);
+		$old = $this->trip($at, 60, ['created_at' => $at, 'updated_at' => $at + 1]);
+		$this->changed($old, $at, ['change' => 'created', 'fields' => []]);
+		$this->trip($at, 60, ['created_at' => $at, 'updated_at' => $at]);
+		$this->trip($at, 60, ['created_at' => $at, 'updated_at' => $at + 700]);
+
+		$this->export();
+
+		$this->assertSame([null, $at + 500, null, null, $at + 700], array_column($this->printed?->trips ?? [], 'unlogged'));
+	}
+
+	/**
+	 * A change made before the period the trip set off in began was made while no logbook covered
+	 * it - a trip entered ahead of time - and nothing was missing from its trail then.
+	 */
+	public function testAChangeBeforeThePeriodBeganIsNotMarked(): void {
+		$this->logbookMode = true;
+		$this->switched(true, self::NEW_YEAR + 10 * 86400);
+		$created = self::NEW_YEAR + 86400;
+		$this->trip(self::NEW_YEAR + 20 * 86400, 60, ['created_at' => $created, 'updated_at' => self::NEW_YEAR + 5 * 86400]);
+		$this->trip(self::NEW_YEAR + 20 * 86400, 60, ['created_at' => $created, 'updated_at' => self::NEW_YEAR + 15 * 86400]);
+
+		$this->export();
+
+		$this->assertSame([null, self::NEW_YEAR + 15 * 86400], array_column($this->printed?->trips ?? [], 'unlogged'));
+	}
+
+	/** A trip outside every period was never in a kept logbook, so nothing is missing from its trail. */
+	public function testATripOutsideEveryPeriodIsNeverMarked(): void {
+		$at = self::NEW_YEAR + 86400;
+		$this->trip($at, 60, ['created_at' => $at, 'updated_at' => $at + 500]);
+
+		$this->export();
+
+		$this->assertSame([null], array_column($this->printed?->trips ?? [], 'unlogged'));
 	}
 
 	/** A vehicle whose jurisdiction states no requirement cites none. */
@@ -350,14 +447,14 @@ class LogbookExportTest extends TestCase {
 
 		$this->export();
 
-		$this->assertSame([['from' => self::CREATED_AT, 'to' => null]], $this->printed?->periods);
+		$this->assertSame([['from' => self::CREATED_AT, 'to' => null]], $this->periods());
 	}
 
 	/** A vehicle nobody ever switched on was never under the mode. */
 	public function testAModeNeverSwitchedOnHasNoPeriod(): void {
 		$this->export();
 
-		$this->assertSame([], $this->printed?->periods);
+		$this->assertSame([], $this->periods());
 	}
 
 	/**
@@ -375,7 +472,7 @@ class LogbookExportTest extends TestCase {
 		$this->assertSame([
 			['from' => self::CREATED_AT, 'to' => self::NEW_YEAR + 10 * 86400],
 			['from' => self::NEW_YEAR + 20 * 86400, 'to' => self::NEW_YEAR + 30 * 86400],
-		], $this->printed?->periods);
+		], $this->periods());
 	}
 
 	/**
@@ -389,7 +486,7 @@ class LogbookExportTest extends TestCase {
 
 		$this->export();
 
-		$this->assertSame([['from' => self::CREATED_AT, 'to' => self::NEW_YEAR - 1800]], $this->printed?->periods);
+		$this->assertSame([['from' => self::CREATED_AT, 'to' => self::NEW_YEAR - 1800]], $this->periods());
 	}
 
 	/**
@@ -404,7 +501,7 @@ class LogbookExportTest extends TestCase {
 
 		$this->export();
 
-		$this->assertSame([], $this->printed?->periods);
+		$this->assertSame([], $this->periods());
 	}
 
 	/** A period that ended before the year or began after it is not the year's to state. */
@@ -420,7 +517,48 @@ class LogbookExportTest extends TestCase {
 
 		$this->assertSame([
 			['from' => self::NEW_YEAR - 50 * 86400, 'to' => self::NEXT_NEW_YEAR + 10 * 86400],
-		], $this->printed?->periods);
+		], $this->periods());
+	}
+
+	/**
+	 * Each period carries the plates valid in it, read off the plate changes on the vehicle's trail:
+	 * the first starting with the period, a change on the period's edge belonging to the side it
+	 * opens, and a vehicle never renamed carrying today's plate throughout.
+	 */
+	public function testEachPeriodCarriesThePlatesValidInIt(): void {
+		$this->logbookMode = true;
+		$this->switched(true, self::NEW_YEAR + 10 * 86400);
+		$this->renamed('B-XY 1', 'B-XY 2', self::NEW_YEAR + 15 * 86400);
+		$this->switched(false, self::NEW_YEAR + 20 * 86400);
+		$this->renamed('B-XY 2', 'B-XY 123', self::NEW_YEAR + 30 * 86400);
+		$this->switched(true, self::NEW_YEAR + 30 * 86400);
+
+		$this->export();
+
+		$this->assertSame([
+			[['plate' => 'B-XY 1', 'from' => self::NEW_YEAR + 10 * 86400], ['plate' => 'B-XY 2', 'from' => self::NEW_YEAR + 15 * 86400]],
+			[['plate' => 'B-XY 123', 'from' => self::NEW_YEAR + 30 * 86400]],
+		], array_column($this->printed?->periods ?? [], 'plates'));
+	}
+
+	public function testAVehicleNeverRenamedCarriesItsPlateThroughEveryPeriod(): void {
+		$this->logbookMode = true;
+
+		$this->export();
+
+		$this->assertSame([[['plate' => 'B-XY 123', 'from' => self::CREATED_AT]]], array_column($this->printed?->periods ?? [], 'plates'));
+	}
+
+	/** One plate change on the vehicle, as VehicleService writes it. */
+	private function renamed(string $from, string $to, int $at): void {
+		$this->auditRows[] = Audit::fromRow([
+			'id' => $this->nextId++,
+			'entity' => Audit::VEHICLE,
+			'entity_id' => self::VEHICLE_ID,
+			'diff_json' => json_encode(['change' => 'edited', 'fields' => ['plate' => [$from, $to]]]),
+			'created_at' => $at,
+			'created_by' => self::OWNER,
+		]);
 	}
 
 	/**

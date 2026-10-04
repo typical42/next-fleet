@@ -8,9 +8,9 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Integration;
 
-use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Db\OdoReadingMapper;
+use OCA\NextFleet\Exception\RefusedException;
 use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\MaintenanceService;
@@ -35,9 +35,8 @@ class OdometerTest extends TestCase {
 	private VehicleService $vehicles;
 
 	protected function setUp(): void {
-		$container = (new Application())->getContainer();
-		$this->odometer = $container->get(OdometerService::class);
-		$this->vehicles = $container->get(VehicleService::class);
+		$this->odometer = \OCP\Server::get(OdometerService::class);
+		$this->vehicles = \OCP\Server::get(VehicleService::class);
 		$this->forgetTestRows();
 	}
 
@@ -90,9 +89,25 @@ class OdometerTest extends TestCase {
 		$this->assertSame([120000 => false, 118000 => true, 119000 => false], $chain);
 		$this->assertSame(119000, $this->vehicles->find(self::OWNER, $uuid)->getOdoValue());
 
-		// The flag is recomputed state, like `odo_value`: it answers to the chain around the row
-		// and not to anyone editing it, so re-deciding it does not re-date the row.
-		$this->assertSame($backwards->getUpdatedAt(), $this->reading($uuid, 119000)->getUpdatedAt());
+		// A flag that changed moves the token, so sync sends that row; one that held does not.
+		$this->assertGreaterThan($backwards->getUpdatedAt(), $this->reading($uuid, 119000)->getUpdatedAt());
+	}
+
+	/**
+	 * A sheet opened on a Reading before another entry changed its flag holds a token that moved:
+	 * its save is refused, and the sheet shows the Reading as it now stands.
+	 */
+	public function testAFlagChangedSinceTheReadRefusesTheSave(): void {
+		$uuid = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123'])->getUuid();
+		$this->odometer->record(self::OWNER, $uuid, $this->at(1750000000, 120000));
+		$open = $this->odometer->record(self::OWNER, $uuid, $this->at(1750172800, 121000));
+		$untouched = $this->odometer->record(self::OWNER, $uuid, $this->at(1750259200, 125000));
+
+		$this->odometer->record(self::OWNER, $uuid, $this->at(1750086400, 122000));
+
+		$this->assertSame($untouched->getUpdatedAt(), $this->reading($uuid, 125000)->getUpdatedAt());
+		$this->expectException(StaleUpdateException::class);
+		$this->odometer->update(self::OWNER, $uuid, $open->getUuid(), $open->getUpdatedAt(), $this->at(1750172800, 121500));
 	}
 
 	private function reading(string $vehicleUuid, int $value): OdoReading {
@@ -255,7 +270,7 @@ class OdometerTest extends TestCase {
 	 */
 	public function testOnlyAnOdometerEntryIsEditedAsOne(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
-		$trip = (new Application())->getContainer()->get(TripService::class)->record(self::OWNER, $vehicle->getUuid(), [
+		$trip = \OCP\Server::get(TripService::class)->record(self::OWNER, $vehicle->getUuid(), [
 			'started_at' => 1750000000,
 			'started_at_off' => 120,
 			'ended_at' => 1750005400,
@@ -273,9 +288,8 @@ class OdometerTest extends TestCase {
 	/** A client ties each Reading to the Entry that wrote it by uuid; an Odometer Entry names none. */
 	public function testEachListedReadingNamesTheEntryThatWroteIt(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
-		$container = (new Application())->getContainer();
 		$this->odometer->record(self::OWNER, $vehicle->getUuid(), $this->at(1749900000, 120000));
-		$trip = $container->get(TripService::class)->record(self::OWNER, $vehicle->getUuid(), [
+		$trip = \OCP\Server::get(TripService::class)->record(self::OWNER, $vehicle->getUuid(), [
 			'started_at' => 1750000000,
 			'started_at_off' => 120,
 			'ended_at' => 1750005400,
@@ -283,10 +297,10 @@ class OdometerTest extends TestCase {
 			'end_odo' => 120450,
 			'category' => 'private',
 		]);
-		$fillUp = $container->get(EnergyService::class)->record(self::OWNER, $vehicle->getUuid(), [
+		$fillUp = \OCP\Server::get(EnergyService::class)->record(self::OWNER, $vehicle->getUuid(), [
 			'filled_at' => 1750100000, 'filled_at_off' => 120, 'energy' => 'diesel', 'amount' => 42000, 'total' => 7350, 'full_tank' => true, 'odo' => 120900,
 		]);
-		$work = $container->get(MaintenanceService::class)->record(self::OWNER, $vehicle->getUuid(), [
+		$work = \OCP\Server::get(MaintenanceService::class)->record(self::OWNER, $vehicle->getUuid(), [
 			'done_at' => 1750200000, 'done_at_off' => 120, 'title' => 'Oil change', 'cost' => 18990, 'odo' => 121300,
 		]);
 
@@ -300,13 +314,78 @@ class OdometerTest extends TestCase {
 	}
 
 	/**
+	 * Rule 3's answer "the counter was replaced": the lower Reading stands as a reset, and the
+	 * Readings after it are judged from the new counter, not the old one.
+	 */
+	public function testACounterReplacedStandsAndTheChainCountsOnFromIt(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$uuid = $vehicle->getUuid();
+		$this->odometer->record(self::OWNER, $uuid, $this->at(1750000000, 120000));
+		$swap = $this->odometer->record(self::OWNER, $uuid, $this->at(1750086400, 30));
+		$this->odometer->record(self::OWNER, $uuid, $this->at(1750172800, 400));
+		$this->assertTrue($swap->getFlagged());
+
+		$answered = $this->odometer->reset(self::OWNER, $uuid, $swap->getUuid(), $swap->getUpdatedAt());
+
+		$this->assertSame(OdoReading::RESET, $answered->getKind());
+		$this->assertFalse($answered->getFlagged());
+		$chain = [];
+		foreach ($this->odometer->list(self::OWNER, $uuid) as $reading) {
+			$chain[$reading->getValue()] = $reading->getFlagged();
+		}
+		$this->assertSame([120000 => false, 30 => false, 400 => false], $chain);
+		$this->assertSame(400, $this->vehicles->find(self::OWNER, $uuid)->getOdoValue());
+	}
+
+	/** Only a Reading in question asks it; a counter that rose was not replaced. */
+	public function testAReadingNotInQuestionIsNoReset(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$read = $this->odometer->record(self::OWNER, $vehicle->getUuid(), $this->at(1750000000, 120000));
+
+		try {
+			$this->odometer->reset(self::OWNER, $vehicle->getUuid(), $read->getUuid(), $read->getUpdatedAt());
+			$this->fail('a reading nobody questioned became a reset');
+		} catch (RefusedException $e) {
+			$this->assertSame('not_in_question', $e->reason);
+		}
+		$this->assertSame(OdoReading::READING, $this->reading($vehicle->getUuid(), 120000)->getKind());
+	}
+
+	/** The reset is the number's answer; a number edited since asks the question afresh. */
+	public function testAnEditedResetIsAReadingAgain(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$uuid = $vehicle->getUuid();
+		$this->odometer->record(self::OWNER, $uuid, $this->at(1750000000, 120000));
+		$swap = $this->odometer->record(self::OWNER, $uuid, $this->at(1750086400, 30));
+		$answered = $this->odometer->reset(self::OWNER, $uuid, $swap->getUuid(), $swap->getUpdatedAt());
+
+		$typo = $this->odometer->update(self::OWNER, $uuid, $swap->getUuid(), $answered->getUpdatedAt(), $this->at(1750086400, 3000));
+
+		$this->assertSame(OdoReading::READING, $typo->getKind());
+		$this->assertTrue($typo->getFlagged());
+	}
+
+	/** Moved to the hour counter, the number answers nothing about the kilometres it left. */
+	public function testAResetMovedToTheOtherCounterIsAReadingAgain(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'second_unit' => 'h']);
+		$uuid = $vehicle->getUuid();
+		$this->odometer->record(self::OWNER, $uuid, $this->at(1750000000, 120000));
+		$swap = $this->odometer->record(self::OWNER, $uuid, $this->at(1750086400, 30));
+		$answered = $this->odometer->reset(self::OWNER, $uuid, $swap->getUuid(), $swap->getUpdatedAt());
+
+		$moved = $this->odometer->update(self::OWNER, $uuid, $swap->getUuid(), $answered->getUpdatedAt(), ['counter' => OdoReading::SECOND] + $this->at(1750086400, 30));
+
+		$this->assertSame(OdoReading::READING, $moved->getKind());
+	}
+
+	/**
 	 * Nothing registers these classes (lib/AppInfo/Application.php), so the container has to
 	 * build the whole chain from constructor types alone.
 	 */
 	public function testTheServiceIsBuiltFromItsConstructorTypesAlone(): void {
 		$this->assertInstanceOf(
 			OdometerService::class,
-			(new Application())->getContainer()->get(OdometerService::class),
+			\OCP\Server::get(OdometerService::class),
 		);
 	}
 

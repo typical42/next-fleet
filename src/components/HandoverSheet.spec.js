@@ -57,11 +57,12 @@ const ANNAS = { uuid: 'b-2', user_id: 'anna', user_name: 'Anna', starts_at: Date
 
 /**
  * @param {object|null} [booking] - the booking the car is taken or given back under, or none to take it now
+ * @param {number|null} [lastIn] - the counter the car last came back at
  * @return {import('@vue/test-utils').VueWrapper} the sheet
  */
-function sheet(booking = MINE) {
+function sheet(booking = MINE, lastIn = null) {
 	return shallowMount(HandoverSheet, {
-		props: { vehicle: VEHICLE, booking },
+		props: { vehicle: VEHICLE, booking, lastIn },
 		global: {
 			renderStubDefaultSlot: true,
 			stubs: { NcDialog: { template: '<div class="dialog"><slot /><slot name="actions" /></div>' } },
@@ -114,6 +115,12 @@ describe('taking the car', () => {
 		expect(wrapper.emitted('saved')).toEqual([[out]])
 	})
 
+	/** Back from a trip nobody logged yet, the car is further than the vehicle's counter says. */
+	it('prefills the larger of the vehicle\'s counter and the one the car last came back at', () => {
+		expect(field(sheet(MINE, 52140), 'Counter reading (km)').props('modelValue')).toBe('52140')
+		expect(field(sheet(MINE, 51000), 'Counter reading (km)').props('modelValue')).toBe('52000')
+	})
+
 	/** The refusal names whose the car is, so the driver knows whom to ask, and the form stays. */
 	it('says the car is still with someone, and keeps the values', async () => {
 		vi.mocked(checkOut).mockRejectedValue(new BookingConflictError('the vehicle is still out', { ...ANNAS, state: /** @type {const} */ ('out') }))
@@ -154,6 +161,27 @@ describe('taking the car', () => {
 		expect(wrapper.getComponent(NcNoteCard).props('text')).toBe('The tank or battery is a percentage, 0 to 100.')
 
 		expect(checkOut).not.toHaveBeenCalled()
+	})
+
+	/** The server's words are English and name columns; a refusal the sheet knows reads as the user's. */
+	it('says a refusal it knows in words', async () => {
+		vi.mocked(checkOut).mockRejectedValue(new Error('the booking is over, so the car is no longer taken under it'))
+		const wrapper = sheet()
+
+		await button(wrapper, 'Take the car').vm.$emit('click')
+		await flushPromises()
+
+		expect(wrapper.getComponent(NcNoteCard).props('text')).toBe('The booking is over, so the car is no longer taken under it.')
+	})
+
+	it('says a note over the bound in words', async () => {
+		vi.mocked(checkOut).mockRejectedValue(new Error('notes is longer than 10000 characters'))
+		const wrapper = sheet()
+
+		await button(wrapper, 'Take the car').vm.$emit('click')
+		await flushPromises()
+
+		expect(wrapper.getComponent(NcNoteCard).props('text')).toBe('The note is longer than 10,000 characters.')
 	})
 })
 
@@ -234,5 +262,17 @@ describe('taking it now', () => {
 
 		expect(wrapper.getComponent(NcNoteCard).props('text')).toBe('Booked by Anna, Fri 02/10, 10:00–12:00')
 		expect(checkOut).not.toHaveBeenCalled()
+	})
+
+	/** Checked before sending, in words; the start is now, so an end gone by is also before it. */
+	it('refuses an end gone by without asking the server', async () => {
+		const wrapper = sheet(null)
+
+		await wrapper.getComponent(NcDateTimePickerNative).vm.$emit('update:modelValue', new Date(2026, 9, 2, 12, 0))
+		await button(wrapper, 'Take the car').vm.$emit('click')
+		await flushPromises()
+
+		expect(wrapper.getComponent(NcNoteCard).props('text')).toBe('A booking ends in the future. A drive that is over is logged as a trip.')
+		expect(createBooking).not.toHaveBeenCalled()
 	})
 })

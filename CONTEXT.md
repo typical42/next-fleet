@@ -9,8 +9,8 @@ and the docs all use. It holds terms only; the design lives in [plan.md](plan.md
 ### Vehicle and its records
 
 **Vehicle**:
-A car, van, truck, trailer, tractor or generator someone keeps records for. Identified by its `uuid`; the
-plate is a mutable label.
+A car, motorcycle, van, truck, trailer, tractor or generator someone keeps records for. Identified
+by its `uuid`; the plate is a mutable label.
 _Avoid_: Car, asset
 
 **Entry**:
@@ -93,7 +93,12 @@ the second. Each counter is a chain of its own. Never called "km".
 
 **Segment**:
 The span between two Observed Readings that consumption may be computed over. A Gap, a Flag or a
-reset ends one.
+Reset ends one.
+
+**Reset**:
+A Flagged Reading answered "the counter was replaced" (`kind = reset`): the Reading, not the swap
+of the cluster behind it. It is never Flagged, and the counter's Segments start over at it; a
+distance adds up the Segments on either side.
 
 **Gap**:
 Kilometres before a Trip that no Trip accounts for: its `start_odo` above the Reading the last Trip
@@ -150,8 +155,8 @@ Our own permission to see or change a vehicle: owner, or a grant with role manag
 viewer. It comes as five operations: `view` (every role), `log` (driver and manager: add an Entry,
 change one you entered), `edit` and `delete` (manager: the vehicle's settings and anybody's
 Entries), and `own` (the owner alone: access, and whether the vehicle exists). Decided in one place,
-`VehicleAccess::may`. A grant ends when the owner revokes it, its grantee Leaves, or its group is
-deleted.
+`VehicleAccess::may`. A grant ends when the owner revokes it, its grantee Leaves, its group is
+deleted, or the owner's account is deleted.
 _Avoid_: Share, permission, ACL
 
 **Leave**:
@@ -163,8 +168,12 @@ _Avoid_: Unshare, opt out
 Nextcloud's concept, never ours. Reserved for file shares and `OCP\Share`.
 
 **Owner**:
-The Nextcloud user a vehicle belongs to. Distinct from a Driver, who may be neither owner nor
-account holder.
+The Nextcloud user a vehicle belongs to. Holds every operation without a grant, so is never a
+grantee. Only an admin changes who it is, by a **Transfer** (`occ nextfleet:transfer`).
+
+**Driver**:
+The grant role between viewer and manager: `view` and `log`, so a driver adds Entries and changes
+the ones they entered, and books the vehicle. Always an account, or a group of them.
 
 ### Pool
 
@@ -180,7 +189,8 @@ battery level and a note. Columns of the Booking, not rows of their own.
 
 **Check-out**:
 Taking the car: the booker's Booking goes from `booked` to `out`, never while another Booking of
-the vehicle is `out`, nor early into another Booking's time.
+the vehicle is `out`, nor early into another Booking's time. An early Check-out holds the car from
+that moment, and an overdue one until the Check-in.
 _Avoid_: Pick-up, start
 
 **Check-in**:
@@ -193,8 +203,9 @@ _Avoid_: Drop-off, return (as the type name)
 
 **Jurisdiction**:
 The set of rules that apply to one vehicle: units, currency, logbook requirements, inspection
-cadence, rates. One directory under `lib/Jurisdiction/`. Per vehicle, not per instance.
-_Avoid_: Country, locale, region, profile
+cadence, rates. One directory under `lib/Jurisdiction/`. Per vehicle, not per instance. The screen
+says "Country" (de "Land"): that is the word a user picks it by.
+_Avoid_ in code and docs: Country, locale, region, profile
 
 **Generic Jurisdiction**:
 The fallback: metric units, no currency, no logbook ruleset, no inspection scheme, no rates, and a

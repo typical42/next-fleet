@@ -194,6 +194,16 @@ class LubeLoggerImporterTest extends TestCase {
 		$this->assertSame(gmmktime(19, 45, 0, 3, 14, 2026), $proposal->fields['filled_at']);
 	}
 
+	/** Which cell is which cannot be told; no column is to blame. */
+	public function testARowWithMoreCellsThanTheHeaderIsUnreadable(): void {
+		[$header, $rows] = self::csv("Date,FuelConsumed\n3/14/2026,40,12\n3/15/2026,30\n");
+
+		[$wide, $fine] = $this->importer->propose('fuel', $header, $rows, self::US)->all;
+
+		$this->assertSame([Proposal::UNREADABLE, 'cells', null, 2], [$wide->outcome, $wide->reason, $wide->column, $wide->row]);
+		$this->assertNull($fine->outcome);
+	}
+
 	public function testARowWithoutTheAmountOrADayIsUnreadableAndBlamesItsColumn(): void {
 		$proposals = $this->propose('fuel', 'lubelogger-fuel.csv');
 
@@ -340,6 +350,32 @@ class LubeLoggerImporterTest extends TestCase {
 		$this->assertSame(['currency', 'Cost'], [$dollars->reason, $dollars->column]);
 	}
 
+	/** A vehicle's currency typed in lower case is still its code. */
+	public function testTheVehiclesCurrencyIsReadInAnyCase(): void {
+		[$header, $rows] = self::csv("Date;Description;Cost\n2026-03-14;Registration;12,00\u{00A0}€\n2026-03-15;Toll;£2,00\n");
+
+		[$euros, $pounds] = $this->importer->propose('tax', $header, $rows, ['tz' => 'UTC', 'currency' => 'eur'])->all;
+
+		$this->assertSame(1200, $euros->fields['amount']);
+		$this->assertSame(['currency', 'Cost'], [$pounds->reason, $pounds->column]);
+	}
+
+	/**
+	 * A vehicle whose currency is no code, from before the vehicle sheet checked it, cannot price
+	 * a row: each row with money is unreadable and blames no column, since the fault is the
+	 * vehicle's. A row without money still imports, and so does a file without any.
+	 */
+	public function testAVehicleCurrencyThatIsNoCodeLeavesOutOnlyTheRowsWithMoney(): void {
+		[$header, $rows] = self::csv("Date,Odometer,Description,Cost\n2026-03-14,12000,Brakes,20\n2026-03-15,12100,Wipers,\n");
+
+		[$priced, $free] = $this->importer->propose('repair', $header, $rows, ['units' => ['distance' => 'km'], 'tz' => 'UTC', 'currency' => '€'])->all;
+		$odometer = $this->propose('odometer', 'lubelogger-odometer.csv', self::US + ['currency' => '€']);
+
+		$this->assertSame(['currency', null], [$priced->reason, $priced->column]);
+		$this->assertNull($free->outcome);
+		$this->assertNull($odometer->all[0]->outcome);
+	}
+
 	public function testANegativeAmountIsUnreadable(): void {
 		[$header, $rows] = self::csv("Date,Description,Cost\n2026-03-14,Refund,-20\n");
 
@@ -363,6 +399,22 @@ class LubeLoggerImporterTest extends TestCase {
 		$proposal = $this->importer->propose('service', $header, $rows, ['units' => ['distance' => 'km'], 'tz' => 'UTC'])->all[0];
 
 		$this->assertSame(['too_long', 'Description'], [$proposal->reason, $proposal->column]);
+	}
+
+	/**
+	 * The entry services' bounds (docs/security.md), met in the preview: past them the write would
+	 * refuse the row and with it the whole import. A note is joined from several cells, so it is
+	 * the joined note that counts.
+	 */
+	public function testANoteOrACostPastTheEntryBoundsIsUnreadable(): void {
+		$half = str_repeat('x', 5_000);
+		[$header, $rows] = self::csv("Date,Description,Cost,Notes,Tags\n2026-03-14,Oil,10,{$half},{$half}\n2026-03-14,Oil,10000000001,,\n2026-03-14,Oil,10000000000,{$half},\n");
+
+		$all = $this->importer->propose('service', $header, $rows, ['units' => ['distance' => 'km'], 'tz' => 'UTC'])->all;
+
+		$this->assertSame(['too_long', 'Notes'], [$all[0]->reason, $all[0]->column]);
+		$this->assertSame(['too_large', 'Cost'], [$all[1]->reason, $all[1]->column]);
+		$this->assertNull($all[2]->outcome);
 	}
 
 	public function testAUnitTheFileNeedsAndTheAnswersLackIsRefused(): void {

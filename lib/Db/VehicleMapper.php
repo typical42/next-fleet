@@ -93,18 +93,72 @@ class VehicleMapper extends BaseMapper {
 	}
 
 	/**
-	 * Every live vehicle not disposed of, whoever owns it: the reminder job's round. A disposed
-	 * one's reminders stop (docs/architecture.md#data-model).
+	 * Every live vehicle not disposed of with a reminder that can still ring, whoever owns it,
+	 * each with the uids on its list: the reminder job's round, in one query. A disposed one's
+	 * reminders stop (docs/architecture.md#data-model); done and dismissed ones move only when
+	 * somebody acts, and that write is what tells.
+	 *
+	 * @param bool $lists false for a caller that reads each list again under the vehicle's hold:
+	 *                    the lists come back empty, and the vehicle rows once each
+	 * @return list<array{Vehicle, list<string>}> by vehicle id, the list in the order it was made
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findReminded(bool $lists = true): array {
+		$qb = $this->db->getQueryBuilder();
+		$expr = $qb->expr();
+		$live = $this->db->getQueryBuilder();
+		$live->select('m.id')
+			->from('fleet_reminders', 'm')
+			->where($expr->eq('m.vehicle_id', 'v.id'))
+			->andWhere($expr->isNull('m.deleted_at'))
+			->andWhere(InList::notIn($qb, 'm.state', [Reminder::DONE, Reminder::DISMISSED], IQueryBuilder::PARAM_STR_ARRAY));
+		$qb->select('v.*')
+			->from($this->tableName, 'v')
+			->where($expr->neq('v.lifecycle', $qb->createNamedParameter(Vehicle::DISPOSED)))
+			->andWhere($expr->isNull('v.deleted_at'))
+			->andWhere($qb->createFunction('EXISTS (' . $live->getSQL() . ')'))
+			->orderBy('v.id', 'ASC');
+		if ($lists) {
+			$qb->selectAlias('r.user_id', 'recipient')
+				->leftJoin('v', 'fleet_reminder_recipients', 'r', $expr->andX(
+					$expr->eq('r.vehicle_id', 'v.id'),
+					$expr->isNull('r.deleted_at'),
+				))
+				->addOrderBy('r.id', 'ASC');
+		}
+
+		/** @var array<int, Vehicle> $vehicles */
+		$vehicles = [];
+		/** @var array<int, list<string>> $named */
+		$named = [];
+		$result = $qb->executeQuery();
+		while ($row = $result->fetch()) {
+			$recipient = $row['recipient'] ?? null;
+			unset($row['recipient']);
+			$id = (int)$row['id'];
+			$vehicles[$id] ??= $this->mapRowToEntity($row);
+			$named[$id] ??= [];
+			if ($recipient !== null) {
+				$named[$id][] = (string)$recipient;
+			}
+		}
+		$result->closeCursor();
+
+		return array_map(static fn (int $id): array => [$vehicles[$id], $named[$id]], array_keys($vehicles));
+	}
+
+	/**
+	 * Every vehicle one account owns, deleted ones too, by id: an erasure closes them all
+	 * (ErasureService::erase()) and holds them in this order.
 	 *
 	 * @return list<Vehicle>
 	 * @throws \OCP\DB\Exception
 	 */
-	public function findInService(): array {
+	public function findAnyOwnedBy(string $userId): array {
 		$qb = $this->db->getQueryBuilder();
 		$qb->select('*')
 			->from($this->tableName)
-			->where($qb->expr()->neq('lifecycle', $qb->createNamedParameter(Vehicle::DISPOSED)))
-			->andWhere($qb->expr()->isNull('deleted_at'))
+			->where($qb->expr()->eq('user_id', $qb->createNamedParameter($userId)))
 			->orderBy('id', 'ASC');
 
 		return $this->findEntities($qb);
@@ -125,7 +179,7 @@ class VehicleMapper extends BaseMapper {
 		// An empty IN () is not a predicate any of the three databases accepts.
 		$reachable = $grantedIds === [] ? $mine : $qb->expr()->orX(
 			$mine,
-			$qb->expr()->in('id', $qb->createNamedParameter($grantedIds, IQueryBuilder::PARAM_INT_ARRAY)),
+			InList::in($qb, 'id', $grantedIds, IQueryBuilder::PARAM_INT_ARRAY),
 		);
 
 		$qb->select('*')

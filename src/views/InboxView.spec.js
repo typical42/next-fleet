@@ -29,7 +29,7 @@ const OTHER = { uuid: 'v-2', plate: 'M-AB 1', may: ['view', 'log'] }
 
 const PHOTO = { file_id: 42, name: 'IMG_0815.jpg', mime: 'image/jpeg', mtime: 1788300000, size: 2048 }
 const BILL = { file_id: 43, name: 'Werkstatt.pdf', mime: 'application/pdf', mtime: 1788200000, size: 4096 }
-const FOLDER = { file_id: 7, path: '/Belege' }
+const FOLDER = { file_id: 7, path: '/Belege R&D' }
 
 /**
  * @return {Promise<import('@vue/test-utils').VueWrapper>} the screen, once the inbox was read
@@ -78,7 +78,7 @@ describe('the inbox screen', () => {
 
 		const wrapper = await screen()
 
-		expect(wrapper.text()).toContain('The newest 2 of 130')
+		expect(wrapper.text()).toContain('The newest 2 of 130 files in /Belege R&D')
 	})
 
 	it('says where files come from while none waits', async () => {
@@ -89,7 +89,7 @@ describe('the inbox screen', () => {
 		/** @type {any} */
 		const empty = wrapper.findComponent(NcEmptyContent)
 		expect(empty.props('name')).toBe('Nothing waiting')
-		expect(empty.props('description')).toContain('/Belege')
+		expect(empty.props('description')).toContain('/Belege R&D')
 	})
 
 	/** A folder deleted in Files, or one never chosen: the settings page is where it is chosen. */
@@ -101,7 +101,10 @@ describe('the inbox screen', () => {
 		/** @type {any} */
 		const empty = wrapper.findComponent(NcEmptyContent)
 		expect(empty.props('name')).toBe('No inbox folder')
-		expect(wrapper.find('a.inbox__settings').attributes('href')).toContain('/settings/user/additional')
+		// Nextcloud's own button as a link, so it looks and focuses as every other button does.
+		/** @type {any} */
+		const settings = wrapper.findAllComponents(NcButton).find((one) => one.text() === 'Open personal settings')
+		expect(settings.props('href')).toContain('/settings/user/additional')
 	})
 
 	it('says what went wrong when the inbox cannot be read, and tries again', async () => {
@@ -200,7 +203,7 @@ describe('the inbox screen', () => {
 
 		/** The entry is written and stays; the file waits, to be attached to it by hand. */
 		it('keeps the entry and says so when the file cannot be filed on it', async () => {
-			vi.mocked(attachDocument).mockRejectedValue(new Error('The server answered 500'))
+			vi.mocked(attachDocument).mockRejectedValue(new Error('The file\'s storage is full'))
 			const wrapper = await logging()
 
 			await wrapper.findComponent(EntrySheet).vm.$emit('saved', { uuid: 'e-9' })
@@ -210,8 +213,8 @@ describe('the inbox screen', () => {
 			/** @type {any} */
 			const note = wrapper.findComponent(NcNoteCard)
 			expect(note.props('type')).toBe('error')
-			expect(note.props('text')).toContain('is saved')
-			expect(note.props('text')).toContain('The server answered 500')
+			expect(note.props('text')).toContain('is saved, but IMG_0815.jpg could not')
+			expect(note.props('text')).toContain('The file\'s storage is full')
 			expect(tiles(wrapper)).toEqual(['IMG_0815.jpg', 'Werkstatt.pdf'])
 
 			// Attached by hand, it is no longer a failure to speak of.

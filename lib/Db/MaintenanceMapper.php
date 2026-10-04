@@ -43,6 +43,11 @@ class MaintenanceMapper extends BaseMapper {
 		return $this->findEntities($qb);
 	}
 
+	/** @throws \OCP\DB\Exception */
+	public function hasMoney(int $vehicleId): bool {
+		return $this->anySet($vehicleId, ['cost']);
+	}
+
 	/**
 	 * @return list<Maintenance>
 	 * @throws \OCP\DB\Exception

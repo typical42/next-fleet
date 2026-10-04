@@ -11,7 +11,8 @@
          executionOrder="depends,defects"
          beStrictAboutOutputDuringTests="true"
          failOnRisky="true"
-         failOnWarning="true">
+         failOnWarning="true"
+         failOnDeprecation="true">
   <!--
     - A running server and a real database, so this suite has its own bootstrap and runs only
     - inside the dev container - see docs/development.md#testing.
@@ -21,7 +22,11 @@
       <directory>tests/Integration</directory>
     </testsuite>
   </testsuites>
-  <source>
+  <!--
+    - Deprecations count from lib/ only: one the server or its 3rdparty raises under a newer PHP
+    - is nothing this app can fix.
+  -->
+  <source restrictDeprecations="true">
     <include>
       <directory>lib</directory>
     </include>

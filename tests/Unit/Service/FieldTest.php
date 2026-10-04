@@ -19,12 +19,11 @@ use PHPUnit\Framework\TestCase;
 class FieldTest extends TestCase {
 	public function testTextPassesAStringWithinItsLength(): void {
 		$this->assertSame('Büro', Field::text('purpose', 'Büro', 4));
-		$this->assertSame('any length', Field::text('purpose', 'any length', null));
 	}
 
 	public function testTextRefusesWhatIsNotAString(): void {
 		$this->expectExceptionObject(new \InvalidArgumentException('purpose is text'));
-		Field::text('purpose', 12, null);
+		Field::text('purpose', 12, 255);
 	}
 
 	public function testTextRefusesRatherThanTruncates(): void {
@@ -48,8 +47,8 @@ class FieldTest extends TestCase {
 	}
 
 	public function testCountPassesAWholeNumberFromJsonOrAForm(): void {
-		$this->assertSame(0, Field::count('value', 0));
-		$this->assertSame(1234, Field::count('value', '1234'));
+		$this->assertSame(0, Field::count('value', 0, Field::COUNTER));
+		$this->assertSame(1234, Field::count('value', '1234', Field::COUNTER));
 	}
 
 	/** @return array<string, array{mixed}> */
@@ -60,7 +59,43 @@ class FieldTest extends TestCase {
 	#[DataProvider('notACount')]
 	public function testCountRefusesAnythingElse(mixed $value): void {
 		$this->expectExceptionObject(new \InvalidArgumentException('value is a whole number, never negative'));
-		Field::count('value', $value);
+		Field::count('value', $value, Field::COUNTER);
+	}
+
+	/** The bounds docs/security.md states: a counter stops at a billion, money at 10^12 cents. */
+	public function testCountTakesItsMaximumAndRefusesOneMore(): void {
+		$this->assertSame(1_000_000_000, Field::count('odo', 1_000_000_000, Field::COUNTER));
+		$this->assertSame(1_000_000_000_000, Field::count('cost', '1000000000000', Field::MONEY));
+		$this->expectExceptionObject(new \InvalidArgumentException('odo is 1000000000 at most'));
+		Field::count('odo', 1_000_000_001, Field::COUNTER);
+	}
+
+	public function testMoneyRefusesOneCentOverItsMaximum(): void {
+		$this->expectExceptionObject(new \InvalidArgumentException('cost is 1000000000000 at most'));
+		Field::read('cost', 'count', Field::MONEY, 1_000_000_000_001);
+	}
+
+	public function testANoteTakesTenThousandCharactersAndNoMore(): void {
+		$page = str_repeat('ä', 10_000);
+		$this->assertSame($page, Field::read('notes', 'text', Field::TEXT, $page));
+		$this->expectExceptionObject(new \InvalidArgumentException('notes is longer than 10000 characters'));
+		Field::read('notes', 'text', Field::TEXT, $page . 'ä');
+	}
+
+	/**
+	 * A count or a text without a bound is a mistake in the caller, not a field to let through: a
+	 * 500, not a 400 that blames the request.
+	 */
+	public function testReadRefusesACountOrATextWithoutABound(): void {
+		foreach ([['count', 1], ['text', 'a']] as [$kind, $value]) {
+			try {
+				Field::read('odo', $kind, null, $value);
+				$this->fail($kind . ' read without a bound');
+			} catch (\LogicException $e) {
+				$this->assertNotInstanceOf(\InvalidArgumentException::class, $e);
+				$this->assertSame('odo has no bound', $e->getMessage());
+			}
+		}
 	}
 
 	public function testOffsetPassesTheRealRange(): void {

@@ -43,10 +43,9 @@ class DueWidgetTest extends TestCase {
 	protected function setUp(): void {
 		// The router links only to a loaded app's routes; the CLI has not loaded it.
 		\OCP\Server::get(IAppManager::class)->loadApp(Application::APP_ID);
-		$container = (new Application())->getContainer();
-		$this->widget = $container->get(DueWidget::class);
-		$this->vehicles = $container->get(VehicleService::class);
-		$this->reminders = $container->get(ReminderService::class);
+		$this->widget = \OCP\Server::get(DueWidget::class);
+		$this->vehicles = \OCP\Server::get(VehicleService::class);
+		$this->reminders = \OCP\Server::get(ReminderService::class);
 		$this->forgetTestRows();
 	}
 

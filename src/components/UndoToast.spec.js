@@ -6,9 +6,9 @@
 import NcButton from '@nextcloud/vue/components/NcButton'
 import { flushPromises, shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ChangedError, deleteEntry, deleteVehicle, detachDocument, getVehicle, restoreDocument, restoreEntry, restoreVehicle, runImport, undoImport } from '../services/api.js'
+import { ChangedError, deleteEntry, deleteVehicle, detachDocument, getVehicle, restoreDocument, restoreEntry, restoreVehicle, runImport, undoImport, updateEntry } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
 import UndoToast from './UndoToast.vue'
 
@@ -25,6 +25,7 @@ vi.mock('../services/api.js', async (original) => ({
 	restoreVehicle: vi.fn(),
 	runImport: vi.fn(),
 	undoImport: vi.fn(),
+	updateEntry: vi.fn(),
 }))
 
 const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', lifecycle: 'active' }
@@ -66,6 +67,91 @@ beforeEach(() => {
 	vi.mocked(getVehicle).mockResolvedValue(VEHICLE)
 	vi.mocked(deleteEntry).mockImplementation(async (uuid, type, entry) => ({ ...entry, updated_at: 1700000200 }))
 	vi.mocked(restoreEntry).mockImplementation(async (uuid, type, entry) => entry)
+})
+
+describe('the toast after a save', () => {
+	afterEach(() => {
+		vi.useRealTimers()
+	})
+
+	/**
+	 * An edit replaced what the Entry said, so the way back writes that back under the token the
+	 * edit answered with (docs/ui.md, saving returns with an undo toast).
+	 */
+	it('says an edit was saved and writes back what it replaced', async () => {
+		vi.mocked(updateEntry).mockImplementation(async (uuid, type, entry, fields) => ({ ...entry, ...fields, updated_at: 1700000400 }))
+		const store = useVehiclesStore()
+		store.upsert(VEHICLE)
+		store.wrote('v-1', 'energy', { uuid: 'e-1', updated_at: 1700000300 }, { amount: 48200 })
+		const wrapper = shallowMount(UndoToast, { global: { renderStubDefaultSlot: true } })
+
+		expect(wrapper.text()).toContain('Saved.')
+		await button(wrapper, 'Undo').vm.$emit('click')
+		await flushPromises()
+
+		expect(updateEntry).toHaveBeenCalledWith('v-1', 'energy', { uuid: 'e-1', updated_at: 1700000300 }, { amount: 48200 })
+		expect(store.restored).toBe(1)
+		expect(wrapper.find('.toast').exists()).toBe(false)
+	})
+
+	it('says when the edit could not be undone, and stops offering it', async () => {
+		vi.mocked(updateEntry).mockRejectedValue(new Error('Changed since you read it'))
+		const store = useVehiclesStore()
+		store.wrote('v-1', 'expense', { uuid: 'x-1', updated_at: 1700000300 }, { amount: 4250 })
+		const wrapper = shallowMount(UndoToast, { global: { renderStubDefaultSlot: true } })
+
+		await button(wrapper, 'Undo').vm.$emit('click')
+		await flushPromises()
+
+		expect(wrapper.text()).toContain('The change could not be undone: Changed since you read it')
+		expect(button(wrapper, 'Undo')).toBeUndefined()
+	})
+
+	/**
+	 * A new Entry is its row on the timeline, and deleting it there is its way back. So the word is
+	 * short and leaves on its own: no token waits on it.
+	 */
+	it('says a new entry was saved, briefly and with no undo', async () => {
+		vi.useFakeTimers()
+		const store = useVehiclesStore()
+		store.wrote('v-1', 'trip')
+		const wrapper = shallowMount(UndoToast, { global: { renderStubDefaultSlot: true } })
+		await flushPromises()
+
+		expect(wrapper.text()).toContain('Saved.')
+		expect(button(wrapper, 'Undo')).toBeUndefined()
+		vi.advanceTimersByTime(5000)
+		await flushPromises()
+		expect(wrapper.find('.toast').exists()).toBe(false)
+	})
+
+	/** A new Entry's word would take a standing way back with it when it leaves, so it gives way. */
+	it('leaves a standing undo alone when a new entry is saved', async () => {
+		vi.useFakeTimers()
+		const store = useVehiclesStore()
+		store.upsert(VEHICLE)
+		await store.strike('v-1', 'energy', { uuid: 'e-1', updated_at: 1700000100 })
+		store.wrote('v-1', 'trip')
+		const wrapper = shallowMount(UndoToast, { global: { renderStubDefaultSlot: true } })
+
+		vi.advanceTimersByTime(5000)
+		await flushPromises()
+
+		expect(wrapper.text()).toContain('The entry was deleted.')
+		expect(button(wrapper, 'Undo')).toBeDefined()
+	})
+
+	/** The edit's offer stays: a way back that leaves on a clock is a time limit on it. */
+	it('keeps the offer for an edit until it is answered', async () => {
+		vi.useFakeTimers()
+		useVehiclesStore().wrote('v-1', 'trip', { uuid: 't-1', updated_at: 1700000300 }, { distance: 82 })
+		const wrapper = shallowMount(UndoToast, { global: { renderStubDefaultSlot: true } })
+
+		vi.advanceTimersByTime(60000)
+		await flushPromises()
+
+		expect(button(wrapper, 'Undo')).toBeDefined()
+	})
 })
 
 describe('the undo toast', () => {

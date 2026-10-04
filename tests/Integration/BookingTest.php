@@ -8,7 +8,6 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Integration;
 
-use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\Booking;
@@ -34,6 +33,8 @@ use PHPUnit\Framework\TestCase;
  * It writes to the instance it runs against (docs/development.md#testing).
  */
 class BookingTest extends TestCase {
+	use CountsQueries;
+
 	/** Not Nextcloud accounts: `user_id` and `grantee` are string columns with no key on them. */
 	private const OWNER = 'nextfleet-test-alice';
 	private const MANAGER = 'nextfleet-test-dave';
@@ -51,10 +52,9 @@ class BookingTest extends TestCase {
 	private int $tomorrow;
 
 	protected function setUp(): void {
-		$container = (new Application())->getContainer();
-		$this->bookings = $container->get(BookingService::class);
-		$this->trips = $container->get(TripService::class);
-		$this->vehicles = $container->get(VehicleService::class);
+		$this->bookings = \OCP\Server::get(BookingService::class);
+		$this->trips = \OCP\Server::get(TripService::class);
+		$this->vehicles = \OCP\Server::get(VehicleService::class);
 		$this->forgetTestRows();
 		$this->vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
 		$this->grant(self::MANAGER, 'manager');
@@ -139,7 +139,67 @@ class BookingTest extends TestCase {
 			'ending before it starts' => [3, 1, 'ends_at is after starts_at'],
 			'ending as it starts' => [3, 3, 'ends_at is after starts_at'],
 			'over before now' => [-50, -48, 'ends_at is still to come'],
+			'longer than 90 days' => [0, 90 * 24 + 1, 'a booking spans 90 days at most'],
+			'ending over a year ahead' => [365 * 24 - 2, 365 * 24, 'ends_at is a year ahead at most'],
+			'starting an hour ago' => [-26, -23, 'starts_at is in the past'],
 		];
+	}
+
+	/** The bounds take what they name: 90 days, a year ahead, a start a few minutes gone. */
+	public function testASpanAtItsBoundsIsTaken(): void {
+		$uuid = $this->vehicle->getUuid();
+		$this->bookings->book(self::DRIVER, $uuid, $this->span($this->tomorrow, 90 * 24));
+		$this->bookings->book(self::DRIVER, $uuid, $this->span(time() + 364 * 86400, 23));
+		$written = $this->bookings->book(self::OWNER, $uuid, $this->span(time() - 240, 1));
+
+		$this->assertSame(Booking::BOOKED, $written['state']);
+	}
+
+	/** Just past each bound is refused: the slack is five minutes, the horizon a year. */
+	public function testJustPastTheBoundsIsRefused(): void {
+		$uuid = $this->vehicle->getUuid();
+		foreach ([
+			'starts_at is in the past' => $this->span(time() - 360, 1),
+			'ends_at is a year ahead at most' => $this->span(time() + 365 * 86400 - self::HOUR + 60, 1),
+		] as $message => $span) {
+			try {
+				$this->bookings->book(self::DRIVER, $uuid, $span);
+				$this->fail('booked: ' . $message);
+			} catch (\InvalidArgumentException $e) {
+				$this->assertSame($message, $e->getMessage());
+			}
+		}
+	}
+
+	/** A booking made before the bounds keeps its span, and its purpose still changes. */
+	public function testABookingPastTheBoundsChangesWithoutMovingItsSpan(): void {
+		$uuid = $this->vehicle->getUuid();
+		$long = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->tomorrow, 3));
+		$mapper = \OCP\Server::get(BookingMapper::class);
+		$row = $mapper->findOnVehicle((int)$this->vehicle->getId(), $long['uuid']);
+		$row->setEndsAt(time() + 400 * 86400);
+		$updatedAt = $mapper->updateChecked($row, $row->getUpdatedAt())->getUpdatedAt();
+		$span = ['starts_at' => $row->getStartsAt(), 'starts_at_off' => 120, 'ends_at' => $row->getEndsAt(), 'ends_at_off' => 120];
+
+		$changed = $this->bookings->change(self::DRIVER, $uuid, $long['uuid'], $updatedAt, $span + ['purpose' => 'Season']);
+		$this->assertSame('Season', $changed['purpose']);
+
+		$this->expectExceptionObject(new \InvalidArgumentException('a booking spans 90 days at most'));
+		$this->bookings->change(self::DRIVER, $uuid, $long['uuid'], $changed['updated_at'], ['ends_at' => $row->getEndsAt() - 60] + $span);
+	}
+
+	/** Someone running late keeps the start they booked: only a new start may not lie behind. */
+	public function testABookingWhoseStartWentByChangesWithoutMovingItBack(): void {
+		$uuid = $this->vehicle->getUuid();
+		$late = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->justNow(), 3));
+		$this->pushBack($late['uuid'], self::HOUR);
+		$late = $this->listed(self::DRIVER)[$late['uuid']];
+
+		$changed = $this->bookings->change(self::DRIVER, $uuid, $late['uuid'], $late['updated_at'], $this->span($late['starts_at'], 4, ['purpose' => 'Airport']));
+		$this->assertSame('Airport', $changed['purpose']);
+
+		$this->expectExceptionObject(new \InvalidArgumentException('starts_at is in the past'));
+		$this->bookings->change(self::DRIVER, $uuid, $late['uuid'], $changed['updated_at'], $this->span($late['starts_at'] - self::HOUR, 5));
 	}
 
 	#[DataProvider('badSpans')]
@@ -181,6 +241,29 @@ class BookingTest extends TestCase {
 		$this->assertSame([$soon['uuid'], $later['uuid']], array_column($this->bookings->list(self::OWNER, $uuid, []), 'uuid'));
 		$this->assertSame([$later['uuid']], array_column($this->bookings->list(self::OWNER, $uuid, ['from' => $this->tomorrow + self::HOUR]), 'uuid'));
 		$this->assertSame([$soon['uuid']], array_column($this->bookings->list(self::OWNER, $uuid, ['to' => $this->tomorrow + self::HOUR]), 'uuid'));
+	}
+
+	/**
+	 * A car still out and a return still waiting for its trip are listed whatever the window: the
+	 * one has to come back, the other to be logged. A return with its trip is history.
+	 */
+	public function testACarOutLongPastItsEndStaysListedAndComesBack(): void {
+		$uuid = $this->vehicle->getUuid();
+		$logged = $this->returned(self::OWNER);
+		$this->trips->record(self::OWNER, $uuid, $logged['trip_draft'] + ['category' => 'private', 'booking_uuid' => $logged['uuid']]);
+		$this->pushBack($logged['uuid'], 10 * 86400);
+		$untripped = $this->returned(self::OWNER);
+		$this->pushBack($untripped['uuid'], 9 * 86400);
+		$out = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->justNow(), 3));
+		$this->bookings->checkOut(self::DRIVER, $uuid, $out['uuid'], ['odo' => 52140, 'at_off' => 120]);
+		$this->pushBack($out['uuid'], 8 * 86400);
+
+		$this->assertSame([$untripped['uuid'], $out['uuid']], array_column($this->bookings->list(self::OWNER, $uuid, []), 'uuid'));
+		$this->assertSame([$untripped['uuid'], $out['uuid']], array_column($this->bookings->list(self::OWNER, $uuid, ['from' => $this->tomorrow, 'to' => $this->tomorrow + self::HOUR]), 'uuid'));
+		$this->assertSame(['check_in', 'attach'], $this->listed(self::DRIVER)[$out['uuid']]['may']);
+		$in = $this->bookings->checkIn(self::DRIVER, $uuid, $out['uuid'], ['odo' => 52300, 'at_off' => 120]);
+		$this->assertSame(Booking::RETURNED, $in['state']);
+		$this->assertSame(['late'], $in['flags']);
 	}
 
 	/** A change may overlap the booking's own old span, never another's. */
@@ -288,7 +371,7 @@ class BookingTest extends TestCase {
 	/** Taking the car: the moment is the server's, the offset the client's. */
 	public function testTheBookerChecksOutWithTheCounterTheLevelAndANote(): void {
 		$uuid = $this->vehicle->getUuid();
-		$booking = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->thisHour(), 3));
+		$booking = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->justNow(), 3));
 		$before = time();
 
 		$out = $this->bookings->checkOut(self::DRIVER, $uuid, $booking['uuid'], ['odo' => 52000, 'level' => 80, 'notes' => 'Scratch on the left door', 'at_off' => 60]);
@@ -308,8 +391,8 @@ class BookingTest extends TestCase {
 	/** Early is allowed; while the car is still with somebody else it is not - "still with Erin". */
 	public function testNobodyChecksOutWhileTheCarIsOutWithSomebodyElse(): void {
 		$uuid = $this->vehicle->getUuid();
-		$drivers = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->thisHour(), 3));
-		$owners = $this->bookings->book(self::OWNER, $uuid, $this->span($this->thisHour() + 3 * self::HOUR, 2));
+		$drivers = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->justNow(), 3));
+		$owners = $this->bookings->book(self::OWNER, $uuid, $this->span($this->justNow() + 3 * self::HOUR, 2));
 		$this->bookings->checkOut(self::DRIVER, $uuid, $drivers['uuid'], self::HANDOVER);
 
 		try {
@@ -325,7 +408,7 @@ class BookingTest extends TestCase {
 	/** Giving it back answers what the entry sheet needs to log the trip, and logs none itself. */
 	public function testCheckingInAnswersTheTripToLog(): void {
 		$uuid = $this->vehicle->getUuid();
-		$booking = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->thisHour(), 3, ['purpose' => 'Customer visit']));
+		$booking = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->justNow(), 3, ['purpose' => 'Customer visit']));
 		$out = $this->bookings->checkOut(self::DRIVER, $uuid, $booking['uuid'], ['odo' => 52000, 'level' => 80, 'at_off' => 120]);
 
 		$in = $this->bookings->checkIn(self::DRIVER, $uuid, $booking['uuid'], ['odo' => 52140, 'level' => 45, 'notes' => 'Washed', 'at_off' => 60]);
@@ -359,7 +442,9 @@ class BookingTest extends TestCase {
 			'no counter' => [['at_off' => 120], 'odo is required'],
 			'no offset' => [['odo' => 52000], 'at_off is required'],
 			'a negative counter' => [['odo' => -1, 'at_off' => 120], 'odo is a whole number'],
-			'a level over 100' => [['odo' => 52000, 'level' => 101, 'at_off' => 120], 'level is a percentage'],
+			'a level over 100' => [['odo' => 52000, 'level' => 101, 'at_off' => 120], 'level is 100 at most'],
+			'a counter over a billion' => [['odo' => 1_000_000_001, 'at_off' => 120], 'odo is 1000000000 at most'],
+			'a note over 10 000 characters' => [['odo' => 52000, 'at_off' => 120, 'notes' => str_repeat('x', 10_001)], 'notes is longer than 10000 characters'],
 		];
 	}
 
@@ -368,7 +453,7 @@ class BookingTest extends TestCase {
 	 */
 	#[DataProvider('badHandovers')]
 	public function testAHandoverStatesTheCounterAndALevelThatIsAPercentage(array $fields, string $message): void {
-		$booking = $this->bookings->book(self::DRIVER, $this->vehicle->getUuid(), $this->span($this->thisHour(), 3));
+		$booking = $this->bookings->book(self::DRIVER, $this->vehicle->getUuid(), $this->span($this->justNow(), 3));
 
 		$this->expectException(\InvalidArgumentException::class);
 		$this->expectExceptionMessage($message);
@@ -378,7 +463,7 @@ class BookingTest extends TestCase {
 	/** Past its end a booking is not taken any more; the screen stops offering it as well. */
 	public function testABookingThatIsOverIsNotCheckedOut(): void {
 		$uuid = $this->vehicle->getUuid();
-		$booking = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->thisHour(), 3));
+		$booking = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->justNow(), 3));
 		$this->endBefore($booking['uuid'], time() - 60);
 
 		$this->assertNotContains('check_out', $this->listed(self::DRIVER)[$booking['uuid']]['may']);
@@ -391,23 +476,45 @@ class BookingTest extends TestCase {
 	public function testACounterThatRunsBackwardsIsFlaggedNotRefused(): void {
 		$uuid = $this->vehicle->getUuid();
 		$odometer = \OCP\Server::get(OdometerService::class);
-		$odometer->record(self::OWNER, $uuid, ['read_at' => $this->thisHour() - 2 * self::HOUR, 'read_at_off' => 120, 'value' => 52000]);
-		$below = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->thisHour(), 3));
+		$odometer->record(self::OWNER, $uuid, ['read_at' => $this->justNow() - 2 * self::HOUR, 'read_at_off' => 120, 'value' => 52000]);
+		$below = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->justNow(), 3));
 		$this->assertSame(['odo_below'], $this->bookings->checkOut(self::DRIVER, $uuid, $below['uuid'], ['odo' => 51900, 'at_off' => 120])['flags']);
 		$this->assertSame(['odo_below'], $this->listed(self::OWNER)[$below['uuid']]['flags']);
 		$this->bookings->checkIn(self::DRIVER, $uuid, $below['uuid'], ['odo' => 52100, 'at_off' => 120]);
 
-		$backwards = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->thisHour() + 3 * self::HOUR, 1));
+		$backwards = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->justNow() + 3 * self::HOUR, 1));
 		$this->bookings->checkOut(self::DRIVER, $uuid, $backwards['uuid'], ['odo' => 52100, 'at_off' => 120]);
 		$odometer->record(self::OWNER, $uuid, ['read_at' => time() + 60, 'read_at_off' => 120, 'value' => 52500]);
 		$this->assertSame([], $this->listed(self::OWNER)[$backwards['uuid']]['flags']);
 		$this->assertSame(['odo_below'], $this->bookings->checkIn(self::DRIVER, $uuid, $backwards['uuid'], ['odo' => 52050, 'at_off' => 120])['flags']);
 	}
 
+	/** The counter it came back at counts too, before anyone logs that trip: taken below it is flagged. */
+	public function testACheckOutBelowTheLastReturnIsFlagged(): void {
+		$uuid = $this->vehicle->getUuid();
+		$this->returned(self::DRIVER);
+		$below = $this->bookings->book(self::OWNER, $uuid, $this->span($this->justNow(), 3));
+
+		$this->assertSame(['odo_below'], $this->bookings->checkOut(self::OWNER, $uuid, $below['uuid'], ['odo' => 52100, 'at_off' => 120])['flags']);
+		$this->assertSame(['odo_below'], $this->bookings->checkIn(self::OWNER, $uuid, $below['uuid'], ['odo' => 52200, 'at_off' => 120])['flags']);
+		$next = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->justNow(), 3));
+		$this->assertSame([], $this->bookings->checkOut(self::DRIVER, $uuid, $next['uuid'], ['odo' => 52200, 'at_off' => 120])['flags']);
+	}
+
+	/** Once its trip is logged the trip is the record, so a slip in the check-in counter flags nobody after. */
+	public function testALoggedTripOverridesTheCounterTheCarCameBackAt(): void {
+		$uuid = $this->vehicle->getUuid();
+		$slipped = $this->returned(self::DRIVER);
+		$this->trips->record(self::DRIVER, $uuid, ['end_odo' => 52100, 'category' => 'private', 'booking_uuid' => $slipped['uuid']] + $slipped['trip_draft']);
+		$next = $this->bookings->book(self::OWNER, $uuid, $this->span($this->justNow(), 3));
+
+		$this->assertSame([], $this->bookings->checkOut(self::OWNER, $uuid, $next['uuid'], ['odo' => 52110, 'at_off' => 120])['flags']);
+	}
+
 	/** A car laid up while it is out still comes back. */
 	public function testACarLaidUpWhileOutIsStillCheckedIn(): void {
 		$uuid = $this->vehicle->getUuid();
-		$booking = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->thisHour(), 3));
+		$booking = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->justNow(), 3));
 		$this->bookings->checkOut(self::DRIVER, $uuid, $booking['uuid'], self::HANDOVER);
 		$this->vehicles->update(self::OWNER, $uuid, $this->vehicle->getUpdatedAt(), ['lifecycle' => Vehicle::LAID_UP]);
 
@@ -418,8 +525,8 @@ class BookingTest extends TestCase {
 	/** Early takes the hours before the start too, so not while another booking holds them. */
 	public function testAnEarlyCheckOutDoesNotTakeAnotherBookingsHours(): void {
 		$uuid = $this->vehicle->getUuid();
-		$erins = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->thisHour(), 2));
-		$alices = $this->bookings->book(self::OWNER, $uuid, $this->span($this->thisHour() + 2 * self::HOUR, 2));
+		$erins = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->justNow(), 2));
+		$alices = $this->bookings->book(self::OWNER, $uuid, $this->span($this->justNow() + 2 * self::HOUR, 2));
 
 		try {
 			$this->bookings->checkOut(self::OWNER, $uuid, $alices['uuid'], self::HANDOVER);
@@ -431,10 +538,60 @@ class BookingTest extends TestCase {
 		$this->assertSame(Booking::OUT, $this->bookings->checkOut(self::OWNER, $uuid, $alices['uuid'], self::HANDOVER)['state']);
 	}
 
+	/**
+	 * The flags of a page are read in one go: a list of many handovers costs what a list of two
+	 * does. Two, so one has a return before it to look up, as each of the many does.
+	 */
+	public function testTheFlagsCostTheSameQueriesForFewRowsAsForMany(): void {
+		$this->returned(self::DRIVER);
+		$this->returned(self::DRIVER);
+		$two = self::queriesOf(fn () => $this->bookings->list(self::OWNER, $this->vehicle->getUuid(), []));
+		for ($i = 0; $i < 3; $i++) {
+			$this->returned(self::DRIVER);
+		}
+
+		$five = self::queriesOf(fn () => $this->bookings->list(self::OWNER, $this->vehicle->getUuid(), []));
+
+		$this->assertSame($two, $five);
+	}
+
+	/** Taken early, the car is gone from the moment it was taken: nobody books the hours before the start. */
+	public function testNobodyBooksTheHoursAnEarlyCheckOutTook(): void {
+		$uuid = $this->vehicle->getUuid();
+		$alices = $this->bookings->book(self::OWNER, $uuid, $this->span($this->justNow() + 3 * self::HOUR, 2));
+		$this->bookings->checkOut(self::OWNER, $uuid, $alices['uuid'], self::HANDOVER);
+
+		try {
+			$this->bookings->book(self::DRIVER, $uuid, $this->span($this->justNow() + self::HOUR, 1));
+			$this->fail('a booking was taken in the hours an early check-out holds');
+		} catch (BookingConflictException $e) {
+			$this->assertSame($alices['uuid'], $e->booking['uuid']);
+			$this->assertSame(Booking::OUT, $e->booking['state']);
+		}
+		$this->assertSame(Booking::BOOKED, $this->bookings->book(self::DRIVER, $uuid, $this->span($this->justNow() + 5 * self::HOUR, 1))['state']);
+	}
+
+	/** Overdue, the car is still gone: nobody books from now until it is back, and later stays bookable. */
+	public function testAnOverdueCarRefusesABookingFromNow(): void {
+		$uuid = $this->vehicle->getUuid();
+		$erins = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->justNow(), 3));
+		$this->bookings->checkOut(self::DRIVER, $uuid, $erins['uuid'], self::HANDOVER);
+		$this->pushBack($erins['uuid'], 86400);
+
+		try {
+			$this->bookings->book(self::OWNER, $uuid, $this->span($this->justNow(), 2));
+			$this->fail('a booking was taken while the car is overdue');
+		} catch (BookingConflictException $e) {
+			$this->assertSame($erins['uuid'], $e->booking['uuid']);
+			$this->assertSame(Booking::OUT, $e->booking['state']);
+		}
+		$this->assertSame(Booking::BOOKED, $this->bookings->book(self::OWNER, $uuid, $this->span($this->tomorrow, 1))['state']);
+	}
+
 	/** Given back after its end: flagged, never refused. An `out` past its end is overdue, not late. */
 	public function testACheckInAfterTheEndIsLate(): void {
 		$uuid = $this->vehicle->getUuid();
-		$booking = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->thisHour(), 3));
+		$booking = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->justNow(), 3));
 		$this->bookings->checkOut(self::DRIVER, $uuid, $booking['uuid'], self::HANDOVER);
 		$this->endBefore($booking['uuid'], time() - 60);
 		$this->assertSame([], $this->listed(self::OWNER)[$booking['uuid']]['flags']);
@@ -522,13 +679,13 @@ class BookingTest extends TestCase {
 	public function testTheFleetListSaysWhoHasTheCar(): void {
 		$uuid = $this->vehicle->getUuid();
 		$this->assertNull($this->fleetRow(self::OWNER)['out_with']);
-		$booking = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->thisHour(), 3));
+		$booking = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->justNow(), 3));
 		$this->assertNull($this->fleetRow(self::OWNER)['out_with']);
 
 		$this->bookings->checkOut(self::DRIVER, $uuid, $booking['uuid'], self::HANDOVER);
 
 		$this->grant(self::VIEWER, 'viewer');
-		$with = ['user_id' => self::DRIVER, 'user_name' => self::DRIVER, 'ends_at' => $this->thisHour() + 3 * self::HOUR, 'ends_at_off' => 120];
+		$with = ['user_id' => self::DRIVER, 'user_name' => self::DRIVER, 'ends_at' => $this->justNow() + 3 * self::HOUR, 'ends_at_off' => 120];
 		$this->assertSame($with, $this->fleetRow(self::OWNER)['out_with']);
 		$this->assertSame($with, $this->fleetRow(self::VIEWER)['out_with']);
 		$this->bookings->checkIn(self::DRIVER, $uuid, $booking['uuid'], self::HANDOVER);
@@ -557,7 +714,7 @@ class BookingTest extends TestCase {
 		$this->assertSame($this->tomorrow, $this->fleetRow(self::OWNER)['my_next_booking']['starts_at']);
 
 		// Running now and not taken yet is still the next; taken, it is "with you" instead.
-		$now = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->thisHour(), 1));
+		$now = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->justNow(), 1));
 		$this->assertSame($now['uuid'], $this->fleetRow(self::DRIVER)['my_next_booking']['uuid']);
 		$this->bookings->checkOut(self::DRIVER, $uuid, $now['uuid'], self::HANDOVER);
 		$this->assertSame($next['uuid'], $this->fleetRow(self::DRIVER)['my_next_booking']['uuid']);
@@ -566,7 +723,7 @@ class BookingTest extends TestCase {
 	/** The single vehicle's read says the same, so the vehicle header can. */
 	public function testTheVehiclesOwnReadSaysWhoHasItToo(): void {
 		$uuid = $this->vehicle->getUuid();
-		$booking = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->thisHour(), 3));
+		$booking = $this->bookings->book(self::DRIVER, $uuid, $this->span($this->justNow(), 3));
 		$this->bookings->book(self::DRIVER, $uuid, $this->span($this->tomorrow, 1));
 		$this->bookings->checkOut(self::DRIVER, $uuid, $booking['uuid'], self::HANDOVER);
 
@@ -599,7 +756,7 @@ class BookingTest extends TestCase {
 	 */
 	private function returned(string $booker, ?string $purpose = null): array {
 		$uuid = $this->vehicle->getUuid();
-		$booking = $this->bookings->book($booker, $uuid, $this->span($this->thisHour(), 3, ['purpose' => $purpose]));
+		$booking = $this->bookings->book($booker, $uuid, $this->span($this->justNow(), 3, ['purpose' => $purpose]));
 		$this->bookings->checkOut($booker, $uuid, $booking['uuid'], self::HANDOVER);
 
 		return $this->bookings->checkIn($booker, $uuid, $booking['uuid'], ['odo' => 52140, 'at_off' => 120]);
@@ -635,9 +792,28 @@ class BookingTest extends TestCase {
 		$mapper->updateChecked($booking, $booking->getUpdatedAt());
 	}
 
-	/** The current full hour: a booking starting then is running now. */
-	private function thisHour(): int {
-		return $this->tomorrow - 86400 - self::HOUR;
+	/** Moves a booking and its handover back in time, which no route does: a booking long past. */
+	private function pushBack(string $bookingUuid, int $seconds): void {
+		$mapper = \OCP\Server::get(BookingMapper::class);
+		$booking = $mapper->findOnVehicle((int)$this->vehicle->getId(), $bookingUuid);
+		$booking->setStartsAt($booking->getStartsAt() - $seconds);
+		$booking->setEndsAt($booking->getEndsAt() - $seconds);
+		$outAt = $booking->getOutAt();
+		$inAt = $booking->getInAt();
+		if ($outAt !== null) {
+			$booking->setOutAt($outAt - $seconds);
+		}
+		if ($inAt !== null) {
+			$booking->setInAt($inAt - $seconds);
+		}
+		$mapper->updateChecked($booking, $booking->getUpdatedAt());
+	}
+
+	/** This minute: a booking starting then is running now, and lies within the start's slack. */
+	private function justNow(): int {
+		$now = time();
+
+		return $now - $now % 60;
 	}
 
 	private function grant(string $grantee, string $role): void {

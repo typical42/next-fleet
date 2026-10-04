@@ -4,18 +4,21 @@
 -->
 <script setup>
 import { mdiPaperclip } from '@mdi/js'
-import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcIconSvgWrapper from '@nextcloud/vue/components/NcIconSvgWrapper'
 import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 import BookingSheet from './BookingSheet.vue'
 import HandoverSheet from './HandoverSheet.vue'
 import { cancelBooking, ConflictError, documentUrl, listBookings, readEntry } from '../services/api.js'
+import { useVehiclesStore } from '../store/index.js'
 import { may } from '../utils/access.js'
 import { formatSpan } from '../utils/format.js'
+import { t } from '../utils/l10n.js'
+import { savePaper } from '../utils/papers.js'
+import { refusalWords } from '../utils/pool.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -72,9 +75,35 @@ const sheet = ref(null)
  * @type {import('vue').Ref<import('../services/api.js').Booking|true|null>}
  */
 const handover = ref(null)
+/**
+ * Why a booking's paper was not saved, by the booking's uuid, as TimelineRow says it on its row.
+ *
+ * @type {import('vue').Ref<Record<string, string>>}
+ */
+const unsaved = ref({})
 /** The booking whose cancel is being asked about, by uuid. */
 const asking = ref('')
 const cancelling = ref(false)
+/** @type {import('vue').Ref<HTMLElement|null>} */
+const root = ref(null)
+
+/**
+ * Opens or closes a row's cancel question, and moves focus to its first answer or back to the button
+ * that asked it, where the row still has one: the buttons are swapped out from under a keyboard or
+ * screen reader user otherwise.
+ *
+ * @param {string} uuid - the booking asked about, or empty to close the question
+ * @param {string} [back] - the booking whose Cancel button takes focus back
+ */
+async function ask(uuid, back = '') {
+	asking.value = uuid
+	await nextTick()
+	const at = uuid !== '' ? `[data-booking="${uuid}"] .bookings__question button` : `[data-booking="${back}"] .bookings__cancel`
+	// A cancelled booking keeps its row but no button, and a row the list no longer holds leaves the
+	// heading: focus stays near rather than falling to the page.
+	const target = root.value?.querySelector(at) ?? root.value?.querySelector(`[data-booking="${back}"]`) ?? root.value?.querySelector('h3')
+	target?.focus()
+}
 
 /**
  * Whether a booking is behind the reader: over, and not a car still out past its end, which has not
@@ -87,11 +116,23 @@ function past(booking) {
 	return booking.state !== 'out' && booking.ends_at * 1000 <= Date.now()
 }
 
-/** The coming ones first, which are what a driver plans around; groups without any left out. */
+/**
+ * The coming ones first, which are what a driver plans around; groups without any left out. The past
+ * ones are the last week's and any return still waiting for its trip, however old.
+ */
 const groups = computed(() => [
 	{ key: 'coming', title: t('nextfleet', 'Coming'), list: (bookings.value ?? []).filter((one) => !past(one)) },
-	{ key: 'past', title: t('nextfleet', 'Last 7 days'), list: (bookings.value ?? []).filter(past) },
+	{ key: 'past', title: t('nextfleet', 'Earlier'), list: (bookings.value ?? []).filter(past) },
 ].filter((group) => group.list.length > 0))
+
+/**
+ * The counter the car last came back at, for the handover sheet to prefill: the newest return's whose
+ * trip is not logged yet, as BookingMapper::findCountersAtOut() reads it - a logged trip is the record.
+ */
+const lastIn = computed(() => (bookings.value ?? [])
+	.filter((one) => one.state === 'returned' && one.trip_uuid === null && one.in_odo !== null && one.in_at !== null)
+	.reduce((newest, one) => (newest === null || one.in_at > newest.in_at ? one : newest), null)
+	?.in_odo ?? null)
 
 /**
  * Whether *Take it now* is offered: nobody holds the car this minute, none out, none booked across
@@ -128,6 +169,10 @@ async function load() {
 // The screen reads the list again once the trip of a booking is saved, so the row links it.
 defineExpose({ reload: load })
 
+// The undo toast has no vehicle screen to tell; a trip it brings back is linked on its row again.
+const store = useVehiclesStore()
+watch(() => store.restored, load)
+
 // The shell keeps one vehicle screen and swaps the vehicle under it (src/App.vue).
 watch(() => props.vehicle.uuid, () => {
 	bookings.value = null
@@ -157,16 +202,34 @@ function saved(booking) {
 }
 
 /**
+ * Dropped once the screen moved to another vehicle, or the sheet would open this trip over that one.
+ *
  * @param {string} tripUuid - the trip a booking became
  * @return {Promise<void>} when it is handed over, or the refusal is on screen
  */
 async function showTrip(tripUuid) {
+	const uuid = props.vehicle.uuid
 	refusal.value = ''
 	try {
-		emit('open', await readEntry(props.vehicle.uuid, 'trip', tripUuid))
+		const trip = await readEntry(uuid, 'trip', tripUuid)
+		if (uuid === props.vehicle.uuid) {
+			emit('open', trip)
+		}
 	} catch (error) {
-		refusal.value = error.message
+		if (uuid === props.vehicle.uuid) {
+			refusal.value = error.message
+		}
 	}
+}
+
+/**
+ * @param {import('../services/api.js').Booking} booking - the row the paper hangs on
+ * @param {import('../services/api.js').Document} paper - one whose file is listed
+ * @return {Promise<void>} when it is saved, or the reason is on the row
+ */
+async function save(booking, paper) {
+	unsaved.value = { ...unsaved.value, [booking.uuid]: '' }
+	unsaved.value = { ...unsaved.value, [booking.uuid]: await savePaper(props.vehicle.uuid, paper) }
 }
 
 /**
@@ -181,13 +244,23 @@ async function cancel(booking) {
 	} catch (error) {
 		refusal.value = error instanceof ConflictError
 			? t('nextfleet', 'This booking was changed somewhere else. It is shown as it now stands.')
-			: t('nextfleet', 'The booking was not cancelled: {reason}', { reason: { value: error.message, escape: false } })
+			: refusalWords(error.message) ?? t('nextfleet', 'The booking was not cancelled: {reason}', { reason: error.message })
 	} finally {
 		cancelling.value = false
 		asking.value = ''
 	}
 	emit('changed')
 	await load()
+	// A refused cancel leaves the row and its button; a done one leaves neither.
+	await ask('', booking.uuid)
+}
+
+/**
+ * @param {import('../services/api.js').Booking} booking - as listed
+ * @return {string} when it is, as its row says it
+ */
+function spanOf(booking) {
+	return formatSpan(booking.starts_at, booking.starts_at_off, booking.ends_at, booking.ends_at_off)
 }
 
 /**
@@ -208,9 +281,11 @@ function stateWord(booking) {
 </script>
 
 <template>
-	<section class="bookings">
+	<section ref="root" class="bookings">
 		<div class="bookings__head">
-			<h3>{{ t('nextfleet', 'Bookings') }}</h3>
+			<h3 tabindex="-1">
+				{{ t('nextfleet', 'Bookings') }}
+			</h3>
 			<NcButton v-if="books" @click="sheet = true">
 				{{ t('nextfleet', 'Book') }}
 			</NcButton>
@@ -236,10 +311,11 @@ function stateWord(booking) {
 				<li v-for="booking in group.list"
 					:key="booking.uuid"
 					class="bookings__booking"
-					:data-booking="booking.uuid">
+					:data-booking="booking.uuid"
+					tabindex="-1">
 					<div class="bookings__row">
 						<span class="bookings__what">
-							<span class="bookings__span">{{ formatSpan(booking.starts_at, booking.starts_at_off, booking.ends_at, booking.ends_at_off) }}</span>
+							<span class="bookings__span">{{ spanOf(booking) }}</span>
 							<span>{{ booking.user_name }}</span>
 							<span v-if="booking.purpose" class="bookings__purpose">{{ booking.purpose }}</span>
 							<span class="bookings__state">{{ stateWord(booking) }}</span>
@@ -247,23 +323,41 @@ function stateWord(booking) {
 							<span v-if="booking.trip_voided" class="bookings__state">{{ t('nextfleet', 'Trip voided') }}</span>
 							<span v-else-if="booking.trip_uuid && !may(booking, 'open_trip')" class="bookings__state">{{ t('nextfleet', 'Trip logged') }}</span>
 						</span>
+						<!-- Each label names the booking, after the words the button shows: read out of its row,
+						     "Change" says not which. -->
 						<span v-if="asking !== booking.uuid" class="bookings__actions">
-							<NcButton v-if="may(booking, 'check_out')" @click="handover = booking">
+							<NcButton v-if="may(booking, 'check_out')"
+								:aria-label="t('nextfleet', 'Take the car, booked {span}', { span: spanOf(booking) })"
+								@click="handover = booking">
 								{{ t('nextfleet', 'Take the car') }}
 							</NcButton>
-							<NcButton v-if="may(booking, 'check_in')" @click="handover = booking">
+							<NcButton v-if="may(booking, 'check_in')"
+								:aria-label="t('nextfleet', 'Return the car, booked {span}', { span: spanOf(booking) })"
+								@click="handover = booking">
 								{{ t('nextfleet', 'Return the car') }}
 							</NcButton>
-							<NcButton v-if="may(booking, 'log_trip')" @click="emit('log', booking)">
+							<NcButton v-if="may(booking, 'log_trip')"
+								:aria-label="t('nextfleet', 'Log the trip, booked {span}', { span: spanOf(booking) })"
+								@click="emit('log', booking)">
 								{{ t('nextfleet', 'Log the trip') }}
 							</NcButton>
-							<NcButton v-if="may(booking, 'open_trip')" variant="tertiary" @click="showTrip(booking.trip_uuid)">
+							<NcButton v-if="may(booking, 'open_trip')"
+								variant="tertiary"
+								:aria-label="t('nextfleet', 'Show the trip, booked {span}', { span: spanOf(booking) })"
+								@click="showTrip(booking.trip_uuid)">
 								{{ t('nextfleet', 'Show the trip') }}
 							</NcButton>
-							<NcButton v-if="may(booking, 'edit')" variant="tertiary" @click="sheet = booking">
+							<NcButton v-if="may(booking, 'edit')"
+								variant="tertiary"
+								:aria-label="t('nextfleet', 'Change the booking {span}', { span: spanOf(booking) })"
+								@click="sheet = booking">
 								{{ t('nextfleet', 'Change') }}
 							</NcButton>
-							<NcButton v-if="may(booking, 'cancel')" variant="tertiary" @click="asking = booking.uuid">
+							<NcButton v-if="may(booking, 'cancel')"
+								class="bookings__cancel"
+								variant="tertiary"
+								:aria-label="t('nextfleet', 'Cancel booking {span}', { span: spanOf(booking) })"
+								@click="ask(booking.uuid)">
 								{{ t('nextfleet', 'Cancel booking') }}
 							</NcButton>
 						</span>
@@ -272,17 +366,19 @@ function stateWord(booking) {
 						<template v-for="paper in papersOf.get(booking.uuid)" :key="paper.uuid">
 							<a v-if="paper.name !== null"
 								:href="documentUrl(vehicle.uuid, paper.uuid)"
-								:aria-label="t('nextfleet', 'Open {name}', { name: { value: paper.name, escape: false } })"
-								:title="paper.name">
+								:aria-label="t('nextfleet', 'Open {name}', { name: paper.name })"
+								:title="paper.name"
+								@click.prevent="save(booking, paper)">
 								<NcIconSvgWrapper :path="mdiPaperclip" :size="20" />
 							</a>
-							<span v-else class="bookings__flag">{{ t('nextfleet', 'The file is gone from Files') }}</span>
+							<span v-else class="bookings__flag">{{ t('nextfleet', 'The file is no longer in the Files of whoever attached it') }}</span>
 						</template>
+						<span v-if="unsaved[booking.uuid]" class="bookings__flag">{{ unsaved[booking.uuid] }}</span>
 					</span>
 					<!-- Asks once: a cancel has no undo, and someone else's booking may be all they planned on. -->
 					<div v-if="asking === booking.uuid" class="bookings__question">
 						<span>{{ t('nextfleet', 'Cancel this booking?') }}</span>
-						<NcButton :disabled="cancelling" @click="asking = ''">
+						<NcButton :disabled="cancelling" @click="ask('', booking.uuid)">
 							{{ t('nextfleet', 'Keep it') }}
 						</NcButton>
 						<NcButton variant="warning" :disabled="cancelling" @click="cancel(booking)">
@@ -301,6 +397,7 @@ function stateWord(booking) {
 		<HandoverSheet v-if="handover !== null"
 			:vehicle="vehicle"
 			:booking="handover === true ? null : handover"
+			:last-in="lastIn"
 			@close="saved"
 			@saved="saved" />
 	</section>

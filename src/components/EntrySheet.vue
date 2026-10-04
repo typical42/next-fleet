@@ -3,7 +3,6 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
-import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcDateTimePickerNative from '@nextcloud/vue/components/NcDateTimePickerNative'
 import NcDialog from '@nextcloud/vue/components/NcDialog'
@@ -16,11 +15,13 @@ import NcTextArea from '@nextcloud/vue/components/NcTextArea'
 import NcTextField from '@nextcloud/vue/components/NcTextField'
 import { computed, ref, useId, watch } from 'vue'
 
-import { BookingConflictError, ConflictError, energyPrefill, expensePrefill, listReminders, maintenancePrefill, readEntry, tripPrefill } from '../services/api.js'
+import { BookingConflictError, ConflictError, RefusedError, energyPrefill, expensePrefill, listReminders, maintenancePrefill, readEntry, tripPrefill } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
 import { may } from '../utils/access.js'
-import { CATEGORIES, EXPENSE_CATEGORIES, MAINTENANCE_TYPES, categoryWord, energyWord, expenseWord, formatDecimal, maintenanceWord, parseDecimal, parseWhole } from '../utils/format.js'
-import { closedByDefault, openByUrgency, reminderTitle } from '../utils/reminders.js'
+import { CATEGORIES, EXPENSE_CATEGORIES, MAINTENANCE_TYPES, categoryWord, decimalComplaint, energyWord, expenseWord, formatCount, formatDecimal, maintenanceWord, parseDecimal, parseWhole, tripCounterWords } from '../utils/format.js'
+import { closedByDefault, openByUrgency, reminderTitle, workOf } from '../utils/reminders.js'
+import { t } from '../utils/l10n.js'
+import { newUuid } from '../utils/uuid.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -74,7 +75,7 @@ const editing = props.entry !== null
 const refused = ref(/** @type {'save'|'delete'|null} */ (null))
 
 // `energy_types` decides which energies a fill-up may be of (docs/architecture.md#data-model), so a
-// vehicle that names none is offered no fill-up and a diesel is never asked about electricity.
+// vehicle that names none can log no fill-up and a diesel is never asked about electricity.
 const energies = computed(() => (props.vehicle.energy_types ?? [])
 	.map((/** @type {string} */ id) => ({ id, label: energyWord(id) })))
 
@@ -82,6 +83,11 @@ const energies = computed(() => (props.vehicle.energy_types ?? [])
 // (docs/architecture.md#odometer-rules): the counter the journey ended on, or the kilometres it
 // covered. Never both - either would state the end of the journey twice.
 const knows = ref('counter')
+const tripCounters = computed(() => tripCounterWords(props.vehicle.odo_unit))
+// The same rule as the trip's labels: hours are read off a counter, kilometres off the odometer.
+const consumptionNeeds = computed(() => (props.vehicle.odo_unit === 'h'
+	? t('nextfleet', 'Consumption needs the counter reading.')
+	: t('nextfleet', 'Consumption needs the odometer reading.')))
 
 // Which chain an Odometer Entry reads, asked only of a vehicle that keeps two
 // (docs/architecture.md#odometer-rules, rule 4). Kilometres unless the person says otherwise.
@@ -205,6 +211,17 @@ watch(kind, async (now) => {
 	}
 }, { immediate: true })
 
+/**
+ * How the vehicle's last trip ended, offered on a new trip that is the driver's own to state - not
+ * on an edit, and not on a booking's, whose handover states it.
+ *
+ * @type {import('vue').Ref<import('../services/api.js').TripPrefill['last']>}
+ */
+const last = ref(null)
+const ownNewTrip = !editing && props.booking === null
+// What the departure opened on, so the prefill moves it only while nobody has.
+const openedDeparture = departure.value
+
 let worded = false
 // Read once the sheet is on a trip, as the reminders are on a record: without them the fields are
 // plain text fields, so a failure is not the sheet's to report either.
@@ -217,12 +234,56 @@ watch(kind, async (now) => {
 		tripWords.value = await tripPrefill(props.vehicle.uuid)
 	} catch {
 		worded = false
+		return
+	}
+	if (ownNewTrip) {
+		follow(tripWords.value)
 	}
 }, { immediate: true })
+
+/**
+ * A new trip picks up where this person and this vehicle left off: the category they last chose
+ * here, else none, since the claim is theirs to make (docs/features.md#logbook-mode); and the
+ * departure at the last arrival when that was today, the driver's next leg. A value somebody
+ * already set stays.
+ *
+ * @param {import('../services/api.js').TripPrefill} answer - the prefill
+ */
+function follow(answer) {
+	last.value = answer.last ?? null
+	if (category.value === null) {
+		category.value = categories.value.find((one) => one.id === answer.category) ?? null
+	}
+
+	const arrived = last.value === null ? null : new Date(last.value.ended_at * 1000)
+	if (arrived !== null && departure.value === openedDeparture && arrived <= new Date() && arrived.toDateString() === new Date().toDateString()) {
+		departure.value = arrived
+	}
+}
+
+/** Takes the counter the last trip ended at as this one's start: the hint's *Use it*. */
+function startWhereLastEnded() {
+	startOdo.value = String(last.value?.end_odo)
+}
 
 watch([reminders, workType], ([listed, type]) => {
 	if (!picked.value) {
 		closing.value = closedByDefault(listed, type?.id ?? null)
+	}
+})
+
+// *Done* in the due banner names the work, so the record opens saying what it is, once the list
+// has the reminder. A word the driver typed meanwhile stays.
+watch(reminders, (listed) => {
+	const done = listed.find((one) => one.uuid === props.closes)
+	if (editing || done === undefined) {
+		return
+	}
+	if (title.value === '') {
+		title.value = reminderTitle(done)
+	}
+	if (workType.value === null) {
+		workType.value = workTypes.value.find((one) => one.id === workOf(done)) ?? null
 	}
 })
 
@@ -242,11 +303,11 @@ const failure = ref('')
 // well, so they are read from the one place that has them (src/utils/format.js).
 const categories = computed(() => CATEGORIES.map((id) => ({ id, label: categoryWord(id) })))
 
-// The category the logbook exists for: a business trip is the one Germany asks the questions about
-// (docs/features.md#logbook-mode), so it is the one the sheet offers to answer them for. Not on a
-// booking's trip: the handover is evidence of the drive, and calling it business would be the app
-// inventing the claim the logbook is there to record.
-const category = ref(props.booking === null ? categories.value[0] : null)
+// None until the prefill names this person's last one (follow()) or the driver picks: calling a
+// trip business is the claim the logbook is there to record, and the app does not make it for them.
+// A booking's trip stays empty for the same reason.
+/** @type {import('vue').Ref<{id: string, label: string}|null>} */
+const category = ref(null)
 
 // Under Logbook Mode a trip is voided rather than deleted (docs/features.md#logbook-mode), and the
 // button says what the click does.
@@ -283,19 +344,35 @@ const note = computed(() => {
 /** What each kind's create is in the store; an edit is one write for every kind. */
 const CREATES = { trip: store.log, energy: store.fill, maintenance: store.maintain, odometer: store.record, expense: store.spend }
 
+// The Entry this sheet creates, named before it is sent: a retry after a lost answer is then that
+// Entry again, not a second one (docs/api.md#retried-creates). Each kind is its own table, so a
+// switch of kind keeps it.
+const clientUuid = newUuid()
+
 /**
  * Records what the sheet is on, or rewrites the Entry it was opened on.
  */
 function save() {
 	return attempt(async () => {
-		const fields = ({ trip, energy: fillUp, maintenance: work, odometer: reading, expense: spending })[kind.value]()
+		const fields = fieldsOfKind()
 		if (editing) {
-			await store.revise(props.vehicle.uuid, kind.value, await current(), fields)
+			const written = await store.revise(props.vehicle.uuid, kind.value, await current(), fields)
+			store.wrote(props.vehicle.uuid, kind.value, written, before)
 			return undefined
 		}
 
-		return CREATES[kind.value](props.vehicle.uuid, fields)
+		const created = await CREATES[kind.value](props.vehicle.uuid, { ...fields, client_uuid: clientUuid })
+		store.wrote(props.vehicle.uuid, kind.value)
+		return created
 	}, 'save')
+}
+
+/**
+ * @return {Record<string, unknown>} what the sheet holds, as the write of its kind takes it
+ * @throws {Error} when a field cannot be read
+ */
+function fieldsOfKind() {
+	return ({ trip, energy: fillUp, maintenance: work, odometer: reading, expense: spending })[kind.value]()
 }
 
 /** Nothing asks "are you sure?": the way back is the undo toast (docs/ui.md). */
@@ -303,6 +380,12 @@ function remove() {
 	return attempt(async () => {
 		await store.strike(props.vehicle.uuid, kind.value, await current())
 	}, 'delete')
+}
+
+/** What each reason a write is refused for (TripService) reads as. */
+const REFUSALS = {
+	end_below_start: t('nextfleet', 'The counter at the end is below the start.'),
+	ends_in_future: t('nextfleet', 'The arrival is more than a day in the future.'),
 }
 
 /**
@@ -316,8 +399,9 @@ async function attempt(work, which) {
 	saving.value = true
 	failure.value = ''
 	try {
-		// A new Entry goes with `saved`: the Inbox screen files the receipt on it.
-		emit('saved', await work())
+		// A new Entry goes with `saved`: the Inbox screen files the receipt on it. The kind tells the
+		// vehicle screen what the write can have changed.
+		emit('saved', await work(), kind.value)
 		emit('close')
 	} catch (error) {
 		if (error instanceof ConflictError) {
@@ -325,6 +409,8 @@ async function attempt(work, which) {
 		} else if (error instanceof BookingConflictError && error.booking.state === 'returned') {
 			// The row offered the trip, so it was logged meanwhile, in another tab or by a manager.
 			failure.value = t('nextfleet', 'This booking was logged as a trip already.')
+		} else if (error instanceof RefusedError && REFUSALS[error.reason]) {
+			failure.value = REFUSALS[error.reason]
 		} else {
 			failure.value = error.message
 		}
@@ -385,7 +471,7 @@ function fillUp() {
 	if (litres === null) {
 		throw new Error(complaint)
 	}
-	const moment = stated(costAt.value, t('nextfleet', 'A fill-up carries the moment it happened.'))
+	const moment = stated(costAt.value, t('nextfleet', 'A fill-up needs a date.'))
 	const price = t('nextfleet', 'That is not a price.')
 	const paid = decimal(total, 2, price)
 
@@ -422,7 +508,7 @@ function work() {
 	if (title.value.trim() === '') {
 		throw new Error(complaint)
 	}
-	const moment = stated(costAt.value, t('nextfleet', 'A maintenance record carries the moment the work was done.'))
+	const moment = stated(costAt.value, t('nextfleet', 'A maintenance record needs a date.'))
 
 	return {
 		done_at: seconds(moment),
@@ -453,7 +539,7 @@ function spending() {
 	if (cents === null) {
 		throw new Error(complaint)
 	}
-	const moment = stated(costAt.value, t('nextfleet', 'An expense carries the moment it was spent.'))
+	const moment = stated(costAt.value, t('nextfleet', 'An expense needs a date.'))
 
 	return {
 		spent_at: seconds(moment),
@@ -567,7 +653,7 @@ function decimal(input, places, complaint) {
 
 	const number = parseDecimal(input.value, places)
 	if (number === null) {
-		throw new Error(complaint)
+		throw new Error(decimalComplaint(input.value, complaint))
 	}
 
 	return number
@@ -581,9 +667,12 @@ function decimal(input, places, complaint) {
  * @return {Record<string, unknown>} the fields
  */
 function trip() {
-	const lost = t('nextfleet', 'A trip carries the moment it set off and the moment it arrived.')
+	const lost = t('nextfleet', 'A trip needs a departure and an arrival.')
 	const setOff = stated(departure.value, lost)
 	const arrived = stated(arrival.value, lost)
+	if (arrived < setOff) {
+		throw new Error(t('nextfleet', 'The arrival comes after the departure.'))
+	}
 	if (category.value === null) {
 		throw new Error(t('nextfleet', 'Choose a category for the trip.'))
 	}
@@ -606,19 +695,31 @@ function trip() {
 /**
  * The kilometres, as the toggle asks for them. A distance leaves the counter it set off on unsaid
  * (docs/architecture.md#odometer-rules): the claim and the distance are two different facts, and
- * the driver who knows neither is only asked for one.
+ * the driver who knows neither is only asked for one. One of the two it must have: a trip that
+ * covered no stated distance is one no sum can use, and the server would refuse a backwards pair.
  *
  * @return {Record<string, number>} the fields that state what the journey covered
  */
 function counted() {
+	const unsaid = t('nextfleet', 'Enter the counter at the end, or the distance.')
 	if (knows.value === 'distance') {
-		return omitted({ distance: whole(distance, t('nextfleet', 'That is not a distance.')) })
+		const covered = whole(distance, t('nextfleet', 'That is not a distance.'))
+		if (covered === null) {
+			throw new Error(unsaid)
+		}
+		return { distance: covered }
 	}
 
-	return omitted({
-		start_odo: whole(startOdo, t('nextfleet', 'That is not a counter reading.')),
-		end_odo: whole(endOdo, t('nextfleet', 'That is not a counter reading.')),
-	})
+	const start = whole(startOdo, t('nextfleet', 'That is not a counter reading.'))
+	const end = whole(endOdo, t('nextfleet', 'That is not a counter reading.'))
+	if (end === null) {
+		throw new Error(unsaid)
+	}
+	if (start !== null && end < start) {
+		throw new Error(t('nextfleet', 'The counter at the end is below the start.'))
+	}
+
+	return omitted({ start_odo: start, end_odo: end })
 }
 
 /**
@@ -779,6 +880,24 @@ if (props.entry !== null) {
 	seed(props.entry)
 }
 
+/**
+ * The Entry as the sheet opened on it, as its update takes it: what the toast's undo writes back
+ * (store.wrote()). A fill-up's price goes too, which an edit leaves the server to derive. None for
+ * an Entry stored in a shape the sheet would refuse to send - a trip with neither counter nor
+ * distance - so its save offers no way back rather than one that fails.
+ *
+ * @return {Record<string, unknown>|null} the fields, or none
+ */
+function asOpened() {
+	try {
+		const fields = fieldsOfKind()
+		return kind.value === 'energy' && held.value.unit_price !== null ? { ...fields, unit_price: held.value.unit_price } : fields
+	} catch {
+		return null
+	}
+}
+const before = editing ? asOpened() : null
+
 // The handover's counters are the claim gap detection measures, made by the driver at the car, so
 // a booking's trip is the one new trip that opens with them filled in.
 const draft = props.booking?.trip_draft
@@ -846,14 +965,15 @@ function requestClose() {
 			<NcRadioGroup v-if="entry === null && booking === null && receipt === null"
 				v-model="kind"
 				class="sheet__wide"
-				:label="t('nextfleet', 'Entry type')">
+				:label="t('nextfleet', 'Entry type')"
+				:description="energies.length > 0 ? undefined : t('nextfleet', 'Choose the energy this vehicle takes under Edit vehicle first.')">
 				<NcRadioGroupButton value="trip"
 					:label="t('nextfleet', 'Trip')"
 					:disabled="saving" />
-				<NcRadioGroupButton v-if="energies.length > 0"
-					value="energy"
+				<!-- Shown though it cannot be taken, so the way to a first fill-up is on screen. -->
+				<NcRadioGroupButton value="energy"
 					:label="t('nextfleet', 'Energy')"
-					:disabled="saving" />
+					:disabled="saving || energies.length === 0" />
 				<NcRadioGroupButton value="maintenance"
 					:label="t('nextfleet', 'Maintenance')"
 					:disabled="saving" />
@@ -890,23 +1010,35 @@ function requestClose() {
 
 				<!-- Both fields read in whole kilometres or whole hours, and a comma or a point in
 				     one of them groups thousands - which is what the app wrote out a moment
-				     earlier (docs/ui.md#languages). -->
+				     earlier (docs/ui.md#languages). The number pad, because they are whole. -->
 				<template v-if="knows === 'counter'">
-					<NcTextField v-model="startOdo"
-						:label="t('nextfleet', 'Start counter')"
-						:disabled="saving"
-						inputmode="decimal" />
+					<!-- The hint sits with the field it fills, so a phone's single column keeps
+					     the two together. -->
+					<div class="sheet__field">
+						<NcTextField v-model="startOdo"
+							:label="tripCounters.start_odo"
+							:disabled="saving"
+							inputmode="numeric" />
+						<p v-if="ownNewTrip && typeof last?.end_odo === 'number'" class="sheet__last">
+							{{ t('nextfleet', 'Last trip ended at {counter}', { counter: formatCount(last.end_odo) }) }}
+							<NcButton variant="tertiary"
+								:disabled="saving"
+								@click="startWhereLastEnded">
+								{{ t('nextfleet', 'Use it') }}
+							</NcButton>
+						</p>
+					</div>
 					<NcTextField v-model="endOdo"
-						:label="t('nextfleet', 'End counter')"
+						:label="tripCounters.end_odo"
 						:disabled="saving"
-						inputmode="decimal"
+						inputmode="numeric"
 						autofocus />
 				</template>
 				<NcTextField v-else
 					v-model="distance"
 					:label="t('nextfleet', 'Distance')"
 					:disabled="saving"
-					inputmode="decimal"
+					inputmode="numeric"
 					autofocus />
 
 				<NcSelect v-model="category"
@@ -968,6 +1100,18 @@ function requestClose() {
 					:label="t('nextfleet', 'Total price')"
 					:disabled="saving"
 					inputmode="decimal" />
+				<!-- Right after the money: the pump's display and the receipt are read first, the
+				     dashboard on the walk back. -->
+				<NcTextField v-model="entryOdo"
+					:label="t('nextfleet', 'Counter reading')"
+					:helper-text="entryOdo.trim() === '' ? consumptionNeeds : ''"
+					:disabled="saving"
+					inputmode="numeric" />
+				<NcTextField v-if="twoCounters"
+					v-model="entrySecond"
+					:label="t('nextfleet', 'Engine hours')"
+					:disabled="saving"
+					inputmode="numeric" />
 				<NcTextField v-model="station"
 					:label="t('nextfleet', 'Station')"
 					:disabled="saving"
@@ -982,17 +1126,6 @@ function requestClose() {
 				<!-- Clearable to "not stated", which is not zero (docs/architecture.md#data-model). -->
 				<NcTextField v-model="vatRate"
 					:label="t('nextfleet', 'VAT rate (%)')"
-					:disabled="saving"
-					inputmode="decimal" />
-
-				<NcTextField v-model="entryOdo"
-					:label="t('nextfleet', 'Counter reading')"
-					:helper-text="entryOdo.trim() === '' ? t('nextfleet', 'Consumption needs the counter reading.') : ''"
-					:disabled="saving"
-					inputmode="decimal" />
-				<NcTextField v-if="twoCounters"
-					v-model="entrySecond"
-					:label="t('nextfleet', 'Engine hours')"
 					:disabled="saving"
 					inputmode="decimal" />
 
@@ -1060,12 +1193,12 @@ function requestClose() {
 				<NcTextField v-model="entryOdo"
 					:label="t('nextfleet', 'Counter reading')"
 					:disabled="saving"
-					inputmode="decimal" />
+					inputmode="numeric" />
 				<NcTextField v-if="twoCounters"
 					v-model="entrySecond"
 					:label="t('nextfleet', 'Engine hours')"
 					:disabled="saving"
-					inputmode="decimal" />
+					inputmode="numeric" />
 				<NcTextArea v-model="notes"
 					class="sheet__wide"
 					:label="t('nextfleet', 'Notes')"
@@ -1128,7 +1261,7 @@ function requestClose() {
 				<NcTextField v-model="counter"
 					:label="t('nextfleet', 'Counter reading')"
 					:disabled="saving"
-					inputmode="decimal"
+					inputmode="numeric"
 					autofocus />
 			</template>
 		</div>
@@ -1173,6 +1306,14 @@ function requestClose() {
 
 .sheet__closes-label {
 	flex: 1 0 100%;
+	color: var(--color-text-maxcontrast);
+}
+
+.sheet__last {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--default-grid-baseline);
 	color: var(--color-text-maxcontrast);
 }
 

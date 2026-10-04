@@ -12,19 +12,31 @@ use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Controller\DocumentController;
 use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
+use OCA\NextFleet\Db\BookingMapper;
+use OCA\NextFleet\Db\DocumentMapper;
+use OCA\NextFleet\Db\EnergyMapper;
+use OCA\NextFleet\Db\ExpenseMapper;
+use OCA\NextFleet\Db\MaintenanceMapper;
 use OCA\NextFleet\Db\Vehicle;
+use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Exception\AccessDeniedException;
+use OCA\NextFleet\Exception\AlreadyCreatedException;
 use OCA\NextFleet\Service\BookingService;
 use OCA\NextFleet\Service\DocumentService;
 use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\MaintenanceService;
+use OCA\NextFleet\Service\OwnFiles;
+use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\DataResponse;
 use OCP\Constants;
+use OCP\Files\Config\IMountProviderCollection;
+use OCP\Files\Config\IUserMountCache;
 use OCP\Files\Folder;
 use OCP\Files\IRootFolder;
+use OCP\ICacheFactory;
 use OCP\IDBConnection;
 use OCP\IRequest;
 use OCP\IUser;
@@ -42,6 +54,9 @@ use PHPUnit\Framework\TestCase;
  * It writes to the instance it runs against (docs/development.md#testing).
  */
 class DocumentTest extends TestCase {
+	use Accounts;
+	use CountsQueries;
+
 	private const OWNER = 'nextfleet-test-doc-owner';
 	/** Has a Files of their own, which the owner cannot read. */
 	private const OTHER = 'nextfleet-test-doc-other';
@@ -52,7 +67,11 @@ class DocumentTest extends TestCase {
 	private const SHAREE = 'nextfleet-test-doc-sharee';
 	/** An account: a receipt they attach to their own fill-up is a file in their own Files. */
 	private const DRIVER = 'nextfleet-test-doc-driver';
-	private const ACCOUNTS = [self::OWNER, self::OTHER, self::SHAREE, self::DRIVER];
+	/** Moves an attached file into a share they receive; untouched before, as the sharee is. */
+	private const MOVER = 'nextfleet-test-doc-mover';
+	private const ACCOUNTS = [self::OWNER, self::OTHER, self::SHAREE, self::DRIVER, self::MOVER];
+	/** What the owner's ForeignStorage holds, on the server's disk. */
+	private const FOREIGN_DIR = '/tmp/nextfleet-test-foreign';
 
 	private DocumentService $documents;
 	private VehicleService $vehicles;
@@ -63,12 +82,11 @@ class DocumentTest extends TestCase {
 	private array $vehicleIds = [];
 
 	protected function setUp(): void {
-		$container = (new Application())->getContainer();
-		$this->documents = $container->get(DocumentService::class);
-		$this->vehicles = $container->get(VehicleService::class);
-		$this->workshop = $container->get(MaintenanceService::class);
-		$this->fillUps = $container->get(EnergyService::class);
-		$this->pool = $container->get(BookingService::class);
+		$this->documents = \OCP\Server::get(DocumentService::class);
+		$this->vehicles = \OCP\Server::get(VehicleService::class);
+		$this->workshop = \OCP\Server::get(MaintenanceService::class);
+		$this->fillUps = \OCP\Server::get(EnergyService::class);
+		$this->pool = \OCP\Server::get(BookingService::class);
 	}
 
 	/**
@@ -81,10 +99,16 @@ class DocumentTest extends TestCase {
 		foreach (self::ACCOUNTS as $uid) {
 			$users->createUser($uid, bin2hex(random_bytes(16)));
 		}
+		if (is_dir(self::FOREIGN_DIR)) {
+			self::removeTree(self::FOREIGN_DIR);
+		}
+		mkdir(self::FOREIGN_DIR);
+		\OCP\Server::get(IMountProviderCollection::class)->registerProvider(new ForeignStorage(self::OWNER, self::FOREIGN_DIR));
 	}
 
 	public static function tearDownAfterClass(): void {
 		self::forgetAccounts();
+		self::removeTree(self::FOREIGN_DIR);
 	}
 
 	private static function forgetAccounts(): void {
@@ -131,6 +155,23 @@ class DocumentTest extends TestCase {
 		$this->assertSame($listed, $this->documents->list(self::OWNER, $vehicle->getUuid()));
 	}
 
+	/** A retried attach is answered with the list and writes nothing: a detach since stands. */
+	public function testAnAttachSentAgainUnderItsClientUuidAttachesNothing(): void {
+		$vehicle = $this->vehicle(self::OWNER);
+		$paper = ['client_uuid' => '0195e2f1-3333-4000-8000-000000000001', 'file_id' => $this->file(self::OWNER, 'Police.pdf'), 'kind' => 'insurance'];
+		$listed = $this->documents->attach(self::OWNER, $vehicle->getUuid(), $paper);
+		$this->assertSame([$paper['client_uuid']], array_column($listed, 'uuid'));
+		$this->documents->detach(self::OWNER, $vehicle->getUuid(), $paper['client_uuid']);
+
+		try {
+			$this->documents->attach(self::OWNER, $vehicle->getUuid(), $paper);
+			$this->fail('attached again');
+		} catch (AlreadyCreatedException $e) {
+			$this->assertSame([], $e->answer);
+		}
+		$this->assertSame([], $this->documents->list(self::OWNER, $vehicle->getUuid()));
+	}
+
 	/**
 	 * The download serves whatever is attached to whoever may view the vehicle, so attaching is
 	 * where a file id must be one the attacher can read. Otherwise any id on the instance would be
@@ -171,6 +212,103 @@ class DocumentTest extends TestCase {
 
 		$this->expectException(DoesNotExistException::class);
 		$this->documents->attach(self::SHAREE, $vehicle->getUuid(), ['file_id' => $theirs->getId(), 'kind' => 'receipt']);
+	}
+
+	/**
+	 * A group folder or an admin's external storage names whoever asks as the owner, and is still
+	 * not their Files: somebody else may change or remove what sits there.
+	 */
+	public function testAFileOnAStorageThatIsNotTheAttachersHomeIsNotFound(): void {
+		$vehicle = $this->vehicle(self::OWNER);
+		$foreign = $this->foreign()->newFile(bin2hex(random_bytes(6)) . '.pdf', '%PDF-1.4 test');
+
+		try {
+			$this->documents->attach(self::OWNER, $vehicle->getUuid(), ['file_id' => $foreign->getId(), 'kind' => 'receipt']);
+			$this->fail('attached a file from a storage that is not the attacher\'s home');
+		} catch (DoesNotExistException) {
+		}
+		$this->assertSame([], $this->documents->list(self::OWNER, $vehicle->getUuid()));
+	}
+
+	/**
+	 * What attaching refuses, a live paper does not serve either: moved there after attaching, the
+	 * file is no longer one of the attacher's own. Listed without a name, as the screen shows a
+	 * file it cannot open.
+	 */
+	public function testAFileMovedOntoAStorageThatIsNotTheAttachersHomeIsNoLongerServed(): void {
+		$vehicle = $this->vehicle(self::OWNER);
+		$file = $this->folder(self::OWNER)->newFile('Police.pdf', '%PDF-1.4 test');
+		$uuid = $this->documents->attach(self::OWNER, $vehicle->getUuid(), ['file_id' => $file->getId(), 'kind' => 'insurance'])[0]['uuid'];
+
+		$moved = $file->move($this->foreign()->getPath() . '/' . bin2hex(random_bytes(6)) . '.pdf');
+		$this->assertSame($file->getId(), $moved->getId(), 'the move made a new file, so this test proves nothing');
+		self::later();
+
+		$this->assertNull($this->documents->list(self::OWNER, $vehicle->getUuid())[0]['name']);
+		$this->expectException(DoesNotExistException::class);
+		$this->documents->download(self::OWNER, $vehicle->getUuid(), $uuid);
+	}
+
+	/** Moved into a folder somebody shared with the attacher, the file is the sharer's now. */
+	public function testAFileMovedIntoAReceivedShareIsNoLongerServed(): void {
+		$shared = $this->folder(self::OTHER);
+		$shares = \OCP\Server::get(IShareManager::class);
+		$share = $shares->newShare()
+			->setNode($shared)
+			->setShareType(IShare::TYPE_USER)
+			->setSharedWith(self::MOVER)
+			->setSharedBy(self::OTHER)
+			->setShareOwner(self::OTHER)
+			->setPermissions(Constants::PERMISSION_ALL);
+		$shares->acceptShare($shares->createShare($share), self::MOVER);
+		$seen = \OCP\Server::get(IRootFolder::class)->getUserFolder(self::MOVER)->getFirstNodeById($shared->getId());
+		$this->assertInstanceOf(Folder::class, $seen, 'the share did not reach the mover\'s Files, so this test proves nothing');
+		$vehicle = $this->vehicle(self::MOVER);
+		$file = $this->folder(self::MOVER)->newFile('Police.pdf', '%PDF-1.4 test');
+		$uuid = $this->documents->attach(self::MOVER, $vehicle->getUuid(), ['file_id' => $file->getId(), 'kind' => 'insurance'])[0]['uuid'];
+
+		$moved = $file->move($seen->getPath() . '/Police.pdf');
+		$this->assertSame($file->getId(), $moved->getId(), 'the move made a new file, so this test proves nothing');
+		self::later();
+
+		$this->assertNull($this->documents->list(self::MOVER, $vehicle->getUuid())[0]['name']);
+		$this->expectException(DoesNotExistException::class);
+		$this->documents->download(self::MOVER, $vehicle->getUuid(), $uuid);
+	}
+
+	/**
+	 * An erased attacher's papers name a pseudonym, which has no Files: the list goes on without
+	 * their names rather than failing for everyone.
+	 */
+	public function testAPaperWhoseAttacherIsGoneIsListedWithoutAName(): void {
+		$vehicle = $this->vehicle(self::OWNER);
+		$uuid = $this->documents->attach(self::OWNER, $vehicle->getUuid(), ['file_id' => $this->file(self::OWNER, 'Police.pdf'), 'kind' => 'insurance'])[0]['uuid'];
+		$db = \OCP\Server::get(IDBConnection::class);
+		$qb = $db->getQueryBuilder();
+		$qb->update('fleet_documents')
+			->set('created_by', $qb->createNamedParameter('erased:' . str_repeat('a', 20)))
+			->where($qb->expr()->eq('uuid', $qb->createNamedParameter($uuid)));
+		$qb->executeStatement();
+
+		$this->assertNull($this->documents->list(self::OWNER, $vehicle->getUuid())[0]['name']);
+		$this->expectException(DoesNotExistException::class);
+		$this->documents->download(self::OWNER, $vehicle->getUuid(), $uuid);
+	}
+
+	/** One file on many rows is looked up once: a page of papers costs per file, not per paper. */
+	public function testOneFileOnManyRowsCostsWhatItCostsOnOne(): void {
+		$vehicle = $this->vehicle(self::OWNER);
+		$fileId = $this->file(self::OWNER, 'Rechnung.pdf');
+		$this->documents->attach(self::OWNER, $vehicle->getUuid(), ['file_id' => $fileId, 'kind' => 'receipt', 'linked_type' => 'maintenance', 'linked_uuid' => $this->maintenance($vehicle)]);
+		$one = self::queriesOf(fn () => $this->documents->list(self::OWNER, $vehicle->getUuid()));
+		for ($i = 0; $i < 4; $i++) {
+			$this->documents->attach(self::OWNER, $vehicle->getUuid(), ['file_id' => $fileId, 'kind' => 'receipt', 'linked_type' => 'maintenance', 'linked_uuid' => $this->maintenance($vehicle)]);
+		}
+
+		$five = self::queriesOf(fn () => $this->documents->list(self::OWNER, $vehicle->getUuid()));
+
+		$this->assertCount(5, $this->documents->list(self::OWNER, $vehicle->getUuid()));
+		$this->assertSame($one, $five);
 	}
 
 	/** A folder is not a document, and a download could not serve one. */
@@ -385,9 +523,11 @@ class DocumentTest extends TestCase {
 		$this->documents->attach(self::OWNER, $vehicle->getUuid(), ['file_id' => $file->getId(), 'kind' => 'photo']);
 
 		$file->move($this->folder(self::OWNER)->getPath() . '/Moved.jpg');
+		self::later();
 		$this->assertSame(['Moved.jpg'], array_column($this->documents->list(self::OWNER, $vehicle->getUuid()), 'name'));
 
 		\OCP\Server::get(IRootFolder::class)->getUserFolder(self::OWNER)->getFirstNodeById($file->getId())?->delete();
+		self::later();
 		$listed = $this->documents->list(self::OWNER, $vehicle->getUuid());
 		$this->assertCount(1, $listed);
 		$this->assertNull($listed[0]['name']);
@@ -418,15 +558,42 @@ class DocumentTest extends TestCase {
 		$this->documents->download(self::OTHER, $vehicle->getUuid(), $uuid);
 	}
 
-	/** A `file_id` survives a delete in no usable form: the trash bin keeps it, and we do not serve from there. */
+	/**
+	 * A `file_id` survives a delete in no usable form: the trash bin keeps it, and we do not serve
+	 * from there. The list may name the file for five minutes more; the download asks live.
+	 */
 	public function testAPaperWhoseFileWasDeletedIsNotFound(): void {
 		$vehicle = $this->vehicle(self::OWNER);
 		$fileId = $this->file(self::OWNER, 'Foto.jpg');
 		$uuid = $this->documents->attach(self::OWNER, $vehicle->getUuid(), ['file_id' => $fileId, 'kind' => 'photo'])[0]['uuid'];
 		\OCP\Server::get(IRootFolder::class)->getUserFolder(self::OWNER)->getFirstNodeById($fileId)?->delete();
+		$this->assertSame('Foto.jpg', $this->documents->list(self::OWNER, $vehicle->getUuid())[0]['name']);
 
 		$this->expectException(DoesNotExistException::class);
 		$this->documents->download(self::OWNER, $vehicle->getUuid(), $uuid);
+	}
+
+	/** A database failing while the file is looked up is a failure to retry, not a file removed. */
+	public function testADatabaseFailureFindingTheFileIsNoFileGone(): void {
+		$vehicle = $this->vehicle(self::OWNER);
+		$uuid = $this->documents->attach(self::OWNER, $vehicle->getUuid(), ['file_id' => $this->file(self::OWNER, 'Police.pdf'), 'kind' => 'insurance'])[0]['uuid'];
+		$files = $this->createMock(OwnFiles::class);
+		$files->method('mine')->willThrowException(new \OCP\DB\Exception('connection lost'));
+		$documents = new DocumentService(
+			\OCP\Server::get(DocumentMapper::class),
+			\OCP\Server::get(VehicleService::class),
+			\OCP\Server::get(VehicleMapper::class),
+			\OCP\Server::get(EnergyMapper::class),
+			\OCP\Server::get(MaintenanceMapper::class),
+			\OCP\Server::get(ExpenseMapper::class),
+			\OCP\Server::get(BookingMapper::class),
+			\OCP\Server::get(VehicleAccess::class),
+			$files,
+			\OCP\Server::get(IDBConnection::class),
+		);
+
+		$this->expectException(\OCP\DB\Exception::class);
+		$documents->download(self::OWNER, $vehicle->getUuid(), $uuid);
 	}
 
 	/**
@@ -612,6 +779,25 @@ class DocumentTest extends TestCase {
 	/** A folder of its own for each call, since the accounts outlive a test. */
 	private function folder(string $uid): Folder {
 		return \OCP\Server::get(IRootFolder::class)->getUserFolder($uid)->newFolder(bin2hex(random_bytes(6)));
+	}
+
+	/** A folder of its own for each call on the owner's ForeignStorage. */
+	private function foreign(): Folder {
+		$mount = \OCP\Server::get(IRootFolder::class)->getUserFolder(self::OWNER)->get(ForeignStorage::FOLDER);
+		$this->assertInstanceOf(Folder::class, $mount);
+		$folder = $mount->newFolder(bin2hex(random_bytes(6)));
+		// The server caches a mount only once its storage has a root, which this one lacked when
+		// the owner's mounts were set up; a group folder in use has one.
+		$owner = \OCP\Server::get(IUserManager::class)->get(self::OWNER);
+		$this->assertNotNull($owner);
+		\OCP\Server::get(IUserMountCache::class)->registerMounts($owner, [$mount->getMountPoint()], [ForeignStorage::class]);
+
+		return $folder;
+	}
+
+	/** Five minutes on: what a list was told of each file has run out (OwnFiles::shown()). */
+	private static function later(): void {
+		\OCP\Server::get(ICacheFactory::class)->createDistributed(Application::APP_ID . '-files')->clear();
 	}
 
 	private function grant(Vehicle $vehicle, string $grantee, string $role): void {

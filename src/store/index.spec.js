@@ -3,10 +3,12 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
+import { flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createVehicle, deleteEntry, deleteVehicle, getVehicle, leaveVehicle, listVehicles, recordMaintenance, recordReading, recordTrip, restoreEntry, restoreVehicle, runImport, undoImport, updateEntry, updateVehicle } from '../services/api.js'
+import { createVehicle, deleteEntry, deleteVehicle, detachDocument, getVehicle, leaveVehicle, listVehicles, readInbox, recordMaintenance, recordReading, recordTrip, restoreDocument, restoreEntry, restoreVehicle, runImport, undoImport, updateEntry, updateVehicle } from '../services/api.js'
+import { useInboxStore } from './inbox.js'
 import { useVehiclesStore } from './index.js'
 
 // The network is the api client's own seam (api.spec.js); what is under test here is what the
@@ -15,12 +17,15 @@ vi.mock('../services/api.js', () => ({
 	createVehicle: vi.fn(),
 	deleteEntry: vi.fn(),
 	deleteVehicle: vi.fn(),
+	detachDocument: vi.fn(),
 	getVehicle: vi.fn(),
 	leaveVehicle: vi.fn(),
 	listVehicles: vi.fn(),
+	readInbox: vi.fn(),
 	recordMaintenance: vi.fn(),
 	recordReading: vi.fn(),
 	recordTrip: vi.fn(),
+	restoreDocument: vi.fn(),
 	restoreEntry: vi.fn(),
 	restoreVehicle: vi.fn(),
 	runImport: vi.fn(),
@@ -43,6 +48,37 @@ describe('vehicles store', () => {
 	beforeEach(() => {
 		setActivePinia(createPinia())
 		vi.resetAllMocks()
+	})
+
+	/** A paper taken off puts its file back in the inbox, and its undo takes it out again. */
+	it('reads the inbox count again after a paper is detached and after it is restored', async () => {
+		const PAPER = /** @type {any} */ ({ uuid: 'd-1', file_id: 42 })
+		vi.mocked(readInbox).mockResolvedValueOnce({ folder: { file_id: 7, path: '/Belege' }, files: [], count: 0 })
+		vi.mocked(readInbox).mockResolvedValueOnce({ folder: { file_id: 7, path: '/Belege' }, files: [], count: 1 })
+		vi.mocked(readInbox).mockResolvedValueOnce({ folder: { file_id: 7, path: '/Belege' }, files: [], count: 0 })
+		vi.mocked(detachDocument).mockResolvedValue([])
+		vi.mocked(restoreDocument).mockResolvedValue([PAPER])
+		const inbox = useInboxStore()
+		await inbox.load()
+		const store = useVehiclesStore()
+
+		await store.detach('a', PAPER)
+		await flushPromises()
+		expect(inbox.count).toBe(1)
+
+		await store.restore()
+		await flushPromises()
+		expect(inbox.count).toBe(0)
+	})
+
+	/** The list is the answer; the count beside the menu is no reason to keep a removed paper on screen. */
+	it('takes a paper off without waiting for the inbox', async () => {
+		vi.mocked(readInbox).mockResolvedValueOnce({ folder: { file_id: 7, path: '/Belege' }, files: [], count: 0 })
+		vi.mocked(readInbox).mockReturnValueOnce(new Promise(() => {}))
+		vi.mocked(detachDocument).mockResolvedValue([])
+		await useInboxStore().load()
+
+		await expect(useVehiclesStore().detach('a', /** @type {any} */ ({ uuid: 'd-1' }))).resolves.toEqual([])
 	})
 
 	it('identifies a vehicle by uuid, not by plate', () => {
@@ -109,7 +145,7 @@ describe('vehicles store', () => {
 		it('re-reads the vehicle instead of counting the new value itself', async () => {
 			const store = useVehiclesStore()
 			store.upsert(vehicle({ uuid: 'a', odo_value: 148000 }))
-			vi.mocked(recordReading).mockResolvedValue({ uuid: 'r1', value: 148320, origin: 'observed', flagged: false, read_at: 1750000000, read_at_off: 120, counter: 'main' })
+			vi.mocked(recordReading).mockResolvedValue({ uuid: 'r1', value: 148320, origin: 'observed', flagged: false, kind: 'reading', read_at: 1750000000, read_at_off: 120, counter: 'main', updated_at: 1750000000 })
 			vi.mocked(getVehicle).mockResolvedValue(vehicle({ uuid: 'a', odo_value: 148320 }))
 
 			const reading = await store.record('a', { value: 148320, read_at_off: 120 })
@@ -129,7 +165,7 @@ describe('vehicles store', () => {
 		it('does not report a written reading as failed because the vehicle would not come back', async () => {
 			const store = useVehiclesStore()
 			store.upsert(vehicle({ uuid: 'a', odo_value: 148000 }))
-			vi.mocked(recordReading).mockResolvedValue({ uuid: 'r1', value: 148320, origin: 'observed', flagged: false, read_at: 1750000000, read_at_off: 120, counter: 'main' })
+			vi.mocked(recordReading).mockResolvedValue({ uuid: 'r1', value: 148320, origin: 'observed', flagged: false, kind: 'reading', read_at: 1750000000, read_at_off: 120, counter: 'main', updated_at: 1750000000 })
 			vi.mocked(getVehicle).mockRejectedValue(new Error('The server answered 503'))
 
 			const reading = await store.record('a', { value: 148320, read_at_off: 120 })

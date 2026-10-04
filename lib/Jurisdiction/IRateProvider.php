@@ -27,7 +27,7 @@ interface IRateProvider {
 
 	/**
 	 * The expense categories (`ExpenseService::CATEGORIES`) on which no VAT is charged. Such an
-	 * expense is prefilled with no rate, "not stated", since a stored rate is never zero.
+	 * expense is prefilled with 0: no VAT is a stated fact, and null would mean nobody knows.
 	 *
 	 * @return list<string>
 	 */

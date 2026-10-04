@@ -16,8 +16,8 @@ use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\IDBConnection;
-use OCP\IL10N;
 use OCP\IUserManager;
+use OCP\L10N\IFactory;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -53,12 +53,11 @@ class LogbookExportTest extends TestCase {
 	}
 
 	protected function setUp(): void {
-		$container = (new Application())->getContainer();
-		$this->export = $container->get(LogbookExport::class);
-		$this->trips = $container->get(TripService::class);
-		$this->vehicles = $container->get(VehicleService::class);
-		$this->grants = $container->get(GrantService::class);
-		$this->now = $container->get(ITimeFactory::class)->getTime();
+		$this->export = \OCP\Server::get(LogbookExport::class);
+		$this->trips = \OCP\Server::get(TripService::class);
+		$this->vehicles = \OCP\Server::get(VehicleService::class);
+		$this->grants = \OCP\Server::get(GrantService::class);
+		$this->now = \OCP\Server::get(ITimeFactory::class)->getTime();
 		$this->year = (int)gmdate('Y', $this->now);
 
 		$this->forgetTestRows();
@@ -145,7 +144,7 @@ class LogbookExportTest extends TestCase {
 		$this->assertCount(3, $lines);
 		$this->assertStringNotContainsString('Last year', implode(' ', $lines));
 		// Late unless today is within a week of that January trip.
-		$this->assertMatchesRegularExpression('/(Nachträglich s|S)torniert am/u', $lines[1]);
+		$this->assertMatchesRegularExpression('/(Nachträglich a|A)nnulliert am/u', $lines[1]);
 		$this->assertStringContainsString('Voided', $lines[1]);
 		$this->assertStringNotContainsString('Unvollständig', implode(' ', $lines));
 
@@ -170,7 +169,8 @@ class LogbookExportTest extends TestCase {
 
 		[$lines, $page] = $this->printed($uuid, $this->year);
 
-		$l = (new Application())->getContainer()->get(IL10N::class);
+		// The app's own, as its container hands one to the export.
+		$l = \OCP\Server::get(IFactory::class)->get(Application::APP_ID);
 		$local = new \DateTime(sprintf('%d-01-01T00:30:00+01:00', $this->year));
 		$this->assertCount(1, $lines);
 		$this->assertStringContainsString('New Year', $lines[0]);
@@ -208,7 +208,7 @@ class LogbookExportTest extends TestCase {
 		[$lines] = $this->printed($uuid, (int)gmdate('Y', $monthAgo + 3600));
 
 		$this->assertCount(1, $lines);
-		$this->assertMatchesRegularExpression('/Nachträglich geändert am \d\d\.\d\d\.\d{4}, \d\d:\d\d UTC\. Vorher: Zweck „Abnahme“$/u', $lines[0]);
+		$this->assertMatchesRegularExpression('/Nachträglich geändert am \d\d\.\d\d\.\d{4}, \d\d:\d\d UTC[+−]\d\d:\d\d\. Vorher: Zweck „Abnahme“$/u', $lines[0]);
 	}
 
 	/**
@@ -226,11 +226,60 @@ class LogbookExportTest extends TestCase {
 		[$lines] = $this->printed($uuid, (int)gmdate('Y', $monthAgo + 3600));
 
 		$this->assertCount(1, $lines);
-		$at = '\d\d\.\d\d\.\d{4}, \d\d:\d\d UTC';
+		$at = '\d\d\.\d\d\.\d{4}, \d\d:\d\d UTC[+−]\d\d:\d\d';
 		$this->assertMatchesRegularExpression(
-			"/Nachträglich storniert am {$at}Nachträglich wiederhergestellt am $at\. Vorher: storniert am $at$/u",
+			"/Nachträglich annulliert am {$at}Nachträglich wiederhergestellt am $at\. Vorher: annulliert am $at$/u",
 			$lines[0],
 		);
+	}
+
+	/**
+	 * Late is decided at export: a far-future `ended_at` stopped the clock the void stored its flag
+	 * by, and the trip's own `created_at` restarts it. The stored flag says no; the line says late.
+	 */
+	public function testAVoidOfATripEndingFarAheadIsLateFromWhenTheTripWasEntered(): void {
+		$uuid = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 138', 'jurisdiction' => 'de'])->getUuid();
+		$this->switchMode($uuid, true);
+		$monthAgo = $this->now - 30 * 86400;
+		$trip = $this->trip($uuid, $monthAgo, ['start_odo' => 120000, 'end_odo' => 120450]);
+		$qb = \OCP\Server::get(IDBConnection::class)->getQueryBuilder();
+		$qb->update('fleet_trips')
+			->set('ended_at', $qb->createNamedParameter($this->now + 365 * 86400, $qb::PARAM_INT))
+			->set('created_at', $qb->createNamedParameter($monthAgo, $qb::PARAM_INT))
+			->where($qb->expr()->eq('id', $qb->createNamedParameter($trip->getId(), $qb::PARAM_INT)));
+		$qb->executeStatement();
+		$this->trips->delete(self::AUTHOR, $uuid, $trip->getUuid(), $trip->getUpdatedAt());
+
+		[$lines] = $this->printed($uuid, (int)gmdate('Y', $monthAgo + 3600));
+
+		$this->assertCount(1, $lines);
+		$this->assertStringContainsString('Nachträglich annulliert am', $lines[0]);
+	}
+
+	/**
+	 * The stored flag is not trusted either way: a void inside the delay is on time whatever its
+	 * row says.
+	 */
+	public function testAVoidInsideTheDelayIsOnTimeWhateverItsRowSays(): void {
+		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 139', 'jurisdiction' => 'de']);
+		$uuid = $vehicle->getUuid();
+		$this->switchMode($uuid, true);
+		$trip = $this->trip($uuid, $this->now - 7200, ['start_odo' => 120000, 'end_odo' => 120450]);
+		$this->trips->delete(self::AUTHOR, $uuid, $trip->getUuid(), $trip->getUpdatedAt());
+		$db = \OCP\Server::get(IDBConnection::class);
+		$qb = $db->getQueryBuilder();
+		$qb->update('fleet_audit')
+			->set('diff_json', $qb->createNamedParameter(json_encode(['change' => 'voided', 'fields' => ['deleted_at' => [null, $this->now]], 'late' => true])))
+			->where($qb->expr()->eq('entity', $qb->createNamedParameter('trip')))
+			->andWhere($qb->expr()->eq('entity_id', $qb->createNamedParameter($trip->getId(), $qb::PARAM_INT)))
+			->andWhere($qb->expr()->like('diff_json', $qb->createNamedParameter('%voided%')));
+		$this->assertSame(1, $qb->executeStatement());
+
+		[$lines] = $this->printed($uuid, (int)gmdate('Y', $this->now - 3600));
+
+		$this->assertCount(1, $lines);
+		$this->assertStringNotContainsString('Nachträglich', $lines[0]);
+		$this->assertStringContainsString('Annulliert am', $lines[0]);
 	}
 
 	/** A vehicle nobody else was given access to prints as it did before access existed. */
@@ -271,13 +320,133 @@ class LogbookExportTest extends TestCase {
 		$this->assertStringContainsString('Ben Fahrer', $lines[1]);
 	}
 
-	/** A trip set off while the mode is on is marked with what it lacks: next January is under it. */
-	public function testATripSetOffUnderTheModeIsMarkedIncomplete(): void {
-		$uuid = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 128', 'jurisdiction' => 'de'])->getUuid();
-		$this->switchMode($uuid, true);
-		$this->trip($uuid, gmmktime(8, 0, 0, 1, 10, $this->year + 1), ['start_odo' => 120000, 'end_odo' => 120450, 'partner' => null]);
+	/**
+	 * The vehicle's flips moved to the instants given, oldest first. A flip is stamped with the
+	 * server's clock, and a period in the past is what this suite cannot otherwise write.
+	 *
+	 * @param list<int> $instants
+	 */
+	private function flippedAt(int $vehicleId, array $instants): void {
+		$db = \OCP\Server::get(IDBConnection::class);
+		$qb = $db->getQueryBuilder();
+		$qb->select('id')->from('fleet_audit')
+			->where($qb->expr()->eq('entity', $qb->createNamedParameter('vehicle')))
+			->andWhere($qb->expr()->eq('entity_id', $qb->createNamedParameter($vehicleId, $qb::PARAM_INT)))
+			->orderBy('id', 'ASC');
+		$ids = array_map('intval', $qb->executeQuery()->fetchAll(\PDO::FETCH_COLUMN));
+		$this->assertCount(count($instants), $ids);
 
-		[$lines] = $this->printed($uuid, $this->year + 1);
+		foreach ($ids as $i => $id) {
+			$qb = $db->getQueryBuilder();
+			$qb->update('fleet_audit')
+				->set('created_at', $qb->createNamedParameter($instants[$i], $qb::PARAM_INT))
+				->where($qb->expr()->eq('id', $qb->createNamedParameter($id, $qb::PARAM_INT)));
+			$qb->executeStatement();
+		}
+	}
+
+	/**
+	 * The trail follows the trip, not the switch: on in March, off, the March trip edited while off,
+	 * on again - and the edit is on the March line. A trail that followed the switch could be
+	 * switched off to change a kept logbook unseen.
+	 */
+	public function testAnEditWhileTheModeIsOffIsOnTheLineOfATripSetOffUnderIt(): void {
+		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 136', 'jurisdiction' => 'de']);
+		$uuid = $vehicle->getUuid();
+		$year = $this->year - 1;
+		$march = gmmktime(8, 0, 0, 3, 10, $year);
+		$this->switchMode($uuid, true);
+		$trip = $this->trip($uuid, $march, ['start_odo' => 120000, 'end_odo' => 120450]);
+		$this->switchMode($uuid, false);
+		$this->flippedAt((int)$vehicle->getId(), [(int)gmmktime(0, 0, 0, 3, 1, $year), (int)gmmktime(0, 0, 0, 4, 1, $year)]);
+
+		$this->trips->update(self::AUTHOR, $uuid, $trip->getUuid(), $trip->getUpdatedAt(), [
+			'started_at' => $march,
+			'started_at_off' => 60,
+			'ended_at' => $march + 5400,
+			'ended_at_off' => 60,
+			'start_odo' => 120000,
+			'end_odo' => 120450,
+			'to_label' => 'Hamburg, Hafenstraße 1',
+			'purpose' => 'Besuch',
+			'partner' => 'Muster GmbH',
+			'category' => Trip::BUSINESS,
+		]);
+		$this->switchMode($uuid, true);
+
+		[$lines] = $this->printed($uuid, $year);
+
+		$this->assertCount(1, $lines);
+		$this->assertMatchesRegularExpression('/Nachträglich geändert am \d\d\.\d\d\.\d{4}, \d\d:\d\d UTC[+−]\d\d:\d\d\. Vorher: Zweck „Abnahme“$/u', $lines[0]);
+	}
+
+	/**
+	 * Each period names the plate the vehicle carried in it, and when a new one took over inside it:
+	 * the header's plate is today's, and an auditor matches trips to the plate on the receipts.
+	 */
+	public function testEachPeriodNamesThePlatesValidInIt(): void {
+		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 140', 'jurisdiction' => 'de']);
+		$uuid = $vehicle->getUuid();
+		$year = $this->year - 1;
+		$this->switchMode($uuid, true);
+		$this->renamed($uuid, 'B-XY 141');
+		$this->switchMode($uuid, false);
+		$this->renamed($uuid, 'B-XY 142');
+		$this->switchMode($uuid, true);
+		$this->flippedAt((int)$vehicle->getId(), array_map(
+			static fn (int $month): int => (int)gmmktime(0, 0, 0, $month, 1, $year),
+			[3, 4, 5, 6, 7],
+		));
+
+		[, $page] = $this->printed($uuid, $year);
+
+		$periods = array_map(
+			static fn (\DOMNode $item): string => $item->textContent,
+			iterator_to_array($page->query('//section[@id="modus"]//li') ?: []),
+		);
+		$this->assertCount(2, $periods);
+		// No session reads it, so the reader's zone is the server's default: UTC on a dev instance.
+		$this->assertStringEndsWith('Kennzeichen B-XY 140, ab dem 01.04.' . $year . ', 00:00 UTC+00:00 B-XY 141', $periods[0]);
+		$this->assertStringEndsWith('Kennzeichen B-XY 142', $periods[1]);
+	}
+
+	private function renamed(string $uuid, string $plate): void {
+		$vehicle = $this->vehicles->find(self::AUTHOR, $uuid);
+		$this->vehicles->update(self::AUTHOR, $uuid, $vehicle->getUpdatedAt(), ['plate' => $plate]);
+	}
+
+	/**
+	 * Defence in depth: a trip under the mode changed by something that went around the service -
+	 * a statement run against the database - says so on its line, with when.
+	 */
+	public function testATripChangedWithoutARowSaysSoOnItsLine(): void {
+		$uuid = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 137', 'jurisdiction' => 'de'])->getUuid();
+		$this->switchMode($uuid, true);
+		// After the flip, which the server stamped a moment ago.
+		$startedAt = $this->now + 60;
+		$trip = $this->trip($uuid, $startedAt, ['start_odo' => 120000, 'end_odo' => 120450]);
+		$qb = \OCP\Server::get(IDBConnection::class)->getQueryBuilder();
+		$qb->update('fleet_trips')
+			->set('purpose', $qb->createNamedParameter('Urlaub'))
+			->set('updated_at', $qb->createNamedParameter($trip->getUpdatedAt() + 60, $qb::PARAM_INT))
+			->where($qb->expr()->eq('id', $qb->createNamedParameter($trip->getId(), $qb::PARAM_INT)));
+		$qb->executeStatement();
+
+		[$lines] = $this->printed($uuid, (int)gmdate('Y', $startedAt + 3600));
+
+		$this->assertCount(1, $lines);
+		$this->assertStringEndsWith('Geändert ohne Protokoll am ' . gmdate('d.m.Y, H:i', $trip->getUpdatedAt() + 60) . ' UTC+00:00', $lines[0]);
+	}
+
+	/** A trip set off while the mode is on is marked with what it lacks: the mode went on last New Year. */
+	public function testATripSetOffUnderTheModeIsMarkedIncomplete(): void {
+		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 128', 'jurisdiction' => 'de']);
+		$uuid = $vehicle->getUuid();
+		$this->switchMode($uuid, true);
+		$this->flippedAt((int)$vehicle->getId(), [(int)gmmktime(0, 0, 0, 1, 1, $this->year - 1)]);
+		$this->trip($uuid, gmmktime(8, 0, 0, 1, 10, $this->year - 1), ['start_odo' => 120000, 'end_odo' => 120450, 'partner' => null]);
+
+		[$lines] = $this->printed($uuid, $this->year - 1);
 
 		$this->assertCount(1, $lines);
 		$this->assertStringContainsString('Unvollständig, es fehlt: Geschäftspartner', $lines[0]);

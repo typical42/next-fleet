@@ -20,9 +20,9 @@ is not the reason anyone would switch.
 
 ## Feature backlog
 
-Ranked by value per effort. **v1** marks what M0–M5 built, the unreleased 0.2.0
-([milestones](../plan.md#milestones)); **M6** to **M9** what each built after it, the unreleased
-0.3.0. Everything else waits.
+Ranked by value per effort. **v1** marks what M0–M5 built ([milestones](../plan.md#milestones));
+**M6** to **M9** what each built after it. All of it is 0.3.1, the first release. Everything else
+waits.
 
 **High**
 
@@ -82,7 +82,8 @@ Ranked by value per effort. **v1** marks what M0–M5 built, the unreleased 0.2.
 - Saisonkennzeichen: reminders when the season opens and closes, driven by the `laid_up` lifecycle
   state ([data model](architecture.md#data-model)).
 - "O bis O" (Oktober bis Ostern) as a built-in tyre-swap template.
-- Fuel price memory per station, to prefill the next fill-up.
+- **v1** — Fuel price memory per station: the price it last charged prefills the next fill-up
+  ([entry sheet](ui.md#the-entry-sheet-in-detail)).
 
 **Low / later**
 
@@ -106,7 +107,14 @@ counters and for nothing else.
 
 So: with the mode on, trips become append-only. An edit rewrites the trip in place and writes a
 `fleet_audit` row holding the diff; that row is the revision, not a second trip row. Off by default
-— private users do not need the friction.
+— private users do not need the friction. Where the country has a logbook ruleset, whoever may edit
+the vehicle is asked once, on the overview, whether to switch it on
+([UI](ui.md#details-that-decide-whether-it-feels-easy)).
+
+**The trail follows the trip, not the switch.** A change is recorded while the mode is on, and
+also afterwards when the trip set off — before or after the change — inside a period the mode was
+on. A trail that followed the switch could be switched off to change a kept logbook unseen; one
+written for every trip would keep trip text for people who never asked for a logbook.
 
 **What the logbook asks is computed for every vehicle and said only under the mode.** One rule, for
 completeness and for gap detection alike, so the app has one rule and not two: a vehicle whose mode
@@ -154,7 +162,9 @@ began. Claiming integrity for records that never had it is worse than admitting 
 
 **Every flip is a `fleet_audit` row on the vehicle**, on the way off as well as on, and that trail
 is what the export reads the periods off. A vehicle created with the mode already on has been under
-it since it was created, so the first period needs no row of its own to begin. Switching off is
+it since it was created, so the first period needs no row of its own to begin. A change of the
+plate, the country, the currency or the vehicle type leaves a row too, mode or not, so each period
+prints under the plate it was kept with. Switching off is
 allowed — a mode that could only ever go on would be a trap, not a setting — and it asks first
 ([UI](ui.md#details-that-decide-whether-it-feels-easy)).
 
@@ -162,9 +172,12 @@ allowed — a mode that could only ever go on would be a trap, not a setting —
 German value carries its source URL ([contributing](contributing.md)). Days, not weeks — timeliness
 is the entire point. Germany's is seven, and the same ruleset states the ten years a record is kept
 for, a floor under the vehicle's own retention period ([legal](legal.md)). An edit, a void or a
-restore after the delay is allowed, its audit row says `late`, and the export shows the change on
-the trip's line. The delay runs from the end of the journey, and from the earlier end when the edit re-dates it, so moving an
-old trip to yesterday does not restart the clock. A jurisdiction with no ruleset has no delay, so nothing under it is late.
+restore after the delay is allowed, and the export shows the change on the trip's line. Whether it
+was late is decided at export, against the export's rules, not by the flag the row stored
+([the Fahrtenbuch export](architecture.md#the-fahrtenbuch-export)). The delay runs from the
+earliest end the journey was ever given up to that change, or from when the trip was entered if
+that is earlier, so neither moving an old trip to yesterday nor an end set far ahead stops the
+clock. A jurisdiction with no ruleset has no delay, so nothing under it is late.
 
 **Closing a gap creates one trip, with a confirmation, and only a private one.** Never a batch. A
 private trip legally needs only the kilometres; a business trip needs a purpose and a partner that

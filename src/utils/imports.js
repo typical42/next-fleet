@@ -3,9 +3,8 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-import { t } from '@nextcloud/l10n'
-
 import { formatCount } from './format.js'
+import { t } from './l10n.js'
 
 /**
  * One kind of export file: an importer and one of its record types (lib/Import/IImporter.php).
@@ -65,7 +64,7 @@ export function formatWord(format) {
 
 /**
  * Why one row is not created, in words. The server sends a word and the header it blames
- * (lib/Import/Cells.php, lib/Service/ImportService.php marked()); a word this bundle does not know
+ * (lib/Import/Cells.php, lib/Import/Duplicates.php); a word this bundle does not know
  * yet is shown as it came, which beats nothing.
  *
  * @param {string} reason - the reason word, or `duplicate`
@@ -82,19 +81,22 @@ export function reasonWord(reason, column) {
 		negative: () => t('nextfleet', '{column} is below zero.', named),
 		date: () => t('nextfleet', '{column} is not a date this import reads.', named),
 		flag: () => t('nextfleet', '{column} is neither yes nor no.', named),
-		currency: () => t('nextfleet', '{column} names a currency the vehicle is not kept in.', named),
+		// No column: the vehicle's own currency is no code (lib/Import/Cells.php money()).
+		currency: () => column === null
+			? t('nextfleet', 'The currency of the vehicle is not a three-letter code such as EUR. Correct it in the edit sheet of the vehicle, then preview again.')
+			: t('nextfleet', '{column} names a currency the vehicle is not kept in.', named),
 		missing: () => t('nextfleet', '{column} is empty.', named),
 		too_long: () => t('nextfleet', '{column} is too long.', named),
 		code: () => t('nextfleet', '{column} holds a code this import does not know.', named),
 		category: () => t('nextfleet', 'Its category is still to be chosen.'),
 		// The user's own answer, not a fault of the file: the outcome set has no fourth kind.
 		skipped: () => t('nextfleet', 'Skipped, as you chose for its category.'),
-		adblue: () => t('nextfleet', '{column} says AdBlue, which is no fuel.', named),
+		adblue: () => t('nextfleet', '{column} says AdBlue, which is not a fuel.', named),
 		hydrogen: () => t('nextfleet', '{column} says hydrogen, which this app does not record.', named),
 		purchase: () => t('nextfleet', 'A purchase price is not a running cost.'),
 		refund: () => t('nextfleet', 'A refund would be a negative cost.'),
-		energy: () => t('nextfleet', 'The vehicle takes no such energy.'),
 		duplicate: () => t('nextfleet', 'Already there.'),
+		cells: () => t('nextfleet', 'The row has more cells than the file has columns.'),
 	}
 
 	return words[reason]?.() ?? (column === null ? reason : `${column}: ${reason}`)
@@ -116,6 +118,10 @@ export function refusalWord(reason, row) {
 		too_large: () => t('nextfleet', 'The file is larger than 5 MB.'),
 		too_many_rows: () => t('nextfleet', 'The file has more than {max} rows.', { max: formatCount(20000) }),
 		line_too_long: () => t('nextfleet', 'Row {row} is longer than 64 KiB, so the file is not read.', at),
+		// Without a row it is the file's cap (CsvReader::MAX_FILE_CELLS).
+		too_many_cells: () => row === null
+			? t('nextfleet', 'The file has more than {max} cells.', { max: formatCount(500000) })
+			: t('nextfleet', 'Row {row} has more than {max} cells, so the file is not read.', { ...at, max: formatCount(256) }),
 		binary: () => t('nextfleet', 'The file is not text.'),
 		encoding: () => t('nextfleet', 'Row {row} is neither UTF-8 nor Windows-1252 text, or the file mixes the two.', at),
 		unclosed_quote: () => t('nextfleet', 'A quote opened in row {row} is never closed.', at),

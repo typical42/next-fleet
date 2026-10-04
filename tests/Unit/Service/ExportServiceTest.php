@@ -14,6 +14,7 @@ use OCA\NextFleet\Db\ExpenseMapper;
 use OCA\NextFleet\Db\MaintenanceMapper;
 use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
+use OCA\NextFleet\Service\EnteredBy;
 use OCA\NextFleet\Service\ExportService;
 use OCA\NextFleet\Service\VehicleService;
 use OCA\NextFleet\Tests\Stub\SpyLogger;
@@ -55,6 +56,7 @@ class ExportServiceTest extends TestCase {
 			$this->createMock(EnergyMapper::class),
 			$this->createMock(MaintenanceMapper::class),
 			$expenses,
+			$this->createMock(EnteredBy::class),
 			$logger,
 		);
 	}

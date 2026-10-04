@@ -51,7 +51,7 @@ class MileageClaimRendererTest extends TestCase {
 		return ['trip' => $trip, 'kilometres' => $kilometres, 'rate' => $rate, 'amount' => $amount];
 	}
 
-	/** @param list<array{trip: Trip, kilometres: ?int, rate: ?int, amount: ?int}> $lines */
+	/** @param list<array{trip: Trip, kilometres: ?int, rate: ?int, amount: ?int, missing?: list<string>, reconciled?: bool}> $lines */
 	private function render(array $lines, ?int $total, ?int $kilometres): \DOMXPath {
 		$vehicle = Vehicle::fromRow(['id' => 7, 'plate' => 'B-XY 123', 'manufacturer' => 'VW', 'model' => 'Caddy', 'jurisdiction' => 'de']);
 		$html = (new De\MileageClaimRenderer())->render(new MileageClaim($vehicle, 2026, $lines, $total, $kilometres, self::SOURCE));
@@ -140,6 +140,39 @@ class MileageClaimRendererTest extends TestCase {
 		$this->assertStringContainsString('2 Fahrten ohne Betrag sind in der Summe nicht enthalten', self::text($page, '//body'));
 	}
 
+	/**
+	 * A line the Finanzamt would not accept is printed, its amount in brackets with the reason
+	 * beneath, and the page says why the sum leaves it out. Every missing field is named, the plate
+	 * and the counters too, which have no column here. A Reconciliation Trip reads as derived even
+	 * when it lacks a field: completing it would not make it count.
+	 */
+	public function testWhatTheFinanzamtWouldNotAcceptIsMarkedAndCountedOut(): void {
+		$incomplete = $this->line(40, 300, 1200, ['partner' => null]) + ['missing' => ['plate', 'partner'], 'reconciled' => false];
+		$derived = $this->line(10, 300, 300, ['partner' => null]) + ['missing' => ['partner'], 'reconciled' => true];
+		$page = $this->render([$this->line(120, 300, 3600), $incomplete, $derived], 3600, 120);
+		$rows = $this->rows($page);
+		$body = self::text($page, '//body');
+
+		$this->assertSame('(12,00 €) fehlt: Kennzeichen, Geschäftspartner', $rows[1]['Betrag']);
+		$this->assertSame('(3,00 €) abgeleitet', $rows[2]['Betrag']);
+		$this->assertSame('Summe 120 36,00 €', self::sum($page));
+		$this->assertStringContainsString('Beträge in Klammern sind in der Summe nicht enthalten.', $body);
+		$this->assertStringContainsString('Einer Fahrt fehlen Angaben, die das Finanzamt für eine geschäftliche Fahrt verlangt', $body);
+		$this->assertStringContainsString('Ergänzt zählt sie mit.', $body);
+		$this->assertStringContainsString('1 Fahrt ist abgeleitet', $body);
+		$this->assertStringContainsString('Als geschäftliche Fahrt belegt das nichts.', $body);
+		$this->assertStringNotContainsString('ohne Betrag', $body);
+	}
+
+	/** Brackets are explained only where some amount is in them. */
+	public function testNoBracketsNoteWithoutABracketedAmount(): void {
+		$incomplete = $this->line(null, 300, null, ['partner' => null]) + ['missing' => ['partner'], 'reconciled' => false];
+		$page = $this->render([$incomplete], null, null);
+
+		$this->assertSame('nicht angegeben fehlt: Geschäftspartner', $this->rows($page)[0]['Betrag']);
+		$this->assertStringNotContainsString('Klammern', self::text($page, '//body'));
+	}
+
 	/** Nothing valued is no sum, not 0,00 €. */
 	public function testNoTotalIsNotAZeroTotal(): void {
 		$page = $this->render([$this->line(120, null, null)], null, null);
@@ -150,7 +183,14 @@ class MileageClaimRendererTest extends TestCase {
 	public function testAYearWithoutBusinessTripsSaysSo(): void {
 		$page = $this->render([], null, null);
 
-		$this->assertSame('Keine Dienstfahrten in 2026, die Sie eingetragen haben.', self::text($page, '//table/tbody/tr'));
+		$this->assertSame('Keine geschäftlichen Fahrten in 2026, die Sie eingetragen haben.', self::text($page, '//table/tbody/tr'));
+	}
+
+	/** The heading uses the category's own word, as the logbook's `Art` column does. */
+	public function testTheHeadingNamesTheBusinessTripsAndTheYear(): void {
+		$page = $this->render([], null, null);
+
+		$this->assertSame('Fahrtkosten für geschäftliche Fahrten 2026', self::text($page, '//h1'));
 	}
 
 	/**
@@ -172,6 +212,7 @@ class MileageClaimRendererTest extends TestCase {
 		$body = self::text($page, '//body');
 
 		$this->assertStringContainsString('Wohnung und erster Tätigkeitsstätte', $body);
+		$this->assertStringContainsString('Die Kilometerpauschale gilt nur für Fahrzeuge, die nicht zum Betriebsvermögen gehören.', $body);
 		$this->assertSame(self::SOURCE, $page->evaluate('string(//footer//a/@href)'));
 		$this->assertStringContainsString('nicht rechtlich geprüft', self::text($page, '//footer'));
 	}

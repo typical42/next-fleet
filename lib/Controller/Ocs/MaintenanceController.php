@@ -58,11 +58,13 @@ class MaintenanceController extends OCSController {
 	 * @param int|null $odo the counter
 	 * @param int|null $second_odo the engine hours, on a vehicle that counts them
 	 * @param string|null $closes the uuid of the reminder this work closes
-	 * @return DataResponse<Http::STATUS_CREATED, NextFleetMaintenance, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
+	 * @param string|null $client_uuid a uuid of the client's for the new row: a retry under it answers that row
+	 * @return DataResponse<Http::STATUS_CREATED, NextFleetMaintenance, array{}>|DataResponse<Http::STATUS_OK, NextFleetMaintenance, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
 	 * @throws OCSForbiddenException the caller may not log on this vehicle
 	 * @throws OCSNotFoundException no such vehicle
 	 *
 	 * 201: the record
+	 * 200: the record an earlier create under the same `client_uuid` wrote
 	 * 400: a field is not what it holds; the message names it
 	 * 412: a row the record follows changed meanwhile; send it again
 	 */
@@ -81,9 +83,10 @@ class MaintenanceController extends OCSController {
 		mixed $odo = null,
 		mixed $second_odo = null,
 		mixed $closes = null,
+		mixed $client_uuid = null,
 	): DataResponse {
-		return $this->write(fn (): DataResponse => new DataResponse(
-			$this->service->record($this->userId(), $uuid, $this->request->getParams()),
+		return $this->write(fn (): DataResponse => $this->created(
+			fn (): array => $this->service->record($this->userId(), $uuid, $this->request->getParams()),
 			Http::STATUS_CREATED,
 		));
 	}

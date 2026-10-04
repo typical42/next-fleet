@@ -8,7 +8,6 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Integration;
 
-use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Service\ExpenseService;
@@ -38,6 +37,8 @@ class SyncTest extends TestCase {
 	private const MEMBER = 'nextfleet-test-sync-member';
 	private const ACCOUNTS = [self::OWNER, self::DRIVER, self::MEMBER];
 	private const GROUP = 'nextfleet-test-sync-crew';
+	/** Made and deleted by the deleted-group case alone. */
+	private const GONE = 'nextfleet-test-sync-gone';
 	/** Made and deleted by the erasure case alone. */
 	private const ERASED = 'nextfleet-test-sync-erased';
 
@@ -66,14 +67,15 @@ class SyncTest extends TestCase {
 
 	private static function forgetAccounts(): void {
 		self::deleteAccounts([...self::ACCOUNTS, self::ERASED]);
-		\OCP\Server::get(IGroupManager::class)->get(self::GROUP)?->delete();
+		foreach ([self::GROUP, self::GONE] as $gid) {
+			\OCP\Server::get(IGroupManager::class)->get($gid)?->delete();
+		}
 	}
 
 	protected function setUp(): void {
-		$container = (new Application())->getContainer();
-		$this->sync = $container->get(SyncService::class);
-		$this->vehicles = $container->get(VehicleService::class);
-		$this->expenses = $container->get(ExpenseService::class);
+		$this->sync = \OCP\Server::get(SyncService::class);
+		$this->vehicles = \OCP\Server::get(VehicleService::class);
+		$this->expenses = \OCP\Server::get(ExpenseService::class);
 	}
 
 	/** The rows this suite invents, gone for real - a soft delete would outlive the run. */
@@ -189,19 +191,41 @@ class SyncTest extends TestCase {
 		$this->assertSame([], array_merge(...array_values($answer['changes'])));
 	}
 
-	/** `flagged` moves without its token, so one changed Reading brings the vehicle's others. */
-	public function testAChangedReadingBringsEveryLiveReadingOfItsVehicle(): void {
+	/**
+	 * A row stamped less than 120 seconds before a run began may have committed after it read, so
+	 * the next run sends it again; one stamped before that does not come twice.
+	 */
+	public function testARowStampedInsideTheSettleWindowComesAgain(): void {
+		$vehicle = $this->vehicle();
+		$young = $this->expense($vehicle, 6400);
+		$old = $this->expense($vehicle, 100);
+		$this->stamp('fleet_expenses', $young, time() - 90);
+		$this->stamp('fleet_expenses', $old, time() - 150);
+		$cursor = $this->sync(self::OWNER)['cursor'];
+
+		$this->assertSame([$young], array_column($this->sync(self::OWNER, $cursor)['changes']['expenses'], 'uuid'));
+	}
+
+	/**
+	 * A Reading entered late flags the one after it, which moves that one's token: the next sync
+	 * brings the two, and not the rest of the chain.
+	 */
+	public function testAChangedReadingBringsTheReadingsWhoseFlagItChanged(): void {
 		$vehicle = $this->vehicle();
 		$odometer = \OCP\Server::get(OdometerService::class);
-		$first = $odometer->record(self::OWNER, $vehicle->getUuid(), ['read_at' => 1750000000, 'read_at_off' => 120, 'value' => 1000]);
+		$at = ['read_at_off' => 120];
+		$odometer->record(self::OWNER, $vehicle->getUuid(), ['read_at' => 1750000000, 'value' => 1000] + $at);
+		$later = $odometer->record(self::OWNER, $vehicle->getUuid(), ['read_at' => 1750200000, 'value' => 1200] + $at);
+		$odometer->record(self::OWNER, $vehicle->getUuid(), ['read_at' => 1750400000, 'value' => 1500] + $at);
 		$this->expense($vehicle, 6400);
 		$this->age($vehicle);
 		$cursor = $this->sync(self::OWNER)['cursor'];
 
-		$second = $odometer->record(self::OWNER, $vehicle->getUuid(), ['read_at' => 1750090000, 'read_at_off' => 120, 'value' => 900]);
+		$late = $odometer->record(self::OWNER, $vehicle->getUuid(), ['read_at' => 1750100000, 'value' => 1300] + $at);
 
 		$answer = $this->sync(self::OWNER, $cursor);
-		$this->assertEqualsCanonicalizing([$first->getUuid(), $second->getUuid()], array_column($answer['changes']['readings'], 'uuid'));
+		$this->assertEqualsCanonicalizing([$late->getUuid(), $later->getUuid()], array_column($answer['changes']['readings'], 'uuid'));
+		$this->assertTrue($this->item($answer, 'readings', $later->getUuid())['row']['flagged']);
 		$this->assertSame([], $answer['changes']['expenses']);
 	}
 
@@ -220,6 +244,24 @@ class SyncTest extends TestCase {
 		$this->assertSame([], array_merge(...array_values($answer['changes'])));
 		// Said once: the cursor it answered no longer lists it.
 		$this->assertSame([], $this->sync(self::DRIVER, $answer['cursor'])['unreachable']);
+	}
+
+	/**
+	 * A deleted group takes its grants with it: its former member is told the vehicle is out of
+	 * reach, and the owner is handed the grant's tombstone.
+	 */
+	public function testADeletedGroupsMemberIsToldTheVehicleIsUnreachable(): void {
+		$vehicle = $this->vehicle();
+		$groups = \OCP\Server::get(IGroupManager::class);
+		$groups->createGroup(self::GONE)?->addUser(\OCP\Server::get(IUserManager::class)->get(self::MEMBER) ?? throw new \RuntimeException('no ' . self::MEMBER));
+		$grant = $this->grant($vehicle, self::GONE, 'group');
+		$member = $this->sync(self::MEMBER)['cursor'];
+		$owner = $this->sync(self::OWNER)['cursor'];
+
+		$groups->get(self::GONE)?->delete();
+
+		$this->assertSame([$vehicle->getUuid()], $this->sync(self::MEMBER, $member)['unreachable']);
+		$this->assertNotNull($this->item($this->sync(self::OWNER, $owner), 'grants', $grant)['deleted_at']);
 	}
 
 	public function testARevokedGroupsMemberIsToldTheVehicleIsUnreachable(): void {
@@ -251,6 +293,41 @@ class SyncTest extends TestCase {
 		$this->assertSame([$expense], array_column($answer['changes']['expenses'], 'uuid'));
 		// Only the owner keeps the grants.
 		$this->assertSame([], $answer['changes']['grants']);
+	}
+
+	/**
+	 * A vehicle revoked mid-run is told unreachable, and the client drops it. Granted again before
+	 * the run ends, it is not held at its end, so the next run brings it whole.
+	 */
+	public function testAVehicleRevokedAndGrantedAgainMidRunComesWholeNextRun(): void {
+		$regranted = $this->vehicle();
+		$kept = $this->vehicle();
+		$expenses = [$this->expense($regranted, 100), $this->expense($regranted, 200)];
+		foreach ([300, 400, 500] as $amount) {
+			$this->expense($kept, $amount);
+		}
+		$grant = $this->grant($regranted, self::DRIVER, 'user');
+		$this->grant($kept, self::DRIVER, 'user');
+		$this->age($regranted);
+		$this->age($kept);
+		$first = $this->sync(self::DRIVER, '', 1);
+		$this->assertTrue($first['more']);
+
+		\OCP\Server::get(GrantService::class)->revoke(self::OWNER, $regranted->getUuid(), $grant);
+		$revoked = $this->sync(self::DRIVER, $first['cursor'], 1);
+		$this->assertSame([$regranted->getUuid()], $revoked['unreachable']);
+		$this->assertTrue($revoked['more']);
+
+		$this->grant($regranted, self::DRIVER, 'user');
+		$cursor = $revoked['cursor'];
+		$pages = 0;
+		do {
+			$answer = $this->sync(self::DRIVER, $cursor, 1);
+			$cursor = $answer['cursor'];
+		} while ($answer['more'] && ++$pages < 10);
+		$this->assertFalse($answer['more']);
+
+		$this->assertEqualsCanonicalizing($expenses, array_column($this->sync(self::DRIVER, $cursor)['changes']['expenses'], 'uuid'));
 	}
 
 	/** A vehicle in the trash is out of reach like a revoked one, and back whole once restored. */
@@ -287,10 +364,11 @@ class SyncTest extends TestCase {
 	public function testAnErasureResetsEveryCursorHandedOutBeforeIt(): void {
 		$vehicle = $this->vehicle();
 		$expense = $this->expense($vehicle, 6400);
-		$this->age($vehicle);
-		$cursor = $this->sync(self::OWNER)['cursor'];
 		$users = \OCP\Server::get(IUserManager::class);
 		$users->createUser(self::ERASED, bin2hex(random_bytes(16)));
+		$this->grant($vehicle, self::ERASED, 'user');
+		$this->age($vehicle);
+		$cursor = $this->sync(self::OWNER)['cursor'];
 
 		$users->get(self::ERASED)?->delete();
 
@@ -298,6 +376,18 @@ class SyncTest extends TestCase {
 		$this->assertTrue($answer['reset']);
 		$this->assertSame([$expense], array_column($answer['changes']['expenses'], 'uuid'));
 		$this->assertFalse($this->sync(self::OWNER, $answer['cursor'])['reset']);
+	}
+
+	/** An account that named no row changes nothing a client holds, so no cursor starts over. */
+	public function testAnErasureThatChangedNothingLeavesEveryCursorStanding(): void {
+		$this->expense($this->vehicle(), 6400);
+		$cursor = $this->sync(self::OWNER)['cursor'];
+		$users = \OCP\Server::get(IUserManager::class);
+		$users->createUser(self::ERASED, bin2hex(random_bytes(16)));
+
+		$users->get(self::ERASED)?->delete();
+
+		$this->assertFalse($this->sync(self::OWNER, $cursor)['reset']);
 	}
 
 	/** Paging hands every row over once in a run, whatever the page size. */
@@ -382,13 +472,22 @@ class SyncTest extends TestCase {
 		return (int)$qb->executeQuery()->fetchOne();
 	}
 
+	private function stamp(string $table, string $uuid, int $updatedAt): void {
+		$qb = \OCP\Server::get(IDBConnection::class)->getQueryBuilder();
+		$qb->update($table)
+			->set('updated_at', $qb->createNamedParameter($updatedAt, $qb::PARAM_INT))
+			->where($qb->expr()->eq('uuid', $qb->createNamedParameter($uuid)));
+		$qb->executeStatement();
+	}
+
 	/** Every row of the vehicle a thousand seconds older, well past the settle window. */
 	private function age(Vehicle $vehicle): void {
 		$db = \OCP\Server::get(IDBConnection::class);
 		foreach (self::TABLES as $table) {
 			$qb = $db->getQueryBuilder();
 			$qb->update($table)
-				->set('updated_at', $qb->createFunction('updated_at - 1000'))
+				// Quoted: Oracle folds a bare name to upper case.
+				->set('updated_at', $qb->createFunction($qb->getColumnName('updated_at') . ' - 1000'))
 				->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicle->getId(), $qb::PARAM_INT)));
 			$qb->executeStatement();
 		}

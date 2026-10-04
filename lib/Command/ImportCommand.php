@@ -11,6 +11,7 @@ namespace OCA\NextFleet\Command;
 use OCA\NextFleet\Exception\AccessDeniedException;
 use OCA\NextFleet\Exception\FileChangedException;
 use OCA\NextFleet\Exception\ImportRefusedException;
+use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Import\Values;
 use OCA\NextFleet\Service\ImportService;
 use OCA\NextFleet\Service\UserZone;
@@ -72,6 +73,13 @@ class ImportCommand extends Command {
 			$fields = $this->request($input, $userId);
 			$preview = $this->import->preview($userId, $vehicleUuid, $fields);
 			$this->describe($preview, $output);
+			// The service ignores a text the file does not hold; here it can only be a typo.
+			/** @var array<string, string> $mapped */
+			$mapped = $fields['category_map'] ?? [];
+			$unknown = array_diff(array_map('strval', array_keys($mapped)), $preview['categories']);
+			if ($unknown !== []) {
+				throw new \InvalidArgumentException('--map names ' . implode(', ', $unknown) . ', which the file does not hold');
+			}
 			if ($input->getOption('dry-run') === true) {
 				return self::SUCCESS;
 			}
@@ -82,6 +90,10 @@ class ImportCommand extends Command {
 			return self::FAILURE;
 		} catch (ImportRefusedException $e) {
 			$output->writeln('<error>The file is not one an import reads: ' . $e->getMessage() . '</error>');
+
+			return self::FAILURE;
+		} catch (StaleUpdateException) {
+			$output->writeln('<error>Another write to the vehicle raced the import; nothing was written. Run it again.</error>');
 
 			return self::FAILURE;
 		}

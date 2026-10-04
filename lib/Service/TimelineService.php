@@ -220,7 +220,7 @@ class TimelineService {
 	 * @throws \OCP\DB\Exception
 	 */
 	private function dressed(string $userId, Vehicle $vehicle, array $rows): array {
-		return $this->withEnteredBy($vehicle, $this->withMay($userId, $vehicle, $this->withClosing((int)$vehicle->getId(), $this->withConsumption($vehicle, $this->withFlags($vehicle, $this->withMissing($vehicle, $this->withReadings((int)$vehicle->getId(), $rows)))))));
+		return $this->withEnteredBy($vehicle, $this->withMay($userId, $vehicle, $this->withClosing((int)$vehicle->getId(), $this->withConsumption($vehicle, $this->withFlags($vehicle, $this->withOverlaps((int)$vehicle->getId(), $this->withMissing($vehicle, $this->withReadings((int)$vehicle->getId(), $rows))))))));
 	}
 
 	/**
@@ -366,6 +366,50 @@ class TimelineService {
 			if ($row['type'] === self::ENERGY) {
 				$rows[$index]['flags'] = EnergyService::flags($vehicle, $row[self::ENERGY]);
 			}
+		}
+
+		return $rows;
+	}
+
+	/**
+	 * What each trip on the page is flagged for, computed on read: `overlap` when another live trip
+	 * of the vehicle shares part of its span - one vehicle drives one journey at a time - and
+	 * `overtaken` on a Reconciliation Trip overlapped by a trip entered after it, whose kilometres
+	 * it now counts twice (CONTEXT.md). One query for the page, which reaches trips off it too.
+	 *
+	 * @param list<array<string, mixed>> $rows
+	 * @return list<array<string, mixed>>
+	 * @throws \OCP\DB\Exception
+	 */
+	private function withOverlaps(int $vehicleId, array $rows): array {
+		$trips = array_column(array_filter($rows, static fn (array $row): bool => $row['type'] === self::TRIP), self::TRIP);
+		if ($trips === []) {
+			return $rows;
+		}
+
+		$others = $this->trips->findOverlapping(
+			$vehicleId,
+			min(array_map(static fn (Trip $trip): int => $trip->getStartedAt(), $trips)),
+			max(array_map(static fn (Trip $trip): int => $trip->getEndedAt(), $trips)),
+		);
+		foreach ($rows as $index => $row) {
+			if ($row['type'] !== self::TRIP) {
+				continue;
+			}
+			$trip = $row[self::TRIP];
+			$flags = [];
+			foreach ($others as $other) {
+				if ($other->getId() === $trip->getId()
+					|| $other->getStartedAt() >= $trip->getEndedAt()
+					|| $other->getEndedAt() <= $trip->getStartedAt()) {
+					continue;
+				}
+				$flags['overlap'] = true;
+				if ($trip->getReconciled() && $other->getCreatedAt() > $trip->getCreatedAt()) {
+					$flags['overtaken'] = true;
+				}
+			}
+			$rows[$index]['flags'] = array_keys($flags);
 		}
 
 		return $rows;

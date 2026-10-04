@@ -29,9 +29,10 @@ use OCA\NextFleet\Import\Importers;
 use OCA\NextFleet\Import\Proposal;
 use OCA\NextFleet\Import\Proposals;
 use OCP\AppFramework\Db\DoesNotExistException;
-use OCP\AppFramework\Db\TTransactional;
+use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\Files\File;
-use OCP\IDBConnection;
+use OCP\ICache;
+use OCP\ICacheFactory;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -44,10 +45,14 @@ use Psr\Log\LoggerInterface;
  * @psalm-import-type NextFleetImportUndone from \OCA\NextFleet\ResponseDefinitions as Undone
  */
 class ImportService {
-	use TTransactional;
-
 	/** What a preview shows of the rows; the counts cover them all. */
 	public const SAMPLE = 50;
+
+	/** How long an import's answer is remembered for a retry of the same request. */
+	private const REMEMBERED = 3600;
+
+	/** The last import per vehicle, so one sent again is answered and not imported twice. */
+	private ICache $answers;
 
 	public function __construct(
 		private VehicleService $fleet,
@@ -62,9 +67,12 @@ class ImportService {
 		private ExpenseService $expenses,
 		private OdometerService $odometer,
 		private VehicleMapper $vehicles,
-		private IDBConnection $db,
+		private AfterCommit $after,
 		private LoggerInterface $logger,
+		ICacheFactory $caches,
+		private ITimeFactory $time,
 	) {
+		$this->answers = $caches->createDistributed(Application::APP_ID . '-import');
 	}
 
 	/**
@@ -150,34 +158,93 @@ class ImportService {
 		if ($etag !== $file->getEtag()) {
 			throw new FileChangedException('The file changed since the preview');
 		}
+		// The same request about the same file at the same etag: a retry of an answer that got
+		// lost, not a second import. The file's etag is in the request, so a file written since
+		// imports anew; another answer to a question is another request.
+		$request = hash('sha256', json_encode([$userId, $fields], JSON_THROW_ON_ERROR));
+		$remembered = $this->remembered($vehicle, $request);
+		if ($remembered !== null) {
+			return $remembered;
+		}
 		[, $proposals] = $this->propose($vehicle, $importer, $recordType, $file, $fields);
+		// Looked up again: the node found before the read keeps the etag it was found with.
+		if ($etag !== $this->files->find($userId, OwnFiles::id($fields['file_id'] ?? null))->getEtag()) {
+			throw new FileChangedException('The file changed while it was read');
+		}
 		if ($proposals->open !== []) {
 			throw new \InvalidArgumentException('Still to be answered: ' . implode(', ', array_keys($proposals->open)));
 		}
 
 		// Marked under the hold, so a row somebody entered since the preview is a duplicate here.
-		[$all, $created] = $this->atomicRetry(function () use ($userId, $vehicle, $proposals, $includeDuplicates): array {
-			$this->vehicles->hold((int)$vehicle->getId());
-			$all = $this->marked($vehicle, $proposals->all);
-			$created = $this->odometer->batch($vehicle, fn (): array => array_map(
-				fn (Proposal $proposal): array => ['type' => $proposal->kind, 'uuid' => $this->write($vehicle, $userId, $proposal)],
-				array_values(array_filter($all, static fn (Proposal $proposal): bool => $proposal->creates($includeDuplicates))),
-			));
+		// Through AfterCommit: a maintenance row's reminder withdrawals wait for this commit.
+		try {
+			[$answer, $imported] = $this->after->run(function () use ($userId, $vehicle, $proposals, $includeDuplicates, $request): array {
+				$this->vehicles->hold((int)$vehicle->getId());
+				// A twin sent while this one ran has waited here for its commit.
+				$remembered = $this->remembered($vehicle, $request);
+				if ($remembered !== null) {
+					return [$remembered, false];
+				}
+				$since = $this->time->getTime();
+				$all = $this->marked($vehicle, $proposals->all);
+				$created = $this->odometer->batch($vehicle, fn (): array => array_map(
+					fn (Proposal $proposal): array => ['type' => $proposal->kind, 'uuid' => $this->write($vehicle, $userId, $proposal)],
+					array_values(array_filter($all, static fn (Proposal $proposal): bool => $proposal->creates($includeDuplicates))),
+				));
+				$this->restamp($vehicle, $since);
+				$answer = ['counts' => self::counted($all, $includeDuplicates)[0], 'created' => $created];
+				// Before the commit, so the twin finds it once the hold is free.
+				$this->answers->set((string)$vehicle->getId(), ['request' => $request, 'answer' => $answer], self::REMEMBERED);
 
-			return [$all, $created];
-		}, $this->db);
+				return [$answer, true];
+			});
+		} catch (\Throwable $e) {
+			// Nothing was written, so the answer remembered names nothing.
+			$this->answers->remove((string)$vehicle->getId());
+			throw $e;
+		}
 
-		// docs/security.md#what-is-logged
-		$this->logger->info('Import', [
-			'app' => Application::APP_ID,
-			'user' => $userId,
-			'vehicle' => $vehicleUuid,
-			'importer' => $importer->key(),
-			'record_type' => $recordType,
-			'rows' => count($created),
-		]);
+		if ($imported) {
+			// docs/security.md#what-is-logged
+			$this->logger->info('Import', [
+				'app' => Application::APP_ID,
+				'user' => $userId,
+				'vehicle' => $vehicleUuid,
+				'importer' => $importer->key(),
+				'record_type' => $recordType,
+				'rows' => count($answer['created']),
+			]);
+		}
 
-		return ['counts' => self::counted($all, $includeDuplicates)[0], 'created' => $created];
+		return $answer;
+	}
+
+	/**
+	 * The answer of the vehicle's last import, if it was this request and every entry it names is
+	 * still live. An attempt rolled back after it remembered its answer named entries that never
+	 * were; an entry deleted since is one a second import should bring back.
+	 *
+	 * @return Result|null
+	 * @throws \OCP\DB\Exception
+	 */
+	private function remembered(Vehicle $vehicle, string $request): ?array {
+		$remembered = $this->answers->get((string)$vehicle->getId());
+		if (!is_array($remembered) || ($remembered['request'] ?? null) !== $request) {
+			return null;
+		}
+		/** @var Result $answer */
+		$answer = $remembered['answer'];
+		$byKind = [];
+		foreach ($answer['created'] as ['type' => $kind, 'uuid' => $uuid]) {
+			$byKind[$kind][] = $uuid;
+		}
+		foreach ($byKind as $kind => $uuids) {
+			if ($this->rows($kind)->countLive((int)$vehicle->getId(), $uuids) !== count($uuids)) {
+				return null;
+			}
+		}
+
+		return $answer;
 	}
 
 	/**
@@ -196,16 +263,38 @@ class ImportService {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
 		$created = self::created($fields['created'] ?? null);
 
-		return $this->atomicRetry(function () use ($userId, $vehicle, $created): array {
+		$undone = $this->after->run(function () use ($userId, $vehicle, $created): array {
 			$this->vehicles->hold((int)$vehicle->getId());
+			$since = $this->time->getTime();
 			$this->odometer->batch($vehicle, function () use ($userId, $vehicle, $created): void {
 				foreach ($created as ['type' => $kind, 'uuid' => $uuid]) {
 					$this->remove($vehicle, $userId, $kind, $uuid);
 				}
 			});
+			$this->restamp($vehicle, $since);
 
 			return ['undone' => count($created)];
-		}, $this->db);
+		});
+		// The import it took back is no answer to a retry any more: its entries are gone.
+		$this->answers->remove((string)$vehicle->getId());
+
+		return $undone;
+	}
+
+	/**
+	 * Every row the import or undo wrote, stamped again just before the commit
+	 * (BaseMapper::restamp()). The tables an import writes; it closes no reminder.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	private function restamp(Vehicle $vehicle, int $since): void {
+		$now = $this->time->getTime();
+		if ($now === $since) {
+			return;
+		}
+		foreach ([$this->energyRows, $this->maintenanceRows, $this->expenseRows, $this->readingRows] as $rows) {
+			$rows->restamp((int)$vehicle->getId(), $since, $now);
+		}
 	}
 
 	/**
@@ -389,24 +478,15 @@ class ImportService {
 	}
 
 	/**
-	 * Each proposal as the vehicle would take it: a fill-up of an energy it does not take is
-	 * unreadable, since the fill-up's own rule would refuse it, and a row already there is a
-	 * duplicate.
+	 * Each proposal with a row already there marked a duplicate. A fill-up of an energy the
+	 * vehicle does not take is not refused: the entry sheet takes it and flags it
+	 * (EnergyService::FOREIGN_ENERGY), and so does the import.
 	 *
 	 * @param list<Proposal> $proposals
 	 * @return list<Proposal>
 	 * @throws \OCP\DB\Exception
 	 */
 	private function marked(Vehicle $vehicle, array $proposals): array {
-		$energies = $vehicle->getEnergyTypes() ?? [];
-		$proposals = array_map(
-			static fn (Proposal $proposal): Proposal => $proposal->kind === Proposal::ENERGY && $proposal->outcome !== Proposal::UNREADABLE
-				&& !in_array($proposal->fields['energy'] ?? null, $energies, true)
-				? new Proposal($proposal->kind, [], $proposal->row, Proposal::UNREADABLE, 'energy')
-				: $proposal,
-			$proposals,
-		);
-
 		$vehicleId = (int)$vehicle->getId();
 		$live = [];
 		foreach (Duplicates::span($proposals) as $kind => [$from, $to]) {

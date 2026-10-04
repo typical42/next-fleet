@@ -37,6 +37,10 @@ The app holds a movement profile: where someone was, when, and why. Treat it acc
   admin's "members only" setting a grantee shares a group with the owner, and with group sharing
   off no group is granted, as core's share checks read them ([Nextcloud integration](architecture.md#nextcloud-integration)). A grant hands over a
   movement profile, more than most shares do; the picker offering no one else is not the check.
+  A reminder recipient follows the same rule (`Sharable`), since a reminder names the plate, and is
+  refused in the words of a missing account, so the list neither enumerates accounts nor mails past
+  "members only". Whoever already sees the vehicle passes: they know the plate, and the probe tells
+  an editor only who else uses a car they edit.
 - **A grant does not outlive its grantee.** Nextcloud lets a deleted uid or group id be taken
   again, so a deleted account's grants are renamed to its pseudonym and a deleted group's are
   revoked ([data model](architecture.md#data-model)). Otherwise whoever creates a group under an
@@ -50,7 +54,9 @@ The app holds a movement profile: where someone was, when, and why. Treat it acc
   home storage, since a group folder or an admin's external storage names whoever asks as the
   owner ([documents](architecture.md#documents)). Otherwise any id on the instance would open somebody
   else's Files to everyone who may view one vehicle. The access rule is asked before the file, so
-  a refused attacher learns nothing about an id. The [inbox](architecture.md#the-inbox) folder
+  a refused attacher learns nothing about an id. The download asks the same again: a file moved
+  out of its attacher's own Files — into a share, a group folder or an external storage — is a 404,
+  because somebody else can change it there. The [inbox](architecture.md#the-inbox) folder
   follows the same rule: a folder of the user's own Files, never a share or a group folder.
 
 ### The API
@@ -81,21 +87,25 @@ every rule above holds through it, and the IDOR matrix walks both doors. What it
 - **Nothing uploaded is ever rendered inline.** Downloads go out as an attachment
   (`Content-Disposition`) with `X-Content-Type-Options: nosniff`, and the client-supplied MIME type
   is never trusted. **An SVG served inline from our origin is script execution** — a receipt is a
-  plausible SVG, so this is not theoretical.
+  plausible SVG, so this is not theoretical. The screen saves a paper through a blob URL, which is
+  of our origin too, so the blob is typed `application/octet-stream` (`src/utils/papers.js`).
 - **CSV export is escaped against formula injection.** A field starting with `=`, `+`, `-`, `@`, tab
   or CR gets a leading apostrophe. Otherwise a trip named `=cmd|…` runs when a colleague opens the
   export in Excel — the classic bug in an app whose main output is CSV.
-- **CSV import is bounded** (`lib/Import/CsvReader.php`): at most 5 000 000 bytes and
-  20 000 data rows, read streaming. A row over 64 KiB, a NUL byte, an unclosed quote, CR-only line
-  breaks, or text that is not all UTF-8 (BOM or not) or all Windows-1252 refuses the file; nothing
-  else is guessed. No archives, no `unserialize`. A cell is text until a field parses it: nothing is
-  evaluated. The file is one the caller owns in their own Files, checked as a paper's is
-  (`OwnFiles`); a refused file is a 422 naming the reason, never a 500.
+- **CSV import is bounded** (`lib/Import/CsvReader.php`): at most 5 000 000 bytes, 20 000 data
+  rows and 500 000 cells (header included), read streaming, each byte scanned once. A row over
+  64 KiB or 256 cells, a NUL byte, an unclosed quote, CR-only line breaks, or text that is not all
+  UTF-8 (BOM or not) or all Windows-1252 refuses the file; nothing else is guessed. No archives, no `unserialize`. A cell is
+  text until a field parses it: nothing is evaluated. The file is one the caller owns in their own
+  Files, checked as a paper's is (`OwnFiles`); a refused file is a 422 naming the reason, never a
+  500.
 - **Reports load no remote resources.** v1 renders printable HTML and ships no PDF library
   ([ADR 0005](adr/0005-no-pdf-library.md)), which removes this surface rather than defending it. The
   rule stands for the day a server-side renderer arrives: a renderer that fetches URLs is an SSRF
   hole with a friendly name. The printable page inlines its own CSS and references nothing external.
-- **Never `v-html`**, anywhere, for anything. Every value on screen came from a person.
+- **Never `v-html`**, anywhere, for anything. Every value on screen came from a person. Vue escapes
+  what it shows, so `src/utils/l10n.js` translates without escaping or sanitizing: a name reads as
+  typed, not as `O&#39;Brien`. `l10n.spec.js` fails on a raw HTML sink or on the library's own `t`.
 
 ### The client keeps nothing
 
@@ -148,7 +158,17 @@ release goes out signed with our certificate, which means our name is on whateve
 
 - No raw SQL; QueryBuilder with bound parameters only. No `exec`, no `eval`, no writes outside the
   app's own paths.
-- Bounded input: integers clamped to sane ranges, string lengths capped, enums whitelisted.
+- **Every input has a bound** (`lib/Service/Field.php`), refused with a 400 naming the field, never
+  truncated or clamped. Free text: 10 000 characters (notes, handover notes); names and labels
+  their column's width. Money: 10^12 cents. Counters and distances: 10^9. Fill-up amounts:
+  10^12 ml or Wh; tank and battery 10^9. VAT rates up to 100 %, months up to 1 200, instants
+  up to the year 9999. Words come from a fixed list; dismissed hints hold 1 000 vehicles. The
+  import reads a cell past these bounds as unreadable, so its preview refuses the row the write
+  would. `Field::read` throws a `LogicException` (a 500) for a text or a count read without its
+  bound, and `BoundsTest` fails for a writable column that has none.
+- **A booking spans at most 90 days, ends at most a year ahead, and starts no earlier than 5
+  minutes ago.** A change may keep a start that has gone by, so someone running late can still
+  edit their booking, and a booking made before these bounds keeps its whole span.
 - **Logs never contain destinations, purposes or tokens.** Errors carry ids, not content.
 - **Export endpoints are rate-limited and logged.** A full trip CSV is the most sensitive artefact
   this app can produce, and it is one request away. Sync is rate-limited and logged too
@@ -160,7 +180,8 @@ release goes out signed with our certificate, which means our name is on whateve
 Data that leaves or enters in bulk leaves one line at `info` per request. The CSV export, each sync
 page and each import name who, which vehicle — "all reachable" for sync — what (table and year, or
 importer and record type) and how many rows. The logbook and the mileage claim name who, which
-vehicle and which year. Nothing else: no payload, and no file name, which can say whose car it is.
+vehicle and which year. The personal data export names whose account and how many rows. Nothing
+else: no payload, and no file name, which can say whose car it is.
 
 `info` shows from `loglevel` 1; Nextcloud's default, 2, hides it, so an admin who wants the trail
 turns it on. Not `warning`: these are normal actions, and a sync client alone writes a line every
@@ -181,18 +202,16 @@ The review of M6–M9 (2026-10-03) left these open on purpose:
 - **An Entry's author can undo a manager's delete or void of it.** Undo takes the delete's rule,
   and the author holds it for their own Entry. They could enter it again with `log` anyway; the
   audit keeps both moves.
-- **Undoing a paper's *Remove* asks the row's rule, not the file's again.** It brings back the
-  attacher's file as it was attached, as a live paper keeps serving it. Nothing re-asks the file
-  side while a paper lives either.
 - **Access is read before the vehicle is held.** A write that passed just before a revoke commits
   just after it: the same outcome as arriving a moment earlier.
-- **Adding a recipient tells whether an account exists.** Core's own sharee search answers an exact
-  uid the same way by default.
 - **Undoing an import writes no log line.** It soft-deletes only what the caller imported, so no
   data leaves or enters ([what is logged](#what-is-logged)).
 
 ### Process
 
-`SECURITY.md` with a contact address and a response expectation — a third-party app is not covered
-by Nextcloud's own bug bounty, so the reporting path has to be ours. `/security-review` on the diff
-before every release, and a dependency audit on every merge to `main`.
+A third-party app is not covered by Nextcloud's own bug bounty, so the reporting path has to be
+ours. [`SECURITY.md`](../SECURITY.md) sends reports to GitHub's private vulnerability reporting,
+never a public issue, and promises a first reply within 14 days; a confirmed issue is fixed in the
+next release, with credit if the reporter wants it. No personal address is published (Johannes's
+choice, 2026-10-03). `/security-review` on the diff before every release, and a dependency audit on
+every merge to `main`.

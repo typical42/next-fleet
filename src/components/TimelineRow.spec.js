@@ -53,7 +53,7 @@ function journey(trip, reading = { value: 148402, origin: 'observed', flagged: f
 
 /**
  * @param {object} odometer - the Reading's own fields, over the ordinary ones
- * @return {object} the row a timeline page carries for it
+ * @return {{odometer: object} & Record<string, unknown>} the row a timeline page carries for it
  */
 function counter(odometer) {
 	return {
@@ -213,6 +213,43 @@ describe('a timeline row', () => {
 		expect(row(counter({ value: 148320 })).text()).not.toContain('In question')
 	})
 
+	/**
+	 * Rule 3's question, with its two answers on the row: a replaced counter is answered here, a
+	 * typo is fixed in the sheet the Entry was entered in (docs/architecture.md#odometer-rules).
+	 */
+	it('asks whether a lower reading is a counter replaced or a typo', async () => {
+		const entry = counter({ value: 30, flagged: true, updated_at: 1788391900 })
+		const wrapper = row(entry)
+
+		expect(wrapper.text()).toContain('Was the counter replaced, or is this a typo?')
+		const [replaced, typo] = wrapper.findAll('.row__question button')
+		expect(replaced.text()).toBe('Counter replaced')
+		expect(typo.text()).toBe('Typo')
+
+		await replaced.trigger('click')
+		await typo.trigger('click')
+
+		expect(wrapper.emitted('reset')).toEqual([[entry.odometer]])
+		expect(wrapper.emitted('open')).toEqual([[entry]])
+	})
+
+	/** A fill-up's question is the Reading it left on the counter that is in question. */
+	it('answers for the reading in question on a fill-up', async () => {
+		const flagged = { uuid: 'r-2', value: 30, counter: 'main', origin: 'observed', flagged: true, updated_at: 1788391900 }
+		const wrapper = row(cost('energy', { amount: 40000, energy: 'diesel' }, { readings: [flagged] }))
+
+		await wrapper.get('.row__question button').trigger('click')
+
+		expect(wrapper.emitted('reset')).toEqual([[flagged]])
+	})
+
+	/** Only an Observed Reading asks it, and only of whoever may change the Entry (OdometerService::reset()). */
+	it('asks no such question of a derived reading, or of a reader who may not change the entry', () => {
+		expect(row(journey({ distance: 82 }, { value: 148402, origin: 'derived', flagged: true })).find('.row__question').exists())
+			.toBe(false)
+		expect(row({ ...counter({ value: 30, flagged: true }), may: [] }).find('.row__question').exists()).toBe(false)
+	})
+
 	/** The row asks for what the trip lacks in the words the entry sheet asked by. */
 	it('asks an incomplete trip for what it lacks under Logbook Mode', () => {
 		const wrapper = row(
@@ -221,7 +258,11 @@ describe('a timeline row', () => {
 		)
 
 		expect(wrapper.text()).toContain('Incomplete')
-		expect(wrapper.text()).toContain('Still missing: Start counter, End counter, Business partner')
+		expect(wrapper.text()).toContain('Still missing: Odometer at departure, Odometer at arrival, Business partner')
+		expect(row(
+			{ ...journey({ distance: 82 }), missing: ['start_odo'] },
+			{ ...VEHICLE, odo_unit: 'h', logbook_mode: true },
+		).text()).toContain('Still missing: Start counter')
 	})
 
 	/** docs/features.md#logbook-mode */
@@ -244,7 +285,7 @@ describe('a timeline row', () => {
 			props: { entry: journey({ start_odo: 149652, end_odo: 149734 }), vehicle: { ...VEHICLE, logbook_mode: true }, gap },
 		})
 
-		expect(wrapper.text()).toContain('1,250 km unaccounted before this trip')
+		expect(wrapper.text()).toContain('1,250 km unaccounted for before this trip')
 		await wrapper.get('.row__gap button').trigger('click')
 
 		expect(wrapper.emitted('closeGap')).toEqual([[gap]])
@@ -254,6 +295,35 @@ describe('a timeline row', () => {
 	it('says a trip was written to close a Gap', () => {
 		expect(row(journey({ distance: 1250, category: 'private', reconciled: true })).text()).toContain('Reconciled')
 		expect(row(journey({ distance: 82, reconciled: false })).text()).not.toContain('Reconciled')
+	})
+
+	/** One vehicle, one journey at a time: two trips sharing a span are a mistake in one of them. */
+	it('says a trip overlaps another', () => {
+		const text = row({ ...journey({ distance: 82 }), flags: ['overlap'] }).text()
+
+		expect(text).toContain('Overlaps another trip')
+		expect(text).not.toContain('Reconciliation overtaken')
+	})
+
+	/**
+	 * A trip entered later records kilometres the reconciliation stood for, so the two count them
+	 * twice. Voiding the reconciliation is the fix, offered on the row; overtaken says the overlap.
+	 */
+	it('offers to void a reconciliation a later trip overtook', async () => {
+		const entry = { ...journey({ distance: 1250, category: 'private', reconciled: true }), flags: ['overlap', 'overtaken'] }
+		const wrapper = row(entry)
+
+		expect(wrapper.text()).toContain('Reconciliation overtaken')
+		expect(wrapper.text()).not.toContain('Overlaps another trip')
+		await wrapper.get('.row__gap button').trigger('click')
+
+		expect(wrapper.emitted('void')).toEqual([[entry]])
+	})
+
+	it('offers no void to a reader who may not delete the reconciliation', () => {
+		const entry = { ...journey({ distance: 1250, reconciled: true }), flags: ['overlap', 'overtaken'], may: [] }
+
+		expect(row(entry).find('.row__gap button').exists()).toBe(false)
 	})
 
 	it('offers nothing for a trip that opened no Gap', () => {
@@ -298,7 +368,7 @@ describe('a timeline row', () => {
 	/** On a vehicle others use, the server names who entered each row (TimelineService::withEnteredBy()). */
 	it('says who entered it when the server names them', () => {
 		expect(row({ ...counter({ value: 120500 }), entered_by: 'Ben Fahrer' }).text()).toContain('Entered by Ben Fahrer')
-		expect(row(cost('maintenance', { title: 'Wipers', cost: null }, { readings: [], entered_by: 'erased-k3x9' })).text()).toContain('Entered by erased-k3x9')
+		expect(row(cost('maintenance', { title: 'Wipers', cost: null }, { readings: [], entered_by: 'erased:k3x9' })).text()).toContain('Entered by erased:k3x9')
 	})
 
 	/** A vehicle nobody else uses looks as it did before access existed. */
@@ -313,7 +383,7 @@ describe('a timeline row', () => {
 			props: { entry: journey({ distance: 82 }), vehicle: { ...VEHICLE, logbook_mode: true, may: ['view'] }, gap },
 		})
 
-		expect(wrapper.text()).toContain('40 km unaccounted before this trip')
+		expect(wrapper.text()).toContain('40 km unaccounted for before this trip')
 		expect(wrapper.find('.row__gap button').exists()).toBe(false)
 	})
 
@@ -357,7 +427,7 @@ describe('the papers on a row', () => {
 
 	/** Followed, a refusal would replace the app with a page of JSON (src/utils/papers.js). */
 	it('says on the row why a paper was not saved', async () => {
-		vi.mocked(savePaper).mockResolvedValueOnce('This document is gone: it was removed, or its file was deleted from Files.')
+		vi.mocked(savePaper).mockResolvedValueOnce('This document is gone: it was removed, or its file is no longer in the Files of whoever attached it.')
 		const wrapper = mount(TimelineRow, { props: { entry: work, vehicle: VEHICLE, papers: [invoice] } })
 
 		await wrapper.get('.row__papers a').trigger('click')
@@ -366,12 +436,12 @@ describe('the papers on a row', () => {
 		expect(wrapper.get('.row__papers').text()).toContain('This document is gone')
 	})
 
-	/** A deleted file has no link to follow, and the row says so rather than offering a dead one. */
+	/** A file deleted or moved out of its attacher's own Files has no link to follow, and the row says so. */
 	it('says a linked file is gone', () => {
 		const wrapper = mount(TimelineRow, { props: { entry: work, vehicle: VEHICLE, papers: [{ ...invoice, name: null, mime: null }] } })
 
 		expect(wrapper.find('.row__papers a').exists()).toBe(false)
-		expect(wrapper.get('.row__papers').text()).toContain('The file is gone from Files')
+		expect(wrapper.get('.row__papers').text()).toContain('The file is no longer in the Files of whoever attached it')
 	})
 
 	it('shows no paperclip on a row without papers', () => {

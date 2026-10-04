@@ -86,6 +86,25 @@ class ClientTest extends TestCase {
 		$this->assertSame(1000, self::$server->ocs(self::$anna, 'GET', "/vehicles/{$vehicle['uuid']}")->data()['odo_value']);
 	}
 
+	/**
+	 * A create sent again after its answer was lost: the same trip, 200, and still one Reading.
+	 * Over HTTP, because `client_uuid` sits beside the route's `{uuid}` in one namespace.
+	 */
+	public function testATripSentTwiceUnderItsClientUuidIsOneTrip(): void {
+		$vehicle = $this->vehicle('API 5');
+		$trip = ['client_uuid' => '0195e2f1-4444-4000-8000-' . bin2hex(random_bytes(6)), 'started_at' => 1750000000, 'started_at_off' => 120,
+			'ended_at' => 1750005400, 'ended_at_off' => 120, 'end_odo' => 1000, 'category' => 'business'];
+
+		$created = self::$server->ocs(self::$anna, 'POST', "/vehicles/{$vehicle['uuid']}/trips", $trip);
+		$again = self::$server->ocs(self::$anna, 'POST', "/vehicles/{$vehicle['uuid']}/trips", $trip);
+
+		$this->assertSame(201, $created->status, $created->body);
+		$this->assertSame(200, $again->status, $again->body);
+		$this->assertSame($trip['client_uuid'], $created->data()['uuid']);
+		$this->assertSame($created->data(), $again->data());
+		$this->assertCount(1, self::$server->ocs(self::$anna, 'GET', "/vehicles/{$vehicle['uuid']}/readings")->data());
+	}
+
 	public function testAStaleEditIsA412WithTheConflictFlag(): void {
 		$vehicle = $this->vehicle('API 3');
 
@@ -109,6 +128,36 @@ class ClientTest extends TestCase {
 		$this->assertStringStartsWith('attachment', (string)$download->header('content-disposition'));
 	}
 
+	/**
+	 * A client that saves a paper and then deletes it from Files at once: the delete must not meet
+	 * the download's lock. Nextcloud keeps that lock to the request's end, which under Apache comes
+	 * before the last bytes leave, so this guards that order rather than catching a race it has seen.
+	 * `php -S` sends the bytes first, so there the delete races the request's end by a few
+	 * milliseconds: hence twenty rounds. 64 KiB, whole 8 KiB writes, is the size likeliest to slip
+	 * through first.
+	 */
+	public function testADownloadedFileDeletesAtOnce(): void {
+		$vehicle = $this->vehicle('API 9');
+		$refused = [];
+
+		for ($round = 0; $round < 20; $round++) {
+			$fileId = self::$server->upload(self::$anna, "paper-$round.txt", str_repeat('Fahrzeugschein. ', 4096));
+			$attached = self::$server->ocs(self::$anna, 'POST', "/vehicles/{$vehicle['uuid']}/documents", ['file_id' => $fileId, 'kind' => 'registration']);
+			$this->assertSame(200, $attached->status, $attached->body);
+			$document = array_values(array_filter($attached->data(), static fn (array $paper): bool => $paper['file_id'] === $fileId))[0];
+
+			$download = self::$server->request('GET', "/index.php/apps/nextfleet/vehicles/{$vehicle['uuid']}/documents/{$document['uuid']}", self::$anna);
+			$deleted = self::$server->request('DELETE', '/remote.php/dav/files/' . rawurlencode(self::$anna->uid) . "/paper-$round.txt", self::$anna);
+
+			$this->assertSame(200, $download->status, $download->body);
+			if ($deleted->status !== 204) {
+				$refused[] = "round $round: $deleted->status";
+			}
+		}
+
+		$this->assertSame([], $refused);
+	}
+
 	/** An export in the caller's Files, previewed, then imported against the file the preview read. */
 	public function testAnExportImports(): void {
 		$vehicle = $this->vehicle('API 7', ['jurisdiction' => 'de', 'energy_types' => ['diesel']]);
@@ -126,6 +175,39 @@ class ClientTest extends TestCase {
 		$this->assertSame(['new' => 2, 'duplicate' => 0, 'unreadable' => 2, 'creates' => 2], $imported->data()['counts']);
 		$this->assertSame(['energy', 'energy'], array_column($imported->data()['created'], 'type'));
 		$this->assertSame(52310, self::$server->ocs(self::$anna, 'GET', "/vehicles/{$vehicle['uuid']}")->data()['odo_value']);
+	}
+
+	/**
+	 * Two trips logged from one booking at once - two devices, one tap each, on two connections.
+	 * One is tied to it and the other refused 409, and the refusal takes its trip back with it.
+	 *
+	 * What this proves is that outcome over HTTP, in whatever order the server took the two: it
+	 * cannot tell whether they ran side by side. Apache and `php -S` with workers can run them so;
+	 * that the hold then orders them is TripServiceTest's and HoldOrderTest's to prove.
+	 */
+	public function testTwoTripsSentAtOnceFromOneBookingTieOnlyOne(): void {
+		$uuid = $this->vehicle('API 8')['uuid'];
+		// This minute: a start more than five minutes back is refused (BookingService::apply()).
+		$now = intdiv(time(), 60) * 60;
+		$booked = self::$server->ocs(self::$anna, 'POST', "/vehicles/$uuid/bookings", ['starts_at' => $now, 'starts_at_off' => 120, 'ends_at' => $now + 3 * 3600, 'ends_at_off' => 120]);
+		$this->assertSame(201, $booked->status, $booked->body);
+		$booking = $booked->data()['uuid'];
+		$out = self::$server->ocs(self::$anna, 'POST', "/vehicles/$uuid/bookings/$booking/check-out", ['odo' => 1000, 'at_off' => 120]);
+		$this->assertSame(200, $out->status, $out->body);
+		$in = self::$server->ocs(self::$anna, 'POST', "/vehicles/$uuid/bookings/$booking/check-in", ['odo' => 1100, 'at_off' => 120]);
+		$this->assertSame(200, $in->status, $in->body);
+		$trip = $in->data()['trip_draft'] + ['category' => 'business', 'booking_uuid' => $booking];
+
+		$answers = self::$server->race(self::$anna, [['POST', "/vehicles/$uuid/trips", $trip], ['POST', "/vehicles/$uuid/trips", $trip]]);
+
+		$statuses = array_map(static fn (Answer $answer): int => $answer->status, $answers);
+		sort($statuses);
+		$this->assertSame([201, 409], $statuses, $answers[0]->body . "\n" . $answers[1]->body);
+		$tied = $answers[0]->status === 201 ? $answers[0] : $answers[1];
+		$listed = self::$server->ocs(self::$anna, 'GET', "/vehicles/$uuid/bookings");
+		$this->assertSame([$tied->data()['uuid']], array_column($listed->data(), 'trip_uuid'));
+		$trips = self::$server->ocs(self::$anna, 'GET', "/vehicles/$uuid/timeline", ['type' => 'trip']);
+		$this->assertCount(1, (array)$trips->data()['rows'], $trips->body);
 	}
 
 	/** @return array<string, array{string}> */

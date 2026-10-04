@@ -3,7 +3,9 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-import { getCanonicalLocale, t } from '@nextcloud/l10n'
+import { getCanonicalLocale } from '@nextcloud/l10n'
+
+import { t } from './l10n.js'
 
 /**
  * A grouped whole number, in any locale: at most three digits, then groups of exactly three. `\s`
@@ -65,12 +67,13 @@ export function lifecycleWord(lifecycle) {
 export const ROLES = ['viewer', 'driver', 'manager']
 
 /**
- * @param {string} role - a grant's role
+ * @param {string} role - a grant's role, or `owner`, which no grant carries
  * @return {string} its word; the German nouns match the grant notification's
  */
 export function roleWord(role) {
 	/** @type {Record<string, string>} */
 	const words = {
+		owner: t('nextfleet', 'Owner'),
 		viewer: t('nextfleet', 'Viewer'),
 		driver: t('nextfleet', 'Driver'),
 		manager: t('nextfleet', 'Manager'),
@@ -249,9 +252,10 @@ export function jurisdictionWord(key, name = key) {
  * for the same reason as above.
  *
  * @param {string} column - the column, as the API spells it
+ * @param {string} [odoUnit] - the vehicle's `odo_unit`, which names a trip's counters
  * @return {string} the word for it, or the column where there is none
  */
-export function fieldWord(column) {
+export function fieldWord(column, odoUnit) {
 	/** @type {Record<string, string>} */
 	const words = {
 		vin: t('nextfleet', 'VIN'),
@@ -262,8 +266,7 @@ export function fieldWord(column) {
 		// What a logbook ruleset may require of a trip (lib/Jurisdiction/ILogbookRules.php).
 		plate: t('nextfleet', 'Registration plate'),
 		started_at: t('nextfleet', 'Departure'),
-		start_odo: t('nextfleet', 'Start counter'),
-		end_odo: t('nextfleet', 'End counter'),
+		...tripCounterWords(odoUnit),
 		to_label: t('nextfleet', 'Destination'),
 		purpose: t('nextfleet', 'Purpose'),
 		partner: t('nextfleet', 'Business partner'),
@@ -274,10 +277,24 @@ export function fieldWord(column) {
 
 /**
  * @param {string[]} columns - the fields a hint or a row asks for, in the order it asks
+ * @param {string} [odoUnit] - the vehicle's `odo_unit`
  * @return {string} their words, as one list for a sentence to carry
  */
-export function fieldWords(columns) {
-	return columns.map(fieldWord).join(', ')
+export function fieldWords(columns, odoUnit) {
+	return columns.map((column) => fieldWord(column, odoUnit)).join(', ')
+}
+
+/**
+ * The labels of a trip's two counters. A counter of hours is no odometer, so only a kilometre
+ * vehicle's trip says "odometer".
+ *
+ * @param {string} [odoUnit] - the vehicle's `odo_unit`
+ * @return {{start_odo: string, end_odo: string}} the label of each
+ */
+export function tripCounterWords(odoUnit) {
+	return odoUnit === 'h'
+		? { start_odo: t('nextfleet', 'Start counter'), end_odo: t('nextfleet', 'End counter') }
+		: { start_odo: t('nextfleet', 'Odometer at departure'), end_odo: t('nextfleet', 'Odometer at arrival') }
 }
 
 /**
@@ -425,20 +442,42 @@ export function parseWhole(input) {
 /**
  * A decimal as somebody typed it, as the integer its column holds (docs/architecture.md#data-model):
  * litres as millilitres, euros as cents. A comma and a point are both the decimal mark
- * (docs/ui.md#languages), so a field carries at most one, and no grouping - `1.234,5` is read two
- * ways by two locales, and a fill-up is never a thousand litres often enough to guess.
+ * (docs/ui.md#languages). A point also groups thousands, as a German receipt prints them, where it
+ * cannot be the mark: before a comma, more than once, or with three digits after it in a field
+ * that keeps two. A comma never groups: `1,799` is a German price per litre, and reading it as
+ * 1 799 would put a thousand euros on the bill.
  *
  * @param {string} input - what the field holds
  * @param {number} places - how many decimals the column keeps: 3 for thousandths, 2 for cents
  * @return {number|null} the scaled whole number, or null when the field says nothing usable
  */
 export function parseDecimal(input, places) {
-	const parts = /^(\d*)(?:[.,](\d*))?$/.exec(String(input).trim())
+	const typed = String(input).trim()
+	const grouped = /^([1-9]\d{0,2}(?:\.\d{3})+)(?:,(\d*))?$/.exec(typed)
+	const groups = grouped === null ? 0 : grouped[1].split('.').length - 1
+	const parts = grouped !== null && (grouped[2] !== undefined || groups > 1 || places < 3)
+		? [typed, grouped[1].replaceAll('.', ''), grouped[2]]
+		: /^(\d*)(?:[.,](\d*))?$/.exec(typed)
 	if (parts === null || (parts[1] + (parts[2] ?? '')) === '' || (parts[2] ?? '').length > places) {
 		return null
 	}
 
 	return Number(parts[1] + (parts[2] ?? '').padEnd(places, '0'))
+}
+
+/**
+ * What a decimal field says when parseDecimal() could not read it: two marks in it are a grouping
+ * it would have had to guess at, which the driver can type away; anything else is the field's own
+ * complaint.
+ *
+ * @param {string} input - what the field holds
+ * @param {string} complaint - the field's words for a value that is not a number
+ * @return {string} what to say
+ */
+export function decimalComplaint(input, complaint) {
+	return /[.,].*[.,]/.test(String(input))
+		? t('nextfleet', 'Type the amount without a thousands separator, e.g. 1234,56.')
+		: complaint
 }
 
 /**

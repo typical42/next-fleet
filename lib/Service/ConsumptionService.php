@@ -41,13 +41,10 @@ class ConsumptionService {
 	public function of(Vehicle $vehicle): array {
 		$vehicleId = (int)$vehicle->getId();
 		$fills = $this->energy->findAllForVehicle($vehicleId);
-		$ids = array_map(static fn (Energy $fill): int => (int)$fill->getId(), $fills);
 
 		$counted = [];
-		foreach ($this->readings->findForSources($vehicleId, OdoReading::ENERGY, $ids) as $reading) {
-			if ($reading->getCounter() === OdoReading::MAIN) {
-				$counted[(int)$reading->getSourceId()] = $reading;
-			}
+		foreach ($this->readings->findOfSourceType($vehicleId, OdoReading::ENERGY, OdoReading::MAIN) as $reading) {
+			$counted[(int)$reading->getSourceId()] = $reading;
 		}
 
 		$chains = [];
@@ -55,10 +52,11 @@ class ConsumptionService {
 			$chains[$fill->getEnergy()][] = $fill;
 		}
 
+		$resets = $this->readings->findResets($vehicleId, OdoReading::MAIN, PHP_INT_MIN, PHP_INT_MAX);
 		$per = self::per($vehicle);
 		$segments = [];
 		foreach ($chains as $chain) {
-			array_push($segments, ...self::segments($chain, $counted, $per));
+			array_push($segments, ...self::segments($chain, $counted, $resets, $per));
 		}
 		usort($segments, static fn (array $a, array $b): int => $a['filled_at'] <=> $b['filled_at']);
 
@@ -81,8 +79,11 @@ class ConsumptionService {
 				$amount += $fill->getAmount();
 			}
 		}
+		if ($amount === 0) {
+			return null;
+		}
 		$distance = $this->distance($vehicle, $from, $to);
-		if ($amount === 0 || $distance === null) {
+		if ($distance === null) {
 			return null;
 		}
 
@@ -128,34 +129,142 @@ class ConsumptionService {
 	}
 
 	/**
-	 * How far a counter moved in `[from, to)`: its newest Reading there minus its oldest, leaving
-	 * out any the chain questions. Null when fewer than two Readings say it moved.
+	 * How far a counter moved between `from` and `to`, segments summed
+	 * (docs/architecture.md#numbers-consumption-cost-emissions, "A period's distance"). Null when
+	 * no two Readings say it moved, or when a segment ran backwards: that hides a question nobody
+	 * answered, and a gap must produce no number rather than a wrong one.
 	 *
+	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
 	 * @throws \OCP\DB\Exception
 	 */
 	public function distance(Vehicle $vehicle, int $from, int $to, string $counter = OdoReading::MAIN): ?int {
-		$values = [];
-		foreach ($this->readings->findChain((int)$vehicle->getId(), $counter) as $reading) {
-			if (!$reading->getFlagged() && $reading->getReadAt() >= $from && $reading->getReadAt() < $to) {
-				$values[] = $reading->getValue();
+		return $this->distances($vehicle, [[$from, $to]], $counter)[0];
+	}
+
+	/**
+	 * distance() for many periods at once, as the Costs screen's twelve months and their year ask:
+	 * an edge two periods share is looked up once, and the resets once for all of them, so the
+	 * cost is per edge rather than per period.
+	 *
+	 * @param list<array{int, int}> $periods each `[from, to]`
+	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
+	 * @return list<?int> in the periods' order
+	 * @throws \OCP\DB\Exception
+	 */
+	public function distances(Vehicle $vehicle, array $periods, string $counter = OdoReading::MAIN): array {
+		$vehicleId = (int)$vehicle->getId();
+		/** @var array<int, ?OdoReading> $newest */
+		$newest = [];
+		$standing = function (int $at) use (&$newest, $vehicleId, $counter): ?OdoReading {
+			if (!array_key_exists($at, $newest)) {
+				$newest[$at] = $this->readings->findNewestStanding($vehicleId, $counter, $at);
+			}
+			return $newest[$at];
+		};
+		// Nothing stands at or before an edge only while nothing stands at all before it, so the
+		// oldest Reading after any such edge is the vehicle's oldest.
+		$oldest = false;
+
+		$spans = [];
+		foreach ($periods as $i => [$from, $to]) {
+			$start = $standing($from);
+			if ($start === null) {
+				if ($oldest === false) {
+					$oldest = $this->readings->findOldestStanding($vehicleId, $counter, PHP_INT_MIN);
+				}
+				$start = $oldest;
+			}
+			$end = $start === null ? null : $standing($to);
+			if ($start !== null && $end !== null) {
+				$spans[$i] = [$start, $end];
 			}
 		}
-		$distance = $values === [] ? 0 : end($values) - $values[0];
+		if ($spans === []) {
+			return array_fill(0, count($periods), null);
+		}
+
+		$resets = $this->readings->findResets(
+			$vehicleId,
+			$counter,
+			min(array_map(static fn (array $span): int => $span[0]->getReadAt(), $spans)),
+			max(array_map(static fn (array $span): int => $span[1]->getReadAt(), $spans)),
+		);
+		/** @var array<int, ?OdoReading> $before where the counter stood just before each reset */
+		$before = [];
+		$distances = [];
+		foreach (array_keys($periods) as $i) {
+			if (!isset($spans[$i])) {
+				$distances[] = null;
+				continue;
+			}
+			[$start, $end] = $spans[$i];
+			$ends = [];
+			foreach ($resets as $reset) {
+				if ($reset->place() <= $start->place() || $reset->place() > $end->place()) {
+					continue;
+				}
+				$id = (int)$reset->getId();
+				if (!array_key_exists($id, $before)) {
+					$before[$id] = $this->readings->findNewestStanding($vehicleId, $counter, $reset->getReadAt(), $id);
+				}
+				// Never null: the segment's start stands before the reset.
+				$ends[] = [$start, $before[$id] ?? $start];
+				$start = $reset;
+			}
+			$ends[] = [$start, $end];
+			$distances[] = self::run($ends);
+		}
+
+		return $distances;
+	}
+
+	/**
+	 * The segments' runs summed; null when one ran backwards or nothing moved.
+	 *
+	 * @param list<array{OdoReading, OdoReading}> $ends
+	 */
+	private static function run(array $ends): ?int {
+		$distance = 0;
+		foreach ($ends as [$opens, $closes]) {
+			$run = $closes->getValue() - $opens->getValue();
+			if ($run < 0) {
+				return null;
+			}
+			$distance += $run;
+		}
 
 		return $distance > 0 ? $distance : null;
+	}
+
+	/**
+	 * Whether the counter was replaced after `$open` and up to `$close`, the swap at `$close` itself
+	 * included.
+	 *
+	 * @param list<OdoReading> $resets
+	 */
+	private static function replacedBetween(array $resets, OdoReading $open, OdoReading $close): bool {
+		foreach ($resets as $reset) {
+			if ($reset->place() > $open->place() && $reset->place() <= $close->place()) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**
 	 * One energy's segments. A segment opens at a full fill-up and closes at the next one; whatever
 	 * went in after the opening, partials included, is what the distance used. It yields no number
 	 * when a fill-up in it says one before it went unrecorded, or when either end lacks a Reading
-	 * that was read and not questioned - a gap must produce no number rather than a wrong one.
+	 * that was read and not questioned - a gap must produce no number rather than a wrong one. A
+	 * counter replaced in it ends it too (rule 3): what the old one ran before the swap is unknown.
 	 *
 	 * @param list<Energy> $chain in time order
 	 * @param array<int, OdoReading> $counted each fill-up's live main-counter Reading, by its id
+	 * @param list<OdoReading> $resets the main counter's answered resets
 	 * @return list<Segment>
 	 */
-	private static function segments(array $chain, array $counted, string $per): array {
+	private static function segments(array $chain, array $counted, array $resets, string $per): array {
 		$segments = [];
 		$open = null;
 		$amount = 0;
@@ -168,7 +277,7 @@ class ConsumptionService {
 			}
 
 			$close = self::trusted($counted[(int)$fill->getId()] ?? null);
-			if ($open !== null && $close !== null && !$missed) {
+			if ($open !== null && $close !== null && !$missed && !self::replacedBetween($resets, $open, $close)) {
 				$distance = $close->getValue() - $open->getValue();
 				if ($distance > 0) {
 					$segments[] = [

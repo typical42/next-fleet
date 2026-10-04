@@ -3,13 +3,13 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
-import { t } from '@nextcloud/l10n'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import NcSelect from '@nextcloud/vue/components/NcSelect'
 import NcSelectUsers from '@nextcloud/vue/components/NcSelectUsers'
 import { computed, onMounted, ref } from 'vue'
 
 import { addRecipient, listRecipients, removeRecipient, searchUsers } from '../services/api.js'
+import { t } from '../utils/l10n.js'
 
 const props = defineProps({
 	/** The vehicle's uuid. */

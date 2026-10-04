@@ -13,14 +13,48 @@ namespace OCA\NextFleet\Service;
  * is what the sheet shows the person.
  */
 final class Field {
+	/*
+	 * The bounds every count and text is read under (docs/security.md). Each sits far above what a
+	 * person enters and far below what its column holds, so an absurd number is a 400 naming the
+	 * field, never a 500 from the database or a total that overflows.
+	 */
+	/** Free text a person types: a few pages, and the timeline sends it with every row. */
+	public const TEXT = 10_000;
+	/** Cents, or tenths of a cent for a unit price: ten billion of the vehicle's currency. */
+	public const MONEY = 1_000_000_000_000;
+	/** An odometer, an hour counter or a distance: a billion of its unit. */
+	public const COUNTER = 1_000_000_000;
+	/** Millilitres or watt-hours of one fill-up: a billion litres or a terawatt-hour. */
+	public const AMOUNT = 1_000_000_000_000;
+	/** A tank or a battery: smaller than AMOUNT, since its column is a 32-bit INTEGER. */
+	public const CAPACITY = 1_000_000_000;
+	/** A VAT rate in basis points: 100 %. */
+	public const RATE = 10_000;
+	/** A recurrence or a retention: a hundred years. */
+	public const MONTHS = 1_200;
+	/** An instant in seconds: the last one a four-digit year prints. */
+	public const MOMENT = 253_402_300_799;
+
+	/**
+	 * Whether `$value` is an ISO 4217 code as the vehicle stores it. One rule for the vehicle's
+	 * write and the import's check, so a currency one takes the other never refuses.
+	 * `VehicleSheet.vue` (`currencyCode`) asks the same before sending; change both together.
+	 */
+	public static function isCurrency(string $value): bool {
+		return preg_match('/^[A-Z]{3}$/', $value) === 1;
+	}
+
 	/**
 	 * One field, as its column holds it, by the name of the check it takes. An absent value and an
 	 * empty one are the same fact, so both come back as null.
 	 *
-	 * @param int|list<string>|null $limit a text's length or a word's vocabulary
+	 * @param int|list<string>|null $limit a text's length, a count's maximum or a word's vocabulary
 	 * @throws \InvalidArgumentException
+	 * @throws \LogicException if a text or a count is read without its bound
 	 */
 	public static function read(string $column, string $kind, int|array|null $limit, mixed $value): string|int|bool|null {
+		// Before the empty check, so a caller that forgot the bound fails on its first request.
+		$bound = in_array($kind, ['text', 'count'], true) ? self::bound($column, $limit) : 0;
 		if (is_string($value)) {
 			$value = trim($value);
 		}
@@ -29,23 +63,35 @@ final class Field {
 		}
 
 		return match ($kind) {
-			'text' => self::text($column, $value, is_int($limit) ? $limit : null),
+			'text' => self::text($column, $value, $bound),
 			'word' => self::word($column, $value, is_array($limit) ? $limit : []),
-			'count' => self::count($column, $value),
+			'count' => self::count($column, $value, $bound),
 			'offset' => self::offset($column, $value),
 			'flag' => self::flag($column, $value),
 			default => throw new \InvalidArgumentException($column . ' has no readable kind'),
 		};
 	}
 
+	/**
+	 * @param int|list<string>|null $limit
+	 * @throws \LogicException
+	 */
+	public static function bound(string $column, int|array|null $limit): int {
+		if (!is_int($limit)) {
+			throw new \LogicException($column . ' has no bound');
+		}
+
+		return $limit;
+	}
+
 	/** @throws \InvalidArgumentException */
-	public static function text(string $column, mixed $value, ?int $length): string {
+	public static function text(string $column, mixed $value, int $length): string {
 		if (!is_string($value)) {
 			throw new \InvalidArgumentException($column . ' is text');
 		}
 		// Refused rather than truncated: the database would refuse it too, and a 500 tells the
 		// user nothing about which field was too long.
-		if ($length !== null && mb_strlen($value) > $length) {
+		if (mb_strlen($value) > $length) {
 			throw new \InvalidArgumentException($column . ' is longer than ' . $length . ' characters');
 		}
 
@@ -65,10 +111,13 @@ final class Field {
 	}
 
 	/** @throws \InvalidArgumentException */
-	public static function count(string $column, mixed $value): int {
+	public static function count(string $column, mixed $value, int $max): int {
 		$number = filter_var($value, FILTER_VALIDATE_INT);
 		if ($number === false || $number < 0) {
 			throw new \InvalidArgumentException($column . ' is a whole number, never negative');
+		}
+		if ($number > $max) {
+			throw new \InvalidArgumentException($column . ' is ' . $max . ' at most');
 		}
 
 		return $number;

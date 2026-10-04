@@ -62,11 +62,13 @@ class TripController extends OCSController {
 	 * @param string|null $partner whom it was driven for
 	 * @param string|null $category required: business, private or commute
 	 * @param string|null $booking_uuid the booking it was driven on
-	 * @return DataResponse<Http::STATUS_CREATED, NextFleetTrip, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_CONFLICT, NextFleetBookingConflict, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
+	 * @param string|null $client_uuid a uuid of the client's for the new row: a retry under it answers that row
+	 * @return DataResponse<Http::STATUS_CREATED, NextFleetTrip, array{}>|DataResponse<Http::STATUS_OK, NextFleetTrip, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_CONFLICT, NextFleetBookingConflict, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
 	 * @throws OCSForbiddenException the caller may not log on this vehicle, or the booking is not theirs
 	 * @throws OCSNotFoundException no such vehicle or booking
 	 *
 	 * 201: the trip
+	 * 200: the trip an earlier create under the same `client_uuid` wrote
 	 * 400: a field is not what it holds; the message names it
 	 * 409: the booking is not back yet, or has its trip
 	 * 412: a row the trip follows changed meanwhile; send it again
@@ -88,9 +90,10 @@ class TripController extends OCSController {
 		mixed $partner = null,
 		mixed $category = null,
 		mixed $booking_uuid = null,
+		mixed $client_uuid = null,
 	): DataResponse {
-		return $this->booked(fn (): DataResponse => new DataResponse(
-			$this->service->record($this->userId(), $uuid, $this->request->getParams())->jsonSerialize(),
+		return $this->booked(fn (): DataResponse => $this->created(
+			fn (): array => $this->service->record($this->userId(), $uuid, $this->request->getParams())->jsonSerialize(),
 			Http::STATUS_CREATED,
 		));
 	}
@@ -98,7 +101,8 @@ class TripController extends OCSController {
 	/**
 	 * Suggestions for a trip form
 	 *
-	 * The places, purposes and partners of this vehicle's own trips.
+	 * The places, purposes and partners of this vehicle's own trips, the category the caller last
+	 * entered here, and how the vehicle's last trip ended.
 	 *
 	 * @param string $uuid the vehicle's uuid
 	 * @return DataResponse<Http::STATUS_OK, NextFleetTripPrefill, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>
@@ -138,7 +142,7 @@ class TripController extends OCSController {
 	 * @throws OCSForbiddenException the caller may not edit this trip
 	 * @throws OCSNotFoundException no such vehicle or trip
 	 *
-	 * 200: the trip as edited, with its new `updated_at`
+	 * 200: the trip as edited, with its new `updated_at`; a save that changed nothing writes nothing and keeps it
 	 * 400: a field is not what it holds; the message names it
 	 * 412: the trip changed since `updated_at`; read it again
 	 */

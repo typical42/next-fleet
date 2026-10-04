@@ -101,13 +101,14 @@ class Trip extends BaseEntity implements \JsonSerializable {
 	/**
 	 * The kilometres the trip accounts for on paper: what the driver stated, or the difference
 	 * between the two counters they read. Null where neither says it - a figure worked out from the
-	 * odometer chain would be a guess printed as a record.
+	 * odometer chain would be a guess printed as a record. Null too for counters the wrong way round,
+	 * kept from before TripService refused them: a negative line would lower every sum it lands in.
 	 */
 	public function kilometres(): ?int {
 		if ($this->distance !== null) {
 			return $this->distance;
 		}
-		if ($this->startOdo !== null && $this->endOdo !== null) {
+		if ($this->startOdo !== null && $this->endOdo !== null && $this->endOdo >= $this->startOdo) {
 			return $this->endOdo - $this->startOdo;
 		}
 

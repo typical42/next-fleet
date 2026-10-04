@@ -8,7 +8,6 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Integration;
 
-use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Command\SeedCommand;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\TripMapper;
@@ -46,17 +45,16 @@ class SeedTest extends TestCase {
 	public static function setUpBeforeClass(): void {
 		self::deleteAccounts([self::USER]);
 		\OCP\Server::get(IUserManager::class)->createUser(self::USER, bin2hex(random_bytes(16)));
-		$container = (new Application())->getContainer();
-		$tester = new CommandTester($container->get(SeedCommand::class));
+		$tester = new CommandTester(\OCP\Server::get(SeedCommand::class));
 		self::assertSame(0, $tester->execute(['user' => self::USER]), $tester->getDisplay());
 
-		$vehicles = $container->get(VehicleService::class);
-		$kpis = $container->get(KpiService::class);
-		$odometer = $container->get(OdometerService::class);
-		$reminders = $container->get(ReminderService::class);
-		$now = $container->get(ITimeFactory::class)->getTime();
+		$vehicles = \OCP\Server::get(VehicleService::class);
+		$kpis = \OCP\Server::get(KpiService::class);
+		$odometer = \OCP\Server::get(OdometerService::class);
+		$reminders = \OCP\Server::get(ReminderService::class);
+		$now = \OCP\Server::get(ITimeFactory::class)->getTime();
 		// The day a due date is read against, which is the server's (docs/architecture.md#time).
-		self::$today = $container->get(ITimeFactory::class)->now()->format('Y-m-d');
+		self::$today = \OCP\Server::get(ITimeFactory::class)->now()->format('Y-m-d');
 		foreach ($vehicles->list(self::USER) as $vehicle) {
 			$plate = (string)$vehicle->getPlate();
 			if (!str_starts_with($plate, 'NF-')) {
@@ -177,9 +175,8 @@ class SeedTest extends TestCase {
 	 * Passat's is empty, so whichever months the seeding date puts on screen have bars.
 	 */
 	public function testThePassatHasACostInEveryMonthOfItsYear(): void {
-		$container = (new Application())->getContainer();
-		$kpis = $container->get(KpiService::class);
-		$now = $container->get(ITimeFactory::class)->getTime();
+		$kpis = \OCP\Server::get(KpiService::class);
+		$now = \OCP\Server::get(ITimeFactory::class)->getTime();
 		$uuid = $this->uuid('NF-DE 100');
 
 		for ($month = 0; $month < 12; $month++) {
@@ -191,7 +188,7 @@ class SeedTest extends TestCase {
 
 	/** The Fahrzeugschein on the vehicle screen, and the HU/AU's invoice behind its paperclip. */
 	public function testThePassatCarriesItsPapers(): void {
-		$papers = (new Application())->getContainer()->get(DocumentService::class)->list(self::USER, $this->uuid('NF-DE 100'));
+		$papers = \OCP\Server::get(DocumentService::class)->list(self::USER, $this->uuid('NF-DE 100'));
 
 		$this->assertSame(['registration', 'receipt'], array_column($papers, 'kind'));
 		$this->assertNotContains(null, array_column($papers, 'name'), 'a seeded paper whose file is gone');
@@ -204,9 +201,8 @@ class SeedTest extends TestCase {
 	 * private one it leaves out.
 	 */
 	public function testTheMileageClaimValuesTheBusinessTrip(): void {
-		$container = (new Application())->getContainer();
-		$trips = $container->get(TripMapper::class)->findAnyStartedBetween(
-			(int)$container->get(VehicleService::class)->reach(self::USER, 'view', $this->uuid('NF-DE 100'))->getId(),
+		$trips = \OCP\Server::get(TripMapper::class)->findAnyStartedBetween(
+			(int)\OCP\Server::get(VehicleService::class)->reach(self::USER, 'view', $this->uuid('NF-DE 100'))->getId(),
 			0,
 			PHP_INT_MAX,
 		);
@@ -214,7 +210,7 @@ class SeedTest extends TestCase {
 		$business = $trips[0];
 		$year = (int)(new \DateTimeImmutable('@' . ($business->getStartedAt() + 60 * $business->getStartedAtOff())))->format('Y');
 
-		$page = (string)$container->get(MileageClaimExport::class)->year(self::USER, $this->uuid('NF-DE 100'), $year);
+		$page = (string)\OCP\Server::get(MileageClaimExport::class)->year(self::USER, $this->uuid('NF-DE 100'), $year);
 
 		$this->assertStringContainsString('Kundentermin', $page);
 		$this->assertStringNotContainsString('Einkauf', $page);
@@ -223,7 +219,7 @@ class SeedTest extends TestCase {
 	}
 
 	private function uuid(string $plate): string {
-		foreach ((new Application())->getContainer()->get(VehicleService::class)->list(self::USER) as $vehicle) {
+		foreach (\OCP\Server::get(VehicleService::class)->list(self::USER) as $vehicle) {
 			if ($vehicle->getPlate() === $plate) {
 				return $vehicle->getUuid();
 			}

@@ -5,7 +5,7 @@
 
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
-import { flushPromises, shallowMount } from '@vue/test-utils'
+import { flushPromises, mount, shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -21,7 +21,7 @@ vi.mock('../services/api.js', async (original) => ({
 }))
 
 const DRIVER = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', may: ['view', 'log'] }
-const CREW = { grantee: 'crew', display_name: 'The Crew', role: 'viewer' }
+const CREW = { grantee: 'crew', display_name: 'R&D', role: 'viewer' }
 
 /**
  * @param {object} vehicle - the vehicle the screen shows
@@ -83,6 +83,7 @@ describe('leaving a vehicle', () => {
 		expect(readHeld).toHaveBeenCalledWith('v-1')
 		expect(leaveVehicle).toHaveBeenCalledWith('v-1')
 		expect(store.byUuid.has('v-1')).toBe(false)
+		expect(wrapper.emitted('kept')).toBeUndefined()
 	})
 
 	it('stays when the answer is no', async () => {
@@ -101,7 +102,7 @@ describe('leaving a vehicle', () => {
 		vi.mocked(readHeld).mockResolvedValue({ role: null, groups: [CREW] })
 		const wrapper = await section()
 
-		expect(wrapper.text()).toContain('The Crew')
+		expect(wrapper.text()).toContain('R&D')
 		expect(wrapper.text()).toContain('Only the owner can change that.')
 		expect(button(wrapper, 'Leave vehicle')).toBeUndefined()
 	})
@@ -115,20 +116,53 @@ describe('leaving a vehicle', () => {
 		await button(wrapper, 'Leave').trigger('click')
 		await flushPromises()
 
-		expect(wrapper.text()).toContain('The Crew')
+		expect(wrapper.text()).toContain('R&D')
 		expect(button(wrapper, 'Leave vehicle')).toBeUndefined()
+		// The role changed, and with it what each row of the screen offers.
+		expect(wrapper.emitted('kept')).toHaveLength(1)
+	})
+
+	/** The buttons are gone; focus lands on the words that replaced them rather than on the page. */
+	it('moves focus to the group that still reaches the vehicle after leaving', async () => {
+		vi.mocked(readHeld).mockResolvedValue({ role: 'manager', groups: [CREW] })
+		vi.mocked(leaveVehicle).mockResolvedValue({ role: null, groups: [CREW] })
+		const wrapper = mount(LeaveVehicle, { props: { vehicle: DRIVER }, attachTo: document.body })
+		await flushPromises()
+
+		await wrapper.get('.leave__trigger').trigger('click')
+		await flushPromises()
+		await /** @type {HTMLElement} */ (document.querySelectorAll('.leave__answers button')[1]).click()
+		await flushPromises()
+
+		expect(document.activeElement).toBe(wrapper.get('.leave__group').element)
+		wrapper.unmount()
+	})
+
+	/** A keyboard or screen reader user lands on the answer, and back where they asked from. */
+	it('moves focus to the question and back to the button that asked it', async () => {
+		const wrapper = mount(LeaveVehicle, { props: { vehicle: DRIVER }, attachTo: document.body })
+		await flushPromises()
+
+		await wrapper.get('.leave__trigger').trigger('click')
+		await flushPromises()
+		expect(document.activeElement?.textContent?.trim()).toBe('Stay')
+
+		await /** @type {HTMLElement} */ (document.activeElement).click()
+		await flushPromises()
+		expect(document.activeElement?.textContent?.trim()).toBe('Leave vehicle')
+		wrapper.unmount()
 	})
 
 	/** The question stays up, so trying again is the one click it was. */
 	it('says why a leave was refused and keeps the question', async () => {
-		vi.mocked(leaveVehicle).mockRejectedValue(new Error('No such vehicle'))
+		vi.mocked(leaveVehicle).mockRejectedValue(new Error('The vehicle\'s owner said no'))
 		const wrapper = await section()
 
 		await button(wrapper, 'Leave vehicle').trigger('click')
 		await button(wrapper, 'Leave').trigger('click')
 		await flushPromises()
 
-		expect(notes(wrapper)).toContain('You could not leave: No such vehicle')
+		expect(notes(wrapper)).toContain('You could not leave: The vehicle\'s owner said no')
 		expect(button(wrapper, 'Leave')).toBeDefined()
 	})
 
@@ -141,12 +175,34 @@ describe('leaving a vehicle', () => {
 		await wrapper.setProps({ vehicle: { ...DRIVER, uuid: 'v-2' } })
 		await flushPromises()
 		expect(readHeld).toHaveBeenLastCalledWith('v-2')
-		expect(wrapper.text()).toContain('The Crew')
+		expect(wrapper.text()).toContain('R&D')
 
 		await wrapper.setProps({ vehicle: { ...DRIVER, uuid: 'v-3', may: ['view', 'log', 'edit', 'delete', 'own'] } })
 		await flushPromises()
 		expect(readHeld).toHaveBeenCalledTimes(2)
 		expect(wrapper.text()).toBe('')
+	})
+
+	/** Whoever they hand a trip to is named, read-only: no uid and no button for it. */
+	it('lists who can see the vehicle by name and role', async () => {
+		vi.mocked(readHeld).mockResolvedValue({
+			role: 'driver',
+			groups: [],
+			holders: [
+				{ display_name: 'Anna A.', grantee_type: 'user', role: 'owner' },
+				{ display_name: 'Ben B.', grantee_type: 'user', role: 'driver' },
+				{ display_name: 'R&D', grantee_type: 'group', role: 'viewer' },
+			],
+		})
+		const wrapper = mount(LeaveVehicle, { props: { vehicle: DRIVER } })
+		await flushPromises()
+
+		expect(wrapper.get('.leave__holders summary').text()).toBe('Who can see this vehicle')
+		expect(wrapper.findAll('.leave__holders li').map((one) => one.text())).toEqual([
+			'Anna A. · Owner',
+			'Ben B. · Driver',
+			'Group R&D · Viewer',
+		])
 	})
 
 	/** Not knowing what is held is no reason to offer a write or to claim a group. */

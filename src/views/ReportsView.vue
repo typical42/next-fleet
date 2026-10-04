@@ -3,7 +3,6 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
-import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcEmptyContent from '@nextcloud/vue/components/NcEmptyContent'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
@@ -13,6 +12,7 @@ import { computed, onMounted, ref } from 'vue'
 
 import { getPreferences, logbookUrl, mileageClaimUrl } from '../services/api.js'
 import { nameOf } from '../utils/format.js'
+import { t } from '../utils/l10n.js'
 
 const props = defineProps({
 	/**
@@ -57,8 +57,10 @@ const chosen = ref('')
 const selected = computed(() => options.value.find((one) => one.id === chosen.value) ?? options.value[0] ?? null)
 
 // The reader's own year: the export sorts trips into a year by the date they were driven on, which
-// is the date the driver saw (docs/architecture.md#the-fahrtenbuch-export).
-const year = ref(String(new Date().getFullYear()))
+// is the date the driver saw (docs/architecture.md#the-fahrtenbuch-export). Last year's until the
+// end of February, when the reports printed are the tax return's.
+const today = new Date()
+const year = ref(String(today.getFullYear() - (today.getMonth() < 2 ? 1 : 0)))
 // The route answers anything but four digits with a 400.
 const valid = computed(() => /^\d{4}$/.test(year.value.trim()))
 
@@ -91,7 +93,7 @@ onMounted(async () => {
 				:description="t('nextfleet', 'The logbook of each vehicle prints here, once there is a vehicle.')" />
 			<section v-else class="reports__logbook">
 				<h3>{{ t('nextfleet', 'Logbook') }}</h3>
-				<p>{{ t('nextfleet', 'The trips of one vehicle in one year, on a page your browser prints.') }}</p>
+				<p>{{ t('nextfleet', 'The trips of one vehicle in one year, on a page your browser prints.') }} {{ t('nextfleet', 'Not reviewed by a lawyer.') }}</p>
 				<NcSelect :model-value="selected"
 					:options="options"
 					:input-label="t('nextfleet', 'Vehicle')"
@@ -124,6 +126,9 @@ onMounted(async () => {
 				</div>
 				<p v-if="selected?.claim" class="reports__hint">
 					{{ t('nextfleet', 'The mileage claim values the business trips at the rate set by the country the vehicle is kept under. Commutes are not on it.') }}
+				</p>
+				<p v-if="selected?.claim" class="reports__hint">
+					{{ t('nextfleet', 'The flat rate applies only to vehicles that are not business assets.') }}
 				</p>
 			</section>
 		</template>

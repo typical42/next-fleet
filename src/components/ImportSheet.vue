@@ -4,7 +4,6 @@
 -->
 <script setup>
 import { FilePickerClosed, getFilePickerBuilder } from '@nextcloud/dialogs'
-import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcDialog from '@nextcloud/vue/components/NcDialog'
 import NcFormBoxSwitch from '@nextcloud/vue/components/NcFormBoxSwitch'
@@ -13,10 +12,11 @@ import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import NcSelect from '@nextcloud/vue/components/NcSelect'
 import { computed, onMounted, ref, watch } from 'vue'
 
-import { ChangedError, ImportRefusedError, NotFoundError, previewImport } from '../services/api.js'
+import { ChangedError, ImportRefusedError, NotFoundError, previewImport, RefusedError } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
 import { energyWord, EXPENSE_CATEGORIES, expenseWord, formatCount, MAINTENANCE_TYPES, maintenanceWord } from '../utils/format.js'
 import { FORMATS, formatWord, placedWord, reasonWord, refusalWord, unitsAsked } from '../utils/imports.js'
+import { t } from '../utils/l10n.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -148,6 +148,10 @@ function asked() {
 function refusal(error) {
 	if (error instanceof ImportRefusedError) {
 		return refusalWord(error.reason, error.row)
+	}
+	// The entry sheet's words for the same gap (lib/Import/Answers.php).
+	if (error instanceof RefusedError && error.reason === 'no_energy') {
+		return t('nextfleet', 'Choose the energy this vehicle takes under Edit vehicle first.')
 	}
 
 	// A file shared with the person is refused like a missing one (docs/architecture.md#import),

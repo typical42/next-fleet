@@ -59,8 +59,8 @@ quoted, and a merge request that cannot say where a number came from does not ge
 
 **A rate no source states stays "not stated".** A wrong rate on a tax document is worse than none
 (decided 2026-09-30). The known gap: §9 EStG pays 0,30 €/km for a *Kraftwagen* and 0,20 €/km for
-*andere motorbetriebene Fahrzeuge*, and no source we found places a tractor (*Zugmaschine*) under
-either. So `lib/Jurisdiction/De/RateProvider.php` gives it no mileage rate, and its claim lines say
+*andere motorbetriebene Fahrzeuge*, which a motorcycle is, and no source we found places a tractor
+(*Zugmaschine*) under either. So `lib/Jurisdiction/De/RateProvider.php` gives it no mileage rate, and its claim lines say
 "not stated" until a source does.
 
 **The bigger legal exposure is data protection, not copyright.** Trips carry destinations, purposes
@@ -85,16 +85,44 @@ data, which in Germany brings the works council into it. Therefore:
   retention duty. A co-driver leaving must not shred someone else's tax evidence. This is built:
   deleting a Nextcloud account replaces its uid with one random pseudonym on every row, the
   ownership of its vehicles and its grants included, and takes it off every reminder list.
+- **An erased owner's vehicles close** (decided 2026-10-03). Nobody is left who may decide over
+  them, so the erasure revokes every grant on them and moves them to the trash. Their rows stay
+  under the same rules as any deleted vehicle's. **Open gap:** no purge exists yet, so they stay
+  until the opt-in retention above is built, which may be longer than a law requires. The legal
+  basis for keeping them is the owner's and the drivers'
+  bookkeeping duty, for which the GDPR keeps an erasure from reaching records a law requires
+  (Art. 17(3)(b)), and beyond it the legitimate interest of whoever relied on the records
+  (Art. 6(1)(f)). An admin who wants a pool to outlive its owner hands each vehicle over first
+  with `occ nextfleet:transfer <vehicle-uuid> <new-owner-uid>`: the grants stay, and the former
+  owner keeps viewing it while their account exists ([data model](architecture.md#data-model)).
 - **Bookings and handover notes are the driver's personal data** as well: they say who had the car
   when, and a note may say how they left it. Erasure treats them as it treats trips — the uid goes,
-  the span, counters and notes stay as the owner's record of the car. One gap: an unread
-  cancel notice in a booker's inbox keeps its canceller's uid once that account is gone, because
-  Nextcloud's notifications are not rows the app can rename. The uid is no longer shown: the notice
-  names "a former user".
-- **An employer pooling cars has duties the app does not discharge.** Bookings and handovers show
-  when an employee drives which car. In Germany a system able to monitor employees needs the works
-  council's consent (§ 87 (1) no. 6 BetrVG), and the employer needs its own legal basis and
-  information duties for employee data under the GDPR. The app records; it consults no one.
+  the span, counters and notes stay as the owner's record of the car. A cancel notice names no one
+  (decided 2026-10-03): Nextcloud's notifications are not rows the app can rename, so a name there
+  is one an erasure could not take back. No record of who cancelled is kept: the booking says it
+  was cancelled, not by whom.
+- **The audit keeps old trip text.** A trip change made under Logbook Mode, or to a trip that set
+  off under it, writes the values it replaced to the audit's `diff_json`: destinations, purposes,
+  business partners ([data model](architecture.md#data-model)). That is the point of an audit: § 146 (4) AO and the
+  GoBD forbid a change that hides what stood before. So the text stays for the retention period,
+  and an erasure renames the uid on the row but keeps the text (Art. 17(3)(b) GDPR).
+- **Free text naming a person stays.** A purpose "with Anna to the client" or a handover note is
+  text. An erasure replaces uids; it does not read prose.
+- **Papers go with their Files.** A document row points at a file in its attacher's Files. When an
+  erased driver's account goes, its files go too, and the row stays without a file
+  ([documents](architecture.md#documents)).
+- **Logs outlive an erasure.** Nextcloud's log can hold uids, and an exception trace can hold the
+  arguments of a call, trip text included. NextFleet cannot rename either. How long logs are kept
+  is the admin's decision. We recommend `zend.exception_ignore_args=On` in `php.ini`, so a trace
+  carries no arguments.
+- **Off Logbook Mode the basis for keeping rows is Art. 6(1)(f) GDPR.** No law requires a logbook
+  nobody keeps for the tax office. The rows stay because the owner and the drivers rely on their
+  record of the car, and they stay only until the opt-in retention above is built.
+- **An employer pooling cars has duties the app does not discharge.** Trips show who entered them
+  (*Eingetragen von*) and when; bookings and handovers show when an employee drives which car. In
+  Germany a system able to monitor employees needs the works council's consent (§ 87 (1) no. 6
+  BetrVG), and that covers trips as well as bookings. The employer also needs its own legal basis
+  and information duties for employee data under the GDPR. The app records; it consults no one.
 - **Bookings get no retention rule of their own.** They are kept like every other row, until the
   opt-in retention above is built.
 - **Granting access shows the whole vehicle** (decided 2026-09-30). Every role, viewer included,
@@ -105,6 +133,11 @@ data, which in Germany brings the works council into it. Therefore:
   entry an import creates carries the importing user's `created_by`, so where *Entered by* shows
   ([who entered it](ui.md#who-entered-it)), it names them, not whoever drove or paid in the other
   tool: neither format says who that was, and the app invents no author.
-- Full per-user data export and per-vehicle export, wired into Nextcloud's own user-deletion hooks.
-  The per-vehicle export is also what a buyer gets when a vehicle is sold — v1 transfers no
-  ownership between users ([data model](architecture.md#data-model)).
+- **The personal data export answers access and portability (Art. 15, 20 GDPR).** Nextcloud's
+  *user_migration* app exports an account with every NextFleet row that names it, a JSON file per
+  table ([personal data export](architecture.md#personal-data-export)). The admin installs that
+  app; NextFleet ships none of its own. It is export only: importing the archive restores nothing.
+  Per vehicle there is the [CSV export](architecture.md#csv-export) of a year's trips, energy,
+  maintenance and expenses, and the Fahrtenbuch. That is also all a buyer gets when a vehicle is
+  sold. Only an admin moves a vehicle to another account, with `occ nextfleet:transfer`; no user
+  can ([data model](architecture.md#data-model)).

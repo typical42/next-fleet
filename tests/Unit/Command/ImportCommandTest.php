@@ -10,6 +10,7 @@ namespace OCA\NextFleet\Tests\Unit\Command;
 
 use OCA\NextFleet\Command\ImportCommand;
 use OCA\NextFleet\Exception\ImportRefusedException;
+use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\ImportService;
 use OCA\NextFleet\Service\UserZone;
 use OCP\Files\File;
@@ -145,7 +146,7 @@ class ImportCommandTest extends TestCase {
 				'energy' => 'diesel',
 				'category_map' => ['Steuer' => 'expense.tax', 'Wäsche: innen' => 'skip'],
 			]))
-			->willReturn(self::PREVIEW);
+			->willReturn(['categories' => ['Steuer', 'Wäsche: innen']] + self::PREVIEW);
 
 		$tester = $this->command([
 			'--units' => 'km,l',
@@ -157,6 +158,20 @@ class ImportCommandTest extends TestCase {
 		]);
 
 		$this->assertSame(0, $tester->getStatusCode());
+	}
+
+	/**
+	 * A `--map` text the file does not hold is a typo: ignored, its rows would stay unmapped or
+	 * take the default the user meant to change. It fails before anything is written.
+	 */
+	public function testAMapNamingACategoryTheFileDoesNotHoldFails(): void {
+		$this->import->method('preview')->willReturn(['categories' => ['Steuer', '6']] + self::PREVIEW);
+		$this->import->expects($this->never())->method('import');
+
+		$tester = $this->command(['--units' => 'km,l', '--map' => ['Steuer:expense.tax', '10:skip', 'Stuer:skip']]);
+
+		$this->assertSame(1, $tester->getStatusCode());
+		$this->assertStringContainsString('--map names 10, Stuer, which the file does not hold', $tester->getDisplay());
 	}
 
 	/** A user without a zone of their own reads dates in the server's. */
@@ -181,6 +196,17 @@ class ImportCommandTest extends TestCase {
 
 		$this->assertSame(1, $tester->getStatusCode());
 		$this->assertStringContainsString('Still to be answered: date_order (dmy, mdy)', $tester->getDisplay());
+	}
+
+	/** A write that raced the import fails it as the route's 412 does: nothing was written, run it again. */
+	public function testARacedImportFailsAndSaysToRunItAgain(): void {
+		$this->import->method('preview')->willReturn(self::PREVIEW);
+		$this->import->method('import')->willThrowException(new StaleUpdateException());
+
+		$tester = $this->command(['--units' => 'km,l']);
+
+		$this->assertSame(1, $tester->getStatusCode());
+		$this->assertStringContainsString('Another write to the vehicle raced the import; nothing was written. Run it again.', $tester->getDisplay());
 	}
 
 	public function testAFileTheImportWillNotReadFailsWithItsReason(): void {

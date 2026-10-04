@@ -124,6 +124,22 @@ class ValuesTest extends TestCase {
 		$this->assertSame('too_large', self::reason(fn () => Values::canonical('99999999999999999999', 'money', 'major')));
 	}
 
+	/** Eighteen digits are read, and a half on top of them still carries; nineteen are refused. */
+	public function testEighteenDigitsAreTheMostAValueKeeps(): void {
+		$this->assertSame(999_999_999_999_999_999, Values::canonical('999999999999999999', 'distance', 'km'));
+		$this->assertSame(1_000_000_000_000_000_000, Values::canonical('999999999999999999.5', 'distance', 'km'));
+		$this->assertSame('too_large', self::reason(fn () => Values::canonical('1000000000000000000', 'distance', 'km')));
+	}
+
+	/** A million gallons shows every digit of each factor: one rounded or cut short would differ here. */
+	public function testBothGallonsConvertByTheirFullDefinitions(): void {
+		$this->assertSame(3_785_411_784, Values::canonical('1000000', 'volume', 'us_gal'));
+		$this->assertSame(4_546_090_000, Values::canonical('1000000', 'volume', 'uk_gal'));
+		// 0.5 US gal is 1892.705892 ml, which rounds up; 0.5 UK gal is 2273.045 ml, which does not.
+		$this->assertSame(1893, Values::canonical('0.5', 'volume', 'us_gal'));
+		$this->assertSame(2273, Values::canonical('0.5', 'volume', 'uk_gal'));
+	}
+
 	public function testAUnitOfAnotherDimensionIsAProgrammingError(): void {
 		$this->expectException(\InvalidArgumentException::class);
 		Values::canonical('1', 'distance', 'l');
@@ -179,6 +195,9 @@ class ValuesTest extends TestCase {
 		yield 'a two-digit year' => ['01.03.26', 'dmy'];
 		yield 'a formula' => ['=TODAY()', 'dmy'];
 		yield 'a time the clock skipped' => ['2026-03-29 02:30', 'dmy'];
+		// An entry before the epoch is one no entry route takes: the preview must not count it in.
+		yield 'a day before 1970' => ['31.12.1969', 'dmy'];
+		yield 'the epoch\'s own day, before it began in Berlin' => ['1970-01-01 00:30', 'dmy'];
 	}
 
 	public function testATimeTheClockShowedTwiceIsTheFirst(): void {
@@ -237,6 +256,27 @@ class ValuesTest extends TestCase {
 		yield 'Swiss apostrophes as thousands marks' => ['CHF 1’234.50', '1234.50', 'CHF'];
 		yield 'a word without a number is no mark' => ['n/a', 'n/a', null];
 		yield 'nor are three capitals' => ['TBD', 'TBD', null];
+		// .NET writes U+2212 in sv, nb and fi; a spreadsheet may write an en dash.
+		yield 'a minus sign' => ["\u{2212}120,00\u{00A0}kr", '-120,00', 'kr'];
+		yield 'an en dash' => ["\u{2013}12.00", '-12.00', null];
+		yield 'a sign before a real' => ['R$ 12,00', '12,00', 'R$'];
+	}
+
+	/** @return iterable<string, array{string}> */
+	public static function noMarks(): iterable {
+		yield 'a tilde' => ['~12'];
+		yield 'a percentage' => ['12%'];
+		yield 'a hash' => ['#12'];
+	}
+
+	/**
+	 * A mark is a currency sign or letters; anything else stays on the number, which then reads as
+	 * none.
+	 *
+	 * @dataProvider noMarks
+	 */
+	public function testWhatIsNeitherASignNorLettersIsNoCurrencyMark(string $cell): void {
+		$this->assertSame('number', self::reason(fn () => Values::decimal(Values::money($cell)[0], null)));
 	}
 
 	/** @dataProvider money */

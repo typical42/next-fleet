@@ -58,6 +58,7 @@ namespace OCA\NextFleet;
  *     owned_by: ?string,
  *     out_with: ?array{user_id: string, user_name: string, ends_at: int, ends_at_off: int},
  *     my_next_booking: ?array{uuid: string, starts_at: int, starts_at_off: int, ends_at: int, ends_at_off: int},
+ *     ever_granted: bool,
  * }
  *
  * @psalm-type NextFleetReading = array{
@@ -233,7 +234,7 @@ namespace OCA\NextFleet;
  *
  * @psalm-type NextFleetGap = array{trip: string, distance: int, from_at: int, from_at_off: int, to_at: int, to_at_off: int}
  *
- * @psalm-type NextFleetTripPrefill = array{places: list<string>, purposes: list<string>, partners: list<string>}
+ * @psalm-type NextFleetTripPrefill = array{places: list<string>, purposes: list<string>, partners: list<string>, category: ?string, last: ?array{end_odo: ?int, ended_at: int, ended_at_off: int}}
  *
  * @psalm-type NextFleetEnergyPrefill = array{vat_rate: ?int, stations: list<array{station: string, energy: string, unit_price: ?int}>}
  *
@@ -343,8 +344,10 @@ namespace OCA\NextFleet;
  * @psalm-type NextFleetGrant = array{uuid: string, grantee: string, grantee_type: string, display_name: string, role: string}
  *
  * What the caller holds on a vehicle: their own grant's role, and each group's that reaches them.
+ * `holders` is who reads the vehicle, by display name and role (`owner` for the owner), empty for
+ * the owner and for a caller who holds nothing.
  *
- * @psalm-type NextFleetHeld = array{role: ?string, groups: list<array{grantee: string, display_name: string, role: string}>}
+ * @psalm-type NextFleetHeld = array{role: ?string, groups: list<array{grantee: string, display_name: string, role: string}>, holders: list<array{display_name: string, grantee_type: string, role: string}>}
  *
  * A paper, its file by id and its name as the caller sees it; `linked_*` name the Entry it backs.
  *
@@ -424,7 +427,7 @@ namespace OCA\NextFleet;
  * A country's average grid factor, and the caller's settings with the jurisdictions to pick from.
  *
  * @psalm-type NextFleetGridAverage = array{grams: int, year: int, source: string}
- * @psalm-type NextFleetPreferences = array{preferences: array{jurisdiction: string, dismissed_hints: list<string>, reclaim_vat: bool, kpi_period: string, grid_factor: ?int, inbox_folder: ?int}, jurisdictions: list<array{key: string, name: string, logbook_export: bool, mileage_claim: bool, grid_factor: ?NextFleetGridAverage}>}
+ * @psalm-type NextFleetPreferences = array{preferences: array{jurisdiction: string, dismissed_hints: list<string>, dismissed_logbook_hints: list<string>, reclaim_vat: bool, kpi_period: string, grid_factor: ?int, inbox_folder: ?int}, jurisdictions: list<array{key: string, name: string, logbook_export: bool, mileage_claim: bool, logbook_rules: bool, grid_factor: ?NextFleetGridAverage}>}
  *
  * What importing a file would do (docs/architecture.md#import). A proposal is one source row as the
  * entry it would become: `fields` by the entry routes' names, in their units, empty when the row is
@@ -461,9 +464,14 @@ namespace OCA\NextFleet;
  *
  * @psalm-type NextFleetImportUndone = array{undone: int}
  *
- * A refusal the client can act on: a 400 says what was wrong with the request.
+ * A refusal the client can act on: a 400 says what was wrong with the request. `reason` is a word
+ * for the refusals a client may want to put into its own words: `currency_in_use`, a vehicle's
+ * currency changed after an amount was recorded in it; `end_below_start`, a trip's end counter
+ * below its start; `ends_in_future`, a trip arriving more than a day ahead; `not_in_question`, a
+ * Reading the chain no longer questions; `no_energy`, fill-ups imported into a vehicle that takes
+ * no energy yet.
  *
- * @psalm-type NextFleetRefusal = array{message: string}
+ * @psalm-type NextFleetRefusal = array{message: string, reason?: string}
  *
  * A 422: a file an import will not read. `reason` is a word (`too_large`, `binary`, `encoding`, …),
  * `row` where reading stopped, null when no row is to blame.

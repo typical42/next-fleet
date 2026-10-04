@@ -28,14 +28,52 @@ class AccessMapper extends BaseMapper {
 	 *
 	 * @throws \OCP\DB\Exception
 	 */
-	public function pseudonymise(string $uid, string $pseudonym): void {
-		parent::pseudonymise($uid, $pseudonym);
+	public function pseudonymise(string $uid, string $pseudonym): int {
+		$changed = parent::pseudonymise($uid, $pseudonym);
 
 		$qb = $this->db->getQueryBuilder();
 		$qb->update($this->tableName)
 			->set('grantee', $qb->createNamedParameter($pseudonym))
 			->where($qb->expr()->eq('grantee', $qb->createNamedParameter($uid)))
 			->andWhere($qb->expr()->eq('grantee_type', $qb->createNamedParameter(Access::USER)));
+
+		return $changed + $qb->executeStatement();
+	}
+
+	/** A grant to the account as well, for the reason pseudonymise() gives. */
+	protected function naming(IQueryBuilder $qb, string $uid): array {
+		return [...parent::naming($qb, $uid), $qb->expr()->andX(
+			$qb->expr()->eq('grantee', $qb->createNamedParameter($uid)),
+			$qb->expr()->eq('grantee_type', $qb->createNamedParameter(Access::USER)),
+		)];
+	}
+
+	/**
+	 * A user grantee as well, for the reason pseudonymise() gives.
+	 *
+	 * @return list<string>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function accountsStartingWith(string $prefix): array {
+		$qb = $this->db->getQueryBuilder();
+		$qb->selectDistinct('grantee')
+			->from($this->tableName)
+			->where($qb->expr()->like('grantee', $qb->createNamedParameter($this->db->escapeLikeParameter($prefix) . '%')))
+			->andWhere($qb->expr()->eq('grantee_type', $qb->createNamedParameter(Access::USER)));
+
+		return array_values(array_unique([...parent::accountsStartingWith($prefix), ...$this->accounts($qb)]));
+	}
+
+	/**
+	 * Removes one grant for good, where softDelete() would keep it. Only for a grant that never
+	 * took effect - its grantee was gone the moment it committed - so there is no history to keep.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	public function discard(Access $grant): void {
+		$qb = $this->db->getQueryBuilder();
+		$qb->delete($this->tableName)
+			->where($qb->expr()->eq('id', $qb->createNamedParameter($grant->getId(), IQueryBuilder::PARAM_INT)));
 		$qb->executeStatement();
 	}
 
@@ -59,18 +97,24 @@ class AccessMapper extends BaseMapper {
 
 	/**
 	 * Every live grant to one group, on any vehicle, one in the trash included: a vehicle
-	 * restored brings its grants back with it.
+	 * restored brings its grants back with it. With `$liveAt`, also those revoked since that
+	 * moment: the grants that were live then.
 	 *
 	 * @return list<Access>
 	 * @throws \OCP\DB\Exception
 	 */
-	public function findByGroup(string $groupId): array {
+	public function findByGroup(string $groupId, ?int $liveAt = null): array {
 		$qb = $this->db->getQueryBuilder();
+		$expr = $qb->expr();
 		$qb->select('*')
 			->from($this->tableName)
-			->where($qb->expr()->eq('grantee_type', $qb->createNamedParameter(Access::GROUP)))
-			->andWhere($qb->expr()->eq('grantee', $qb->createNamedParameter($groupId)))
-			->andWhere($qb->expr()->isNull('deleted_at'));
+			->where($expr->eq('grantee_type', $qb->createNamedParameter(Access::GROUP)))
+			->andWhere($expr->eq('grantee', $qb->createNamedParameter($groupId)))
+			->andWhere($liveAt === null ? $expr->isNull('deleted_at') : $expr->orX(
+				$expr->isNull('deleted_at'),
+				$expr->gte('deleted_at', $qb->createNamedParameter($liveAt, IQueryBuilder::PARAM_INT)),
+			))
+			->orderBy('id');
 
 		return $this->findEntities($qb);
 	}
@@ -92,6 +136,31 @@ class AccessMapper extends BaseMapper {
 		$result->closeCursor();
 
 		return $found;
+	}
+
+	/**
+	 * everGranted() for a whole list in one query: the ids of those anybody was ever given access to.
+	 *
+	 * @param list<int> $vehicleIds
+	 * @return list<int>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function everGrantedAmong(array $vehicleIds): array {
+		if ($vehicleIds === []) {
+			return [];
+		}
+		$qb = $this->db->getQueryBuilder();
+		$qb->selectDistinct('vehicle_id')
+			->from($this->tableName)
+			->where(InList::in($qb, 'vehicle_id', $vehicleIds, IQueryBuilder::PARAM_INT_ARRAY));
+		$result = $qb->executeQuery();
+		$ids = [];
+		while (($id = $result->fetchOne()) !== false) {
+			$ids[] = (int)$id;
+		}
+		$result->closeCursor();
+
+		return $ids;
 	}
 
 	/**
@@ -135,7 +204,7 @@ class AccessMapper extends BaseMapper {
 		$qb->selectDistinct(['vehicle_id', 'role'])
 			->from($this->tableName)
 			->where($this->grantedTo($qb, $userId, $groupIds))
-			->andWhere($qb->expr()->in('role', $qb->createNamedParameter($roles, IQueryBuilder::PARAM_STR_ARRAY)))
+			->andWhere(InList::in($qb, 'role', $roles, IQueryBuilder::PARAM_STR_ARRAY))
 			->andWhere($qb->expr()->isNull('deleted_at'));
 
 		$result = $qb->executeQuery();
@@ -165,7 +234,7 @@ class AccessMapper extends BaseMapper {
 
 		return $qb->expr()->orX($mine, $qb->expr()->andX(
 			$qb->expr()->eq('grantee_type', $qb->createNamedParameter(Access::GROUP)),
-			$qb->expr()->in('grantee', $qb->createNamedParameter($groupIds, IQueryBuilder::PARAM_STR_ARRAY)),
+			InList::in($qb, 'grantee', $groupIds, IQueryBuilder::PARAM_STR_ARRAY),
 		));
 	}
 }

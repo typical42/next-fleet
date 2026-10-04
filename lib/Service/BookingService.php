@@ -10,8 +10,6 @@ namespace OCA\NextFleet\Service;
 
 use OCA\NextFleet\Db\Booking;
 use OCA\NextFleet\Db\BookingMapper;
-use OCA\NextFleet\Db\OdoReading;
-use OCA\NextFleet\Db\OdoReadingMapper;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
@@ -35,6 +33,10 @@ class BookingService {
 
 	/** How far back the list reaches when the client names no start: the last week's. */
 	private const LOOKBACK = 7 * 86400;
+	/** The bounds of a new span, and how far behind now a start may lie (apply()). */
+	private const LONGEST = 90 * 86400;
+	private const AHEAD = 365 * 86400;
+	private const START_SLACK = 5 * 60;
 	/** A handover counter below the vehicle's when it was taken, or a check-in below the check-out. */
 	public const ODO_BELOW = 'odo_below';
 	/** Checked in after the booking's end. */
@@ -42,7 +44,6 @@ class BookingService {
 
 	public function __construct(
 		private BookingMapper $bookings,
-		private OdoReadingMapper $readings,
 		private TripMapper $trips,
 		private VehicleService $fleet,
 		private VehicleMapper $vehicles,
@@ -67,8 +68,8 @@ class BookingService {
 	 */
 	public function list(string $userId, string $vehicleUuid, array $params): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::VIEW, $vehicleUuid);
-		$from = Field::read('from', 'count', null, $params['from'] ?? null);
-		$to = Field::read('to', 'count', null, $params['to'] ?? null);
+		$from = Field::read('from', 'count', Field::MOMENT, $params['from'] ?? null);
+		$to = Field::read('to', 'count', Field::MOMENT, $params['to'] ?? null);
 
 		return $this->wired($userId, $vehicle, $this->bookings->findSpanning(
 			(int)$vehicle->getId(),
@@ -89,8 +90,29 @@ class BookingService {
 	 */
 	public function book(string $userId, string $vehicleUuid, array $fields): array {
 		$vehicle = $this->bookable($userId, $vehicleUuid);
+		$once = Once::of(
+			$fields,
+			$this->bookings,
+			static fn (Booking $row): bool => $row->getVehicleId() === (int)$vehicle->getId(),
+			fn (Booking $row): array => $this->wired($userId, $vehicle, [$row])[0],
+		);
 
+		return $once->run(fn (): array => $this->insert($userId, $vehicle, $fields, $once));
+	}
+
+	/**
+	 * What book() writes once it knows the request is no retry.
+	 *
+	 * @param array<string, mixed> $fields
+	 * @param Once<Booking> $once
+	 * @return NextFleetBooking
+	 * @throws \InvalidArgumentException
+	 * @throws BookingConflictException
+	 * @throws \OCP\DB\Exception
+	 */
+	private function insert(string $userId, Vehicle $vehicle, array $fields, Once $once): array {
 		$booking = new Booking();
+		$once->stamp($booking);
 		$booking->setVehicleId((int)$vehicle->getId());
 		$booking->setUserId($userId);
 		$booking->setCreatedBy($userId);
@@ -98,8 +120,9 @@ class BookingService {
 		$this->apply($booking, $fields);
 
 		// Retried for the reason TripService::record() gives.
-		$written = $this->atomicRetry(function () use ($vehicle, $booking): Booking {
+		$written = $this->atomicRetry(function () use ($vehicle, $booking, $once): Booking {
 			$this->vehicles->hold((int)$vehicle->getId());
+			$once->check();
 			$this->claim($booking);
 
 			return $this->bookings->insert($booking);
@@ -157,7 +180,7 @@ class BookingService {
 		}, $this->db);
 		// After the cancel stands, the reason NotificationService::sweep() gives.
 		if ($cancelled->getUserId() !== $userId) {
-			$this->notices->tellCancelled($vehicle, $cancelled, $userId);
+			$this->notices->tellCancelled($vehicle, $cancelled);
 		}
 
 		return $this->wired($userId, $vehicle, [$cancelled])[0];
@@ -193,7 +216,7 @@ class BookingService {
 			}
 			// Early is allowed, but it claims the hours before the start as well.
 			$before = $now < $booking->getStartsAt()
-				? $this->bookings->findLiveOverlapping((int)$vehicle->getId(), $now, $booking->getStartsAt(), $booking->getId())[0] ?? null
+				? $this->bookings->findLiveOverlapping((int)$vehicle->getId(), $now, $booking->getStartsAt(), $now, $booking->getId())[0] ?? null
 				: null;
 			if ($before !== null) {
 				throw $this->conflict('the vehicle is booked until then', $before);
@@ -354,27 +377,25 @@ class BookingService {
 	 * @throws \InvalidArgumentException
 	 */
 	private static function handover(array $fields): array {
-		$odo = self::required('odo', 'count', $fields);
-		$level = Field::read('level', 'count', null, $fields['level'] ?? null);
-		if (is_int($level) && $level > 100) {
-			throw new \InvalidArgumentException('level is a percentage, 100 at most');
-		}
-		$notes = Field::read('notes', 'text', null, $fields['notes'] ?? null);
+		$odo = self::required('odo', 'count', $fields, Field::COUNTER);
+		$level = Field::read('level', 'count', 100, $fields['level'] ?? null);
+		$notes = Field::read('notes', 'text', Field::TEXT, $fields['notes'] ?? null);
 
 		return [$odo, is_int($level) ? $level : null, is_string($notes) ? $notes : null, self::required('at_off', 'offset', $fields)];
 	}
 
 	/**
-	 * Refuses the span when another live booking holds any second of it. Under the vehicle's hold,
-	 * or two bookings checked at once could both find it free.
+	 * Refuses the span when another live booking holds any second of it - an `out` one the hours it
+	 * was taken early and those it is overdue as well. Under the vehicle's hold, or two bookings
+	 * checked at once could both find it free.
 	 *
 	 * @throws BookingConflictException
 	 * @throws \OCP\DB\Exception
 	 */
 	private function claim(Booking $booking): void {
-		$held = $this->bookings->findLiveOverlapping($booking->getVehicleId(), $booking->getStartsAt(), $booking->getEndsAt(), $booking->getId())[0] ?? null;
+		$held = $this->bookings->findLiveOverlapping($booking->getVehicleId(), $booking->getStartsAt(), $booking->getEndsAt(), $this->time->getTime(), $booking->getId())[0] ?? null;
 		if ($held !== null) {
-			throw $this->conflict('the vehicle is booked then', $held);
+			throw $this->conflict($held->getState() === Booking::OUT ? 'the vehicle is still out then' : 'the vehicle is booked then', $held);
 		}
 	}
 
@@ -401,9 +422,11 @@ class BookingService {
 	 * @throws \InvalidArgumentException
 	 */
 	private function apply(Booking $booking, array $fields): void {
-		$booking->setStartsAt(self::required('starts_at', 'count', $fields));
+		// What an edit started from: a span kept as it was is not measured against bounds it predates.
+		[$wasStart, $wasEnd] = $booking->getId() === null ? [null, null] : [$booking->getStartsAt(), $booking->getEndsAt()];
+		$booking->setStartsAt(self::required('starts_at', 'count', $fields, Field::MOMENT));
 		$booking->setStartsAtOff(self::required('starts_at_off', 'offset', $fields));
-		$booking->setEndsAt(self::required('ends_at', 'count', $fields));
+		$booking->setEndsAt(self::required('ends_at', 'count', $fields, Field::MOMENT));
 		$booking->setEndsAtOff(self::required('ends_at_off', 'offset', $fields));
 		$purpose = Field::read('purpose', 'text', 255, $fields['purpose'] ?? null);
 		$booking->setPurpose(is_string($purpose) ? $purpose : null);
@@ -411,8 +434,23 @@ class BookingService {
 		if ($booking->getEndsAt() <= $booking->getStartsAt()) {
 			throw new \InvalidArgumentException('ends_at is after starts_at');
 		}
-		if ($booking->getEndsAt() <= $this->time->getTime()) {
+		$now = $this->time->getTime();
+		if ($booking->getEndsAt() <= $now) {
 			throw new \InvalidArgumentException('ends_at is still to come');
+		}
+		$kept = $booking->getStartsAt() === $wasStart && $booking->getEndsAt() === $wasEnd;
+		// A pool car held for a season is no booking but a reassignment, and one held years ahead
+		// blocks a span nobody can plan around (docs/security.md).
+		if (!$kept && $booking->getEndsAt() - $booking->getStartsAt() > self::LONGEST) {
+			throw new \InvalidArgumentException('a booking spans 90 days at most');
+		}
+		if (!$kept && $booking->getEndsAt() > $now + self::AHEAD) {
+			throw new \InvalidArgumentException('ends_at is a year ahead at most');
+		}
+		// Taking the car now sends the moment the sheet was saved, a little behind by the time it
+		// arrives. Someone running late keeps the start they booked; a new one may not lie behind.
+		if ($booking->getStartsAt() < $now - self::START_SLACK && $booking->getStartsAt() !== $wasStart) {
+			throw new \InvalidArgumentException('starts_at is in the past');
 		}
 	}
 
@@ -423,8 +461,8 @@ class BookingService {
 	 * @param array<string, mixed> $fields
 	 * @throws \InvalidArgumentException
 	 */
-	private static function required(string $column, string $kind, array $fields): int {
-		$value = Field::read($column, $kind, null, $fields[$column] ?? null);
+	private static function required(string $column, string $kind, array $fields, ?int $bound = null): int {
+		$value = Field::read($column, $kind, $bound, $fields[$column] ?? null);
 		if (!is_int($value)) {
 			throw new \InvalidArgumentException($column . ' is required');
 		}
@@ -443,19 +481,15 @@ class BookingService {
 	 * The counter at check-out is measured against the vehicle's when the car was taken, not now:
 	 * the trip logged from the booking moves the counter past it.
 	 *
+	 * @param ?int $counterAtOut the vehicle's main counter at `out_at` (BookingMapper::findCountersAtOut())
 	 * @return list<self::ODO_BELOW|self::LATE>
-	 * @throws \OCP\DB\Exception
 	 */
-	private function flags(Booking $booking): array {
+	private static function flags(Booking $booking, ?int $counterAtOut): array {
 		$flags = [];
-		$outAt = $booking->getOutAt();
 		$outOdo = $booking->getOutOdo();
 		$inOdo = $booking->getInOdo();
-		if ($outAt !== null && $outOdo !== null) {
-			$before = $this->readings->findNewestAtOrBefore($booking->getVehicleId(), OdoReading::MAIN, $outAt);
-			if (($before !== null && $outOdo < $before->getValue()) || ($inOdo !== null && $inOdo < $outOdo)) {
-				$flags[] = self::ODO_BELOW;
-			}
+		if ($outOdo !== null && (($counterAtOut !== null && $outOdo < $counterAtOut) || ($inOdo !== null && $inOdo < $outOdo))) {
+			$flags[] = self::ODO_BELOW;
 		}
 		$inAt = $booking->getInAt();
 		if ($inAt !== null && $inAt > $booking->getEndsAt()) {
@@ -482,10 +516,11 @@ class BookingService {
 			}
 		}
 		$trips = $this->trips->findAnyByIds((int)$vehicle->getId(), $tripIds);
+		$counters = $this->bookings->findCountersAtOut($bookings);
 		$now = $this->time->getTime();
 		$names = [];
 
-		return array_map(function (Booking $booking) use ($userId, $vehicle, $trips, $now, &$names): array {
+		return array_map(function (Booking $booking) use ($userId, $vehicle, $trips, $counters, $now, &$names): array {
 			$booker = $booking->getUserId();
 			$names[$booker] ??= $this->nameOf($booker);
 			$state = $booking->getState();
@@ -533,7 +568,7 @@ class BookingService {
 				// The trip stays tied when voided: the booking was driven, whatever became of its log.
 				'trip_voided' => $trip?->getDeletedAt() !== null,
 				'trip_draft' => $untripped ? self::draft($booking) : null,
-				'flags' => $this->flags($booking),
+				'flags' => self::flags($booking, $counters[(int)$booking->getId()] ?? null),
 				'created_at' => $booking->getCreatedAt(),
 				'updated_at' => $booking->getUpdatedAt(),
 				'created_by' => $booking->getCreatedBy(),

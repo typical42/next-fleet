@@ -1,0 +1,62 @@
+# SPDX-FileCopyrightText: 2026 Johannes Kolb
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# A throwaway stack that runs NextFleet on Oracle (docs/development.md#oracle). Its own project
+# name and volumes, so it never touches the dev stack. The official images cannot install on
+# Oracle by themselves, so Nextcloud is installed by hand:
+#
+#   docker compose -f .docker/oracle/compose.yml up -d --build --wait
+#   docker compose -f .docker/oracle/compose.yml exec -u www-data app php occ maintenance:install \
+#     --database=oci --database-host=oracle --database-name=FREEPDB1 \
+#     --database-user=nextcloud --database-pass=nextcloud --admin-user=admin --admin-pass=admin
+#
+# Credentials are trivial for the reason .docker/compose.yml gives.
+
+name: nextfleet-oracle
+
+services:
+  oracle:
+    image: gvenzl/oracle-free:23-slim-faststart
+    environment:
+      ORACLE_PASSWORD: oracle
+      # Created in FREEPDB1, with the rights Nextcloud's installer needs.
+      APP_USER: nextcloud
+      APP_USER_PASSWORD: nextcloud
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  app:
+    build: .
+    image: nextfleet-oracle-app:34
+    # The ownership fix .docker/compose.yml explains.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - chown www-data:www-data /var/www/html/custom_apps && exec /entrypoint.sh apache2-foreground
+    # Up means the server is unpacked and answering; it is installed by hand afterwards.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost/status.php"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    ports:
+      - "8082:80"
+    environment:
+      NEXTCLOUD_TRUSTED_DOMAINS: localhost
+      # The integration suite reads the digests back from the sink.
+      SMTP_HOST: mail
+      SMTP_PORT: 1025
+      MAIL_FROM_ADDRESS: nextfleet
+      MAIL_DOMAIN: example.org
+    volumes:
+      - ../..:/var/www/html/custom_apps/nextfleet
+    depends_on:
+      oracle:
+        condition: service_healthy
+
+  mail:
+    image: axllent/mailpit

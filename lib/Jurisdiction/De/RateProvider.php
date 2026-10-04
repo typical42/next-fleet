@@ -39,15 +39,17 @@ class RateProvider implements IRateProvider {
 	];
 
 	/**
-	 * Tenths of a cent per business kilometre by motor car (`Kraftwagen`), by the first day it
-	 * applied. From 2014, when the travel-cost reform wrote it into the statute. A trailer and a
-	 * generator make no trip of their own; no source places a tractor under either rate, so it has none
-	 * rather than a guess (docs/legal.md).
+	 * Tenths of a cent per business kilometre by motor car (`Kraftwagen`), or by a motorcycle as
+	 * one of the "andere motorbetriebene Fahrzeuge", by the first day it applied. From 2014, when
+	 * the travel-cost reform wrote it into the statute. A trailer and a generator make no trip of
+	 * their own; no source places a tractor under either rate, so it has none rather than a guess
+	 * (docs/legal.md).
 	 */
 	private const MILEAGE = [
 		'car' => ['2014-01-01' => 300],
 		'van' => ['2014-01-01' => 300],
 		'truck' => ['2014-01-01' => 300],
+		'motorcycle' => ['2014-01-01' => 200],
 	];
 
 	public function vatRateAt(\DateTimeInterface $when): ?int {

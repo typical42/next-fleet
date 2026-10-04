@@ -66,7 +66,8 @@ class LogbookRenderer implements IReportRenderer {
 			. $this->split($report)
 			. $this->table($report)
 			// docs/legal.md: said wherever the app speaks, and a printed logbook is where it matters.
-			. '<footer><p>' . $this->text($this->l->t('Made with NextFleet. An aid for keeping a logbook, not a certification.')) . '</p></footer>'
+			. '<footer><p>' . $this->text($this->l->t('Made with NextFleet. An aid for keeping a logbook, not a certification.'))
+			. ' ' . $this->text($this->l->t('Not reviewed by a lawyer.')) . '</p></footer>'
 			. '</body></html>';
 	}
 
@@ -138,14 +139,14 @@ class LogbookRenderer implements IReportRenderer {
 		}
 
 		foreach ($report->trips as $line) {
-			$html .= $this->line($line['trip'], $report->enteredBy);
+			$html .= $this->line($line['trip'], $report->enteredBy, $report->zone);
 		}
 
 		return $html . '</tbody></table>';
 	}
 
 	/** @param ?array<string, string> $enteredBy */
-	private function line(Trip $trip, ?array $enteredBy): string {
+	private function line(Trip $trip, ?array $enteredBy, \DateTimeZone $zone): string {
 		$started = $this->local($trip->getStartedAt(), $trip->getStartedAtOff());
 		$ended = $this->local($trip->getEndedAt(), $trip->getEndedAtOff());
 		$sameDay = $this->date($started) === $this->date($ended);
@@ -161,7 +162,7 @@ class LogbookRenderer implements IReportRenderer {
 			['number', $this->count($trip->kilometres())],
 			['', $this->text($this->category($trip->getCategory()))],
 			...($enteredBy === null ? [] : [['', $this->text($enteredBy[$trip->getCreatedBy()] ?? $trip->getCreatedBy())]]),
-			['note', $this->notes($trip)],
+			['note', $this->notes($trip, $zone)],
 		];
 
 		$html = '<tr' . ($trip->getDeletedAt() === null ? '' : ' class="voided"') . '>';
@@ -172,12 +173,14 @@ class LogbookRenderer implements IReportRenderer {
 		return $html . '</tr>';
 	}
 
-	private function notes(Trip $trip): string {
+	private function notes(Trip $trip, \DateTimeZone $zone): string {
 		$notes = [];
 		if ($trip->getDeletedAt() !== null) {
-			// The server's instant, which carries no offset, so it says it is UTC.
-			$at = $this->local($trip->getDeletedAt(), 0);
-			$notes[] = $this->l->t('Voided on %1$s, %2$s UTC', [$this->date($at), $this->time($at)]);
+			// The server's instant carries no offset: the reader's zone, and its offset said, since
+			// the trip's own times are in the trip's offsets.
+			$at = \DateTime::createFromImmutable((new \DateTimeImmutable('@' . $trip->getDeletedAt()))->setTimezone($zone));
+			// TRANSLATORS: %1$s is a date, %2$s a time, %3$s its offset from UTC, as "UTC+01:00"
+			$notes[] = $this->l->t('Voided on %1$s, %2$s %3$s', [$this->date($at), $this->time($at), 'UTC' . $at->format('P')]);
 		}
 		if ($trip->getReconciled()) {
 			$notes[] = $this->l->t('Distance derived from the odometer, not read off it');

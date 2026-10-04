@@ -32,6 +32,7 @@ use OCP\IURLGenerator;
 use OCP\IUserManager;
 use OCP\L10N\IFactory;
 use OCP\Mail\IMailer;
+use OCP\Mail\IMessage;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 
@@ -42,6 +43,7 @@ use Psr\Log\LoggerInterface;
  */
 class ReminderMailTest extends TestCase {
 	use Accounts;
+	use CountsQueries;
 
 	private const OWNER = 'nextfleet-test-mail-owner';
 	/** On the list, with no Vehicle Access: told the plate and title, not given the link. */
@@ -72,10 +74,9 @@ class ReminderMailTest extends TestCase {
 
 	protected function setUp(): void {
 		\OCP\Server::get(IAppManager::class)->loadApps();
-		$container = (new Application())->getContainer();
-		$this->vehicles = $container->get(VehicleService::class);
-		$this->reminders = $container->get(ReminderService::class);
-		$this->recipients = $container->get(RecipientService::class);
+		$this->vehicles = \OCP\Server::get(VehicleService::class);
+		$this->reminders = \OCP\Server::get(ReminderService::class);
+		$this->recipients = \OCP\Server::get(RecipientService::class);
 		$this->forget();
 		$this->mailpit('DELETE', '/messages');
 	}
@@ -102,6 +103,7 @@ class ReminderMailTest extends TestCase {
 		foreach ($people as $uid) {
 			$manager->markProcessed($manager->createNotification()->setApp(Application::APP_ID)->setUser($uid));
 			\OCP\Server::get(IConfig::class)->deleteUserValue($uid, 'core', 'timezone');
+			\OCP\Server::get(IConfig::class)->deleteUserValue($uid, Application::APP_ID, MailService::CHECKED);
 			$users->get($uid)?->setEnabled(true);
 		}
 	}
@@ -180,6 +182,24 @@ class ReminderMailTest extends TestCase {
 		$this->assertStringContainsString('B-BB 2', $mails[0]['Text']);
 	}
 
+	/** A new due date is news by mail too, though the point it reached has the same name. */
+	public function testAnEditedDueDateIsMailedAgain(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'reminder_mail' => 'daily']);
+		$this->reminders->create(self::OWNER, $vehicle->getUuid(), ['template_key' => 'hu_au', 'due_date' => '2031-05-31']);
+		$this->runAt('2031-05-03 07:00');
+		$reminder = $this->reminders->list(self::OWNER, $vehicle->getUuid())[0];
+
+		$this->reminders->update(self::OWNER, $vehicle->getUuid(), $reminder['uuid'], $reminder['updated_at'], ['mode' => 'date', 'due_date' => '2031-05-20']);
+		// Still one mail a day: the moved point's mail still counts for today.
+		$this->runAt('2031-05-03 08:00');
+		$this->assertCount(1, $this->mails(self::OWNER));
+		$this->runAt('2031-05-04 07:00');
+
+		$mails = $this->mails(self::OWNER);
+		$this->assertCount(2, $mails);
+		$this->assertStringContainsString('Hauptuntersuchung (HU/AU) ist am 20.05.2031 fällig', $mails[0]['Text']);
+	}
+
 	/** Off, laid up or disposed: nothing by mail. */
 	public function testAVehicleOffOrOutOfServiceIsNotMailed(): void {
 		foreach ([['reminder_mail' => 'off'], ['reminder_mail' => 'daily', 'lifecycle' => 'laid_up']] as $fields) {
@@ -247,58 +267,158 @@ class ReminderMailTest extends TestCase {
 		$this->assertStringContainsString('Hauptuntersuchung (HU/AU) ist am 31.05.2031 fällig', $mails[0]['Text']);
 	}
 
+	/** A mail that fails takes nobody else's with it, and goes on the next run, the same day. */
+	public function testAMailThatFailsLeavesTheOthersMailedAndGoesNextRun(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'reminder_mail' => 'daily']);
+		$this->recipients->add(self::OWNER, $vehicle->getUuid(), self::OUTSIDER);
+		$this->reminders->create(self::OWNER, $vehicle->getUuid(), ['template_key' => 'hu_au', 'due_date' => '2031-05-31']);
+
+		// The owner's mail is the round's first: the owner joined the list first.
+		$this->runAt('2031-05-03 07:00', throwingFirst: true);
+
+		$this->assertSame([], $this->mails(self::OWNER));
+		$this->assertCount(1, $this->mails(self::OUTSIDER));
+
+		$this->runAt('2031-05-03 08:00');
+
+		$this->assertCount(1, $this->mails(self::OWNER));
+		$this->assertCount(1, $this->mails(self::OUTSIDER));
+	}
+
+	/** The hourly job reads only the vehicles a reminder could ring for: the rest cost it nothing. */
+	public function testVehiclesWithoutALiveReminderCostTheJobNothing(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'reminder_mail' => 'daily']);
+		$this->reminders->create(self::OWNER, $vehicle->getUuid(), ['template_key' => 'hu_au', 'due_date' => '2031-05-31']);
+		$this->runAt('2031-05-03 07:00');
+		$one = self::queriesOf(fn () => $this->runAt('2031-05-03 08:00'));
+
+		for ($i = 0; $i < 5; $i++) {
+			$quiet = $this->vehicles->create(self::OWNER, ['plate' => 'B-QQ ' . $i, 'reminder_mail' => 'daily']);
+			if ($i === 0) {
+				// Dismissed is as quiet as none: nothing moves it on but a person.
+				$dismissed = $this->reminders->create(self::OWNER, $quiet->getUuid(), ['title' => 'Insurance', 'mode' => 'date', 'due_date' => '2031-05-31']);
+				$this->reminders->dismiss(self::OWNER, $quiet->getUuid(), $dismissed['uuid'], $dismissed['updated_at']);
+			}
+		}
+		$six = self::queriesOf(fn () => $this->runAt('2031-05-03 09:00'));
+
+		$this->assertSame($one, $six);
+	}
+
+	/**
+	 * A daily digest with nothing new is checked once that day, not every hour, however many
+	 * vehicles it covers: news found later on them goes with tomorrow's.
+	 */
+	public function testADayWithNothingNewIsCheckedOnce(): void {
+		$first = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'reminder_mail' => 'daily']);
+		$this->reminders->create(self::OWNER, $first->getUuid(), ['template_key' => 'hu_au', 'due_date' => '2032-05-31']);
+		$this->mailAt('2031-05-03 07:00')->digest();
+		$one = self::queriesOf(fn () => $this->mailAt('2031-05-03 08:00')->digest());
+
+		for ($i = 0; $i < 4; $i++) {
+			$more = $this->vehicles->create(self::OWNER, ['plate' => 'B-MM ' . $i, 'reminder_mail' => 'daily']);
+			$this->reminders->create(self::OWNER, $more->getUuid(), ['template_key' => 'hu_au', 'due_date' => '2032-05-31']);
+		}
+		$this->mailAt('2031-05-03 09:00')->digest();
+		$five = self::queriesOf(fn () => $this->mailAt('2031-05-03 10:00')->digest());
+		$this->assertSame($one, $five);
+
+		$reminder = $this->reminders->list(self::OWNER, $first->getUuid())[0];
+		$this->reminders->update(self::OWNER, $first->getUuid(), $reminder['uuid'], $reminder['updated_at'], ['mode' => 'date', 'due_date' => '2031-05-31']);
+		$this->mailAt('2031-05-03 11:00')->digest();
+		$this->assertSame([], $this->mails(self::OWNER));
+		$this->mailAt('2031-05-04 07:00')->digest();
+		$this->assertCount(1, $this->mails(self::OWNER));
+	}
+
+	/**
+	 * A vehicle that joins the recipient's list after the day's check - added, or given its first
+	 * reminder - was never checked, so it is that day.
+	 */
+	public function testAVehicleNewToTheListIsCheckedTheSameDay(): void {
+		$quiet = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'reminder_mail' => 'daily']);
+		$this->reminders->create(self::OWNER, $quiet->getUuid(), ['template_key' => 'hu_au', 'due_date' => '2032-05-31']);
+		$this->mailAt('2031-05-03 07:00')->digest();
+
+		$due = $this->vehicles->create(self::OWNER, ['plate' => 'B-DD 1', 'reminder_mail' => 'daily']);
+		$this->reminders->create(self::OWNER, $due->getUuid(), ['template_key' => 'hu_au', 'due_date' => '2031-05-31']);
+		$this->mailAt('2031-05-03 08:00')->digest();
+
+		$mails = $this->mails(self::OWNER);
+		$this->assertCount(1, $mails);
+		$this->assertStringContainsString('B-DD 1', $mails[0]['Text']);
+	}
+
 	/**
 	 * The job, on a clock set to that moment in UTC. A refusing mailer answers the way
-	 * Nextcloud's does when the SMTP server turns the message down: every recipient failed.
+	 * Nextcloud's does when the SMTP server turns the message down: every recipient failed. A
+	 * throwing one breaks with an \Error on the round's first mail, as a TypeError in a mail plugin
+	 * would.
 	 */
-	private function runAt(string $moment, bool $refusing = false): void {
+	private function runAt(string $moment, bool $refusing = false, bool $throwingFirst = false): void {
+		$clock = $this->clockAt($moment);
+		$mailer = \OCP\Server::get(IMailer::class);
+		if ($refusing || $throwingFirst) {
+			$real = $mailer;
+			$mailer = $this->createMock(IMailer::class);
+			$mailer->method('createMessage')->willReturnCallback(static fn () => $real->createMessage());
+			$mailer->method('createEMailTemplate')->willReturnCallback(static fn (string $id, array $data = []) => $real->createEMailTemplate($id, $data));
+			$mailer->method('send')->willReturnCallback(static function (IMessage $message) use ($real, $refusing, &$throwingFirst): array {
+				if ($refusing) {
+					return [self::OWNER . '@example.org'];
+				}
+				if ($throwingFirst) {
+					$throwingFirst = false;
+					throw new \Error('the mailer broke');
+				}
+
+				return $real->send($message);
+			});
+		}
+
+		$notifications = new NotificationService(
+			\OCP\Server::get(VehicleMapper::class),
+			\OCP\Server::get(ReminderMapper::class),
+			\OCP\Server::get(ReminderRecipientMapper::class),
+			\OCP\Server::get(ReminderReceiptMapper::class),
+			\OCP\Server::get(OdoReadingMapper::class),
+			\OCP\Server::get(\OCP\Notification\IManager::class),
+			$clock,
+			\OCP\Server::get(IDBConnection::class),
+			\OCP\Server::get(LoggerInterface::class),
+			\OCP\Server::get(IUserManager::class),
+		);
+		(new ReminderJob($clock, $notifications, $this->mailAt($moment, $mailer)))->start(\OCP\Server::get(IJobList::class));
+	}
+
+	/** The digest alone, on a clock set to that moment in UTC. */
+	private function mailAt(string $moment, ?IMailer $mailer = null): MailService {
+		return new MailService(
+			\OCP\Server::get(VehicleMapper::class),
+			\OCP\Server::get(ReminderMapper::class),
+			\OCP\Server::get(ReminderReceiptMapper::class),
+			\OCP\Server::get(OdoReadingMapper::class),
+			\OCP\Server::get(VehicleAccess::class),
+			$mailer ?? \OCP\Server::get(IMailer::class),
+			\OCP\Server::get(IUserManager::class),
+			\OCP\Server::get(IFactory::class),
+			\OCP\Server::get(IConfig::class),
+			\OCP\Server::get(UserZone::class),
+			\OCP\Server::get(IURLGenerator::class),
+			$this->clockAt($moment),
+			\OCP\Server::get(IDBConnection::class),
+			\OCP\Server::get(LoggerInterface::class),
+		);
+	}
+
+	private function clockAt(string $moment): ITimeFactory {
 		$now = new \DateTimeImmutable($moment, new \DateTimeZone('UTC'));
 		$clock = $this->createMock(ITimeFactory::class);
 		$clock->method('now')->willReturn($now);
 		$clock->method('getTime')->willReturn($now->getTimestamp());
 		$clock->method('getDateTime')->willReturnCallback(static fn (): \DateTime => \DateTime::createFromImmutable($now));
 
-		$mailer = \OCP\Server::get(IMailer::class);
-		if ($refusing) {
-			$real = $mailer;
-			$mailer = $this->createMock(IMailer::class);
-			$mailer->method('createMessage')->willReturnCallback(static fn () => $real->createMessage());
-			$mailer->method('createEMailTemplate')->willReturnCallback(static fn (string $id, array $data = []) => $real->createEMailTemplate($id, $data));
-			$mailer->method('send')->willReturn([self::OWNER . '@example.org']);
-		}
-
-		$container = (new Application())->getContainer();
-		$db = \OCP\Server::get(IDBConnection::class);
-		$logger = \OCP\Server::get(LoggerInterface::class);
-		$notifications = new NotificationService(
-			$container->get(VehicleMapper::class),
-			$container->get(ReminderMapper::class),
-			$container->get(ReminderRecipientMapper::class),
-			$container->get(ReminderReceiptMapper::class),
-			$container->get(OdoReadingMapper::class),
-			\OCP\Server::get(\OCP\Notification\IManager::class),
-			$clock,
-			$db,
-			$logger,
-		);
-		$mail = new MailService(
-			$container->get(VehicleMapper::class),
-			$container->get(ReminderMapper::class),
-			$container->get(ReminderRecipientMapper::class),
-			$container->get(ReminderReceiptMapper::class),
-			$container->get(OdoReadingMapper::class),
-			$container->get(VehicleAccess::class),
-			$mailer,
-			\OCP\Server::get(IUserManager::class),
-			\OCP\Server::get(IFactory::class),
-			\OCP\Server::get(IConfig::class),
-			$container->get(UserZone::class),
-			\OCP\Server::get(IURLGenerator::class),
-			$clock,
-			$db,
-			$logger,
-		);
-		(new ReminderJob($clock, $notifications, $mail))->start(\OCP\Server::get(IJobList::class));
+		return $clock;
 	}
 
 	/**

@@ -12,6 +12,7 @@ use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Controller\VehicleController;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Exception\AccessDeniedException;
+use OCA\NextFleet\Exception\CurrencyInUseException;
 use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Db\DoesNotExistException;
@@ -227,5 +228,17 @@ class VehicleControllerTest extends TestCase {
 
 		$this->assertSame(Http::STATUS_BAD_REQUEST, $response->getStatus());
 		$this->assertSame(['message' => 'vehicle_type is one of car, van'], $response->getData());
+	}
+
+	/** The sheet words a frozen currency itself, so the refusal names its reason. */
+	public function testACurrencyInUseIsABadRequestWithItsReason(): void {
+		$this->params = ['uuid' => self::UUID, 'updated_at' => 1750000000, 'currency' => 'CHF'];
+		$this->service->method('update')
+			->willThrowException(new CurrencyInUseException('currency stays'));
+
+		$response = $this->controller()->update(self::UUID);
+
+		$this->assertSame(Http::STATUS_BAD_REQUEST, $response->getStatus());
+		$this->assertSame(['message' => 'currency stays', 'reason' => 'currency_in_use'], $response->getData());
 	}
 }

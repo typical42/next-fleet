@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-import { t } from '@nextcloud/l10n'
+import { t } from './l10n.js'
 
 /** @typedef {[number, number, number]} Day year, month from 0, day - as `new Date()` takes them */
 

@@ -8,6 +8,7 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Unit\Service;
 
+use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\Audit;
 use OCA\NextFleet\Db\AuditMapper;
 use OCA\NextFleet\Db\BookingMapper;
@@ -16,9 +17,11 @@ use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Exception\AccessDeniedException;
+use OCA\NextFleet\Exception\CurrencyInUseException;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCA\NextFleet\Service\BookingNotices;
 use OCA\NextFleet\Service\GrantNotices;
+use OCA\NextFleet\Service\MoneyRows;
 use OCA\NextFleet\Service\NotificationService;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
@@ -52,6 +55,7 @@ class VehicleServiceTest extends TestCase {
 	private AuditMapper&MockObject $audit;
 	private IDBConnection&MockObject $db;
 	private IUserManager&MockObject $users;
+	private MoneyRows&MockObject $money;
 
 	protected function setUp(): void {
 		$this->users = $this->createMock(IUserManager::class);
@@ -79,6 +83,10 @@ class VehicleServiceTest extends TestCase {
 		$this->db->method('commit')->willReturnCallback(function (): void {
 			$this->calls[] = 'commit';
 		});
+		$this->db->method('rollBack')->willReturnCallback(function (): void {
+			$this->calls[] = 'rollBack';
+		});
+		$this->money = $this->createMock(MoneyRows::class);
 
 		$this->config = $this->createMock(IConfig::class);
 		$this->config->method('getUserValue')->willReturnArgument(3);
@@ -114,6 +122,8 @@ class VehicleServiceTest extends TestCase {
 			$this->createMock(BookingMapper::class),
 			$this->createMock(ITimeFactory::class),
 			$this->users,
+			$this->money,
+			$this->createMock(AccessMapper::class),
 		);
 	}
 
@@ -314,6 +324,56 @@ class VehicleServiceTest extends TestCase {
 		$this->assertSame('laid_up', $vehicle->getLifecycle());
 	}
 
+	/**
+	 * The create sheet asks for the engine, not the energies; without them *Energy* has nothing
+	 * to offer, so a first fill-up would wait on a trip to *Edit vehicle*.
+	 *
+	 * @param list<string> $energies
+	 */
+	#[\PHPUnit\Framework\Attributes\DataProvider('engines')]
+	public function testCreateDerivesTheEnergiesFromTheEngineWhenNoneAreSent(string $engine, array $energies): void {
+		$this->assertSame($energies, $this->service()->create('alice', ['engine' => $engine])->getEnergyTypes());
+		$this->assertSame($energies, $this->service()->create('alice', ['engine' => $engine, 'energy_types' => []])->getEnergyTypes());
+	}
+
+	/** @return iterable<string, array{string, list<string>}> */
+	public static function engines(): iterable {
+		yield 'petrol' => ['petrol', ['petrol']];
+		yield 'diesel' => ['diesel', ['diesel']];
+		yield 'lpg' => ['lpg', ['petrol', 'lpg']];
+		yield 'cng' => ['cng', ['petrol', 'cng']];
+		yield 'electric' => ['electric', ['electric']];
+		yield 'hybrid' => ['hybrid', ['petrol', 'electric']];
+	}
+
+	public function testSentEnergiesOutrankTheEngine(): void {
+		$vehicle = $this->service()->create('alice', ['engine' => 'hybrid', 'energy_types' => ['diesel', 'electric']]);
+
+		$this->assertSame(['diesel', 'electric'], $vehicle->getEnergyTypes());
+	}
+
+	public function testAVehicleWithoutAnEngineTakesNoEnergy(): void {
+		$this->assertNull($this->service()->create('alice', ['plate' => 'B-XY 1'])->getEnergyTypes());
+	}
+
+	/** An edit says what the owner chose; emptying the energies there is a choice too. */
+	public function testAnUpdateDerivesNothing(): void {
+		$this->mapper->method('findByUuid')->willReturn($this->stored());
+		$this->mapper->method('updateChecked')->willReturnArgument(0);
+
+		$vehicle = $this->service()->update(self::OWNER, self::UUID, 1750000000, ['engine' => 'petrol', 'energy_types' => []]);
+
+		$this->assertNull($vehicle->getEnergyTypes());
+	}
+
+	/** A motorcycle is a type of its own: §9 EStG values its kilometre below a car's. */
+	public function testAMotorcycleIsAVehicleType(): void {
+		$vehicle = $this->service()->create('alice', ['vehicle_type' => 'motorcycle']);
+
+		$this->assertSame('motorcycle', $vehicle->getVehicleType());
+		$this->assertSame('km', $vehicle->getOdoUnit());
+	}
+
 	/** A truck counts kilometres and may count engine hours beside them. */
 	public function testATruckCountsEngineHoursBesideItsKilometres(): void {
 		$vehicle = $this->service()->create('alice', ['vehicle_type' => 'truck', 'second_unit' => 'h']);
@@ -371,6 +431,89 @@ class VehicleServiceTest extends TestCase {
 		$vehicle = $this->service()->update(self::OWNER, self::UUID, 1750000000, ['plate' => 'B-ZZ 9']);
 
 		$this->assertSame('B-ZZ 9', $vehicle->getPlate());
+	}
+
+	/**
+	 * A currency stored before the check is sent back as it was by every sheet that saves the
+	 * whole vehicle; refusing it would block a rename over a field nobody touched.
+	 */
+	public function testACurrencyFromBeforeTheCheckMayBeSentBackUnchanged(): void {
+		$stored = $this->stored();
+		$stored->setCurrency('€');
+		$this->mapper->method('findByUuid')->willReturn($stored);
+		$this->mapper->method('updateChecked')->willReturnArgument(0);
+
+		$vehicle = $this->service()->update(self::OWNER, self::UUID, 1750000000, ['plate' => 'B-ZZ 9', 'currency' => '€']);
+
+		$this->assertSame(['B-ZZ 9', '€'], [$vehicle->getPlate(), $vehicle->getCurrency()]);
+		$this->expectException(\InvalidArgumentException::class);
+		$this->service()->update(self::OWNER, self::UUID, 1750000000, ['currency' => '$']);
+	}
+
+	/**
+	 * Every amount on a vehicle is in its currency, so once one is recorded the currency stays:
+	 * a new code would relabel every cost without converting it. Checked under the vehicle's hold,
+	 * which every money write takes, so a fill-up racing the edit is seen. Sending it back as it
+	 * is still saves.
+	 */
+	public function testTheCurrencyStaysOnceTheVehicleHasCosts(): void {
+		$stored = $this->stored();
+		$stored->setCurrency('EUR');
+		$this->mapper->method('findByUuid')->willReturnCallback(fn (): Vehicle => clone $stored);
+		$this->mapper->method('hold')->willReturnCallback(function (): void {
+			$this->calls[] = 'hold';
+		});
+		$this->mapper->method('updateChecked')->willReturnArgument(0);
+		$this->money->method('exist')->willReturnCallback(function (int $vehicleId): bool {
+			$this->calls[] = 'money';
+
+			return $vehicleId === 7;
+		});
+
+		$kept = $this->service()->update(self::OWNER, self::UUID, 1750000000, ['plate' => 'B-ZZ 9', 'currency' => 'EUR']);
+		$this->assertSame('EUR', $kept->getCurrency());
+
+		$before = count($this->calls);
+		try {
+			$this->service()->update(self::OWNER, self::UUID, 1750000000, ['currency' => 'CHF']);
+			$this->fail('the currency changed under recorded costs');
+		} catch (CurrencyInUseException) {
+		}
+		$this->assertSame(['begin', 'hold', 'money', 'rollBack'], array_slice($this->calls, $before));
+	}
+
+	/**
+	 * Amounts recorded under no currency, or under a sign from before the check, are in none yet:
+	 * naming the code labels them rather than relabelling them, and it is what the import's refusal
+	 * asks for (lib/Import/Cells.php money()).
+	 *
+	 * @dataProvider noCode
+	 */
+	public function testAVehicleWithoutACodeMayBeGivenOneOverItsCosts(?string $stored): void {
+		$vehicle = $this->stored();
+		$vehicle->setCurrency($stored);
+		$this->mapper->method('findByUuid')->willReturn($vehicle);
+		$this->mapper->method('updateChecked')->willReturnArgument(0);
+		$this->money->method('exist')->willReturn(true);
+
+		$this->assertSame('EUR', $this->service()->update(self::OWNER, self::UUID, 1750000000, ['currency' => 'EUR'])->getCurrency());
+	}
+
+	/** @return iterable<string, array{?string}> */
+	public static function noCode(): iterable {
+		yield 'none' => [null];
+		yield 'a sign' => ['€'];
+		yield 'lower case' => ['eur'];
+	}
+
+	public function testTheCurrencyOfAVehicleWithoutCostsMayChange(): void {
+		$stored = $this->stored();
+		$stored->setCurrency('EUR');
+		$this->mapper->method('findByUuid')->willReturn($stored);
+		$this->mapper->method('updateChecked')->willReturnArgument(0);
+		$this->money->method('exist')->willReturn(false);
+
+		$this->assertSame('CHF', $this->service()->update(self::OWNER, self::UUID, 1750000000, ['currency' => 'CHF'])->getCurrency());
 	}
 
 	/**
@@ -445,10 +588,39 @@ class VehicleServiceTest extends TestCase {
 		$this->mapper->method('findByUuid')->willReturn($this->stored());
 		$this->mapper->method('updateChecked')->willReturnArgument(0);
 
-		$this->service()->update(self::OWNER, self::UUID, 1750000000, ['plate' => 'B-ZZ 9']);
+		$this->service()->update(self::OWNER, self::UUID, 1750000000, ['color' => 'blau', 'plate' => 'B-XY 123']);
 		$this->service()->update(self::OWNER, self::UUID, 1750000000, ['logbook_mode' => false]);
 
 		$this->assertSame([], $this->audits);
+	}
+
+	/**
+	 * The facts a logbook or a cost is read under have a history, mode or not: the Fahrtenbuch
+	 * prints the plate valid in each period, and an auditor asks when the country or the currency
+	 * changed. One row per save, beside a flip of the mode where the save carried one too.
+	 */
+	public function testAChangeOfAVehicleFactIsRecordedModeOrNot(): void {
+		$this->mapper->method('findByUuid')->willReturnCallback(fn (): Vehicle => $this->stored());
+		$this->mapper->method('updateChecked')->willReturnCallback(function (Vehicle $vehicle): Vehicle {
+			$this->calls[] = 'vehicle';
+
+			return $vehicle;
+		});
+
+		$this->service()->update(self::OWNER, self::UUID, 1750000000, [
+			'plate' => 'B-ZZ 9',
+			'jurisdiction' => 'de',
+			'currency' => 'EUR',
+			'vehicle_type' => 'van',
+			'color' => 'blau',
+		]);
+		$this->service()->update(self::OWNER, self::UUID, 1750000000, ['plate' => 'B-ZZ 10', 'logbook_mode' => true]);
+
+		$this->assertSame([
+			['change' => 'edited', 'fields' => ['plate' => ['B-XY 123', 'B-ZZ 9'], 'vehicle_type' => ['car', 'van'], 'currency' => [null, 'EUR'], 'jurisdiction' => ['uk', 'de']]],
+			['change' => 'switched', 'fields' => ['plate' => ['B-XY 123', 'B-ZZ 10'], 'logbook_mode' => [false, true]]],
+		], array_map(static fn (Audit $row): array => $row->getDiffJson(), $this->audits));
+		$this->assertSame(['begin', 'vehicle', 'audit', 'commit', 'begin', 'vehicle', 'audit', 'commit'], $this->calls);
 	}
 
 	/** Denied before the write, not after it: the row is not touched at all. */
@@ -659,5 +831,14 @@ class VehicleServiceTest extends TestCase {
 		yield 'a German date' => [['first_reg' => '07.03.2019']];
 		yield 'a day that is not one' => [['first_reg' => '2019-02-31']];
 		yield 'a plate longer than the column' => [['plate' => str_repeat('B', 33)]];
+		// An import can price nothing in it (lib/Import/Cells.php), and the costs add up under it.
+		yield 'a currency sign' => [['currency' => '€']];
+		yield 'a currency of two letters' => [['currency' => 'EU']];
+		yield 'a currency with a digit' => [['currency' => 'EU1']];
+	}
+
+	/** A code typed in lower case is the code. */
+	public function testACurrencyIsKeptUpperCase(): void {
+		$this->assertSame('CHF', $this->service()->create('alice', ['currency' => ' chf '])->getCurrency());
 	}
 }

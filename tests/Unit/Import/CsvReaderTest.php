@@ -148,6 +148,52 @@ class CsvReaderTest extends TestCase {
 		$this->assertRefused('too_many_rows', 20_002, self::rowsOf(20_001, 20));
 	}
 
+	/** @return resource a header and data rows of $width one-byte cells, the last row $extra cells wider */
+	private static function cellsOf(int $rows, int $width, int $extra) {
+		$stream = fopen('php://temp', 'r+b');
+		$line = implode(',', array_fill(0, $width, 'a')) . "\n";
+		fwrite($stream, $line . str_repeat($line, $rows - 1));
+		fwrite($stream, implode(',', array_fill(0, $width + $extra, 'a')) . "\n");
+		rewind($stream);
+
+		return $stream;
+	}
+
+	/** 20 000 rows of 256 cells pass both of those caps and would still hold five million strings. */
+	public function testHalfAMillionCellsAreReadAndOneMoreIsRefused(): void {
+		// The header's 25 cells count too: 25 + 19 999 × 25 = 500 000.
+		$this->assertCount(19_999, self::rows(CsvReader::open(self::cellsOf(19_999, 25, 0))));
+		$this->assertRefused('too_many_cells', null, self::cellsOf(19_999, 25, 1));
+	}
+
+	/** Five million bytes are read, the last row ending on the last of them; one more is refused. */
+	public function testFiveMillionBytesAreReadAndOneMoreIsRefused(): void {
+		$exactly = static function (int $bytes) {
+			// 11 header bytes, then rows of 420 bytes and one that takes up the rest.
+			$rows = intdiv($bytes - 11, 420) - 1;
+			$stream = self::rowsOf($rows, 419);
+			fseek($stream, 0, SEEK_END);
+			fwrite($stream, '2026-03-02,' . str_repeat('x', $bytes - 11 - $rows * 420 - 12) . "\n");
+			self::assertSame($bytes, ftell($stream));
+			rewind($stream);
+
+			return $stream;
+		};
+
+		$this->assertCount(11_904, self::rows(CsvReader::open($exactly(CsvReader::MAX_BYTES))));
+		$this->assertRefused('too_large', 11_905, $exactly(CsvReader::MAX_BYTES + 1));
+	}
+
+	/** The record cap counts the record, not its line break, whichever break the file uses. */
+	public function testARecordOfExactlySixtyFourKibibytesIsRead(): void {
+		$record = '2026-03-02,' . str_repeat('x', CsvReader::MAX_LINE - 11);
+		foreach (["\n", "\r\n"] as $break) {
+			$rows = self::rows(CsvReader::open(self::stream('Date,Notes' . $break . $record . $break)));
+			$this->assertSame(CsvReader::MAX_LINE - 11, strlen($rows[2][1]));
+			$this->assertRefused('line_too_long', 2, self::stream('Date,Notes' . $break . $record . 'x' . $break));
+		}
+	}
+
 	/** An endless line must not be buffered to its end: the read stops at the cap. */
 	public function testALineOverSixtyFourKibibytesEndsTheRead(): void {
 		$this->assertRefused('line_too_long', 3, self::stream("Date,Notes\n2026-03-01,a\n2026-03-02," . str_repeat('x', 70 * 1024) . "\n"));
@@ -155,6 +201,58 @@ class CsvReaderTest extends TestCase {
 
 	public function testAQuotedCellSpanningLinesIsBoundLikeOneLine(): void {
 		$this->assertRefused('line_too_long', 2, self::stream("Date,Notes\n2026-03-01,\"" . str_repeat(str_repeat('x', 1023) . "\n", 70) . "\"\n"));
+	}
+
+	/** @return iterable<string, array{string, ?string}> a cell of about 64 KiB, almost all line breaks */
+	public static function multiLineCells(): iterable {
+		yield 'quoted' => ['"' . str_repeat("\n", 65_000) . '"', null];
+		yield 'escaped' => [str_repeat("\\\n", 32_000), '\\'];
+		yield 'escaped in quotes' => ['"' . str_repeat("\\\n", 32_000) . '"', '\\'];
+	}
+
+	/**
+	 * Each appended line is scanned, not the whole record again: this took seconds while it was.
+	 *
+	 * @dataProvider multiLineCells
+	 */
+	public function testACellSpanningThousandsOfLinesIsReadInLinearTime(string $cell, ?string $escape): void {
+		$started = hrtime(true);
+		$rows = self::rows(CsvReader::open(self::stream("A;B\n{$cell};b\n"), $escape));
+		$seconds = (hrtime(true) - $started) / 1e9;
+
+		$this->assertSame([2], array_keys($rows));
+		$this->assertSame('b', $rows[2][1]);
+		$this->assertLessThan(0.5, $seconds);
+	}
+
+	/** Five megabytes of the slowest shape there is still reads in a few seconds. */
+	public function testAWorstCaseFileUnderTheCapIsReadInSeconds(): void {
+		$stream = fopen('php://temp', 'r+b');
+		fwrite($stream, "Datum;Bemerkung;Kosten\n");
+		$row = '01.03.2026;"' . str_repeat("a\\\n\"\"\n", 10_000) . "\";x\\\ny\n";
+		for ($i = 0; $i < 80; $i++) {
+			fwrite($stream, $row);
+		}
+		rewind($stream);
+		$this->assertLessThan(CsvReader::MAX_BYTES, fstat($stream)['size']);
+
+		$started = hrtime(true);
+		$count = 0;
+		foreach (CsvReader::open($stream, '\\')->rows() as $cells) {
+			$this->assertCount(3, $cells);
+			$count++;
+		}
+		$seconds = (hrtime(true) - $started) / 1e9;
+
+		$this->assertSame(80, $count);
+		$this->assertLessThan(5.0, $seconds);
+	}
+
+	/** No export has that many columns; a file of separators would hold one array entry per byte. */
+	public function testARecordOfMoreThan256CellsIsRefused(): void {
+		$this->assertSame(256, count(CsvReader::open(self::stream(str_repeat('a,', 255) . "a\n"))->header));
+		$this->assertRefused('too_many_cells', 1, self::stream(str_repeat('a,', 256) . "a\n"));
+		$this->assertRefused('too_many_cells', 2, self::stream("A,B\n" . str_repeat(',', 256) . "\n"));
 	}
 
 	public function testANulByteIsRefusedAsBinary(): void {

@@ -237,4 +237,28 @@ class VehicleAccessTest extends TestCase {
 		yield 'a viewer edits their own' => [['view'], 'edit', self::STRANGER, false];
 		yield 'a vehicle that never passed the gate' => [[], 'edit', self::STRANGER, false];
 	}
+
+	/**
+	 * A pseudonym is no account (docs/adr/0008-erasing-a-driver-pseudonymises.md): whatever still
+	 * names it - an erased owner's vehicle, a renamed grant, an Entry it wrote - opens nothing to a
+	 * caller that hands it in as a uid.
+	 */
+	public function testAPseudonymMayNothing(): void {
+		$erased = 'erased:k3x9qk3x9qk3x9qk3x9q';
+		$this->grants = $this->createMock(AccessMapper::class);
+		$this->grants->method('findGrants')->willReturn([$this->grant('manager', $erased)]);
+		$this->grants->method('findReachable')->willReturn([self::VEHICLE_ID => ['manager']]);
+		$owned = Vehicle::fromRow(['id' => self::VEHICLE_ID, 'uuid' => '0195e2f1-0000-4000-8000-000000000001', 'user_id' => $erased]);
+		$granted = $this->vehicle();
+		$granted->setMay(['view', 'log']);
+		$access = $this->access();
+
+		$this->assertSame([], $access->operations($erased, $owned));
+		$this->assertSame([], $access->operations($erased, $this->vehicle()));
+		$this->assertFalse($access->may($erased, VehicleAccess::VIEW, $owned));
+		$this->assertFalse($access->mayChange($erased, VehicleAccess::EDIT, $granted, $erased));
+		$this->assertFalse($access->mayBooking($erased, $granted, $erased));
+		$this->assertSame([], $access->listed($erased, $owned, [self::VEHICLE_ID => ['view']]));
+		$this->assertSame([], $access->reachable($erased));
+	}
 }

@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Tests\Integration;
 
 use OCA\NextFleet\AppInfo\Application;
+use OCA\NextFleet\BackgroundJob\GrantNoticeJob;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Service\GrantNotices;
 use OCA\NextFleet\Service\GrantService;
@@ -31,6 +32,7 @@ use PHPUnit\Framework\TestCase;
  */
 class GrantNotificationTest extends TestCase {
 	use Accounts;
+	use RunsQueuedJobs;
 
 	/** Shown as "Anna": the sentence names the owner. */
 	private const OWNER = 'nextfleet-test-told-owner';
@@ -77,9 +79,8 @@ class GrantNotificationTest extends TestCase {
 	protected function setUp(): void {
 		// Without the notifications app booted a notification has nowhere to go (ReminderJobTest).
 		\OCP\Server::get(IAppManager::class)->loadApps();
-		$container = (new Application())->getContainer();
-		$this->grants = $container->get(GrantService::class);
-		$this->vehicles = $container->get(VehicleService::class);
+		$this->grants = \OCP\Server::get(GrantService::class);
+		$this->vehicles = \OCP\Server::get(VehicleService::class);
 		$this->forget();
 	}
 
@@ -113,11 +114,16 @@ class GrantNotificationTest extends TestCase {
 		$this->assertStringContainsString('vehicle=' . $vehicle->getUuid(), $list[0]['link']);
 	}
 
-	/** Each member as the group stands now, in their own language; the owner never. */
+	/**
+	 * Each member as the group stands when the queued job runs, in their own language; the owner
+	 * never. A big group is told by cron, not inside the owner's request.
+	 */
 	public function testEachMemberOfAGroupIsToldButNotTheOwner(): void {
 		$vehicle = $this->vehicle();
 
-		$this->grants->grant(self::OWNER, $vehicle->getUuid(), ['grantee' => self::GROUP, 'grantee_type' => 'group', 'role' => 'viewer']);
+		[$grant] = $this->grants->grant(self::OWNER, $vehicle->getUuid(), ['grantee' => self::GROUP, 'grantee_type' => 'group', 'role' => 'viewer']);
+		$this->assertSame(0, $this->stored($grant['uuid']));
+		self::runQueued(GrantNoticeJob::class);
 
 		$this->assertSame(['Anna hat dir Zugriff auf NF-DE 100 als Betrachter gegeben'], array_column($this->notifications(self::CARL), 'subject'));
 		$this->assertSame([], $this->notifications(self::OWNER));
@@ -143,6 +149,8 @@ class GrantNotificationTest extends TestCase {
 		foreach ($list as $grant) {
 			$this->grants->revoke(self::OWNER, $vehicle->getUuid(), $grant['uuid']);
 		}
+		// Revoked before cron came round to telling the group: it tells nobody.
+		self::runQueued(GrantNoticeJob::class);
 
 		$this->assertSame([], $this->notifications(self::BEN));
 		$this->assertSame([], $this->notifications(self::CARL));
@@ -168,11 +176,32 @@ class GrantNotificationTest extends TestCase {
 		$crew = \OCP\Server::get(IGroupManager::class)->createGroup(self::GONE);
 		$crew?->addUser(\OCP\Server::get(IUserManager::class)->get(self::BEN) ?? throw new \RuntimeException('no ' . self::BEN));
 		[$grant] = $this->grants->grant(self::OWNER, $vehicle->getUuid(), ['grantee' => self::GONE, 'grantee_type' => 'group', 'role' => 'viewer']);
+		self::runQueued(GrantNoticeJob::class);
 		$this->assertSame(1, $this->stored($grant['uuid']));
 
 		$crew?->delete();
 
 		$this->assertSame(0, $this->stored($grant['uuid']));
+	}
+
+	/**
+	 * Leaving the group leaves its grant in place, and the notice of it reaches somebody the vehicle
+	 * no longer opens for: the notifier drops it from the store.
+	 */
+	public function testAFormerMemberIsToldNothing(): void {
+		$vehicle = $this->vehicle();
+		$crew = \OCP\Server::get(IGroupManager::class)->createGroup(self::GONE) ?? throw new \RuntimeException('no group');
+		$ben = \OCP\Server::get(IUserManager::class)->get(self::BEN) ?? throw new \RuntimeException('no ' . self::BEN);
+		$crew->addUser($ben);
+		[$grant] = $this->grants->grant(self::OWNER, $vehicle->getUuid(), ['grantee' => self::GONE, 'grantee_type' => 'group', 'role' => 'viewer']);
+		self::runQueued(GrantNoticeJob::class);
+		$this->assertSame(1, $this->stored($grant['uuid']));
+
+		$crew->removeUser($ben);
+
+		$this->assertSame([], $this->notifications(self::BEN));
+		$this->assertSame(0, $this->stored($grant['uuid']));
+		$crew->delete();
 	}
 
 	/** A notice of a deleted car is litter, as its reminders' are (ReminderJobTest). */

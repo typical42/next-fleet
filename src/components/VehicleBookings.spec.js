@@ -5,10 +5,13 @@
 
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
-import { flushPromises, shallowMount } from '@vue/test-utils'
+import { flushPromises, mount, shallowMount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { cancelBooking, ConflictError, listBookings, readEntry } from '../services/api.js'
+import { useVehiclesStore } from '../store/index.js'
+import { savePaper } from '../utils/papers.js'
 import BookingSheet from './BookingSheet.vue'
 import HandoverSheet from './HandoverSheet.vue'
 import VehicleBookings from './VehicleBookings.vue'
@@ -19,6 +22,8 @@ vi.mock('../services/api.js', async (original) => ({
 	listBookings: vi.fn(),
 	readEntry: vi.fn(),
 }))
+
+vi.mock('../utils/papers.js', () => ({ savePaper: vi.fn(async () => '') }))
 
 vi.mock('@nextcloud/l10n', async (original) => ({
 	...await original(),
@@ -93,6 +98,7 @@ function row(wrapper, uuid) {
 }
 
 beforeEach(() => {
+	setActivePinia(createPinia())
 	vi.resetAllMocks()
 	vi.useFakeTimers({ toFake: ['Date'] })
 	vi.setSystemTime(NOW * 1000)
@@ -138,6 +144,28 @@ describe('the bookings section', () => {
 		expect(row(wrapper, 'b-2').find('.bookings__papers').exists()).toBe(false)
 	})
 
+	/** Followed, a refusal would replace the app with a page of JSON (src/utils/papers.js). */
+	it('saves a handover photo through the download, and says on the row why it was not', async () => {
+		const photo = /** @type {import('../services/api.js').Document} */ ({ uuid: 'd-1', kind: 'photo', file_id: 7, name: 'scratch.jpg', mime: 'image/jpeg', linked_type: 'booking', linked_uuid: 'b-1', may: [] })
+		vi.mocked(savePaper).mockResolvedValueOnce('Somebody is saving this file right now. Try again in a moment.')
+		const wrapper = await section(VEHICLE, [photo])
+
+		await row(wrapper, 'b-1').get('.bookings__papers a').trigger('click')
+		await flushPromises()
+
+		expect(savePaper).toHaveBeenCalledWith('v-1', photo)
+		expect(row(wrapper, 'b-1').get('.bookings__papers').text()).toContain('Somebody is saving this file right now.')
+		expect(row(wrapper, 'b-2').text()).not.toContain('Somebody is saving')
+	})
+
+	/** The server lists a return still waiting for its trip however old: the heading claims no week. */
+	it('heads the ones behind the reader as earlier', async () => {
+		const wrapper = await section()
+
+		expect(wrapper.get('.bookings__past').text()).toContain('Earlier')
+		expect(wrapper.text()).not.toContain('Last 7 days')
+	})
+
 	/** A car still out past its end has not been given back: it stays among the coming ones. */
 	it('keeps a car that is still out among the coming ones', async () => {
 		vi.mocked(listBookings).mockResolvedValue([booking({ uuid: 'b-4', starts_at: 1790582400, ends_at: 1790596800, state: 'out' })])
@@ -169,6 +197,17 @@ describe('the bookings section', () => {
 		const wrapper = await section()
 
 		expect(wrapper.getComponent(NcNoteCard).props('text')).toContain('500')
+	})
+
+	/** The undo toast brought a trip back: the row it came from links it again (src/store/index.js). */
+	it('reads the list again when an undo restores something', async () => {
+		const wrapper = await section()
+
+		useVehiclesStore().restored++
+		await flushPromises()
+
+		expect(listBookings).toHaveBeenCalledTimes(2)
+		expect(wrapper.findAll('[data-booking]')).toHaveLength(3)
 	})
 
 	/** The first vehicle's list arriving last would put its bookings on the second. */
@@ -224,6 +263,17 @@ describe('changing and cancelling', () => {
 		expect(row(wrapper, 'b-3').findAllComponents(NcButton)).toHaveLength(0)
 	})
 
+	/** Read out of its row, "Change" alone does not say which booking it changes. */
+	it('names the booking in each row button\'s label', async () => {
+		const wrapper = await section()
+
+		expect(row(wrapper, 'b-2').findAllComponents(NcButton).map((/** @type {any} */ one) => one.props('ariaLabel'))).toEqual([
+			'Take the car, booked Fri 02/10, 14:00–18:00',
+			'Change the booking Fri 02/10, 14:00–18:00',
+			'Cancel booking Fri 02/10, 14:00–18:00',
+		])
+	})
+
 	it('opens the sheet on the booking', async () => {
 		const wrapper = await section()
 
@@ -248,6 +298,36 @@ describe('changing and cancelling', () => {
 		expect(wrapper.emitted('changed')).toHaveLength(1)
 	})
 
+	/** A keyboard or screen reader user lands on the answer, and back where they asked from. */
+	it('moves focus to the question and back to the button that asked it', async () => {
+		const wrapper = mount(VehicleBookings, { props: { vehicle: VEHICLE, papers: [] }, attachTo: document.body })
+		await flushPromises()
+
+		await row(wrapper, 'b-2').get('.bookings__cancel').trigger('click')
+		await flushPromises()
+		expect(document.activeElement?.textContent?.trim()).toBe('Keep it')
+
+		await /** @type {HTMLElement} */ (document.activeElement).click()
+		await flushPromises()
+		expect(document.activeElement).toBe(row(wrapper, 'b-2').get('.bookings__cancel').element)
+		wrapper.unmount()
+	})
+
+	/** Cancelled, the row keeps no Cancel button; focus stays on the row rather than falling to the page. */
+	it('keeps focus on the row once its booking is cancelled', async () => {
+		const wrapper = mount(VehicleBookings, { props: { vehicle: VEHICLE, papers: [] }, attachTo: document.body })
+		await flushPromises()
+		vi.mocked(listBookings).mockResolvedValue([PAST, { ...COMING, state: 'cancelled', may: [] }, ANNAS])
+
+		await row(wrapper, 'b-2').get('.bookings__cancel').trigger('click')
+		await flushPromises()
+		await /** @type {HTMLElement} */ ([...document.querySelectorAll('.bookings__question button')].find((one) => one.textContent?.trim() === 'Yes, cancel it')).click()
+		await flushPromises()
+
+		expect(document.activeElement).toBe(row(wrapper, 'b-2').element)
+		wrapper.unmount()
+	})
+
 	it('leaves the booking alone when the question is answered no', async () => {
 		const wrapper = await section()
 
@@ -256,6 +336,17 @@ describe('changing and cancelling', () => {
 
 		expect(cancelBooking).not.toHaveBeenCalled()
 		expect(button(row(wrapper, 'b-2'), 'Cancel booking')).toBeDefined()
+	})
+
+	it('says a refused cancel in words', async () => {
+		vi.mocked(cancelBooking).mockRejectedValue(new Error('only a booking not yet taken changes, is cancelled or is checked out'))
+		const wrapper = await section()
+
+		await button(row(wrapper, 'b-2'), 'Cancel booking').vm.$emit('click')
+		await button(row(wrapper, 'b-2'), 'Yes, cancel it').vm.$emit('click')
+		await flushPromises()
+
+		expect(wrapper.getComponent(NcNoteCard).props('text')).toBe('This booking was taken, returned or cancelled meanwhile.')
 	})
 
 	/** The booking moved on; what it now is decides whether a cancel still makes sense, so the list is read again. */
@@ -283,6 +374,29 @@ describe('the handover', () => {
 		await button(row(wrapper, 'b-2'), 'Take the car').vm.$emit('click')
 
 		expect(/** @type {any} */ (wrapper.getComponent(HandoverSheet)).props('booking')).toEqual(COMING)
+	})
+
+	/** The newest return's counter, not the largest: a counter that ran backwards is the car's now. */
+	it('hands the sheet the counter the car last came back at', async () => {
+		const older = booking({ uuid: 'b-6', starts_at: 1790582400, ends_at: 1790596800, state: 'returned', in_at: 1790596000, in_odo: 52300 })
+		const newer = booking({ uuid: 'b-7', starts_at: 1790600000, ends_at: 1790610000, state: 'returned', in_at: 1790609000, in_odo: 52140 })
+		vi.mocked(listBookings).mockResolvedValue([older, newer, COMING])
+		const wrapper = await section()
+
+		await button(row(wrapper, 'b-2'), 'Take the car').vm.$emit('click')
+
+		expect(/** @type {any} */ (wrapper.getComponent(HandoverSheet)).props('lastIn')).toBe(52140)
+	})
+
+	/** A logged trip is the record and has moved the vehicle's counter: its check-in counter no longer counts. */
+	it('hands the sheet no counter from a return whose trip is logged', async () => {
+		const logged = booking({ uuid: 'b-6', starts_at: 1790582400, ends_at: 1790596800, state: 'returned', in_at: 1790596000, in_odo: 52300, trip_uuid: 't-1' })
+		vi.mocked(listBookings).mockResolvedValue([logged, COMING])
+		const wrapper = await section()
+
+		await button(row(wrapper, 'b-2'), 'Take the car').vm.$emit('click')
+
+		expect(/** @type {any} */ (wrapper.getComponent(HandoverSheet)).props('lastIn')).toBeNull()
 	})
 
 	/** The screen is told too: the header says who has the car. */
@@ -390,6 +504,22 @@ describe('a booking becomes a trip', () => {
 
 		expect(readEntry).toHaveBeenCalledWith('v-1', 'trip', 't-1')
 		expect(wrapper.emitted('open')).toEqual([[trip]])
+	})
+
+	/** The entry sheet would open the last vehicle's trip over this one. */
+	it('drops a trip that arrives after the screen moved to another vehicle', async () => {
+		/** @type {(entry: any) => void} */
+		let late = () => {}
+		vi.mocked(readEntry).mockReturnValue(new Promise((resolve) => { late = resolve }))
+		vi.mocked(listBookings).mockResolvedValue([{ ...BACK, trip_uuid: 't-1', trip_voided: false, trip_draft: null, may: ['open_trip'] }])
+		const wrapper = await section()
+
+		await button(row(wrapper, 'b-8'), 'Show the trip').vm.$emit('click')
+		await wrapper.setProps({ vehicle: { ...VEHICLE, uuid: 'v-2' } })
+		late({ type: 'trip', trip: { uuid: 't-1' } })
+		await flushPromises()
+
+		expect(wrapper.emitted('open')).toBeUndefined()
 	})
 
 	/** The trip opens by its own rule, as its timeline row does; to anyone else the row only says it is logged. */

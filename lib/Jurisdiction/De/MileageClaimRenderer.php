@@ -20,6 +20,8 @@ use OCA\NextFleet\Jurisdiction\MileageClaim;
  */
 class MileageClaimRenderer implements IClaimRenderer {
 	private const UNSTATED = 'nicht angegeben';
+	private const INCOMPLETE = 'incomplete';
+	private const DERIVED = 'derived';
 
 	/** Upright, since eight columns fit; inline, because the page loads nothing. */
 	private const STYLE = <<<'CSS'
@@ -48,7 +50,7 @@ class MileageClaimRenderer implements IClaimRenderer {
 			. '<meta name="viewport" content="width=device-width, initial-scale=1">'
 			. '<title>Fahrtkosten ' . $this->text($vehicle->getPlate()) . ' ' . $claim->year . '</title>'
 			. '<style>' . self::STYLE . '</style></head><body>'
-			. '<header><h1>Fahrtkosten für Dienstfahrten ' . $claim->year . '</h1><dl>'
+			. '<header><h1>Fahrtkosten für geschäftliche Fahrten ' . $claim->year . '</h1><dl>'
 			. '<dt>Kennzeichen</dt><dd>' . $this->text($vehicle->getPlate()) . '</dd>'
 			. ($name === '' ? '' : '<dt>Fahrzeug</dt><dd>' . $this->text($name) . '</dd>')
 			. '</dl><p>Nur Fahrten, die Sie eingetragen haben.</p></header>'
@@ -68,11 +70,20 @@ class MileageClaimRenderer implements IClaimRenderer {
 		$html .= '</tr></thead><tbody>';
 
 		if ($claim->lines === []) {
-			return $html . '<tr><td colspan="' . count($columns) . '">Keine Dienstfahrten in ' . $claim->year . ', die Sie eingetragen haben.</td></tr></tbody></table>';
+			return $html . '<tr><td colspan="' . count($columns) . '">Keine geschäftlichen Fahrten in ' . $claim->year . ', die Sie eingetragen haben.</td></tr></tbody></table>';
 		}
 
 		foreach ($claim->lines as $line) {
 			$trip = $line['trip'];
+			$amount = $line['amount'] === null ? self::UNSTATED : $this->money($line['amount']);
+			$amount = match (self::leftOut($line)) {
+				null => $amount,
+				// Brackets for an amount the sum leaves out, as an accountant would mark it. A
+				// missing field is named, since the plate and the counters have no column here.
+				self::DERIVED => self::bracketed($line, $amount) . ' <br>abgeleitet',
+				self::INCOMPLETE => self::bracketed($line, $amount) . ' <br>fehlt: '
+					. implode(', ', array_map(static fn (string $field): string => FahrtenbuchRenderer::WORDS[$field] ?? $field, $line['missing'] ?? [])),
+			};
 			$cells = [
 				['', gmdate('d.m.Y', $trip->getStartedAt() + $trip->getStartedAtOff() * 60)],
 				['', $this->text($trip->getFromLabel())],
@@ -81,7 +92,7 @@ class MileageClaimRenderer implements IClaimRenderer {
 				['', $this->text($trip->getPartner())],
 				['number', $line['kilometres'] === null ? self::UNSTATED : $this->count($line['kilometres'])],
 				['number', $line['rate'] === null ? self::UNSTATED : $this->rate($line['rate'])],
-				['number', $line['amount'] === null ? self::UNSTATED : $this->money($line['amount'])],
+				['number', $amount],
 			];
 			$html .= '<tr>';
 			foreach ($cells as [$class, $content]) {
@@ -97,18 +108,61 @@ class MileageClaimRenderer implements IClaimRenderer {
 	}
 
 	/**
-	 * What the sum leaves out, so nobody reads it as the year's: the trips it could not value, and
-	 * the commutes, which are a different deduction (the Entfernungspauschale).
+	 * What the sum leaves out, so nobody reads it as the year's: the trips the Finanzamt would not
+	 * accept, the trips it could not value, and the commutes, which are a different deduction (the
+	 * Entfernungspauschale). Then who may claim the flat rate at all.
 	 */
 	private function notes(MileageClaim $claim): string {
-		$unvalued = count(array_filter($claim->lines, static fn (array $line): bool => $line['amount'] === null));
+		$incomplete = 0;
+		$derived = 0;
+		$bracketed = false;
+		$unvalued = 0;
+		foreach ($claim->lines as $line) {
+			$reason = self::leftOut($line);
+			$incomplete += (int)($reason === self::INCOMPLETE);
+			$derived += (int)($reason === self::DERIVED);
+			$bracketed = $bracketed || ($reason !== null && $line['amount'] !== null);
+			$unvalued += (int)($reason === null && $line['amount'] === null);
+		}
 		$html = '<section id="hinweise">';
+		if ($bracketed) {
+			$html .= '<p>Beträge in Klammern sind in der Summe nicht enthalten.</p>';
+		}
+		if ($incomplete > 0) {
+			$html .= '<p>' . ($incomplete === 1 ? 'Einer Fahrt' : $incomplete . ' Fahrten')
+				. ' fehlen Angaben, die das Finanzamt für eine geschäftliche Fahrt verlangt; was fehlt, steht beim Betrag.'
+				. ($incomplete === 1 ? ' Ergänzt zählt sie mit.' : ' Ergänzt zählen sie mit.') . '</p>';
+		}
+		if ($derived > 0) {
+			$html .= '<p>' . ($derived === 1 ? '1 Fahrt ist' : $derived . ' Fahrten sind') . ' abgeleitet: aus dem Kilometerstand erschlossen, um eine Lücke'
+				. ' zu schließen, und nicht als gefahren eingetragen. Als geschäftliche Fahrt belegt das nichts.</p>';
+		}
 		if ($unvalued > 0) {
 			$html .= '<p>' . ($unvalued === 1 ? '1 Fahrt ohne Betrag ist' : $unvalued . ' Fahrten ohne Betrag sind')
 				. ' in der Summe nicht enthalten: für ihren Tag ist kein Satz oder für sie keine Strecke angegeben.</p>';
 		}
 
-		return $html . '<p>Fahrten zwischen Wohnung und erster Tätigkeitsstätte sind nicht enthalten.</p></section>';
+		return $html . '<p>Fahrten zwischen Wohnung und erster Tätigkeitsstätte sind nicht enthalten.</p>'
+			. '<p>Die Kilometerpauschale gilt nur für Fahrzeuge, die nicht zum Betriebsvermögen gehören.</p></section>';
+	}
+
+	/**
+	 * Why the sum leaves a line out, or null when it counts. Derived wins over incomplete:
+	 * completing a Reconciliation Trip would not make it count, so it must not be promised.
+	 *
+	 * @param array{missing?: list<string>, reconciled?: bool, ...} $line
+	 */
+	private static function leftOut(array $line): ?string {
+		return match (true) {
+			$line['reconciled'] ?? false => self::DERIVED,
+			($line['missing'] ?? []) !== [] => self::INCOMPLETE,
+			default => null,
+		};
+	}
+
+	/** @param array{amount: ?int, ...} $line */
+	private static function bracketed(array $line, string $amount): string {
+		return $line['amount'] === null ? $amount : '(' . $amount . ')';
 	}
 
 	private function footer(MileageClaim $claim): string {

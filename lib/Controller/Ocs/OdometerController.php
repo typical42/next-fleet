@@ -74,11 +74,13 @@ class OdometerController extends OCSController {
 	 * @param int|null $value the counter as read; required unless `distance` is given
 	 * @param int|null $distance the distance driven since the Reading before
 	 * @param string|null $counter main, or second for the engine hours; main when left out
-	 * @return DataResponse<Http::STATUS_CREATED, NextFleetReading, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
+	 * @param string|null $client_uuid a uuid of the client's for the new row: a retry under it answers that row
+	 * @return DataResponse<Http::STATUS_CREATED, NextFleetReading, array{}>|DataResponse<Http::STATUS_OK, NextFleetReading, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
 	 * @throws OCSForbiddenException the caller may not log on this vehicle
 	 * @throws OCSNotFoundException no such vehicle
 	 *
 	 * 201: the Reading
+	 * 200: the Reading an earlier create under the same `client_uuid` wrote
 	 * 400: a field is not what it holds, or both `value` and `distance` are given
 	 * 412: a Reading on the chain changed meanwhile; send it again
 	 */
@@ -91,9 +93,10 @@ class OdometerController extends OCSController {
 		mixed $value = null,
 		mixed $distance = null,
 		mixed $counter = null,
+		mixed $client_uuid = null,
 	): DataResponse {
-		return $this->write(fn (): DataResponse => new DataResponse(
-			$this->service->record($this->userId(), $uuid, $this->request->getParams())->jsonSerialize(),
+		return $this->write(fn (): DataResponse => $this->created(
+			fn (): array => $this->service->record($this->userId(), $uuid, $this->request->getParams())->jsonSerialize(),
 			Http::STATUS_CREATED,
 		));
 	}
@@ -180,6 +183,32 @@ class OdometerController extends OCSController {
 	public function restore(string $uuid, string $reading, mixed $updated_at = null): DataResponse {
 		return $this->write(fn (): DataResponse => new DataResponse(
 			$this->service->restore($this->userId(), $uuid, $reading, $this->token())->jsonSerialize(),
+		));
+	}
+
+	/**
+	 * Answer a Reading in question: the counter was replaced
+	 *
+	 * The Reading becomes a `reset`: it stands, and starts a new segment. Any Entry's Reading, and
+	 * answering takes what changing that Entry takes. The other answer, a typo, is an edit of the
+	 * Entry.
+	 *
+	 * @param string $uuid the vehicle's uuid
+	 * @param string $reading the Reading's uuid
+	 * @param int|null $updated_at required: the Reading's `updated_at` as the caller read it
+	 * @return DataResponse<Http::STATUS_OK, NextFleetReading, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
+	 * @throws OCSForbiddenException the caller may not change this Reading's Entry
+	 * @throws OCSNotFoundException no such vehicle or live Reading
+	 *
+	 * 200: the Reading as a reset, with its new `updated_at`
+	 * 400: `updated_at` is missing, or the Reading is not in question (`reason`: `not_in_question`)
+	 * 412: the Reading changed since `updated_at`; read it again
+	 */
+	#[NoAdminRequired]
+	#[UserRateLimit(limit: 60, period: 60)]
+	public function reset(string $uuid, string $reading, mixed $updated_at = null): DataResponse {
+		return $this->write(fn (): DataResponse => new DataResponse(
+			$this->service->reset($this->userId(), $uuid, $reading, $this->token())->jsonSerialize(),
 		));
 	}
 }

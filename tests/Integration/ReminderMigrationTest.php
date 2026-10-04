@@ -8,7 +8,6 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Integration;
 
-use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\Reminder;
 use OCA\NextFleet\Db\ReminderMapper;
 use OCA\NextFleet\Db\ReminderReceipt;
@@ -18,6 +17,7 @@ use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Migration\Version000004Date20260922000000;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\DB\Exception;
+use OCP\DB\ISchemaWrapper;
 use OCP\IDBConnection;
 use OCP\Migration\IOutput;
 use PHPUnit\Framework\TestCase;
@@ -35,9 +35,8 @@ class ReminderMigrationTest extends TestCase {
 	private ReminderRecipientMapper $recipients;
 
 	protected function setUp(): void {
-		$container = (new Application())->getContainer();
-		$this->vehicles = $container->get(VehicleService::class);
-		$this->recipients = $container->get(ReminderRecipientMapper::class);
+		$this->vehicles = \OCP\Server::get(VehicleService::class);
+		$this->recipients = \OCP\Server::get(ReminderRecipientMapper::class);
 		$this->forgetTestRows();
 	}
 
@@ -58,8 +57,8 @@ class ReminderMigrationTest extends TestCase {
 	}
 
 	private function migrate(): void {
-		(new Application())->getContainer()->get(Version000004Date20260922000000::class)
-			->postSchemaChange($this->createMock(IOutput::class), static fn () => null, []);
+		\OCP\Server::get(Version000004Date20260922000000::class)
+			->postSchemaChange($this->createMock(IOutput::class), fn (): ISchemaWrapper => $this->createMock(ISchemaWrapper::class), []);
 	}
 
 	/** @return list<string> */
@@ -116,7 +115,7 @@ class ReminderMigrationTest extends TestCase {
 		$reminder->setState(Reminder::PLANNED);
 		$reminder->setCreatedBy(self::OWNER);
 
-		$mapper = (new Application())->getContainer()->get(ReminderMapper::class);
+		$mapper = \OCP\Server::get(ReminderMapper::class);
 		$written = $mapper->insert($reminder);
 		$read = $mapper->findByUuid($written->getUuid());
 
@@ -128,7 +127,7 @@ class ReminderMigrationTest extends TestCase {
 
 	/** One receipt per point, occurrence, channel and recipient, however often the job runs. */
 	public function testTheDatabaseRefusesASecondReceiptForTheSameSend(): void {
-		$mapper = (new Application())->getContainer()->get(ReminderReceiptMapper::class);
+		$mapper = \OCP\Server::get(ReminderReceiptMapper::class);
 		$receipt = function (string $channel): ReminderReceipt {
 			$receipt = new ReminderReceipt();
 			$receipt->setReminderId(1);

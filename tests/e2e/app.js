@@ -114,15 +114,17 @@ export function ocs(page, method, path, body) {
 /**
  * A vehicle's row on the overview. The navigation lists the same vehicles and Nextcloud's chrome
  * has landmarks of its own, so the row is the one in the app's own content area - and in the
- * fleet's own list, because the hint above it lists vehicles as well.
+ * fleet's own list, because the hint above it lists vehicles as well. Matched on the whole name:
+ * spec files run at once, and `E2E-edit` is part of `M3-E2E-edit-…`.
  *
  * @param {import('@playwright/test').Page} page - a page showing the overview
  * @param {string} plate - the label to find it by
  * @return {import('@playwright/test').Locator} the row
  */
 export function row(page, plate) {
+	const whole = new RegExp(`^\\s*${plate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`)
 	return page.locator('#nextfleet').getByRole('main').locator('.overview__list')
-		.getByRole('listitem').filter({ hasText: plate })
+		.getByRole('listitem').filter({ has: page.locator('.list-item-content__name', { hasText: whole }) })
 }
 
 /**
@@ -170,6 +172,20 @@ export function choice(within, label) {
  */
 export function toggle(within, label) {
 	return within.locator('label').filter({ hasText: label })
+}
+
+/**
+ * Picks a trip's category in the entry sheet. A new trip opens on none until the person has used
+ * one on the vehicle (docs/ui.md), and the prefill that names it may land after a quick fill, so a
+ * spec that saves a trip picks it. The options list is rendered outside the dialog.
+ *
+ * @param {import('@playwright/test').Page} page - the page the sheet is on
+ * @param {import('@playwright/test').Locator} sheet - the entry sheet
+ * @param {string} [word] - the category, as it reads on screen
+ */
+export async function categorise(page, sheet, word = 'Business') {
+	await sheet.getByRole('combobox', { name: 'Category' }).click()
+	await page.getByRole('option', { name: word, exact: true }).click()
 }
 
 /**

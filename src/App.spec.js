@@ -4,6 +4,7 @@
  */
 
 import NcAppNavigationItem from '@nextcloud/vue/components/NcAppNavigationItem'
+import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
 import { flushPromises, shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -39,7 +40,7 @@ vi.mock('./services/api.js', async (original) => ({
 
 const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', lifecycle: 'active' }
 const SETTINGS = {
-	preferences: { jurisdiction: 'de', dismissed_hints: [], reclaim_vat: false, kpi_period: 'last-12', grid_factor: null, inbox_folder: null },
+	preferences: { jurisdiction: 'de', dismissed_hints: [], dismissed_logbook_hints: [], reclaim_vat: false, kpi_period: 'last-12', grid_factor: null, inbox_folder: null },
 	jurisdictions: [],
 }
 /** Someone who chose an inbox folder on their settings page. */
@@ -105,7 +106,7 @@ describe('the app shell', () => {
 	 */
 	it('reads the preferences along with the fleet', async () => {
 		vi.mocked(getPreferences).mockResolvedValue({
-			preferences: { jurisdiction: 'de', dismissed_hints: [VEHICLE.uuid], reclaim_vat: false, kpi_period: 'last-12', grid_factor: null, inbox_folder: null },
+			preferences: { jurisdiction: 'de', dismissed_hints: [VEHICLE.uuid], dismissed_logbook_hints: [], reclaim_vat: false, kpi_period: 'last-12', grid_factor: null, inbox_folder: null },
 			jurisdictions: [],
 		})
 
@@ -292,7 +293,34 @@ describe('the app shell', () => {
 		})
 		await flushPromises()
 
-		expect(wrapper.findAll('.item').map((one) => one.text())).toEqual(['Overview', 'Inbox3', 'Reports'])
+		expect(wrapper.findAll('.item').map((one) => one.text())).toEqual(['Overview', 'Inbox3', 'Reports', 'Settings'])
+	})
+
+	/** A fleet still on its way is not an empty one: "No vehicles yet" would teach the wrong thing. */
+	it('shows that the fleet is loading, not that it is empty', async () => {
+		/** @type {(fleet: any[]) => void} */
+		let arrive = () => {}
+		vi.mocked(listVehicles).mockReturnValue(new Promise((resolve) => { arrive = resolve }))
+		const wrapper = shallowMount(App, {
+			global: { stubs: { NcContent: { template: '<div><slot /></div>' }, NcAppContent: { template: '<div><slot /></div>' } } },
+		})
+		await flushPromises()
+
+		expect(wrapper.findComponent(NcLoadingIcon).exists()).toBe(true)
+		expect(wrapper.findComponent(OverviewView).exists()).toBe(false)
+
+		arrive([])
+		await flushPromises()
+
+		expect(wrapper.findComponent(NcLoadingIcon).exists()).toBe(false)
+		expect(wrapper.findComponent(OverviewView).exists()).toBe(true)
+	})
+
+	/** The app's own settings sit on the personal settings page; the navigation leads there. */
+	it('links to the personal settings from the navigation footer', async () => {
+		const wrapper = await shell()
+
+		expect(entry(wrapper, 'Settings').props('href')).toMatch(/\/settings\/user\/additional$/)
 	})
 
 	it('opens the inbox screen on the fleet, and leaves it for a vehicle', async () => {

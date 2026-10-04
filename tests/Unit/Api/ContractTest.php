@@ -128,6 +128,133 @@ class ContractTest extends TestCase {
 		$this->assertContains('GET ' . self::SYNC . ' query limit: was integer/int64, is string', $breaks);
 	}
 
+	public function testANarrowerRangeBreaksIt(): void {
+		$offered = $this->baseline();
+		$limit = &$offered['paths'][self::SYNC]['get']['parameters'][1]['schema'];
+		$limit['maximum'] = 500;
+		$limit['minimum'] = 10;
+		$offered['paths'][self::VEHICLES]['post']['requestBody']['content']['application/json']['schema']['properties']['tank_ml']['minimum'] = 0;
+
+		$this->assertEqualsCanonicalizing([
+			'GET ' . self::SYNC . ' query limit: minimum was 1, is 10',
+			'GET ' . self::SYNC . ' query limit: maximum was 2000, is 500',
+			'POST ' . self::VEHICLES . ' body: tank_ml minimum was none, is 0',
+		], Contract::breaks($this->baseline(), $offered));
+	}
+
+	public function testAWiderRangeKeepsEveryPromise(): void {
+		$offered = $this->baseline();
+		$limit = &$offered['paths'][self::SYNC]['get']['parameters'][1]['schema'];
+		$limit['maximum'] = 5000;
+		unset($limit['minimum']);
+
+		$this->assertSame([], Contract::breaks($this->baseline(), $offered));
+	}
+
+	public function testARequestValueNoLongerTakenBreaksIt(): void {
+		$promised = $this->baseline();
+		$body = &$promised['paths'][self::VEHICLES]['post']['requestBody']['content']['application/json']['schema'];
+		$body['properties']['color']['enum'] = ['red', 'blue'];
+		// A copy of an array keeps its references shared.
+		unset($body);
+		$offered = $promised;
+		$body = &$offered['paths'][self::VEHICLES]['post']['requestBody']['content']['application/json']['schema'];
+		$body['properties']['color']['enum'] = ['red'];
+		$body['properties']['plate']['enum'] = ['AB-12'];
+
+		$this->assertEqualsCanonicalizing([
+			'POST ' . self::VEHICLES . ' body: color no longer takes "blue"',
+			'POST ' . self::VEHICLES . ' body: plate now takes only ["AB-12"]',
+		], Contract::breaks($promised, $offered));
+	}
+
+	public function testAnAnswerValueNotPromisedBreaksIt(): void {
+		$offered = $this->baseline();
+		$offered['components']['schemas']['Conflict']['properties']['conflict']['enum'] = [true, false];
+
+		$this->assertContains('POST ' . self::VEHICLES . ' 412: ocs.data.conflict may now be false', Contract::breaks($this->baseline(), $offered));
+
+		unset($offered['components']['schemas']['Conflict']['properties']['conflict']['enum']);
+
+		$this->assertContains('POST ' . self::VEHICLES . ' 412: ocs.data.conflict is no longer one of [true]', Contract::breaks($this->baseline(), $offered));
+	}
+
+	/** The extractor writes a nullable `$ref` as an `allOf` of one: what the part holds still counts. */
+	public function testANarrowingBehindAnAllOfBreaksIt(): void {
+		$promised = $this->baseline();
+		$promised['components']['schemas']['Kind'] = ['type' => 'string', 'enum' => ['car', 'van']];
+		$promised['components']['schemas']['Vehicle']['properties']['kind'] = ['nullable' => true, 'allOf' => [['$ref' => '#/components/schemas/Kind']]];
+		$offered = $promised;
+		$offered['components']['schemas']['Kind']['enum'][] = 'bus';
+
+		$this->assertContains('GET ' . self::VEHICLES . ' 200: ocs.data[].kind may now be "bus"', Contract::breaks($promised, $offered));
+	}
+
+	/** A request may take more values, an answer give fewer. */
+	public function testAWiderRequestOrANarrowerAnswerKeepsEveryPromise(): void {
+		$promised = $this->baseline();
+		$promised['paths'][self::VEHICLES]['post']['requestBody']['content']['application/json']['schema']['properties']['color']['enum'] = ['red'];
+		$promised['components']['schemas']['Conflict']['properties']['conflict']['enum'] = [true, false];
+		$offered = $promised;
+		$offered['paths'][self::VEHICLES]['post']['requestBody']['content']['application/json']['schema']['properties']['color']['enum'] = ['red', 'blue'];
+		$offered['components']['schemas']['Conflict']['properties']['conflict']['enum'] = [true];
+
+		$this->assertSame([], Contract::breaks($promised, $offered));
+
+		unset($offered['paths'][self::VEHICLES]['post']['requestBody']['content']['application/json']['schema']['properties']['color']['enum']);
+
+		$this->assertSame([], Contract::breaks($promised, $offered));
+	}
+
+	/**
+	 * A map's values are neither walked nor narrowed one way: whatever changes inside them, behind
+	 * a `$ref` too, may break a client on one side or the other.
+	 */
+	public function testAnyChangeInsideAMapsValuesBreaksIt(): void {
+		$promised = $this->baseline();
+		$promised['components']['schemas']['Vehicle']['properties']['extras'] = ['type' => 'object', 'additionalProperties' => ['$ref' => '#/components/schemas/Conflict']];
+		$promised['paths'][self::VEHICLES]['post']['requestBody']['content']['application/json']['schema']['properties']['units'] = ['type' => 'object', 'additionalProperties' => ['type' => 'string']];
+		$offered = $promised;
+		$offered['components']['schemas']['Conflict']['properties']['message']['nullable'] = true;
+		$offered['paths'][self::VEHICLES]['post']['requestBody']['content']['application/json']['schema']['properties']['units']['additionalProperties'] = ['type' => 'string', 'minLength' => 2];
+
+		$breaks = Contract::breaks($promised, $offered);
+
+		$this->assertContains('GET ' . self::VEHICLES . ' 200: ocs.data[].extras additionalProperties changed', $breaks);
+		$this->assertContains('POST ' . self::VEHICLES . ' body: units additionalProperties changed', $breaks);
+	}
+
+	public function testAnyChangeToTheMembersOfAOneOfBreaksIt(): void {
+		$members = [['type' => 'integer', 'format' => 'int64'], ['type' => 'string']];
+		$promised = $this->baseline();
+		$promised['components']['schemas']['Vehicle']['properties']['extra'] = ['nullable' => true, 'oneOf' => $members];
+		$promised['paths'][self::VEHICLES]['post']['requestBody']['content']['application/json']['schema']['properties']['extra'] = ['oneOf' => $members];
+		$offered = $promised;
+		$offered['components']['schemas']['Vehicle']['properties']['extra']['oneOf'][] = ['type' => 'boolean'];
+		$offered['paths'][self::VEHICLES]['post']['requestBody']['content']['application/json']['schema']['properties']['extra']['oneOf'] = [$members[1]];
+
+		$breaks = Contract::breaks($promised, $offered);
+
+		$this->assertContains('GET ' . self::VEHICLES . ' 200: ocs.data[].extra oneOf changed', $breaks);
+		$this->assertContains('POST ' . self::VEHICLES . ' body: extra oneOf changed', $breaks);
+	}
+
+	/** Words about a map's values or a `oneOf`'s members promise nothing a client reads. */
+	public function testADescriptionInsideAMapOrAOneOfKeepsEveryPromise(): void {
+		$promised = $this->baseline();
+		$promised['components']['schemas']['Vehicle']['properties']['extras'] = ['type' => 'object', 'additionalProperties' => ['type' => 'object', 'properties' => ['description' => ['type' => 'string']]]];
+		$promised['components']['schemas']['Vehicle']['properties']['extra'] = ['oneOf' => [['type' => 'string'], ['type' => 'boolean']]];
+		$offered = $promised;
+		$offered['components']['schemas']['Vehicle']['properties']['extras']['additionalProperties']['description'] = 'what the owner adds';
+		$offered['components']['schemas']['Vehicle']['properties']['extra']['oneOf'][0]['description'] = 'a word';
+
+		$this->assertSame([], Contract::breaks($promised, $offered));
+
+		unset($offered['components']['schemas']['Vehicle']['properties']['extras']['additionalProperties']['properties']['description']);
+
+		$this->assertContains('GET ' . self::VEHICLES . ' 200: ocs.data[].extras additionalProperties changed', Contract::breaks($promised, $offered));
+	}
+
 	public function testASuccessThatIsNoLongerAnsweredBreaksIt(): void {
 		$offered = $this->baseline();
 		$offered['paths'][self::VEHICLES]['post']['responses']['200'] = $offered['paths'][self::VEHICLES]['post']['responses']['201'];

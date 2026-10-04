@@ -19,12 +19,14 @@ use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Exception\AccessDeniedException;
+use OCA\NextFleet\Exception\RefusedException;
 use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Jurisdiction\IJurisdiction;
 use OCA\NextFleet\Jurisdiction\ILogbookRules;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCA\NextFleet\Service\BookingService;
 use OCA\NextFleet\Service\Gaps;
+use OCA\NextFleet\Service\LogbookPeriods;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleAccess;
@@ -81,6 +83,8 @@ class TripServiceTest extends TestCase {
 	private ?int $cached = null;
 	/** Whether the vehicle the gate hands back is under Logbook Mode. */
 	private bool $logbookMode = false;
+	/** The mode's flips on the vehicle's trail, oldest first. @var list<Audit> */
+	private array $flips = [];
 	/** Whether the vehicle's jurisdiction has a logbook ruleset at all. */
 	private bool $ruleset = true;
 	/** What the server's clock says when a write arrives. */
@@ -103,6 +107,7 @@ class TripServiceTest extends TestCase {
 		$this->nextReadingId = 1;
 		$this->cached = null;
 		$this->logbookMode = false;
+		$this->flips = [];
 		$this->ruleset = true;
 		$this->now = self::ENTERED_AT;
 		$this->odometer = null;
@@ -173,6 +178,9 @@ class TripServiceTest extends TestCase {
 
 			return $row;
 		});
+		$this->auditMapper->method('findForEntity')->willReturnCallback(
+			fn (string $entity): array => $entity === Audit::VEHICLE ? $this->flips : [],
+		);
 
 		$this->readingMapper = $this->createMock(OdoReadingMapper::class);
 		$this->readingMapper->method('insert')->willReturnCallback(
@@ -354,7 +362,21 @@ class TripServiceTest extends TestCase {
 			$this->vehicles,
 			$this->createMock(BookingService::class),
 			$this->db,
+			new LogbookPeriods($this->auditMapper),
 		);
+	}
+
+	/** The mode was on from `$on` to `$off` and is off now, as VehicleService's flips say. */
+	private function wasOn(int $on, int $off): void {
+		foreach ([[false, true, $on], [true, false, $off]] as [$before, $after, $at]) {
+			$this->flips[] = Audit::fromRow([
+				'entity' => Audit::VEHICLE,
+				'entity_id' => self::VEHICLE_ID,
+				'diff_json' => json_encode(['change' => 'switched', 'fields' => ['logbook_mode' => [$before, $after]]]),
+				'created_at' => $at,
+				'created_by' => self::OWNER,
+			]);
+		}
 	}
 
 	/** Every jurisdiction answers with one ruleset, or with none when a case says so. */
@@ -676,6 +698,53 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
+	 * Two counters the wrong way round are a typo, and a negative trip would lower every sum it
+	 * lands in. The refusal names its reason, so the sheet can say it in the driver's words.
+	 */
+	public function testAnEndCounterBelowTheStartIsRefusedWithItsReason(): void {
+		try {
+			$this->service()->record(self::OWNER, self::VEHICLE, ['start_odo' => 120500] + $this->drove(1750000000, 120450));
+			$this->fail('a trip that drove backwards was written');
+		} catch (RefusedException $e) {
+			$this->assertSame('end_below_start', $e->reason);
+			$this->assertSame([], $this->trips);
+		}
+	}
+
+	public function testAnEndCounterEqualToTheStartIsAStandingTrip(): void {
+		$trip = $this->service()->record(self::OWNER, self::VEHICLE, ['start_odo' => 120450] + $this->drove(1750000000, 120450));
+
+		$this->assertSame(0, $trip->kilometres());
+	}
+
+	/**
+	 * A day of slack covers every clock and offset a phone gets wrong; past it the arrival is a
+	 * typo in the year, and it would date a Reading ahead of every later one.
+	 */
+	public function testAnArrivalMoreThanADayAheadIsRefusedWithItsReason(): void {
+		try {
+			$this->service()->record(self::OWNER, self::VEHICLE, ['ended_at' => self::ENTERED_AT + 86401] + $this->drove(1750000000, 120450));
+			$this->fail('a trip arriving next week was written');
+		} catch (RefusedException $e) {
+			$this->assertSame('ends_in_future', $e->reason);
+			$this->assertSame([], $this->trips);
+		}
+	}
+
+	public function testAnArrivalADayAheadIsStillTaken(): void {
+		$trip = $this->service()->record(self::OWNER, self::VEHICLE, ['ended_at' => self::ENTERED_AT + 86400] + $this->drove(1750000000, 120450));
+
+		$this->assertSame(self::ENTERED_AT + 86400, $trip->getEndedAt());
+	}
+
+	public function testAnEditIsHeldToTheSameArithmetic(): void {
+		$trip = $this->service()->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+
+		$this->expectException(RefusedException::class);
+		$this->service()->update(self::OWNER, self::VEHICLE, (string)$trip->getUuid(), self::ENTERED_AT, ['start_odo' => 120451] + $this->drove(1750000000, 120450));
+	}
+
+	/**
 	 * A uuid is all it takes to name a vehicle, and everything hanging off one goes through the
 	 * same gate (docs/security.md). Nothing is written on the way to the refusal.
 	 */
@@ -749,6 +818,7 @@ class TripServiceTest extends TestCase {
 				'purpose' => [null, 'Kundentermin'],
 				'category' => [null, 'business'],
 			],
+			'updated_at' => self::ENTERED_AT,
 		], $this->audits[0]->getDiffJson());
 	}
 
@@ -886,7 +956,7 @@ class TripServiceTest extends TestCase {
 		$this->assertSame((int)$trip->getId(), $void->getEntityId());
 		$this->assertSame(self::OWNER, $void->getCreatedBy());
 		$this->assertSame(
-			['change' => 'voided', 'fields' => ['deleted_at' => [null, self::VOIDED_AT]], 'late' => false],
+			['change' => 'voided', 'fields' => ['deleted_at' => [null, self::VOIDED_AT]], 'late' => false, 'updated_at' => self::VOIDED_AT],
 			$void->getDiffJson(),
 		);
 	}
@@ -1004,7 +1074,7 @@ class TripServiceTest extends TestCase {
 
 		$this->assertCount(3, $this->audits);
 		$this->assertSame(
-			['change' => 'restored', 'fields' => ['deleted_at' => [self::VOIDED_AT, null]], 'late' => false],
+			['change' => 'restored', 'fields' => ['deleted_at' => [self::VOIDED_AT, null]], 'late' => false, 'updated_at' => self::VOIDED_AT],
 			$this->audits[2]->getDiffJson(),
 		);
 		$this->assertSame(self::OWNER, $this->audits[2]->getCreatedBy());
@@ -1291,6 +1361,7 @@ class TripServiceTest extends TestCase {
 				'partner' => [null, 'Meyer GmbH'],
 			],
 			'late' => false,
+			'updated_at' => self::EDITED_AT,
 		], $edit->getDiffJson());
 	}
 
@@ -1332,6 +1403,96 @@ class TripServiceTest extends TestCase {
 		);
 
 		$this->assertFalse($this->audits[1]->getDiffJson()['late']);
+	}
+
+	/**
+	 * The trail follows the trip, not the switch: a trip that set off while the mode was on is in a
+	 * logbook somebody kept, and switching the mode off must not open a window to change it unseen.
+	 */
+	public function testATripSetOffUnderTheModeIsRecordedAfterTheModeWentOff(): void {
+		$this->wasOn(1749000000, 1751000000);
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+		$edited = $service->update(self::OWNER, self::VEHICLE, $trip->getUuid(), $trip->getUpdatedAt(), $this->drove(1750000000, 120450) + ['purpose' => 'Kundentermin']);
+		$voided = $service->delete(self::OWNER, self::VEHICLE, $trip->getUuid(), $edited->getUpdatedAt());
+		$service->restore(self::OWNER, self::VEHICLE, $trip->getUuid(), $voided->getUpdatedAt());
+
+		$this->assertSame(
+			['created', 'edited', 'voided', 'restored'],
+			array_map(static fn (Audit $row): string => $row->getDiffJson()['change'], $this->audits),
+		);
+	}
+
+	/**
+	 * A trip that never fell under the mode keeps no trail while it is off: nobody who never kept a
+	 * logbook has old trip text kept.
+	 */
+	public function testATripSetOffOutsideEveryPeriodLeavesNoRowWhileTheModeIsOff(): void {
+		$this->wasOn(1749000000, 1749500000);
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+		$edited = $service->update(self::OWNER, self::VEHICLE, $trip->getUuid(), $trip->getUpdatedAt(), $this->drove(1750000000, 120450) + ['purpose' => 'Kundentermin']);
+		$service->delete(self::OWNER, self::VEHICLE, $trip->getUuid(), $edited->getUpdatedAt());
+
+		$this->assertSame([], $this->audits);
+	}
+
+	/** An edit that moves a trip out of the period is still a change to a trip that was in it. */
+	public function testAnEditMovingATripOutOfAPeriodIsRecorded(): void {
+		$this->wasOn(1749000000, 1751000000);
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+		// Edited once the trip it is moved to has happened.
+		$this->now = 1752100000;
+
+		$service->update(self::OWNER, self::VEHICLE, $trip->getUuid(), $trip->getUpdatedAt(), $this->drove(1752000000, 120450));
+
+		$this->assertCount(2, $this->audits);
+		$this->assertSame([1750000000, 1752000000], $this->audits[1]->getDiffJson()['fields']['started_at']);
+	}
+
+	/**
+	 * Each row says which token the trip was left with, so the export can tell a trip changed
+	 * without a row (LogbookExport): a second save in the same second moves the token past the
+	 * row's own `created_at`.
+	 */
+	public function testEveryRowCarriesTheTokenTheChangeLeftTheTripWith(): void {
+		$this->logbookMode = true;
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+		$edited = $service->update(self::OWNER, self::VEHICLE, $trip->getUuid(), $trip->getUpdatedAt(), $this->drove(1750000000, 120460));
+		$service->delete(self::OWNER, self::VEHICLE, $trip->getUuid(), $edited->getUpdatedAt());
+
+		$this->assertSame(
+			[self::ENTERED_AT, self::EDITED_AT, self::VOIDED_AT],
+			array_map(static fn (Audit $row): int => $row->getDiffJson()['updated_at'], $this->audits),
+		);
+	}
+
+	/**
+	 * A save that changed nothing writes nothing: no row, so no token moved without one - which the
+	 * export would print as a change nobody recorded.
+	 */
+	public function testASaveThatChangesNothingLeavesTheTripAsItWas(): void {
+		$this->logbookMode = true;
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+		$this->calls = [];
+
+		$same = $service->update(self::OWNER, self::VEHICLE, $trip->getUuid(), $trip->getUpdatedAt(), $this->drove(1750000000, 120450));
+
+		$this->assertSame(self::ENTERED_AT, $same->getUpdatedAt());
+		$this->assertNotContains('edit', $this->calls);
+		$this->assertCount(1, $this->audits);
+	}
+
+	/** ...and is still checked: a stale token is refused whether or not anything changed. */
+	public function testAStaleSaveThatChangesNothingIsStillRefused(): void {
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
+
+		$this->expectException(StaleUpdateException::class);
+		$service->update(self::OWNER, self::VEHICLE, $trip->getUuid(), $trip->getUpdatedAt() - 1, $this->drove(1750000000, 120450));
 	}
 
 	/**
@@ -1589,6 +1750,7 @@ class TripServiceTest extends TestCase {
 				'reconciled' => [null, true],
 			],
 			'derived' => true,
+			'updated_at' => self::ENTERED_AT,
 		], $row->getDiffJson());
 		$this->assertSame(['begin', 'hold', 'trips read', 'trip', 'audit', 'commit'], array_slice($this->calls, $before));
 	}
@@ -1690,6 +1852,7 @@ class TripServiceTest extends TestCase {
 			'change' => 'edited',
 			'fields' => ['purpose' => [null, 'Urlaub']],
 			'late' => true,
+			'updated_at' => self::EDITED_AT,
 		], $this->audits[3]->getDiffJson());
 	}
 

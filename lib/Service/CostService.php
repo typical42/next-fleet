@@ -8,8 +8,11 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Service;
 
+use OCA\NextFleet\Db\Energy;
 use OCA\NextFleet\Db\EnergyMapper;
+use OCA\NextFleet\Db\Expense;
 use OCA\NextFleet\Db\ExpenseMapper;
+use OCA\NextFleet\Db\Maintenance;
 use OCA\NextFleet\Db\MaintenanceMapper;
 use OCA\NextFleet\Db\Vehicle;
 
@@ -33,7 +36,70 @@ class CostService {
 	 * @throws \OCP\DB\Exception
 	 */
 	public function of(Vehicle $vehicle, int $from, int $to, bool $net): array {
+		return $this->periods($vehicle, [[$from, $to]], $net)[0];
+	}
+
+	/**
+	 * of() for many periods at once, as the Costs screen's months and their year ask: each table
+	 * is read once over all of them, and the distances by ConsumptionService::distances().
+	 *
+	 * @param non-empty-list<array{int, int}> $periods each `[from, to]`, half-open
+	 * @return list<Cost> in the periods' order
+	 * @throws \OCP\DB\Exception
+	 */
+	public function periods(Vehicle $vehicle, array $periods, bool $net): array {
 		$vehicleId = (int)$vehicle->getId();
+		$from = min(array_column($periods, 0));
+		$to = max(array_column($periods, 1));
+		$fills = $this->energy->findBetween($vehicleId, $from, $to);
+		$records = $this->maintenance->findBetween($vehicleId, $from, $to);
+		$expenses = $this->expenses->findBetween($vehicleId, $from, $to);
+		$distances = $this->consumption->distances($vehicle, $periods);
+		// Cost per 100 km plus what the vehicle loses in value, spread over every kilometre it has
+		// run since it was first read, not over the period: depreciation belongs to the whole
+		// holding, so its distance is read once for every period. Purchase and residual count as
+		// entered, since neither carries a VAT rate.
+		$held = false;
+		$tco = function (float $value, string $per) use ($vehicle, &$held): ?float {
+			$purchase = $vehicle->getPurchasePrice();
+			$residual = $vehicle->getResidualEst();
+			if ($purchase === null || $residual === null) {
+				return null;
+			}
+			if ($held === false) {
+				$held = $this->consumption->distance($vehicle, PHP_INT_MIN, PHP_INT_MAX);
+			}
+			return $held === null ? null : $value + (float)self::value($purchase - $residual, $held, $per);
+		};
+
+		$costs = [];
+		foreach ($periods as $i => [$start, $end]) {
+			$within = static fn (int $at): bool => $at >= $start && $at < $end;
+			$costs[] = $this->cost(
+				$vehicle,
+				$net,
+				array_values(array_filter($fills, static fn (Energy $fill): bool => $within($fill->getFilledAt()))),
+				array_values(array_filter($records, static fn (Maintenance $record): bool => $within($record->getDoneAt()))),
+				array_values(array_filter($expenses, static fn (Expense $expense): bool => $within($expense->getSpentAt()))),
+				$distances[$i],
+				$tco,
+			);
+		}
+
+		return $costs;
+	}
+
+	/**
+	 * One period's cost from its rows.
+	 *
+	 * @param list<Energy> $fills
+	 * @param list<Maintenance> $records
+	 * @param list<Expense> $expenses
+	 * @param \Closure(float, string): ?float $tco
+	 * @return Cost
+	 * @throws \OCP\DB\Exception
+	 */
+	private function cost(Vehicle $vehicle, bool $net, array $fills, array $records, array $expenses, ?int $distance, \Closure $tco): array {
 		$unstated = false;
 		$count = static function (?int $gross, ?int $rate) use ($net, &$unstated): int {
 			if ($gross === null || !$net) {
@@ -48,24 +114,20 @@ class CostService {
 
 		$energy = 0;
 		$incomplete = false;
-		$fills = $this->energy->findBetween($vehicleId, $from, $to);
 		foreach ($fills as $fill) {
 			$incomplete = $incomplete || $fill->getTotal() === null;
 			$energy += $count($fill->getTotal(), $fill->getVatRate());
 		}
 		$maintenance = 0;
-		$records = $this->maintenance->findBetween($vehicleId, $from, $to);
 		foreach ($records as $record) {
 			$maintenance += $count($record->getCost(), $record->getVatRate());
 		}
 		$byCategory = [];
-		$expenses = $this->expenses->findBetween($vehicleId, $from, $to);
 		foreach ($expenses as $expense) {
 			$key = $expense->getCategory() ?? '';
 			$byCategory[$key] = ($byCategory[$key] ?? 0) + $count($expense->getAmount(), $expense->getVatRate());
 		}
 		$total = $energy + $maintenance + array_sum($byCategory);
-		$distance = $this->consumption->distance($vehicle, $from, $to);
 		$per = ConsumptionService::per($vehicle);
 		// Money without a currency is a number nobody can read, and a period with no rows has no
 		// figure rather than 0 (docs/architecture.md#numbers-consumption-cost-emissions).
@@ -84,28 +146,10 @@ class CostService {
 			'expenses' => $priced ? self::itemised($byCategory) : null,
 			'value' => $value,
 			'energy_value' => $priced ? self::value($energy, $distance, $per) : null,
-			'tco' => $value === null ? null : $this->tco($vehicle, $value, $per),
+			'tco' => $value === null ? null : $tco($value, $per),
 			'incomplete' => $incomplete,
 			'unstated' => $unstated,
 		];
-	}
-
-	/**
-	 * Cost per 100 km plus what the vehicle loses in value, spread over every kilometre it has run
-	 * since it was first read, not over the period: depreciation belongs to the whole holding.
-	 * Purchase and residual count as entered, since neither carries a VAT rate.
-	 *
-	 * @throws \OCP\DB\Exception
-	 */
-	private function tco(Vehicle $vehicle, float $value, string $per): ?float {
-		$purchase = $vehicle->getPurchasePrice();
-		$residual = $vehicle->getResidualEst();
-		if ($purchase === null || $residual === null) {
-			return null;
-		}
-		$held = $this->consumption->distance($vehicle, PHP_INT_MIN, PHP_INT_MAX);
-
-		return $held === null ? null : $value + (float)self::value($purchase - $residual, $held, $per);
 	}
 
 	/**

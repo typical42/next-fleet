@@ -3,7 +3,6 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
-import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcDateTimePickerNative from '@nextcloud/vue/components/NcDateTimePickerNative'
 import NcDialog from '@nextcloud/vue/components/NcDialog'
@@ -17,11 +16,14 @@ import { computed, onMounted, ref, watch } from 'vue'
 import InspectionSticker from './InspectionSticker.vue'
 import ReminderRecipients from './ReminderRecipients.vue'
 import VehicleGrants from './VehicleGrants.vue'
-import { ConflictError, getPreferences, getVehicle, listReminders, reminderTemplates } from '../services/api.js'
+import { ConflictError, RefusedError, getPreferences, getVehicle, listReminders, reminderTemplates } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
+import { usePreferencesStore } from '../store/preferences.js'
 import { may } from '../utils/access.js'
-import { energyWord, formatDay, formatDecimal, jurisdictionWord, lifecycleWord, parseDay, parseDecimal, parseWhole } from '../utils/format.js'
+import { decimalComplaint, energyWord, formatDay, formatDecimal, jurisdictionWord, lifecycleWord, parseDay, parseDecimal, parseWhole } from '../utils/format.js'
 import { INSPECTION, inspectionOf, rewrite } from '../utils/reminders.js'
+import { t } from '../utils/l10n.js'
+import { newUuid } from '../utils/uuid.js'
 
 const props = defineProps({
 	/**
@@ -36,6 +38,7 @@ const props = defineProps({
 const emit = defineEmits(['close', 'created', 'import', 'saved'])
 
 const store = useVehiclesStore()
+const preferences = usePreferencesStore()
 
 const editing = computed(() => props.vehicle !== null)
 
@@ -89,6 +92,10 @@ const refused = ref(null)
  */
 const created = ref(null)
 
+// The two rows a create writes, named before they are sent: an answer lost on the way leaves the
+// row written, and the retry is then that row again (docs/api.md#retried-creates).
+const clientUuids = { vehicle: newUuid(), reading: newUuid() }
+
 /** The countries the server registers, read once the sheet is up. @type {import('vue').Ref<{ key: string, name: string }[]>} */
 const countries = ref([])
 
@@ -96,6 +103,7 @@ const countries = ref([])
 // the catalogue is registered by the page and not by this module.
 const types = computed(() => [
 	{ id: 'car', label: t('nextfleet', 'Car') },
+	{ id: 'motorcycle', label: t('nextfleet', 'Motorcycle') },
 	{ id: 'van', label: t('nextfleet', 'Van') },
 	{ id: 'truck', label: t('nextfleet', 'Truck') },
 	{ id: 'trailer', label: t('nextfleet', 'Trailer') },
@@ -316,6 +324,13 @@ async function readInspection() {
 	}
 }
 
+/** The first grant changes `ever_granted`, which the vehicle screen shows Bookings by. */
+function granted() {
+	if (!props.vehicle.ever_granted) {
+		store.refresh(props.vehicle.uuid)
+	}
+}
+
 /** The question in the sheet wrote the reminder; its interval now belongs here. */
 function added() {
 	adding.value = false
@@ -371,7 +386,7 @@ function fields() {
 		second_unit: offersHours.value && countsHours.value ? 'h' : '',
 		purchase_price: decimal(purchasePrice, 2, t('nextfleet', 'That is not a purchase price.')),
 		residual_est: decimal(residualEst, 2, t('nextfleet', 'That is not a residual value.')),
-		currency: currency.value,
+		currency: currencyCode(currency.value),
 		jurisdiction: jurisdiction.value,
 		logbook_mode: logbookMode.value,
 		lifecycle: lifecycle.value?.id ?? '',
@@ -396,6 +411,8 @@ async function attempt(work, kind) {
 	} catch (error) {
 		if (error instanceof ConflictError) {
 			refused.value = kind
+		} else if (error instanceof RefusedError && error.reason === 'currency_in_use') {
+			failure.value = t('nextfleet', 'The currency cannot change any more: costs are already recorded in it for this vehicle.')
 		} else {
 			failure.value = error.message
 		}
@@ -458,7 +475,14 @@ async function write() {
 	}
 
 	await writeInterval()
-	emit('saved', await store.save({ ...vehicle, ...changed }))
+	const saved = await store.save({ ...vehicle, ...changed })
+	if ((vehicle.logbook_mode === true) !== (saved.logbook_mode === true)) {
+		// A flip answers the overview's logbook question too (src/components/CompleteHint.vue), so
+		// a vehicle switched on here and off again is not asked a second time. Silent: the save
+		// went through, and an unstored answer costs one more question.
+		preferences.dismissLogbook(saved.uuid).catch(() => {})
+	}
+	emit('saved', saved)
 }
 
 /**
@@ -487,6 +511,7 @@ async function add() {
 			engine: engine.value?.id ?? '',
 			vehicle_type: vehicleType.value?.id ?? '',
 			odo_unit: odoUnit.value?.id ?? '',
+			client_uuid: clientUuids.vehicle,
 		})
 	}
 
@@ -495,6 +520,7 @@ async function add() {
 			value: number,
 			read_at: Math.floor(Date.now() / 1000),
 			read_at_off: -new Date().getTimezoneOffset(),
+			client_uuid: clientUuids.reading,
 		})
 	}
 
@@ -551,10 +577,30 @@ function decimal(input, places, complaint) {
 
 	const number = parseDecimal(input.value, places)
 	if (number === null) {
-		throw new Error(complaint)
+		throw new Error(decimalComplaint(input.value, complaint))
 	}
 
 	return number
+}
+
+/**
+ * The currency as the server keeps it (lib/Service/VehicleService.php), asked about here so a sign
+ * gets words rather than the server's English. One stored before that check goes back untouched.
+ *
+ * @param {string} typed - the field
+ * @return {string} the code in capitals, or the empty field that clears the column
+ * @throws {Error} when the field is not three letters
+ */
+function currencyCode(typed) {
+	if (typed !== '' && typed === text(props.vehicle?.currency)) {
+		return typed
+	}
+	const code = typed.trim().toUpperCase()
+	if (code !== '' && !/^[A-Z]{3}$/.test(code)) {
+		throw new Error(t('nextfleet', 'That is not a currency code such as EUR.'))
+	}
+
+	return code
 }
 
 /**
@@ -621,7 +667,7 @@ function chosen(options, id) {
 				v-model="counter"
 				:label="t('nextfleet', 'Counter reading')"
 				:disabled="saving"
-				inputmode="decimal" />
+				inputmode="numeric" />
 
 			<template v-if="editing">
 				<!-- Switching off hides the hour field and keeps the hour Readings. -->
@@ -693,10 +739,10 @@ function chosen(options, id) {
 					:disabled="saving"
 					maxlength="3" />
 				<!-- The jurisdiction is not a fifth create field: it defaults from the personal
-				     setting and is changed here until the sidebar exists (docs/ui.md). -->
+				     setting and is changed here (docs/ui.md). -->
 				<NcSelect :model-value="country"
 					:options="jurisdictions"
-					:input-label="t('nextfleet', 'Jurisdiction')"
+					:input-label="t('nextfleet', 'Country')"
 					:disabled="saving"
 					:clearable="false"
 					label="label"
@@ -706,7 +752,7 @@ function chosen(options, id) {
 				<NcFormBoxSwitch v-model="logbookMode"
 					class="sheet__wide"
 					:label="t('nextfleet', 'Logbook mode')"
-					:description="t('nextfleet', 'Trips are recorded with an audit trail, and a delete voids the trip instead of removing it.')"
+					:description="`${t('nextfleet', 'Trips are recorded with an audit trail, and a delete voids the trip instead of removing it.')} ${t('nextfleet', 'Not reviewed by a lawyer.')}`"
 					:disabled="saving" />
 				<div v-if="askingOff" class="sheet__wide sheet__question">
 					<NcNoteCard type="warning"
@@ -743,6 +789,7 @@ function chosen(options, id) {
 				<VehicleGrants class="sheet__wide"
 					:vehicle="props.vehicle"
 					:disabled="saving"
+					@granted="granted"
 					@revoked="recipientsRead++" />
 				<!-- Importing is `edit`, and a disposed vehicle takes none (docs/architecture.md#import).
 				     The screen swaps this sheet for the import's (src/views/VehicleView.vue). -->
@@ -754,18 +801,19 @@ function chosen(options, id) {
 						{{ t('nextfleet', 'Save or cancel your changes first.') }}
 					</span>
 				</div>
+				<!-- Last in the body and away from *Cancel*, so a thumb aiming at one does not land on
+				     the other; it has a way back all the same (docs/ui.md). The owner's alone. -->
+				<div v-if="may(props.vehicle, 'own')" class="sheet__wide">
+					<NcButton variant="error"
+						:disabled="saving"
+						@click="remove">
+						{{ t('nextfleet', 'Delete vehicle') }}
+					</NcButton>
+				</div>
 			</template>
 		</div>
 
 		<template #actions>
-			<!-- First in the row and last in emphasis: the one action here nobody reaches for by
-			     accident, and the only one with a way back (docs/ui.md). The owner's alone. -->
-			<NcButton v-if="editing && may(props.vehicle, 'own')"
-				variant="error"
-				:disabled="saving"
-				@click="remove">
-				{{ t('nextfleet', 'Delete vehicle') }}
-			</NcButton>
 			<NcButton :disabled="saving" @click="requestClose">
 				{{ t('nextfleet', 'Cancel') }}
 			</NcButton>

@@ -11,7 +11,8 @@ import { flushPromises, shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { attachDocument, detachDocument, fetchDocument, listBookings, listDocuments, LockedError, NotFoundError, readTimeline, restoreDocument } from '../services/api.js'
+import { attachDocument, detachDocument, fetchDocument, listBookings, listDocuments, LockedError, NotFoundError, readInbox, readTimeline, restoreDocument } from '../services/api.js'
+import { useInboxStore } from '../store/inbox.js'
 import { useVehiclesStore } from '../store/index.js'
 import VehicleDocuments from './VehicleDocuments.vue'
 
@@ -22,6 +23,7 @@ vi.mock('../services/api.js', async (original) => ({
 	fetchDocument: vi.fn(),
 	listBookings: vi.fn(),
 	listDocuments: vi.fn(),
+	readInbox: vi.fn(),
 	readTimeline: vi.fn(),
 	restoreDocument: vi.fn(),
 }))
@@ -152,7 +154,7 @@ describe('the documents section', () => {
 	it('says a file is gone rather than offering a dead link', async () => {
 		const wrapper = await section()
 
-		expect(wrapper.text()).toContain('The file is gone from Files')
+		expect(wrapper.text()).toContain('The file is no longer in the Files of whoever attached it')
 	})
 
 	it('names the kind of entry a paper belongs to', async () => {
@@ -233,6 +235,15 @@ describe('the documents section', () => {
 		expect(listDocuments).toHaveBeenLastCalledWith('v-2')
 	})
 
+	/** The screen asks once the role changed, since each paper's `may` follows it (src/views/VehicleView.vue). */
+	it('reads the list again when the screen asks', async () => {
+		const wrapper = await section()
+
+		await /** @type {any} */ (wrapper.vm).reload()
+
+		expect(listDocuments).toHaveBeenCalledTimes(2)
+	})
+
 	/** The first vehicle's list arriving last would put its papers, and its paperclips, on the second. */
 	it('drops the answer for a vehicle the screen has moved on from', async () => {
 		/** @type {(list: any) => void} */
@@ -273,6 +284,21 @@ describe('adding a document', () => {
 
 		expect(attachDocument).toHaveBeenCalledWith('v-1', { file_id: 42, kind: 'registration' })
 		expect(wrapper.find('.dialog').exists()).toBe(false)
+	})
+
+	/** A file from the inbox folder waits no more, and the count beside the menu says so. */
+	it('reads the inbox count again once a file is attached', async () => {
+		vi.mocked(readInbox).mockResolvedValueOnce({ folder: { file_id: 7, path: '/Belege' }, files: [], count: 3 })
+		vi.mocked(readInbox).mockResolvedValueOnce({ folder: { file_id: 7, path: '/Belege' }, files: [], count: 2 })
+		await useInboxStore().load()
+		const wrapper = await section()
+		await pick(wrapper, 42)
+
+		await choose(wrapper, 'registration')
+		await button(wrapper, 'Attach').vm.$emit('click')
+		await flushPromises()
+
+		expect(useInboxStore().count).toBe(2)
 	})
 
 	/** The picker brings no button of its own, and one with nothing selected would pick nothing. */
@@ -468,7 +494,7 @@ describe('saving a document', () => {
 
 		expect(click.defaultPrevented).toBe(true)
 		expect(fetchDocument).toHaveBeenCalledWith('v-1', 'd-1')
-		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('This document is gone: it was removed, or its file was deleted from Files.')
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('This document is gone: it was removed, or its file is no longer in the Files of whoever attached it.')
 	})
 
 	it('drops a refusal that comes after the screen moved to another vehicle', async () => {

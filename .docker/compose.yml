@@ -118,6 +118,18 @@ services:
       db:
         condition: service_healthy
 
+  # The same for app31: each install needs its own runner (docs/development.md).
+  cron31:
+    image: nextcloud:31-apache
+    restart: unless-stopped
+    entrypoint: /cron.sh
+    volumes:
+      - app31_html:/var/www/html
+      - ..:/var/www/html/custom_apps/nextfleet
+    depends_on:
+      db:
+        condition: service_healthy
+
   # SMTP sink. Nothing leaves the machine; the digest is read at http://localhost:8025.
   mail:
     image: axllent/mailpit

@@ -52,6 +52,14 @@ class OdoReading extends BaseEntity implements \JsonSerializable {
 	public const MAIN = 'main';
 	public const SECOND = 'second';
 
+	/**
+	 * What a Reading is (`kind`): read off the counter, or the answer "the counter was replaced"
+	 * to one the chain questioned. A reset stands whatever came before it and starts a new segment
+	 * (docs/architecture.md#odometer-rules, rule 3).
+	 */
+	public const READING = 'reading';
+	public const RESET = 'reset';
+
 	protected int $vehicleId = 0;
 	protected int $readAt = 0;
 	protected int $readAtOff = 0;
@@ -94,6 +102,16 @@ class OdoReading extends BaseEntity implements \JsonSerializable {
 
 	public function setCounter(string $counter): void {
 		$this->setter('counter', [$counter]);
+	}
+
+	/**
+	 * Where the Reading stands in its chain, comparable with `<=>`: OdoReadingMapper::findChain()'s
+	 * order, `id` breaking a tie in time (docs/architecture.md#odometer-rules, rule 1).
+	 *
+	 * @return array{int, int}
+	 */
+	public function place(): array {
+		return [$this->readAt, (int)$this->id];
 	}
 
 	/**

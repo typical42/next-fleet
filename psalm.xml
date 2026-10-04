@@ -37,4 +37,14 @@
     <file name="tests/Stub/template_functions.php"/>
     <file name="tests/Stub/oc_hooks_emitter.php"/>
   </stubs>
+  <!-- Why: docs/development.md, "A deprecation is an error". -->
+  <issueHandlers>
+    <DeprecatedClass errorLevel="error"/>
+    <DeprecatedConstant errorLevel="error"/>
+    <DeprecatedFunction errorLevel="error"/>
+    <DeprecatedInterface errorLevel="error"/>
+    <DeprecatedMethod errorLevel="error"/>
+    <DeprecatedProperty errorLevel="error"/>
+    <DeprecatedTrait errorLevel="error"/>
+  </issueHandlers>
 </psalm>

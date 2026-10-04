@@ -24,7 +24,7 @@ that can be reached from anywhere; review is desktop-first and lives in the app 
 
 "Intuitive" here does not mean inventing something clever. It means the app looks like Files, Deck
 and Calendar, because the user has already learned those. Use the standard shell —
-`NcAppNavigation` on the left, `NcAppContent` in the middle, `NcAppSidebar` on the right — and the
+`NcAppNavigation` on the left, `NcAppContent` beside it — and the
 standard components (`NcButton`, `NcListItem`, `NcEmptyContent`, `NcActions`, `NcDialog`). No custom
 chrome, no bespoke tables, no second design language inside the page.
 
@@ -36,15 +36,16 @@ The obvious layout gives each table a tab: Trips, Energy, Maintenance, Expenses.
 
 So the vehicle has **one timeline** of everything that happened — trips, fill-ups, maintenance,
 expenses — newest first, with filter chips above it:
-`All · Trips · Odometer · Energy · Maintenance · Costs`. One place to look, one place to search, and
+`All · Trips · Odometer · Energy · Maintenance · Expenses`. One place to look, one place to search, and
 the tabs collapse from six to three. A chip per kind of Entry, so the odometer has one too: a
 counter somebody read is a thing that happened to the vehicle, even though the counter's own chain
 is a different question and keeps its own route
 ([architecture](architecture.md#the-timeline)).
 
 The timeline is also where flagged records get resolved. An odometer that went backwards shows the
-follow-up question there — cluster swap, or a mistake? — instead of interrupting the person who
-entered it ([odometer rules](architecture.md#odometer-rules)).
+follow-up question on its row — "Was the counter replaced, or is this a typo?" — instead of
+interrupting the person who entered it. *Counter replaced* answers it there; *Typo* opens the
+entry to fix the number ([odometer rules](architecture.md#odometer-rules)).
 
 ```
 ┌─ NextFleet ──────────────────────────────────────────────────────────┐
@@ -58,7 +59,7 @@ entered it ([odometer rules](architecture.md#odometer-rules)).
 │ Reports         │                                                    │
 │ ─────────────── │  Bookings [Book][Take it now]                      │
 │ Settings        │  COMING                                            │
-│                 │  Fr., 02.10., 14:00–18:00 Uhr  Anna  Booked        │
+│                 │  Fr., 02.10., 14:00–18:00  Anna  Booked  [Change]  │
 │                 │                                                    │
 │                 │  Documents [Add document]                          │
 │                 │  REGISTRATION                                      │
@@ -66,7 +67,7 @@ entered it ([odometer rules](architecture.md#odometer-rules)).
 │                 │  RECEIPT                                           │
 │                 │  Huber.pdf  Belongs to a maintenance rec.  Remove  │
 │                 │                                                    │
-│                 │  Timeline [All][Trips][Odo.][Energy][Maint.][Cost] │
+│                 │  Timeline [All][Trips][Odo.][Energy][Maint.][Exp.] │
 │                 │  ───────────────────────────────────────────────   │
 │                 │  03.09.  ⛽ Energy    48,2 l   82,10 €   6,1 l/100 │
 │                 │  02.09.  🚗 Munich → Augsburg   82 km   business   │
@@ -98,7 +99,8 @@ _+ Reminder_ opens the reminder sheet: a template or an own title, due by date, 
 whichever comes first, the warning points and the recurrence. A template fills in what it knows, and
 every field stays editable. A row opens the same sheet on that reminder, with snooze (a week, a
 month, or until a day), _Skip this time_, and a delete that goes with the undo toast. _Done_ beside
-a row opens the entry sheet on a Maintenance Record with that reminder picked.
+a row opens the entry sheet on a Maintenance Record with that reminder picked, and its title and
+type filled in from the reminder.
 
 Where the vehicle's jurisdiction requires an inspection and no HU/AU reminder is open, the banner
 asks "When is the next HU/AU?": the month and year on the sticker. The reminder is due on that
@@ -116,14 +118,20 @@ the cadence is a column of the vehicle and is saved with it.
 The timeline pages: 50 rows, then more on scroll, with the month a sticky header. Five years of a
 company car is thousands of rows, and the screen people open most often is not the place to
 discover that. The scroll is the bottom of the list coming into view; the button sitting there is
-what a browser without an observer, and a page the server refused, still have.
+what a browser without an observer, and a page the server refused, still have. At most four pages
+are on screen: the oldest goes as the next comes, and *Show newer entries* above the rows, or
+scrolling back up to it, brings it back from memory without asking the server. The rows keep their
+reading order, so a keyboard walks them top to bottom as before, and the row the reader is at stays
+where it was on screen.
 
 Under Logbook Mode the month header also states the month's unaccounted kilometres
 ([logbook mode](features.md#logbook-mode)). It is the whole month's figure from the first page on,
 never the sum of the rows scrolled in so far. The trip that opened a Gap says so on its row and
 offers *Close gap*; the question names the kilometres and the two moments, and a confirmation writes
 one private trip whose row reads *Reconciled*. The offer sits on the row, not on the header, because
-a Gap is closed one at a time.
+a Gap is closed one at a time. A trip entered later inside that private trip's span overtakes it:
+its row reads *Reconciliation overtaken* and offers *Void trip*. Any two trips whose times overlap
+both read *Overlaps another trip*.
 
 A row states one figure, and it is the one the driver gave — the kilometres a trip covered, or the
 counter it ended on, never both and never one worked out from the other
@@ -134,8 +142,8 @@ vehicle does not take, more than it holds — and whether it was partial or miss
 A fill-up that closes a full-to-full segment also states that segment's consumption, the one figure
 on a row that is worked out rather than given.
 
-The right sidebar holds the vehicle's own data — the things you set once and rarely touch. That
-keeps the middle free for the things you touch weekly. The documents sit in a section of their own
+The vehicle's own data — the things you set once and rarely touch — lives in the edit sheet, not on
+the screen. That keeps the screen free for the things you touch weekly. The documents sit in a section of their own
 above the timeline instead: listed by kind, each one a link, with *Add
 document* opening Nextcloud's file picker. A document linked to an entry shows as a paperclip on
 that entry's row, one linked to a booking on the booking's. It is never a row of its own, since a
@@ -143,7 +151,8 @@ registration has no date to sort by ([documents](architecture.md#documents)). A 
 too, but only to an entry or booking of their own: *Belongs to* offers only those and must be
 chosen, and *Remove* shows on the papers the server says they may take off. *Belongs to* offers the
 newest rows; typing a word of the title or a date searches all of them. *Remove* goes with the undo
-toast. A tap on a paper saves its file; when the server refuses, the section or the row says why.
+toast. A tap on a paper saves its file, on a booking's row too; when the server refuses, the section
+or the row says why.
 
 ### Screens
 
@@ -156,14 +165,16 @@ toast. A tap on a paper saves its file; when the server refuses, the section or 
 | **Costs** | One year, one vehicle: stacked bars per month, table below, the CO₂ estimate, export button | Export |
 | **Inbox** | The files in the person's inbox folder that belong to no vehicle yet, as thumbnails ([the Inbox screen](#the-inbox-screen)). Shown once a folder is chosen | Attach |
 | **Reports** | Fahrtenbuch and mileage claim — pick a vehicle and a year, get a printable page ([ADR 0005](adr/0005-no-pdf-library.md)). Costs and CO₂ are not reports: they live on the Costs screen, and its CSV exports the rows behind the costs | Print |
-| **Vehicle sidebar** | Master data, jurisdiction; reminders stay in the due banner, documents in their section, access in the vehicle sheet | Edit inline |
 | **Personal settings** | The defaults a person keeps: jurisdiction first, then "I reclaim VAT", then the grid factor for charging (empty for the country's average, which it names), then the inbox folder. Not a screen in the app: it is the app's block on Nextcloud's own settings page, its own bundle, and it talks to the same API as everything else | Pick and it saves |
 
 **Reports** has two, each one vehicle and one year, opened as a page in a tab of its own: the
 logbook ([export](architecture.md#the-fahrtenbuch-export)), a Fahrtenbuch in Germany and a plain one
 under `generic`, and the [mileage claim](architecture.md#the-mileage-claim). Each button shows only
 where its country prints it, because any other opens a 404. Sold vehicles are offered too: their
-logbook is still kept after they leave the fleet.
+logbook is still kept after they leave the fleet. The year is last year's until the end of February,
+when the reports people print are for the tax return, and this year's from March. Times the server
+stamped — entered, changed, voided, the mode switched — print in the reader's time zone with the
+offset written out, since the trips beside them carry their own.
 
 **Costs** opens from *Costs* on the vehicle screen and goes back there; picking any vehicle in the
 navigation leaves it. The year steps back one at a time and not past the current one. The bars are
@@ -188,12 +199,23 @@ a phone has room for one sheet at a time. It opens on the trip, which is what a 
   ([odometer rules](architecture.md#odometer-rules)). Neither counter is prefilled, and that is the
   one exception to the rule below: the counter a trip set off on is a *claim* about what the
   dashboard read, and filling it in from the vehicle would answer the question gap detection exists
-  to ask. Both moments default to now; route, purpose and
+  to ask. Under the start counter the sheet *offers* where the vehicle's last trip ended — "Last
+  trip ended at 148 320" — and *Use it* takes it with one tap, which makes it the driver's word.
+  The two counters are *Odometer at departure* and *Odometer at arrival*; a vehicle counted in
+  hours has no odometer, so there they are *Start counter* and *End counter*.
+  Both moments default to now, the departure to the last trip's arrival when that was today. The
+  category is the one this person last used on this vehicle, else none: calling a trip business
+  is the claim, and the app does not make it. Route, purpose and
   partner autocomplete from this vehicle's own history, which is what keeps six spellings of one
   client out of the reports. Starting point and destination offer the same places, because where
-  one trip ended is where the next sets off.
-- **Energy** — amount and total price. Offered only on a vehicle with `energy_types`, and only
-  with those, so a plug-in hybrid can log either and a diesel is never asked
+  one trip ended is where the next sets off. Before it sends, the sheet asks for an arrival after
+  the departure, an end counter or a distance, and an end counter not below the start. The server
+  refuses the backwards pair too, and an arrival more than a day ahead, each with a reason the
+  sheet words.
+- **Energy** — amount and total price, then the counter, read in that order at the pump. Taken only on a vehicle with `energy_types`, and only
+  with those, so a plug-in hybrid can log either and a diesel is never asked. On a vehicle with
+  none the kind is shown disabled and says to choose the energy under *Edit vehicle*; an import of
+  fill-ups is refused in the same words
   ([data model](architecture.md#data-model)). Unit price is derived from the total. The station
   completes from this vehicle's history and prefills the price it last charged; that guess is
   sent only when there is no total, or the driver changed it. VAT is the jurisdiction's rate on
@@ -217,28 +239,36 @@ a phone has room for one sheet at a time. It opens on the trip, which is what a 
   number is prefilled from that counter. The timeline row states it in that counter's unit.
 - **Expense** — the amount; category, VAT, notes and date beside it. Last in the chooser. No category until one is picked, as with a maintenance type. VAT works as on a
   fill-up, except that a category the jurisdiction charges no VAT on (in Germany insurance, vehicle
-  tax and a fine) empties the prefilled rate to "not stated" and another one puts it back. A rate the driver typed stays.
+  tax and a fine) sets the prefilled rate to 0 and another one puts the day's rate back. A rate the driver typed stays.
   Date, VAT and notes carry over from the kind the driver switched from. It asks for no counter: insurance or a toll says nothing about the dashboard.
 
-Rules for all four:
+Rules for all five:
 
 - Everything that can be prefilled **is** prefilled, and every prefilled value is visibly editable.
-- Numeric fields use `inputmode="decimal"` and accept both `7,2` and `7.2`
-  ([languages](#languages)).
+- Decimal fields use `inputmode="decimal"` and accept both `7,2` and `7.2`
+  ([languages](#languages)), and a receipt's `1.234,56`: a point groups thousands where it cannot be
+  the decimal mark. Whole counters use `inputmode="numeric"`, the number pad.
 - The sheet never blocks on validation. An implausible odometer is saved and flagged
   ([data model](architecture.md#data-model)), never rejected — a driver at a petrol station will not
-  debug a form.
+  debug a form. A trip that cannot have been driven is the exception — no arrival after the
+  departure, no stated distance, or its own two counters running backwards: no sum can use it.
 - **A failed save is never lost.** The sheet stays open with every value intact and offers retry.
   Nothing is written to `localStorage`: a durable queue would put destinations and purposes on a
   phone that may be shared or lost, to solve a problem the open sheet already solves. The driver
-  loses a tap, and only if they close the tab. (The Android client will need a real offline queue.
+  loses a tap, and only if they close the tab. With no signal the sheet says so, and that what was
+  typed is still there. A save whose answer was lost may have landed, so the
+  sheet names the row before it sends it, and the retry is that row again, not a second one
+  ([retried creates](api.md#retried-creates)). (The Android client will need a real offline queue.
   It will also need the clock handling in [time](architecture.md#time); neither is a v1 concern.)
 - **A refused write is the one failure that is not about the values.** A save the server refused
   because the row moved on ([concurrency](architecture.md#concurrency)) leaves the sheet saying so,
   and the retry becomes _Save anyway_: it reads the vehicle or the Entry back and writes what is on
   screen under the token that came with it. What is on screen wins — the person looking at it is the one who
   knows whether the other change matters, and the message says that is what the button does.
-- Saving returns to where you were, with an undo toast. Nothing asks "are you sure?"; `deleted_at`
+- Saving returns to where you were, with a toast: "Saved.". An edit's toast offers *Undo*, which
+  writes back what the Entry said when the sheet opened, under the token the edit answered with,
+  and stays until it is answered. A new Entry's leaves after a few seconds: its row on the
+  timeline is where it is taken back. Nothing asks "are you sure?"; `deleted_at`
   ([data model](architecture.md#data-model)) makes undo the cheaper pattern.
 - **Tapping a timeline row opens the sheet on that Entry**, any kind, when the reader may change it
   ([screens follow the role](#screens-follow-the-role)). It keeps its kind — the
@@ -273,30 +303,49 @@ The last section of the Edit vehicle sheet, shown to the owner alone, since only
 group, a role picker and *Remove*. Below, a search finds accounts and groups through core's
 autocomplete, which applies the instance's rules on who may find whom. A role picker beside it
 offers a driver first, because a car is lent to be driven. Like the recipients, each change is
-written at once, not with *Save*. A revoke may take people off the recipients, so the sheet reads
-that list again. It is never called "Share" (CONTEXT.md).
+written at once, not with *Save*. *Remove* asks once — "{name} loses access to this vehicle." —
+with *Cancel* and *Remove access* in its place, because only the owner can grant again. A revoke may
+take people off the recipients, so the sheet reads that list again. The first grant reads the
+vehicle back, since its `ever_granted` changes (the Bookings section). It is never called "Share"
+(CONTEXT.md).
+
+A grantee gets a read-only version on the vehicle screen, under the name beside *Leave vehicle*,
+since most grantees never open the sheet: *Who can see this vehicle* folds out the owner, each
+account and each group, by name and role. A trip's purpose reaches all of them, so a driver should
+know who they are. No uid is sent (an account without a display name still shows its uid as
+one), and nothing there can be changed.
 
 ### The Bookings section
 
 On the vehicle screen, between the due banner and the documents, because who has the car when is
-what a shared car is checked for before it is driven. It lists the coming bookings, then the last
-seven days', each with its span, booker, purpose and state. A car still out past its end stays among
-the coming ones: it has not been given back. A booking is no timeline row
+what a shared car is checked for before it is driven. Only on a vehicle anybody else has or had
+access to — the vehicle's `ever_granted`, the rule *Entered by* follows: alone with a car, there is
+nobody to book against. It lists the coming bookings, then the earlier
+ones — the last seven days' and any return still waiting for its trip, however old — each with its
+span, booker, purpose and state. A car still out past its end stays among the coming ones, however
+long ago: it has not been given back. A booking is no timeline row
 ([a booking is a plan](architecture.md#data-model)).
 
 *Book* opens a small sheet: start, end and purpose. The start defaults to the next full hour and the
 end to two hours later. A span another live booking holds is refused; the sheet stays open with
 what was typed and names the booking in the way: "Booked by Anna, Fri 02/10, 14:00–18:00", or
-"With Anna until Fri 02/10, 18:00" when that booking is out. The weekday stands in for the year,
-since a booking is looked at within days of it.
+"With Anna until Fri 02/10, 18:00" when that booking is out — or, once it is overdue, "Still with
+Anna, booked Fri 02/10, 14:00–18:00". The weekday stands in for the year, since a booking is looked
+at within days of it. An end before the start, or one gone by, is said in the sheet before anything
+is sent. Any other refusal a person can run into is said in the reader's words; only one the bundle
+does not know shows the server's.
 
 *Change* opens the same sheet on the booking; a booking that moved on meanwhile is handled as in
 every sheet ([the entry sheet](#the-entry-sheet-in-detail)). *Cancel booking* asks once, because a
-cancel has no undo. Both show where the booking's own `may` allows them.
+cancel has no undo; focus moves to the question and back to the button, or to the row once the
+booking is cancelled. Both show where the
+booking's own `may` allows them. Each row button's label names the booking's span, since a screen
+reader reads it out of its row.
 
 *Take the car* on a booking the reader may check out, and *Return the car* on one that is out, open
 the handover sheet: the counter, the tank or battery in percent, and a note. Taking it, the counter
-is prefilled from the vehicle's; giving it back, the field starts empty and says the counter the car
+is prefilled from the vehicle's, or from the one the car last came back at when that is further — no
+Reading holds it until somebody logs that trip; giving it back, the field starts empty and says the counter the car
 was taken at, because a prefilled one would be saved unread. A car still out with someone refuses
 the check-out by name: "Still with Anna, booked Fri 02/10, 10:00–12:00". While no booking holds the
 car this minute and none is out, *Take it now* opens the same sheet with one more field, *Back by*
@@ -336,8 +385,9 @@ core's PDF icon for a PDF, the name and the day beneath. Past a hundred it says 
 A tap opens a small sheet: *Vehicle* (those the reader may `log` on, the one used last in this
 session picked, else the first), *What it is* (*Receipt*), *Belongs to* and *Attach*. Someone
 without `edit` must hang the paper on a row of their own, so their newest own entry is picked for
-them. Either way the common case is two taps: the file, then *Attach*. The attached file leaves the
-grid and the count.
+them. *Belongs to* searches as in the documents section. Either way the common case is two taps: the
+file, then *Attach*. The attached file leaves the grid and the count. A paper attached, removed or
+brought back in a documents section moves the count too.
 
 A receipt for a cost not entered yet is logged from the file: *New fill-up* (on a vehicle that
 names an energy), *New maintenance* or *New expense* opens the [entry sheet](#the-entry-sheet-in-detail) on that
@@ -422,6 +472,9 @@ Under the vehicle's name, a grantee with a grant of their own sees *Leave vehicl
 because only the owner grants again, and there is no undo. One who reaches the vehicle through a
 group reads which group and that only the owner can change it, with no button. The owner sees
 neither. Leaving with no group left takes the vehicle out of the fleet, and the screen with it.
+Leaving with a group left reads the timeline, the bookings and the documents again, so no row
+offers what the group's role does not allow. The question takes focus, as *Cancel booking*'s does,
+and after such a leave the words naming the group take it.
 
 ### Details that decide whether it feels easy
 
@@ -435,11 +488,15 @@ neither. Leaving with no group left takes the vehicle out of the fleet, and the 
   record. The hint asks per vehicle and the vehicle's name in it opens the screen the edit sheet is
   on. Dismissing answers for that one vehicle, and it is kept with the person's preferences rather
   than in the browser: somebody who has said "not this one" is not asked again on their laptop.
-  There is no inspection date to ask for — the next inspection is a reminder
+  The energies are not asked either: the server takes them from the engine
+  ([data model](architecture.md#data-model)), so the first fill-up needs no detour. A vehicle whose
+  country has a logbook ruleset — Germany so far — and whose [logbook mode](features.md#logbook-mode)
+  is off is asked once, in a card of its own, whether to keep a logbook for the tax office.
+  Switching it on, dismissing, or flipping the mode in the edit sheet answers it, per vehicle and
+  in the same preferences. There is no inspection date to ask for — the next inspection is a reminder
   ([architecture](architecture.md#data-model)).
 - **The jurisdiction is not a fifth field.** It defaults from the user's personal setting and is
-  changed in the vehicle's edit sheet, moving to the sidebar when that exists
-  ([contributing](contributing.md)). It decides units, currency and rules — and a freelancer's
+  changed in the vehicle's edit sheet ([contributing](contributing.md)). It decides units, currency and rules — and a freelancer's
   vehicles are all in one country, so asking would cost more than it is worth.
 - **Switching [logbook mode](features.md#logbook-mode) off is the one thing that asks.** It is the
   one thing undo does not reach: switching it back on is a second flip in the audit trail, not a way
@@ -447,7 +504,9 @@ neither. Leaving with no group left takes the vehicle out of the fleet, and the 
   and the question stands between it and the save, which is when anything happens. Switching on asks
   nothing: it takes something on rather than away.
 - **Empty states do the teaching.** Not "no entries" but the two buttons that create the first one,
-  `NcEmptyContent` with a real call to action. The QR sticker is offered in the vehicle header,
+  `NcEmptyContent` with a real call to action: the empty timeline offers *New entry* and *Import
+  from a file…*, each to who may take it. A fleet still loading shows a spinner, never "No vehicles
+  yet". The QR sticker is offered in the vehicle header,
   not yet in an empty state.
 - **Numbers get context.** `6,4 l/100 km` alone means nothing; `6,4 l/100 km  +0,3 l/100 km vs. the
   period before` means something. Every KPI shows its comparison or its trend.
@@ -476,12 +535,14 @@ Both first-class from M1. Retrofitting i18n means touching every string in the a
 `de_DE` is formal ("Sie"). A fleet app is used in companies, so `de_DE` is the one that matters —
 but shipping only `de` would give company users "du". Ship both, worded differently.
 
-- **Marking strings:** PHP `IL10N->t()` / `->n()`, Vue `t('nextfleet', …)` / `n()` from
-  `@nextcloud/l10n`. Never assemble a sentence from fragments — German word order is not English
-  word order. Use placeholders (`%1$s` in PHP, `{plate}` in JS) and the plural form for every count.
+- **Marking strings:** PHP `IL10N->t()` / `->n()`, Vue `t('nextfleet', …)` from
+  `src/utils/l10n.js`, which shows a placeholder's value as typed ([security](security.md)).
+  Never assemble a sentence from fragments — German word order is not English word order. Use
+  placeholders (`%1$s` in PHP, `{plate}` in JS) and the plural form for every count. The wrapper
+  has no `n()` yet, since the screens word their counts without one: add it there, as `t()` is.
   Add `// TRANSLATORS:` notes where a string is ambiguous.
-- **Files:** `l10n/en.json|js`, `l10n/de.json|js`, `l10n/de_DE.json|js`, extracted with the
-  Nextcloud translation tool. Maintained in-repo by hand; other languages by pull request.
+- **Files:** `l10n/en.json|js`, `l10n/de.json|js`, `l10n/de_DE.json|js`, edited by hand — no tool
+  extracts them. Other languages by pull request.
 - **Background jobs have no request locale.** A reminder mail or notification created by cron must
   use the *recipient's* language: `IFactory::getUserLanguage($uid)`, then
   `IFactory::get('nextfleet', $lang)`. Getting this wrong sends German mails to English users and is
@@ -504,5 +565,7 @@ but shipping only `de` would give company users "du". Ship both, worded differen
   switch.
 - **App store metadata** is translatable too: `<name lang="de">`, `<description lang="de">` in
   `info.xml`.
-- **CI check:** every extracted string must have an entry in all three catalogues; a missing one
-  fails the build. One E2E run with the user language set to `de_DE`.
+- **CI check:** `tests/Unit/TranslationsTest.php` fails the build when a marked string is missing
+  from one of the six files, when one holds a string nothing marks, when a `.js` lacks a
+  translation its `.json` holds, or when `de_DE` says du or `de` says Sie. The reminder E2E (`m4-slice`) tells a recipient whose language is `de`, so
+  the notifier's and the digest's late translation is checked in German.

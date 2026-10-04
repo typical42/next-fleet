@@ -3,7 +3,6 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
-import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import { computed, onMounted, ref, watch } from 'vue'
 
@@ -13,6 +12,7 @@ import { listReminders, reminderTemplates } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
 import { may } from '../utils/access.js'
 import { dayWords, dueWords, INSPECTION, inspectionOf, light, openByUrgency, reminderTitle, stateWord } from '../utils/reminders.js'
+import { t } from '../utils/l10n.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -168,7 +168,7 @@ function estimateWords(reminder) {
 				<NcButton v-if="may(vehicle, 'log')"
 					class="due__done"
 					variant="tertiary"
-					:aria-label="t('nextfleet', 'Done: {title}', { title: { value: reminderTitle(reminder), escape: false } })"
+					:aria-label="t('nextfleet', 'Done: {title}', { title: reminderTitle(reminder) })"
 					@click="emit('done', reminder.uuid)">
 					{{ t('nextfleet', 'Done') }}
 				</NcButton>

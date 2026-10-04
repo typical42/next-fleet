@@ -3,7 +3,7 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
-import { t } from '@nextcloud/l10n'
+import NcButton from '@nextcloud/vue/components/NcButton'
 import NcDateTimePickerNative from '@nextcloud/vue/components/NcDateTimePickerNative'
 import NcSelect from '@nextcloud/vue/components/NcSelect'
 import { computed, onMounted, ref, watch } from 'vue'
@@ -14,6 +14,7 @@ import { usePreferencesStore } from '../store/preferences.js'
 import { tilesOf } from '../utils/kpis.js'
 import { PERIODS, periodOf, periodWord } from '../utils/period.js'
 import KpiTile from './KpiTile.vue'
+import { t } from '../utils/l10n.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -128,6 +129,9 @@ defineExpose({ reload })
 		</div>
 		<p v-if="failure" class="kpis__failure">
 			{{ failure }}
+			<NcButton variant="tertiary" @click="reload">
+				{{ t('nextfleet', 'Try again') }}
+			</NcButton>
 		</p>
 		<dl class="kpis__tiles">
 			<KpiTile v-for="tile in tiles" :key="tile.label" :tile="tile" />

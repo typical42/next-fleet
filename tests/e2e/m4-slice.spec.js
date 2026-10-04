@@ -166,3 +166,29 @@ test('an oil change closed from the banner schedules the next one, and the overv
 	await expect(page.getByRole('heading', { name: 'Vehicles' })).toBeVisible()
 	await expect.poll(oilFirst).toBe(false)
 })
+
+test.describe('at 320 x 640', { tag: '@nc34' }, () => {
+	test.use({ viewport: { width: 320, height: 640 } })
+
+	/** A phone's row wraps rather than cutting off what comes due, which is what it is read for. */
+	test('an overview row shows the next due in full', async ({ page }) => {
+		const vehicle = await api(page, { method: 'POST', path: '/api/vehicles', body: { plate: `${plates}narrow-${Date.now()}`, manufacturer: 'Volkswagen', model: 'Caddy Maxi' } })
+		await api(page, {
+			method: 'POST',
+			path: `/api/vehicles/${vehicle.uuid}/reminders`,
+			body: { template_key: 'oil_change', due_date: iso(new Date(Date.now() + 10 * DAY)), due_odo: 20000 },
+		})
+
+		await page.goto(appPage)
+		const row = page.locator('.overview__list').getByRole('listitem').filter({ hasText: vehicle.plate })
+		const next = row.locator('.overview__next')
+		await expect(next).toContainText('Oil change')
+		// Inside the row and inside the subname's box, which clips what overflows it.
+		const fits = await next.evaluate((element) => {
+			const box = element.getBoundingClientRect()
+			const clip = /** @type {HTMLElement} */ (element.parentElement).getBoundingClientRect()
+			return box.right <= clip.right + 1 && box.bottom <= clip.bottom + 1
+		})
+		expect(fits).toBe(true)
+	})
+})

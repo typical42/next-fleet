@@ -30,24 +30,36 @@ class SchemaTest extends TestCase {
 
 	private function migrate(): SchemaWrapper {
 		if ($this->migrated === null) {
-			$schema = new SchemaWrapper();
-			$steps = Steps::inOrder($this->createMock(IDBConnection::class), $this->createMock(ReminderRecipientMapper::class));
-			foreach ($steps as $step) {
-				$returned = $step->changeSchema(
-					$this->createMock(IOutput::class),
-					static fn (): ISchemaWrapper => $schema,
-					[],
-				);
-
-				// A migration that keeps its schema to itself changes nothing: MigrationService
-				// applies what comes back, and null means "no schema change".
-				$this->assertSame($schema, $returned);
-			}
-
-			$this->migrated = $schema;
+			$this->migrated = new SchemaWrapper();
+			$this->runSteps($this->migrated);
 		}
 
 		return $this->migrated;
+	}
+
+	private function runSteps(SchemaWrapper $schema): void {
+		$steps = Steps::inOrder($this->createMock(IDBConnection::class), $this->createMock(ReminderRecipientMapper::class));
+		foreach ($steps as $step) {
+			$returned = $step->changeSchema(
+				$this->createMock(IOutput::class),
+				static fn (): ISchemaWrapper => $schema,
+				[],
+			);
+
+			// A migration that keeps its schema to itself changes nothing: MigrationService
+			// applies what comes back, and null means "no schema change".
+			$this->assertSame($schema, $returned);
+		}
+	}
+
+	/** @return array<string, array<string, string>> table => its indexes */
+	private function allIndexes(): array {
+		$all = [];
+		foreach ($this->fleetTableNames() as $name) {
+			$all[$name] = $this->indexes($name);
+		}
+
+		return $all;
 	}
 
 	protected function fleetTableNames(): array {
@@ -56,6 +68,18 @@ class SchemaTest extends TestCase {
 
 	protected function table(string $name): Table {
 		return $this->migrate()->getTable($name);
+	}
+
+	/**
+	 * A re-install meets its own leftover indexes, and Doctrine refuses to add one twice. Every
+	 * step guards for that, so running them all again over what they built changes nothing.
+	 */
+	public function testEveryStepRunsAgainOverWhatItBuilt(): void {
+		$before = $this->allIndexes();
+
+		$this->runSteps($this->migrate());
+
+		$this->assertSame($before, $this->allIndexes());
 	}
 
 	/**

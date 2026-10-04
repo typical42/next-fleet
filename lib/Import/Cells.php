@@ -9,19 +9,23 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Import;
 
 use OCA\NextFleet\Exception\UnreadableCellException;
+use OCA\NextFleet\Service\Field;
 
 /**
  * One source row, read by the name of the value a column holds rather than by position. A cell
  * it cannot read blames that column's header, so the preview can say where.
  */
 final class Cells {
+	/** The entry services' bound per dimension (Field), so the preview refuses what the write would. */
+	private const BOUNDS = ['distance' => Field::COUNTER, 'volume' => Field::AMOUNT, 'energy' => Field::AMOUNT, 'money' => Field::MONEY];
+
 	/**
 	 * @param list<string> $row as CsvReader yields it; a short row lacks its last cells
 	 * @param array<string, array{?int, string}> $columns value => its position, null when the file
 	 *                                                    has no such column, and the header to blame
 	 * @param array<string, ?string> $marks value => the decimal mark its column shows
 	 * @param string $order of slash dates, `dmy` or `mdy`
-	 * @param ?string $currency the vehicle's, an ISO 4217 code; null when it states none
+	 * @param ?string $currency the vehicle's, from Answers::currency(); null when it states none
 	 */
 	public function __construct(
 		private array $row,
@@ -91,11 +95,18 @@ final class Cells {
 		return $columns;
 	}
 
-	/** Notes from several cells, one per line; a cell of `0` is a note too. */
-	public static function lines(?string ...$lines): ?string {
+	/**
+	 * Notes from several cells, one per line; a cell of `0` is a note too. Past the entry
+	 * services' length it blames $blame, the column most of a note comes from.
+	 */
+	public function notes(string $blame, ?string ...$lines): ?string {
 		$lines = array_filter($lines, 'is_string');
+		$notes = $lines === [] ? null : implode("\n", $lines);
+		if ($notes !== null && mb_strlen($notes) > Field::TEXT) {
+			$this->refuse($blame, 'too_long');
+		}
 
-		return $lines === [] ? null : implode("\n", $lines);
+		return $notes;
 	}
 
 	/**
@@ -130,6 +141,19 @@ final class Cells {
 		return $position === null ? [] : array_map(static fn (array $row): string => $row[$position] ?? '', array_values($rows));
 	}
 
+	/**
+	 * A row wider than the header cannot say which cell is which, so no column is blamed. A
+	 * Spritmonitor note ending in a lone `\` escapes its line break and swallows the next row.
+	 *
+	 * @param list<string> $header
+	 * @throws UnreadableCellException
+	 */
+	public function fits(array $header): void {
+		if (count($this->row) > count($header)) {
+			throw new UnreadableCellException('cells');
+		}
+	}
+
 	/** Trimmed; an empty cell is nothing. */
 	public function text(string $value, ?int $length = null): ?string {
 		$text = trim($this->cell($value));
@@ -151,15 +175,21 @@ final class Cells {
 
 	/**
 	 * Cents, from a cell that may carry a currency mark (Values::money()). One that cannot stand
-	 * for the vehicle's currency is refused: there is no rate to convert at.
+	 * for the vehicle's currency is refused: there is no rate to convert at. So is any amount
+	 * while the vehicle's currency is no code, blaming no column: the vehicle is to be fixed.
 	 */
 	public function money(string $value): ?int {
-		return $this->blaming($value, function (string $cell) use ($value): ?int {
+		$cents = $this->blaming($value, function (string $cell) use ($value): ?int {
 			[$number, $mark] = Values::money($cell);
 			$this->vehicleCurrency($mark);
 
 			return $this->counted($value, $number, 'money', 'major');
 		});
+		if ($cents !== null && !$this->coded()) {
+			throw new UnreadableCellException('currency');
+		}
+
+		return $cents;
 	}
 
 	/** A column of its own naming the row's currency, refused as in money(). */
@@ -194,9 +224,14 @@ final class Cells {
 
 	/** @throws UnreadableCellException when the mark cannot stand for the vehicle's currency */
 	private function vehicleCurrency(?string $mark): void {
-		if ($this->currency !== null && $mark !== null && !Values::mayName($mark, $this->currency)) {
+		if ($this->currency !== null && $this->coded() && $mark !== null && !Values::mayName($mark, $this->currency)) {
 			throw new UnreadableCellException('currency');
 		}
+	}
+
+	/** Whether the vehicle's currency, when it states one, is an ISO 4217 code. */
+	private function coded(): bool {
+		return $this->currency === null || Field::isCurrency($this->currency);
 	}
 
 	private function counted(string $value, string $cell, string $dimension, string $unit): ?int {
@@ -207,6 +242,9 @@ final class Cells {
 		$count = Values::canonical($decimal, $dimension, $unit);
 		if ($count < 0) {
 			throw new UnreadableCellException('negative');
+		}
+		if ($count > (self::BOUNDS[$dimension] ?? throw new \LogicException($dimension . ' has no bound'))) {
+			throw new UnreadableCellException('too_large');
 		}
 
 		return $count;

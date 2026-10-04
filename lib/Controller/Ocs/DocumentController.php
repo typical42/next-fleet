@@ -71,19 +71,21 @@ class DocumentController extends OCSController {
 	 * @param string|null $kind required: registration, insurance, manual, receipt or photo
 	 * @param string|null $linked_type energy, maintenance, expense or booking; with `linked_uuid`
 	 * @param string|null $linked_uuid the uuid of the row it backs; with `linked_type`
+	 * @param string|null $client_uuid a uuid of the client's for the new row: a retry under it answers that row
 	 * @return DataResponse<Http::STATUS_OK, list<NextFleetDocument>, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
 	 * @throws OCSForbiddenException the caller may not keep papers on this vehicle, or on that row
 	 * @throws OCSNotFoundException no such vehicle, file of the caller's own, or linked row
 	 *
-	 * 200: the papers as they now stand
+	 * 200: the papers as they now stand; a retry under the same `client_uuid` writes nothing
 	 * 400: a field is not what it holds; the message names it
 	 * 412: another write to the paper raced this one; send it again
 	 */
 	#[NoAdminRequired]
 	#[UserRateLimit(limit: 60, period: 60)]
-	public function create(string $uuid, mixed $file_id = null, mixed $kind = null, mixed $linked_type = null, mixed $linked_uuid = null): DataResponse {
-		return $this->write(fn (): DataResponse => new DataResponse(
-			$this->service->attach($this->userId(), $uuid, $this->request->getParams()),
+	public function create(string $uuid, mixed $file_id = null, mixed $kind = null, mixed $linked_type = null, mixed $linked_uuid = null, mixed $client_uuid = null): DataResponse {
+		return $this->write(fn (): DataResponse => $this->created(
+			fn (): array => $this->service->attach($this->userId(), $uuid, $this->request->getParams()),
+			Http::STATUS_OK,
 		));
 	}
 

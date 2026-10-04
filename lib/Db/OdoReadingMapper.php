@@ -53,32 +53,6 @@ class OdoReadingMapper extends BaseMapper {
 	}
 
 	/**
-	 * Which of these vehicles had a Reading written, deleted or restored after `$since`. A sync
-	 * sends such a vehicle's every live Reading, since settling a chain re-flags rows without
-	 * moving their token (OdometerService::settle()).
-	 *
-	 * @param list<int> $vehicleIds
-	 * @return list<int>
-	 * @throws \OCP\DB\Exception
-	 */
-	public function findVehiclesChangedSince(array $vehicleIds, int $since): array {
-		if ($vehicleIds === []) {
-			return [];
-		}
-		$qb = $this->db->getQueryBuilder();
-		$qb->selectDistinct('vehicle_id')
-			->from($this->tableName)
-			->where($qb->expr()->in('vehicle_id', $qb->createNamedParameter($vehicleIds, IQueryBuilder::PARAM_INT_ARRAY)))
-			->andWhere($qb->expr()->gt('updated_at', $qb->createNamedParameter($since, IQueryBuilder::PARAM_INT)));
-
-		$result = $qb->executeQuery();
-		$ids = array_map('intval', $result->fetchAll(\PDO::FETCH_COLUMN));
-		$result->closeCursor();
-
-		return $ids;
-	}
-
-	/**
 	 * One counter's chain, in findAllForVehicle()'s order. Every rule that compares a Reading with
 	 * its neighbours reads this, because a Reading in hours next to one in kilometres is no
 	 * contradiction (rule 4).
@@ -101,6 +75,145 @@ class OdoReadingMapper extends BaseMapper {
 	}
 
 	/**
+	 * The main chains of these vehicles inside `[from, to]`, in findChain()'s order, by vehicle:
+	 * what a reminder's pace reads (ReminderEngine::estimate()), for a whole fleet in one query
+	 * off the `(vehicle_id, read_at)` index.
+	 *
+	 * @param list<int> $vehicleIds
+	 * @return array<int, list<OdoReading>> a vehicle without a Reading there is missing
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findMainWithin(array $vehicleIds, int $from, int $to): array {
+		if ($vehicleIds === []) {
+			return [];
+		}
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->tableName)
+			->where(InList::in($qb, 'vehicle_id', $vehicleIds, IQueryBuilder::PARAM_INT_ARRAY))
+			->andWhere($qb->expr()->isNull('deleted_at'))
+			->andWhere($this->onCounter($qb, OdoReading::MAIN))
+			->andWhere($qb->expr()->gte('read_at', $qb->createNamedParameter($from, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->lte('read_at', $qb->createNamedParameter($to, IQueryBuilder::PARAM_INT)))
+			->orderBy('read_at', 'ASC')
+			->addOrderBy('id', 'ASC');
+
+		$byVehicle = [];
+		foreach ($this->findEntities($qb) as $reading) {
+			$byVehicle[$reading->getVehicleId()][] = $reading;
+		}
+
+		return $byVehicle;
+	}
+
+	/**
+	 * Where a distance starts or ends (ConsumptionService::distance()): the newest Reading on the
+	 * counter at or before `$readAt` that the chain does not question. One row off the
+	 * `(vehicle_id, read_at)` index, however long the chain.
+	 *
+	 * With `$beforeId`, only one before that Reading, read at `$readAt`, in findChain()'s order:
+	 * where the counter stood just before it was replaced.
+	 *
+	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findNewestStanding(int $vehicleId, string $counter, int $readAt, ?int $beforeId = null): ?OdoReading {
+		$qb = $this->standing($vehicleId, $counter);
+		$at = $qb->createNamedParameter($readAt, IQueryBuilder::PARAM_INT);
+		$qb->andWhere($beforeId === null
+			? $qb->expr()->lte('read_at', $at)
+			: $qb->expr()->orX(
+				$qb->expr()->lt('read_at', $at),
+				$qb->expr()->andX(
+					$qb->expr()->eq('read_at', $at),
+					$qb->expr()->lt('id', $qb->createNamedParameter($beforeId, IQueryBuilder::PARAM_INT)),
+				),
+			))
+			->orderBy('read_at', 'DESC')
+			->addOrderBy('id', 'DESC');
+
+		return $this->first($qb);
+	}
+
+	/**
+	 * Where a distance starts when the counter was never read before the period: the oldest
+	 * Reading at or after `$readAt` that the chain does not question.
+	 *
+	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findOldestStanding(int $vehicleId, string $counter, int $readAt): ?OdoReading {
+		$qb = $this->standing($vehicleId, $counter);
+		$qb->andWhere($qb->expr()->gte('read_at', $qb->createNamedParameter($readAt, IQueryBuilder::PARAM_INT)))
+			->orderBy('read_at', 'ASC')
+			->addOrderBy('id', 'ASC');
+
+		return $this->first($qb);
+	}
+
+	/**
+	 * The answered resets on one counter read from `$from` to `$to`, both included, in
+	 * findChain()'s order: where its segments begin (rule 3). The database filters the period's
+	 * index range by kind and hands back only the few resets; no index names `kind`.
+	 *
+	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
+	 * @return list<OdoReading>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findResets(int $vehicleId, string $counter, int $from, int $to): array {
+		$qb = $this->live($vehicleId, $counter);
+		$qb->andWhere($qb->expr()->gte('read_at', $qb->createNamedParameter($from, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->lte('read_at', $qb->createNamedParameter($to, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->eq('kind', $qb->createNamedParameter(OdoReading::RESET)))
+			->orderBy('read_at', 'ASC')
+			->addOrderBy('id', 'ASC');
+
+		return $this->findEntities($qb);
+	}
+
+	/**
+	 * The live, unquestioned Readings of one counter. `flagged` is nullable, and null is unflagged
+	 * (OdoReading::getFlagged()).
+	 *
+	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
+	 */
+	private function standing(int $vehicleId, string $counter): IQueryBuilder {
+		$qb = $this->live($vehicleId, $counter);
+		$qb->andWhere($qb->expr()->orX(
+			$qb->expr()->isNull('flagged'),
+			$qb->expr()->eq('flagged', $qb->createNamedParameter(false, IQueryBuilder::PARAM_BOOL)),
+		));
+
+		return $qb;
+	}
+
+	/**
+	 * The live Readings of one counter.
+	 *
+	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
+	 */
+	private function live(int $vehicleId, string $counter): IQueryBuilder {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->tableName)
+			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->isNull('deleted_at'))
+			->andWhere($this->onCounter($qb, $counter));
+
+		return $qb;
+	}
+
+	/** @throws \OCP\DB\Exception */
+	private function first(IQueryBuilder $qb): ?OdoReading {
+		$qb->setMaxResults(1);
+		try {
+			return $this->findEntity($qb);
+		} catch (DoesNotExistException) {
+			return null;
+		}
+	}
+
+	/**
 	 * The condition that keeps a query on one counter. A null `counter` is `main`: every Reading
 	 * from before M3 is on the only counter there was (OdoReading::getCounter()).
 	 *
@@ -115,22 +228,24 @@ class OdoReadingMapper extends BaseMapper {
 	}
 
 	/**
-	 * Marks a Reading as contradicted, or no longer contradicted. Like `odo_value` on the
-	 * vehicle, `flagged` is recomputed from the chain rather than edited, so writing it neither
-	 * re-dates the row nor takes a concurrency token: two entries landing at once would both
-	 * recompute the same answer, and a checked write would refuse the second of them after its
-	 * Reading was already in.
+	 * Marks a Reading as contradicted, or no longer contradicted. `flagged` is recomputed from the
+	 * chain rather than edited, so the write checks no token: the caller holds the vehicle and has
+	 * just read the row. It moves the token all the same, so a sync sends the rows whose flag
+	 * changed and no others (docs/architecture.md#concurrency).
 	 *
 	 * @throws \OCP\DB\Exception
 	 */
 	public function flag(OdoReading $reading, bool $flagged): void {
+		$now = max($this->time->getTime(), $reading->getUpdatedAt() + 1);
 		$qb = $this->db->getQueryBuilder();
 		$qb->update($this->tableName)
 			->set('flagged', $qb->createNamedParameter($flagged, IQueryBuilder::PARAM_BOOL))
+			->set('updated_at', $qb->createNamedParameter($now, IQueryBuilder::PARAM_INT))
 			->where($qb->expr()->eq('id', $qb->createNamedParameter((int)$reading->getId(), IQueryBuilder::PARAM_INT)));
 		$qb->executeStatement();
 
 		$reading->setFlagged($flagged);
+		$reading->setUpdatedAt($now);
 		$reading->resetUpdatedFields();
 	}
 
@@ -170,7 +285,7 @@ class OdoReadingMapper extends BaseMapper {
 			->from($this->tableName)
 			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
 			->andWhere($qb->expr()->eq('source_type', $qb->createNamedParameter($sourceType)))
-			->andWhere($qb->expr()->in('source_id', $qb->createNamedParameter($sourceIds, IQueryBuilder::PARAM_INT_ARRAY)))
+			->andWhere(InList::in($qb, 'source_id', $sourceIds, IQueryBuilder::PARAM_INT_ARRAY))
 			->andWhere($qb->expr()->isNull('deleted_at'))
 			// Main before second, so a row's Readings come in the order its fields do.
 			->orderBy('id', 'ASC');
@@ -179,9 +294,27 @@ class OdoReadingMapper extends BaseMapper {
 	}
 
 	/**
-	 * Hangs on each Reading the uuid of the Entry that wrote it, one query per thousand Readings
-	 * rather than one per Reading. A thousand because Oracle refuses a longer `IN`. The Entry is
-	 * found deleted or not: a Reading outlives its Entry only as a tombstone, which names it still.
+	 * Every live Reading one kind of Entry left on one counter, for a caller that wants them all
+	 * (ConsumptionService::of()): one query off the `(vehicle_id, source_type, source_id)` index,
+	 * where findForSources() would name every Entry of a long history.
+	 *
+	 * @param OdoReading::TRIP|OdoReading::ENERGY|OdoReading::MAINTENANCE $sourceType
+	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
+	 * @return list<OdoReading>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findOfSourceType(int $vehicleId, string $sourceType, string $counter): array {
+		$qb = $this->live($vehicleId, $counter);
+		$qb->andWhere($qb->expr()->eq('source_type', $qb->createNamedParameter($sourceType)))
+			->orderBy('id', 'ASC');
+
+		return $this->findEntities($qb);
+	}
+
+	/**
+	 * Hangs on each Reading the uuid of the Entry that wrote it, one query per InList chunk rather
+	 * than one per Reading: a whole chain can come here. The Entry is found deleted or not: a
+	 * Reading outlives its Entry only as a tombstone, which names it still.
 	 *
 	 * @param list<OdoReading> $readings
 	 * @throws \OCP\DB\Exception
@@ -195,7 +328,7 @@ class OdoReadingMapper extends BaseMapper {
 		}
 
 		$sources = ['t' => ['fleet_trips', OdoReading::TRIP], 'e' => ['fleet_energy', OdoReading::ENERGY], 'm' => ['fleet_maintenance', OdoReading::MAINTENANCE]];
-		foreach (array_chunk(array_keys($byId), 1000) as $chunk) {
+		foreach (InList::chunks(array_keys($byId)) as $chunk) {
 			$qb = $this->db->getQueryBuilder();
 			$qb->select('r.id')->from($this->tableName, 'r');
 			foreach ($sources as $alias => [$table, $type]) {
@@ -205,7 +338,7 @@ class OdoReadingMapper extends BaseMapper {
 						$qb->expr()->eq($alias . '.id', 'r.source_id'),
 					));
 			}
-			$qb->where($qb->expr()->in('r.id', $qb->createNamedParameter($chunk, IQueryBuilder::PARAM_INT_ARRAY)));
+			$qb->where(InList::in($qb, 'r.id', $chunk, IQueryBuilder::PARAM_INT_ARRAY));
 
 			$result = $qb->executeQuery();
 			while (($row = $result->fetch()) !== false) {

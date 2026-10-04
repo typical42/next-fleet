@@ -116,11 +116,13 @@ class ReminderController extends OCSController {
 	 * @param bool|null $warn_month_before warn a month before the due date
 	 * @param bool|null $warn_month_start warn when the month it is due in starts
 	 * @param bool|null $warn_due_date warn on the due date
-	 * @return DataResponse<Http::STATUS_CREATED, NextFleetReminder, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
+	 * @param string|null $client_uuid a uuid of the client's for the new row: a retry under it answers that row
+	 * @return DataResponse<Http::STATUS_CREATED, NextFleetReminder, array{}>|DataResponse<Http::STATUS_OK, NextFleetReminder, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
 	 * @throws OCSForbiddenException the caller may not edit this vehicle
 	 * @throws OCSNotFoundException no such vehicle
 	 *
 	 * 201: the reminder
+	 * 200: the reminder an earlier create under the same `client_uuid` wrote
 	 * 400: a field is not what it holds, or does not fit the mode; the message names it
 	 * 412: never for a create; listed because every write can answer it
 	 */
@@ -139,9 +141,10 @@ class ReminderController extends OCSController {
 		mixed $warn_month_before = null,
 		mixed $warn_month_start = null,
 		mixed $warn_due_date = null,
+		mixed $client_uuid = null,
 	): DataResponse {
-		return $this->write(fn (): DataResponse => new DataResponse(
-			$this->service->create($this->userId(), $uuid, $this->request->getParams()),
+		return $this->write(fn (): DataResponse => $this->created(
+			fn (): array => $this->service->create($this->userId(), $uuid, $this->request->getParams()),
 			Http::STATUS_CREATED,
 		));
 	}

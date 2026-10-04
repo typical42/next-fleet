@@ -33,6 +33,8 @@ use OCA\NextFleet\Db\BookingMapper;
 use OCA\NextFleet\Db\Document;
 use OCA\NextFleet\Db\DocumentMapper;
 use OCA\NextFleet\Db\EnergyMapper;
+use OCA\NextFleet\Db\OdoReading;
+use OCA\NextFleet\Db\OdoReadingMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Service\BookingService;
@@ -155,28 +157,27 @@ class VehicleIdorTest extends TestCase {
 	}
 
 	protected function setUp(): void {
-		$container = (new Application())->getContainer();
-		$this->service = $container->get(VehicleService::class);
-		$this->odometry = $container->get(OdometerService::class);
-		$this->journeys = $container->get(TripService::class);
-		$this->fillUps = $container->get(EnergyService::class);
-		$this->workshop = $container->get(MaintenanceService::class);
-		$this->spending = $container->get(ExpenseService::class);
-		$this->reminders = $container->get(ReminderService::class);
-		$this->recipients = $container->get(RecipientService::class);
-		$this->access = $container->get(GrantService::class);
-		$this->papers = $container->get(DocumentService::class);
-		$this->imports = $container->get(ImportService::class);
-		$this->history = $container->get(TimelineService::class);
-		$this->figures = $container->get(KpiService::class);
-		$this->logbook = $container->get(LogbookExport::class);
-		$this->claim = $container->get(MileageClaimExport::class);
-		$this->csv = $container->get(ExportService::class);
-		$this->settings = $container->get(PreferencesService::class);
-		$this->inbox = $container->get(InboxService::class);
-		$this->pool = $container->get(BookingService::class);
-		$this->syncing = $container->get(SyncService::class);
-		$this->grants = $container->get(AccessMapper::class);
+		$this->service = \OCP\Server::get(VehicleService::class);
+		$this->odometry = \OCP\Server::get(OdometerService::class);
+		$this->journeys = \OCP\Server::get(TripService::class);
+		$this->fillUps = \OCP\Server::get(EnergyService::class);
+		$this->workshop = \OCP\Server::get(MaintenanceService::class);
+		$this->spending = \OCP\Server::get(ExpenseService::class);
+		$this->reminders = \OCP\Server::get(ReminderService::class);
+		$this->recipients = \OCP\Server::get(RecipientService::class);
+		$this->access = \OCP\Server::get(GrantService::class);
+		$this->papers = \OCP\Server::get(DocumentService::class);
+		$this->imports = \OCP\Server::get(ImportService::class);
+		$this->history = \OCP\Server::get(TimelineService::class);
+		$this->figures = \OCP\Server::get(KpiService::class);
+		$this->logbook = \OCP\Server::get(LogbookExport::class);
+		$this->claim = \OCP\Server::get(MileageClaimExport::class);
+		$this->csv = \OCP\Server::get(ExportService::class);
+		$this->settings = \OCP\Server::get(PreferencesService::class);
+		$this->inbox = \OCP\Server::get(InboxService::class);
+		$this->pool = \OCP\Server::get(BookingService::class);
+		$this->syncing = \OCP\Server::get(SyncService::class);
+		$this->grants = \OCP\Server::get(AccessMapper::class);
 
 		$this->forgetTestRows();
 		$this->vehicle = $this->service->create(self::OWNER, ['plate' => self::PLATE]);
@@ -508,6 +509,7 @@ class VehicleIdorTest extends TestCase {
 			'odometer#update' => $this->odometer(self::STRANGER, $params)->update($uuid, self::NO_SUCH_ENTRY),
 			'odometer#delete' => $this->odometer(self::STRANGER, $params)->delete($uuid, self::NO_SUCH_ENTRY),
 			'odometer#restore' => $this->odometer(self::STRANGER, $params)->restore($uuid, self::NO_SUCH_ENTRY),
+			'odometer#reset' => $this->odometer(self::STRANGER, $params)->reset($uuid, self::NO_SUCH_ENTRY),
 			'trip#create' => $this->trip(self::STRANGER, $params)->create($uuid),
 			'trip#prefill' => $this->trip(self::STRANGER, $params)->prefill($uuid),
 			// Walked against a trip that is not there: the gate is the vehicle's, so a stranger
@@ -709,9 +711,10 @@ class VehicleIdorTest extends TestCase {
 	 * stranger, all at once on one vehicle, so a route is judged by the role and not by being
 	 * the only grant there.
 	 *
+	 * @param array<string, mixed> $body what an update sends
 	 * @dataProvider roleMatrix
 	 */
-	public function testEachRoleReachesWhatItCoversThroughEveryRoute(string $route, string $role, int $status, bool $deletedAfter, bool $ocs): void {
+	public function testEachRoleReachesWhatItCoversThroughEveryRoute(string $route, string $role, int $status, bool $deletedAfter, array $body, bool $ocs): void {
 		$this->ocs = $ocs;
 		$uuid = $this->vehicle->getUuid();
 		$this->grantEveryRole();
@@ -724,8 +727,15 @@ class VehicleIdorTest extends TestCase {
 			// Against a deleted vehicle, so the owner's arm is the undo that works.
 			$token = $this->service->delete(self::OWNER, $uuid, (int)$token)->getUpdatedAt();
 		}
+		if (($body['logbook_mode'] ?? null) === false) {
+			// Under the mode, so switching it off is a change and not a save of what is there.
+			$token = $this->service->update(self::OWNER, $uuid, (int)$token, ['logbook_mode' => true])->getUpdatedAt();
+		}
+		$rows = \OCP\Server::get(VehicleMapper::class);
+		$was = $rows->findAnyByUuid($uuid)->jsonSerialize();
 
 		$response = $this->through(fn (): Response => match ($route) {
+			'vehicle#update' => $this->controller($who, $body + ['updated_at' => $token])->update($uuid),
 			'vehicle#delete' => $this->controller($who, ['updated_at' => $token])->delete($uuid),
 			'vehicle#restore' => $this->controller($who, ['updated_at' => $token])->restore($uuid),
 			'grant#index' => $this->grantRoute($who, [])->index($uuid),
@@ -739,10 +749,13 @@ class VehicleIdorTest extends TestCase {
 		});
 
 		$this->assertSame($status, $response->getStatus());
-		$after = \OCP\Server::get(VehicleMapper::class)->findAnyByUuid($uuid);
+		$after = $rows->findAnyByUuid($uuid);
 		$this->assertSame($deletedAfter, $after->getDeletedAt() !== null);
 		if ($status !== Http::STATUS_OK && !$deletedAfter) {
 			$this->assertSame($grants, $this->access->list(self::OWNER, $uuid));
+		}
+		if ($status === Http::STATUS_FORBIDDEN) {
+			$this->assertSame($was, $after->jsonSerialize(), 'a refused write changed the vehicle');
 		}
 	}
 
@@ -752,22 +765,27 @@ class VehicleIdorTest extends TestCase {
 	}
 
 	/**
-	 * @return iterable<string, array{string, string, int, bool}>
+	 * @return iterable<string, array{string, string, int, bool, array<string, mixed>}>
 	 */
 	private static function roleCases(): iterable {
-		// The car is the owner's: deleting and restoring it is theirs alone, a manager included.
 		foreach (array_keys(self::HOLDERS) as $role) {
 			$owner = $role === 'owner';
-			yield "vehicle#delete by the $role" => ['vehicle#delete', $role, $owner ? Http::STATUS_OK : Http::STATUS_FORBIDDEN, $owner];
-			yield "vehicle#restore by the $role" => ['vehicle#restore', $role, $owner ? Http::STATUS_OK : Http::STATUS_FORBIDDEN, !$owner];
+			// Editing the car is `edit`. Switching the Logbook Mode off is an edit too, and the one
+			// a driver would most want: it ends the period their trips are kept under.
+			$edits = $owner || $role === 'manager';
+			yield "vehicle#update by the $role" => ['vehicle#update', $role, $edits ? Http::STATUS_OK : Http::STATUS_FORBIDDEN, false, ['plate' => 'HH-ZZ 9']];
+			yield "vehicle#update switching the Logbook Mode off by the $role" => ['vehicle#update', $role, $edits ? Http::STATUS_OK : Http::STATUS_FORBIDDEN, false, ['logbook_mode' => false]];
+			// The car is the owner's: deleting and restoring it is theirs alone, a manager included.
+			yield "vehicle#delete by the $role" => ['vehicle#delete', $role, $owner ? Http::STATUS_OK : Http::STATUS_FORBIDDEN, $owner, []];
+			yield "vehicle#restore by the $role" => ['vehicle#restore', $role, $owner ? Http::STATUS_OK : Http::STATUS_FORBIDDEN, !$owner, []];
 			// Access is the owner's alone, reading who holds it included.
 			foreach (['grant#index', 'grant#create', 'grant#update', 'grant#delete'] as $route) {
-				yield "$route by the $role" => [$route, $role, $owner ? Http::STATUS_OK : Http::STATUS_FORBIDDEN, false];
+				yield "$route by the $role" => [$route, $role, $owner ? Http::STATUS_OK : Http::STATUS_FORBIDDEN, false, []];
 			}
 			// What you hold yourself is yours to read and to leave; the owner holds no grant.
 			$grantee = $role !== 'owner' && $role !== 'stranger';
-			yield "grant#held by the $role" => ['grant#held', $role, $role === 'stranger' ? Http::STATUS_FORBIDDEN : Http::STATUS_OK, false];
-			yield "grant#leave by the $role" => ['grant#leave', $role, $grantee ? Http::STATUS_OK : ($owner ? Http::STATUS_NOT_FOUND : Http::STATUS_FORBIDDEN), false];
+			yield "grant#held by the $role" => ['grant#held', $role, $role === 'stranger' ? Http::STATUS_FORBIDDEN : Http::STATUS_OK, false, []];
+			yield "grant#leave by the $role" => ['grant#leave', $role, $grantee ? Http::STATUS_OK : ($owner ? Http::STATUS_NOT_FOUND : Http::STATUS_FORBIDDEN), false, []];
 		}
 	}
 
@@ -856,6 +874,41 @@ class VehicleIdorTest extends TestCase {
 				}
 			}
 		}
+	}
+
+	/**
+	 * Answering "the counter was replaced" changes the Reading, so it takes what changing the
+	 * Entry that wrote it takes: `edit`, or `log` on one you entered. The Reading is really in
+	 * question, so a refusal is the gate's.
+	 *
+	 * @dataProvider resetMatrix
+	 */
+	public function testEachRoleAnswersTheQuestionsItMay(string $route, string $role, string $author, int $status, bool $ocs): void {
+		$this->ocs = $ocs;
+		$uuid = $this->vehicle->getUuid();
+		$this->grantEveryRole();
+		$this->odometry->record(self::OWNER, $uuid, self::ENTRY_BODIES['odometer']);
+		$lower = $this->odometry->record(self::HOLDERS[$author], $uuid, ['value' => 30] + self::ENTRY_BODIES['odometer']);
+
+		$response = $this->through(fn (): Response => $this->odometer(self::HOLDERS[$role], ['updated_at' => $lower->getUpdatedAt()])
+			->reset($uuid, $lower->getUuid()));
+
+		$this->assertSame($status, $response->getStatus());
+		$after = \OCP\Server::get(OdoReadingMapper::class)->findAnyByUuid($lower->getUuid());
+		$this->assertSame($status === Http::STATUS_OK ? OdoReading::RESET : OdoReading::READING, $after->getKind());
+	}
+
+	/** @return iterable<string, list<mixed>> */
+	public static function resetMatrix(): iterable {
+		$cases = [];
+		foreach (['owner', 'driver'] as $author) {
+			foreach (array_keys(self::HOLDERS) as $role) {
+				$may = $role === 'owner' || $role === 'manager' || $role === $author;
+				$cases["odometer#reset by the $role on the {$author}'s"] = ['odometer#reset', $role, $author, $may ? Http::STATUS_OK : Http::STATUS_FORBIDDEN];
+			}
+		}
+
+		return self::throughBothDoors($cases);
 	}
 
 	/**

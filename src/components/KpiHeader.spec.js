@@ -26,7 +26,7 @@ vi.mock('../services/api.js', async (original) => ({
  * @return {import('../services/api.js').Settings} what the preferences route answers
  */
 function settings(chosen) {
-	return { preferences: { jurisdiction: 'de', dismissed_hints: [], reclaim_vat: false, kpi_period: 'last-12', grid_factor: null, inbox_folder: null, ...chosen }, jurisdictions: [] }
+	return { preferences: { jurisdiction: 'de', dismissed_hints: [], dismissed_logbook_hints: [], reclaim_vat: false, kpi_period: 'last-12', grid_factor: null, inbox_folder: null, ...chosen }, jurisdictions: [] }
 }
 
 const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, odo_value: 48210, odo_unit: 'km', second_unit: null, currency: 'EUR', energy_types: ['diesel'] }
@@ -214,5 +214,18 @@ describe('the vehicle header', () => {
 
 		expect(tiles(wrapper)).toEqual([['Odometer', '48,210 km']])
 		expect(wrapper.text()).toContain('The figures could not be read.')
+	})
+
+	/** A dropped connection is the common cause, and it passes; nothing else on the screen reads them. */
+	it('reads again when asked to after a failure', async () => {
+		vi.mocked(readKpis).mockRejectedValueOnce(new Error('offline')).mockRejectedValueOnce(new Error('offline'))
+		const wrapper = header()
+		await flushPromises()
+
+		await wrapper.get('.kpis__failure button').trigger('click')
+		await flushPromises()
+
+		expect(wrapper.text()).not.toContain('The figures could not be read.')
+		expect(tiles(wrapper).map(([label]) => label)).toContain('Cost')
 	})
 })

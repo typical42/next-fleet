@@ -11,8 +11,9 @@ import NcRadioGroupButton from '@nextcloud/vue/components/NcRadioGroupButton'
 import { flushPromises, shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { isProxy } from 'vue'
 
-import { closeGap, ConflictError, readGaps, readTimeline } from '../services/api.js'
+import { closeGap, ConflictError, deleteEntry, getVehicle, readGaps, readTimeline, RefusedError, resetReading } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
 import { fullMoment } from '../utils/format.js'
 import Timeline from './Timeline.vue'
@@ -25,6 +26,9 @@ vi.mock('../services/api.js', async (original) => ({
 	readTimeline: vi.fn(),
 	readGaps: vi.fn(),
 	closeGap: vi.fn(),
+	deleteEntry: vi.fn(),
+	getVehicle: vi.fn(),
+	resetReading: vi.fn(),
 }))
 
 const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', odo_unit: 'km' }
@@ -60,7 +64,10 @@ async function timeline(vehicle = VEHICLE) {
 		global: {
 			renderStubDefaultSlot: true,
 			// The question's buttons are in the dialog's own slot, which a plain stub drops.
-			stubs: { NcDialog: { template: '<div class="dialog"><slot /><slot name="actions" /></div>' } },
+			stubs: {
+				NcDialog: { template: '<div class="dialog"><slot /><slot name="actions" /></div>' },
+				NcEmptyContent: { template: '<div class="empty"><slot name="action" /></div>' },
+			},
 		},
 	})
 	await flushPromises()
@@ -164,7 +171,7 @@ describe('the month header under Logbook Mode', () => {
 
 		expect(readGaps).toHaveBeenCalledWith('v-1')
 		const [september, august] = months(wrapper)
-		expect(september).toContain('1,290 km unaccounted')
+		expect(september).toContain('1,290 km unaccounted for')
 		expect(august).not.toContain('unaccounted')
 	})
 
@@ -190,7 +197,7 @@ describe('the month header under Logbook Mode', () => {
 		await flushPromises()
 
 		expect(readGaps).toHaveBeenCalledTimes(2)
-		expect(months(wrapper)[0]).toContain('1,290 km unaccounted')
+		expect(months(wrapper)[0]).toContain('1,290 km unaccounted for')
 	})
 
 	/** Switching the mode on is when the question starts to be asked, on the screen already open. */
@@ -200,7 +207,7 @@ describe('the month header under Logbook Mode', () => {
 		await wrapper.setProps({ vehicle: LOGBOOK })
 		await flushPromises()
 
-		expect(months(wrapper)[0]).toContain('1,290 km unaccounted')
+		expect(months(wrapper)[0]).toContain('1,290 km unaccounted for')
 	})
 })
 
@@ -309,6 +316,78 @@ describe('closing a Gap', () => {
 	})
 })
 
+describe('voiding an overtaken reconciliation', () => {
+	/** @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted timeline */
+	async function voidFirst(wrapper) {
+		await wrapper.findAllComponents(TimelineRow)[0].vm.$emit('void', SEPTEMBER[0])
+		await flushPromises()
+	}
+
+	/** The void holds its way back like any other (src/components/UndoToast.vue), and the list is read again. */
+	it('voids the trip, offers the undo and reads the list again', async () => {
+		vi.mocked(deleteEntry).mockResolvedValue(/** @type {any} */ ({ uuid: 't-1', updated_at: 1788400000 }))
+		vi.mocked(getVehicle).mockResolvedValue(/** @type {any} */ (VEHICLE))
+		const wrapper = await timeline()
+
+		await voidFirst(wrapper)
+
+		expect(deleteEntry).toHaveBeenCalledWith('v-1', 'trip', SEPTEMBER[0].trip)
+		expect(useVehiclesStore().struck?.entry).toEqual({ uuid: 't-1', updated_at: 1788400000 })
+		expect(readTimeline).toHaveBeenCalledTimes(2)
+	})
+
+	it('says why when the server refuses, and reads the list again', async () => {
+		vi.mocked(deleteEntry).mockRejectedValueOnce(new ConflictError('Changed since you read it'))
+		const wrapper = await timeline()
+
+		await voidFirst(wrapper)
+
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('This trip has changed since it was read. The timeline shows it as it is now.')
+		expect(readTimeline).toHaveBeenCalledTimes(2)
+	})
+})
+
+describe('answering a reading in question', () => {
+	const LOWER = { uuid: 'r-1', value: 30, origin: 'observed', flagged: true, updated_at: 1788217300 }
+
+	/** @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted timeline */
+	async function replaced(wrapper) {
+		await wrapper.findAllComponents(TimelineRow)[1].vm.$emit('reset', LOWER)
+		await flushPromises()
+	}
+
+	/** The answer moves flags, distances and Gaps around it, so the list is read again. */
+	it('answers that the counter was replaced and reads the list again', async () => {
+		vi.mocked(resetReading).mockResolvedValue(/** @type {any} */ ({ ...LOWER, kind: 'reset', flagged: false }))
+		const wrapper = await timeline()
+
+		await replaced(wrapper)
+
+		expect(resetReading).toHaveBeenCalledWith('v-1', LOWER)
+		expect(readTimeline).toHaveBeenCalledTimes(2)
+	})
+
+	it('says why when the server refuses, and reads the list again', async () => {
+		vi.mocked(resetReading).mockRejectedValueOnce(new ConflictError('Changed since you read it'))
+		const wrapper = await timeline()
+
+		await replaced(wrapper)
+
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('This reading has changed since it was read. The timeline shows it as it is now.')
+		expect(readTimeline).toHaveBeenCalledTimes(2)
+	})
+
+	/** Another entry since may have settled the question: said in words, not the server's. */
+	it('says so when the reading is no longer in question', async () => {
+		vi.mocked(resetReading).mockRejectedValueOnce(new RefusedError('only a reading in question…', 'not_in_question'))
+		const wrapper = await timeline()
+
+		await replaced(wrapper)
+
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('This reading is no longer in question. The timeline shows it as it is now.')
+	})
+})
+
 describe('the timeline', () => {
 	/** The newest rows of every kind, which is what the screen opens on (docs/ui.md). */
 	it('reads the newest rows of every kind when it opens', async () => {
@@ -343,7 +422,7 @@ describe('the timeline', () => {
 	it('asks again from the top when a chip narrows it', async () => {
 		const wrapper = await timeline()
 		expect(wrapper.findAllComponents(NcRadioGroupButton).map((one) => String(one.props('label'))))
-			.toEqual(['All', 'Trips', 'Odometer', 'Energy', 'Maintenance', 'Costs'])
+			.toEqual(['All', 'Trips', 'Odometer', 'Energy', 'Maintenance', 'Expenses'])
 		vi.mocked(readTimeline).mockResolvedValue(/** @type {any} */ ({ rows: AUGUST, next: null }))
 
 		await chip(wrapper, 'Trips')
@@ -352,8 +431,11 @@ describe('the timeline', () => {
 		expect(wrapper.findAllComponents(TimelineRow)).toHaveLength(1)
 	})
 
-	/** Costs is the expenses: energy and maintenance have chips of their own (docs/ui.md). */
-	it('asks for the expenses under Costs, and lists the cost kinds each as a row', async () => {
+	/**
+	 * The chip says Expenses, not Costs: the header's *Costs* button opens the whole bill, energy and
+	 * maintenance included, and two words for two things keep them apart (docs/ui.md).
+	 */
+	it('asks for the expenses under Expenses, and lists the cost kinds each as a row', async () => {
 		const wrapper = await timeline()
 		const COSTS = [
 			{ type: 'expense', occurred_at: 1788391800, occurred_at_off: 120, expense: { uuid: 'x-1', amount: 1200 } },
@@ -362,7 +444,7 @@ describe('the timeline', () => {
 		]
 		vi.mocked(readTimeline).mockResolvedValue(/** @type {any} */ ({ rows: COSTS, next: null }))
 
-		await chip(wrapper, 'Costs')
+		await chip(wrapper, 'Expenses')
 
 		expect(readTimeline).toHaveBeenLastCalledWith('v-1', { type: 'expense', cursor: null })
 		// Two kinds may share a uuid's shape; the key keeps both rows.
@@ -421,6 +503,27 @@ describe('the timeline', () => {
 
 		expect(wrapper.findComponent(NcEmptyContent).exists()).toBe(true)
 		expect(months(wrapper)).toHaveLength(0)
+	})
+
+	/** The two ways to a first row are the two buttons in the empty state, each for who may take it. */
+	it.each([
+		[['view', 'log', 'edit'], ['New entry', 'Import from a file…']],
+		[['view', 'log'], ['New entry']],
+		[['view'], []],
+	])('offers a reader who may %j a first entry: %j', async (may, offered) => {
+		vi.mocked(readTimeline).mockResolvedValue(/** @type {any} */ ({ rows: [], next: null }))
+		const wrapper = await timeline({ ...VEHICLE, may })
+		const empty = wrapper.findComponent(NcEmptyContent)
+
+		expect(empty.findAllComponents(NcButton).map((one) => one.text())).toEqual(offered)
+		if (offered.length > 0) {
+			await empty.findAllComponents(NcButton).at(0)?.vm.$emit('click')
+			expect(wrapper.emitted('new')).toHaveLength(1)
+		}
+		if (offered.length > 1) {
+			await empty.findAllComponents(NcButton).at(1)?.vm.$emit('click')
+			expect(wrapper.emitted('import')).toHaveLength(1)
+		}
 	})
 
 	/**
@@ -537,5 +640,139 @@ describe('the timeline', () => {
 
 		expect(readTimeline).toHaveBeenLastCalledWith('v-1', { type: '', cursor: null })
 		expect(wrapper.findAllComponents(TimelineRow)).toHaveLength(2)
+	})
+})
+
+describe('a long history', () => {
+	/**
+	 * Page `n` of a history that goes on: two Readings a day apart, under the cursor of the next.
+	 *
+	 * @param {number} n - which page, from 1
+	 * @return {{rows: object[], next: string}} the page as the server answers it
+	 */
+	function nth(n) {
+		const rows = [0, 1].map((i) => {
+			const at = 1788391800 - ((n - 1) * 2 + i) * 86400
+
+			return { type: 'odometer', occurred_at: at, occurred_at_off: 120, odometer: { uuid: `r-${n}-${i}`, value: 150000 - n * 10 - i, flagged: false } }
+		})
+
+		return { rows, next: `cursor-${n}` }
+	}
+
+	/**
+	 * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted timeline
+	 * @return {string[]} the uuid of each row on screen, top to bottom
+	 */
+	function shown(wrapper) {
+		return wrapper.findAllComponents(TimelineRow).map((/** @type {any} */ one) => one.props('entry').odometer.uuid)
+	}
+
+	/**
+	 * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted timeline
+	 * @return {any} the button above the rows that brings newer ones back, or undefined
+	 */
+	function newer(wrapper) {
+		return wrapper.findAllComponents(NcButton).find((/** @type {any} */ one) => one.text() === 'Show newer entries')
+	}
+
+	/**
+	 * The timeline scrolled through `count` pages, each read in turn.
+	 *
+	 * @param {number} count - how many pages
+	 * @return {Promise<import('@vue/test-utils').VueWrapper>} the mounted timeline
+	 */
+	async function scrolled(count) {
+		let n = 0
+		vi.mocked(readTimeline).mockImplementation(async () => /** @type {any} */ (nth(++n)))
+		const wrapper = await timeline()
+		for (let i = 1; i < count; i++) {
+			await more(wrapper).vm.$emit('click')
+			await flushPromises()
+		}
+
+		return wrapper
+	}
+
+	/**
+	 * Years of entries scrolled through would put thousands of rows on screen. Four pages are, and
+	 * the oldest goes as the next comes; what is shown keeps the order it reads in, so a keyboard
+	 * still walks it top to bottom.
+	 */
+	it('keeps at most four pages on screen, the newest read last', async () => {
+		const wrapper = await scrolled(6)
+
+		expect(shown(wrapper)).toEqual(['r-3-0', 'r-3-1', 'r-4-0', 'r-4-1', 'r-5-0', 'r-5-1', 'r-6-0', 'r-6-1'])
+		expect(newer(wrapper)).toBeDefined()
+	})
+
+	it('brings newer pages back without asking the server again', async () => {
+		const wrapper = await scrolled(6)
+
+		await newer(wrapper).vm.$emit('click')
+		await newer(wrapper).vm.$emit('click')
+
+		expect(readTimeline).toHaveBeenCalledTimes(6)
+		expect(shown(wrapper)[0]).toBe('r-1-0')
+		expect(newer(wrapper)).toBeUndefined()
+	})
+
+	it('walks back down through pages it has before asking for the next', async () => {
+		const wrapper = await scrolled(6)
+		await newer(wrapper).vm.$emit('click')
+
+		await more(wrapper).vm.$emit('click')
+		await flushPromises()
+		expect(readTimeline).toHaveBeenCalledTimes(6)
+		expect(shown(wrapper).at(-1)).toBe('r-6-1')
+
+		await more(wrapper).vm.$emit('click')
+		await flushPromises()
+		expect(readTimeline).toHaveBeenLastCalledWith('v-1', { type: '', cursor: 'cursor-6' })
+		expect(shown(wrapper).at(-1)).toBe('r-7-1')
+	})
+
+	/** A page that lands after the reader went back up goes below; it does not pull them down. */
+	it('leaves the window where the reader moved it while a page was on its way', async () => {
+		const wrapper = await scrolled(5)
+		/** @type {(page: any) => void} */
+		let answer = () => {}
+		vi.mocked(readTimeline).mockImplementation(() => new Promise((resolve) => { answer = resolve }))
+		const asking = more(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		await newer(wrapper).vm.$emit('click')
+		answer(nth(6))
+		await asking
+		await flushPromises()
+
+		expect(shown(wrapper)[0]).toBe('r-1-0')
+		expect(more(wrapper).text()).toBe('Load more')
+	})
+
+	/** A refused page is the server's; the pages read before it are still the way down. */
+	it('shows the pages it has below after a refused one, and retries only at the end', async () => {
+		const wrapper = await scrolled(5)
+		vi.mocked(readTimeline).mockRejectedValue(new Error('The server answered 500'))
+		await more(wrapper).vm.$emit('click')
+		await flushPromises()
+		await newer(wrapper).vm.$emit('click')
+
+		expect(more(wrapper).text()).toBe('Load more')
+		expect(wrapper.findComponent(NcNoteCard).exists()).toBe(false)
+		await more(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(readTimeline).toHaveBeenCalledTimes(6)
+		expect(shown(wrapper).at(-1)).toBe('r-5-1')
+		expect(more(wrapper).text()).toBe('Try again')
+	})
+
+	/** A row is read, never changed in place: Vue need not watch every field of thousands. */
+	it('hands the rows over unwatched', async () => {
+		const wrapper = await scrolled(2)
+
+		const row = /** @type {any} */ (wrapper.findAllComponents(TimelineRow)[0])
+		expect(isProxy(row.props('entry'))).toBe(false)
 	})
 })

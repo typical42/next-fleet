@@ -36,6 +36,24 @@ export const useInboxStore = defineStore('inbox', () => {
 	}
 
 	/**
+	 * Reads the inbox again after a paper was attached, detached or restored somewhere else, which
+	 * moves the count beside the menu - while a folder is set, since without one nothing waits. The
+	 * write it follows stands, so a refused read keeps the count it had.
+	 *
+	 * @return {Promise<void>} when the inbox is read, or the read was refused
+	 */
+	async function refresh() {
+		if (folder.value === null) {
+			return
+		}
+		try {
+			await load()
+		} catch {
+			// See above.
+		}
+	}
+
+	/**
 	 * A file attached is no longer waiting. Taken off here rather than read again: the server
 	 * would answer the same, one request later.
 	 *
@@ -56,5 +74,6 @@ export const useInboxStore = defineStore('inbox', () => {
 		folder: computed(() => folder.value),
 		lastVehicle: computed(() => lastVehicle.value),
 		load,
+		refresh,
 	}
 })

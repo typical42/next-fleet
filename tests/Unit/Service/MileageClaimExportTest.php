@@ -14,9 +14,11 @@ use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Exception\AccessDeniedException;
 use OCA\NextFleet\Jurisdiction\IClaimRenderer;
 use OCA\NextFleet\Jurisdiction\IJurisdiction;
+use OCA\NextFleet\Jurisdiction\ILogbookRules;
 use OCA\NextFleet\Jurisdiction\IRateProvider;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCA\NextFleet\Jurisdiction\MileageClaim;
+use OCA\NextFleet\Service\Completeness;
 use OCA\NextFleet\Service\MileageClaimExport;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
@@ -76,13 +78,16 @@ class MileageClaimExportTest extends TestCase {
 		);
 
 		// Nothing stated before 2 January, 30 ct from then, 35 ct from July: enough steps to see
-		// which day each trip was valued on.
+		// which day each trip was valued on. 30,5 ct from October gives a line half a cent, and
+		// 33,3 ct from December a line under half.
 		$rates = $this->createMock(IRateProvider::class);
 		$rates->method('mileageRateAt')->willReturnCallback(function (string $type, \DateTimeInterface $when): ?int {
 			$day = $when->format('Y-m-d');
 			$this->asked[] = $type . ' ' . $day;
 
 			return match (true) {
+				$day >= '2026-12-01' => 333,
+				$day >= '2026-10-01' => 305,
 				$day >= '2026-07-01' => 350,
 				$day >= '2026-01-02' => 300,
 				default => null,
@@ -97,7 +102,15 @@ class MileageClaimExportTest extends TestCase {
 			return '<!DOCTYPE html>printed';
 		});
 
+		// A business trip must state its purpose and nothing else, so the other tests' trips are
+		// complete.
+		$rules = $this->createMock(ILogbookRules::class);
+		$rules->method('mandatoryFields')->willReturnCallback(
+			static fn (string $category): array => $category === Trip::BUSINESS ? ['purpose'] : [],
+		);
+
 		$profile = $this->createMock(IJurisdiction::class);
+		$profile->method('logbookRules')->willReturn($rules);
 		$profile->method('rates')->willReturnCallback(fn (): ?IRateProvider => $this->hasRates ? $rates : null);
 		$profile->method('claimRenderer')->willReturnCallback(fn (): ?IClaimRenderer => $this->hasRenderer ? $renderer : null);
 		$container = $this->createMock(ContainerInterface::class);
@@ -108,7 +121,9 @@ class MileageClaimExportTest extends TestCase {
 			$this->logged[] = $context;
 		});
 
-		return new MileageClaimExport($fleet, $trips, new Jurisdictions($container), $logger);
+		$jurisdictions = new Jurisdictions($container);
+
+		return new MileageClaimExport($fleet, $trips, $jurisdictions, new Completeness($jurisdictions), $logger);
 	}
 
 	/** @param array<string, mixed> $row */
@@ -199,6 +214,69 @@ class MileageClaimExportTest extends TestCase {
 		$this->assertNull($claim->lines[1]['kilometres']);
 		$this->assertSame(1200, $claim->total);
 		$this->assertSame(40, $claim->kilometres);
+	}
+
+	/**
+	 * Counters the wrong way round, kept from before the sheet refused them, state no distance: a
+	 * negative line would lower the claim by kilometres nobody drove backwards.
+	 */
+	public function testABackwardsTripIsNoDistanceAndLowersNothing(): void {
+		$this->trip('2026-03-02T08:00:00', ['distance' => null, 'start_odo' => 50040, 'end_odo' => 50000]);
+		$this->trip('2026-03-03T08:00:00', ['distance' => 40]);
+
+		$claim = $this->claim();
+
+		$this->assertNull($claim->lines[0]['kilometres']);
+		$this->assertSame([null, 1200], self::amounts($claim));
+		$this->assertSame(1200, $claim->total);
+		$this->assertSame(40, $claim->kilometres);
+	}
+
+	/**
+	 * What the Finanzamt would not accept stays on the page, marked, and out of the total: a trip
+	 * that leaves a required field unstated, and a Reconciliation Trip, which was worked out from
+	 * the counter rather than recorded as driven.
+	 */
+	public function testIncompleteAndDerivedTripsAreListedButLeftOutOfTheTotal(): void {
+		$this->trip('2026-03-02T08:00:00', ['distance' => 120]);
+		$this->trip('2026-03-03T08:00:00', ['distance' => 40, 'purpose' => null]);
+		$this->trip('2026-03-04T08:00:00', ['distance' => 10, 'reconciled' => true]);
+
+		$claim = $this->claim();
+
+		$this->assertSame([[], ['purpose'], []], array_map(static fn (array $line): array => $line['missing'] ?? [], $claim->lines));
+		$this->assertSame([false, false, true], array_map(static fn (array $line): bool => $line['reconciled'] ?? false, $claim->lines));
+		// Each is still valued, so the reader sees what completing it is worth.
+		$this->assertSame([3600, 1200, 300], self::amounts($claim));
+		$this->assertSame(3600, $claim->total);
+		$this->assertSame(120, $claim->kilometres);
+	}
+
+	/** Half a cent rounds up, line by line, so the lines printed add up to the total printed. */
+	public function testEachLineRoundsHalfACentUp(): void {
+		$this->trip('2026-10-02T08:00:00', ['distance' => 1]);
+		$this->trip('2026-10-03T08:00:00', ['distance' => 3]);
+
+		$claim = $this->claim();
+
+		// 1 km × 30,5 ct = 30,5 ct and 3 km × 30,5 ct = 91,5 ct.
+		$this->assertSame([31, 92], self::amounts($claim));
+		$this->assertSame(123, $claim->total);
+	}
+
+	/**
+	 * Under half a cent rounds down, line by line: three lines of 33,3 ct claim 99 ct, where
+	 * rounding the sum would claim 1 €, and rounding up would claim 1,02 €.
+	 */
+	public function testEachLineRoundsLessThanHalfACentDown(): void {
+		foreach (['2026-12-01', '2026-12-02', '2026-12-03'] as $day) {
+			$this->trip($day . 'T08:00:00', ['distance' => 1]);
+		}
+
+		$claim = $this->claim();
+
+		$this->assertSame([33, 33, 33], self::amounts($claim));
+		$this->assertSame(99, $claim->total);
 	}
 
 	/** Nothing valued is "not stated", never a claim of 0,00 €. */

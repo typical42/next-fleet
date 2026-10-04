@@ -13,6 +13,7 @@ use OCA\NextFleet\Db\OdoReadingMapper;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
+use OCA\NextFleet\Exception\RefusedException;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Db\TTransactional;
 use OCP\IDBConnection;
@@ -27,12 +28,8 @@ class OdometerService {
 	public const OBSERVED = 'observed';
 	public const DERIVED = 'derived';
 
-	/**
-	 * What M1 writes. `reset` and `correction` are the answers to the follow-up question a
-	 * flagged row asks, and only an answered `reset` starts a new segment (rule 3) - so they
-	 * arrive with the timeline that asks it, not with a client that may pick a word.
-	 */
-	private const READING = 'reading';
+	/** Why reset() refuses: the Reading asks no question it could answer. */
+	public const NOT_IN_QUESTION = 'not_in_question';
 
 	/**
 	 * The chains a batch() has written to and not settled yet; null outside one.
@@ -60,14 +57,22 @@ class OdometerService {
 	 */
 	public function record(string $userId, string $vehicleUuid, array $fields): OdoReading {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
+		$once = Once::of(
+			$fields,
+			$this->readings,
+			// An Odometer Entry's, not a Reading another Entry wrote.
+			static fn (OdoReading $row): bool => $row->getVehicleId() === (int)$vehicle->getId() && $row->getSourceType() === OdoReading::MANUAL,
+			static fn (OdoReading $row): OdoReading => $row,
+		);
 
 		// Retried for the reason TripService::record() gives. The replay builds a fresh row.
-		return $this->atomicRetry(function () use ($vehicle, $userId, $fields): OdoReading {
+		return $once->run(fn (): OdoReading => $this->atomicRetry(function () use ($vehicle, $userId, $fields, $once): OdoReading {
 			// Held before the distance is counted from the chain, as settle() asks.
 			$this->vehicles->hold((int)$vehicle->getId());
+			$once->check();
 
-			return $this->add($vehicle, $userId, $fields);
-		}, $this->db);
+			return $this->add($vehicle, $userId, $fields, $once);
+		}, $this->db));
 	}
 
 	/**
@@ -75,16 +80,17 @@ class OdometerService {
 	 * EnergyService::add() is.
 	 *
 	 * @param array<string, mixed> $fields
+	 * @param Once<OdoReading>|null $once the client's uuid for the row, if it sent one
 	 * @throws \InvalidArgumentException if a field is not what its column holds
 	 * @throws \OCP\DB\Exception
 	 */
-	public function add(Vehicle $vehicle, string $userId, array $fields): OdoReading {
-		$readAt = Field::count('read_at', $fields['read_at'] ?? null);
+	public function add(Vehicle $vehicle, string $userId, array $fields, ?Once $once = null): OdoReading {
+		$readAt = Field::count('read_at', $fields['read_at'] ?? null, Field::MOMENT);
 		$readAtOff = Field::offset('read_at_off', $fields['read_at_off'] ?? null);
 		$counter = self::counterOf($vehicle, $fields['counter'] ?? null);
 		[$value, $origin] = $this->valueOf((int)$vehicle->getId(), $counter, $readAt, $fields);
 
-		return $this->write($vehicle, $userId, $readAt, $readAtOff, $value, $origin, $counter, OdoReading::MANUAL, null);
+		return $this->write($vehicle, $userId, $readAt, $readAtOff, $value, $origin, $counter, OdoReading::MANUAL, null, $once);
 	}
 
 	/**
@@ -135,9 +141,9 @@ class OdometerService {
 	public function update(string $userId, string $vehicleUuid, string $readingUuid, int $expectedUpdatedAt, array $fields): OdoReading {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
-		$readAt = Field::count('read_at', $fields['read_at'] ?? null);
+		$readAt = Field::count('read_at', $fields['read_at'] ?? null, Field::MOMENT);
 		$readAtOff = Field::offset('read_at_off', $fields['read_at_off'] ?? null);
-		$value = Field::count('value', $fields['value'] ?? null);
+		$value = Field::count('value', $fields['value'] ?? null, Field::COUNTER);
 		$counter = self::counterOf($vehicle, $fields['counter'] ?? null);
 
 		// Looked up inside the transaction for the reason TripService::delete() gives.
@@ -147,9 +153,9 @@ class OdometerService {
 			$this->fleet->change($userId, VehicleAccess::EDIT, $vehicle, $reading->getCreatedBy());
 			$was = $reading->getCounter();
 
+			self::renumber($reading, $value, $counter);
 			$reading->setReadAt($readAt);
 			$reading->setReadAtOff($readAtOff);
-			$reading->setValue($value);
 			$reading->setOrigin(self::OBSERVED);
 			$reading->setCounter($counter);
 			$this->readings->updateChecked($reading, $expectedUpdatedAt);
@@ -216,6 +222,37 @@ class OdometerService {
 			$back = $this->readings->restoreChecked($reading, $expectedUpdatedAt);
 
 			return $this->restate($vehicle, $back->getCounter(), $back->getUuid());
+		}, $this->db);
+	}
+
+	/**
+	 * The answer "the counter was replaced" to a Reading the chain questions (rule 3): it becomes a
+	 * `reset`, stands, and starts a new segment. Any Entry's Reading, since the question is asked
+	 * on that Entry's row; answering it takes what changing that Entry takes. Only one somebody
+	 * read: a derived Reading in question is the app's arithmetic, contradicted, and no counter
+	 * was swapped under it. The other answer, a typo, is an edit of the Entry.
+	 *
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not edit the Entry
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException if no live Reading on this vehicle has the uuid
+	 * @throws RefusedException `not_in_question` when the Reading asks no such question
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if it has changed since
+	 * @throws \OCP\DB\Exception
+	 */
+	public function reset(string $userId, string $vehicleUuid, string $readingUuid, int $expectedUpdatedAt): OdoReading {
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
+
+		return $this->atomicRetry(function () use ($userId, $vehicle, $readingUuid, $expectedUpdatedAt): OdoReading {
+			$this->vehicles->hold((int)$vehicle->getId());
+			$reading = $this->readings->findOnVehicle((int)$vehicle->getId(), $readingUuid);
+			$this->fleet->change($userId, VehicleAccess::EDIT, $vehicle, $reading->getCreatedBy());
+			if (!$reading->getFlagged() || $reading->getOrigin() !== self::OBSERVED) {
+				throw new RefusedException('only a reading in question that somebody read can be a reset', self::NOT_IN_QUESTION);
+			}
+
+			$reading->setKind(OdoReading::RESET);
+			$this->readings->updateChecked($reading, $expectedUpdatedAt);
+
+			return $this->restate($vehicle, $reading->getCounter(), $reading->getUuid());
 		}, $this->db);
 	}
 
@@ -295,6 +332,7 @@ class OdometerService {
 	 * The caller has reached and held the vehicle, as for fromTrip().
 	 *
 	 * @param OdoReading::ENERGY|OdoReading::MAINTENANCE $sourceType
+	 * @param bool $fresh the Entry was inserted just now, so it has no Reading to look for
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if a Reading is not as it was read
 	 * @throws \OCP\DB\Exception
 	 */
@@ -308,8 +346,9 @@ class OdometerService {
 		?int $odo,
 		?int $secondOdo,
 		bool $deleted,
+		bool $fresh = false,
 	): void {
-		$written = $this->readings->findAnyForSource((int)$vehicle->getId(), $sourceType, $sourceId);
+		$written = $fresh ? [] : $this->readings->findAnyForSource((int)$vehicle->getId(), $sourceType, $sourceId);
 
 		foreach ([OdoReading::MAIN => $odo, OdoReading::SECOND => $secondOdo] as $counter => $value) {
 			$own = array_values(array_filter(
@@ -339,7 +378,7 @@ class OdometerService {
 				$this->readings->restoreChecked($newest, $newest->getUpdatedAt());
 			}
 			if ([$newest->getValue(), $newest->getReadAt(), $newest->getReadAtOff()] !== [$wanted, $readAt, $readAtOff]) {
-				$newest->setValue($wanted);
+				self::renumber($newest, $wanted);
 				$newest->setReadAt($readAt);
 				$newest->setReadAtOff($readAtOff);
 				$this->readings->updateChecked($newest, $newest->getUpdatedAt());
@@ -359,8 +398,8 @@ class OdometerService {
 	 * @throws \InvalidArgumentException if a counter is not one, or names a chain the vehicle lacks
 	 */
 	public static function entryCounters(Vehicle $vehicle, array $fields): array {
-		$odo = Field::read('odo', 'count', null, $fields['odo'] ?? null);
-		$secondOdo = Field::read('second_odo', 'count', null, $fields['second_odo'] ?? null);
+		$odo = Field::read('odo', 'count', Field::COUNTER, $fields['odo'] ?? null);
+		$secondOdo = Field::read('second_odo', 'count', Field::COUNTER, $fields['second_odo'] ?? null);
 		// Refused as an Odometer Entry naming the hour counter is (counterOf()): the number would
 		// be a Reading on a chain the vehicle does not have.
 		if ($secondOdo !== null && $vehicle->getSecondUnit() === null) {
@@ -420,12 +459,26 @@ class OdometerService {
 		$reading->setReadAtOff($trip->getEndedAtOff());
 		if ($recount) {
 			[$value, $origin] = $this->counted($vehicle, $trip, (int)$reading->getId());
-			$reading->setValue($value);
+			self::renumber($reading, $value);
 			$reading->setOrigin($origin);
 		}
 		$this->readings->updateChecked($reading, $reading->getUpdatedAt());
 
 		$this->settle($vehicle, OdoReading::MAIN);
+	}
+
+	/**
+	 * A new number on a Reading, or the same one on the other counter. An answered reset was the
+	 * answer for the number it had on its counter, so either change asks the question afresh
+	 * (rule 3).
+	 *
+	 * @param OdoReading::MAIN|OdoReading::SECOND|null $counter null where the counter cannot change
+	 */
+	private static function renumber(OdoReading $reading, int $value, ?string $counter = null): void {
+		if ($reading->getValue() !== $value || ($counter !== null && $reading->getCounter() !== $counter)) {
+			$reading->setKind(OdoReading::READING);
+		}
+		$reading->setValue($value);
 	}
 
 	/**
@@ -444,6 +497,7 @@ class OdometerService {
 	 * came from, which is the caller's to say.
 	 *
 	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
+	 * @param Once<OdoReading>|null $once an Odometer Entry's client uuid
 	 * @throws \OCP\DB\Exception
 	 */
 	private function write(
@@ -456,14 +510,17 @@ class OdometerService {
 		string $counter,
 		string $sourceType,
 		?int $sourceId,
+		?Once $once = null,
 	): OdoReading {
 		$reading = new OdoReading();
+		$once?->stamp($reading);
 		$reading->setVehicleId((int)$vehicle->getId());
 		$reading->setCreatedBy($userId);
 		$reading->setReadAt($readAt);
 		$reading->setReadAtOff($readAtOff);
 		$reading->setValue($value);
-		$reading->setKind(self::READING);
+		// A client never picks the word: `reset` is the answer reset() writes.
+		$reading->setKind(OdoReading::READING);
 		$reading->setOrigin($origin);
 		$reading->setFlagged(false);
 		$reading->setSourceType($sourceType);
@@ -609,7 +666,7 @@ class OdometerService {
 		$distance = $fields['distance'] ?? null;
 		$given = $fields['value'] ?? null;
 		if ($distance === null || $distance === '') {
-			return [Field::count('value', $given), self::OBSERVED];
+			return [Field::count('value', $given, Field::COUNTER), self::OBSERVED];
 		}
 		if ($given !== null && $given !== '') {
 			// The sheet toggles between the two (docs/ui.md). Preferring either would throw away
@@ -617,7 +674,7 @@ class OdometerService {
 			throw new \InvalidArgumentException('a reading is a value or a distance, not both');
 		}
 
-		return [$this->derive($vehicleId, $counter, $readAt, Field::count('distance', $distance)), self::DERIVED];
+		return [$this->derive($vehicleId, $counter, $readAt, Field::count('distance', $distance, Field::COUNTER)), self::DERIVED];
 	}
 
 	/**
@@ -653,7 +710,9 @@ class OdometerService {
 		$flags = array_fill(0, count($readings), false);
 
 		for ($i = 1; $i < count($readings); $i++) {
-			if ($readings[$i]->getValue() >= $readings[$i - 1]->getValue()) {
+			// An answered reset is a new counter: nothing before it can contradict it.
+			if ($readings[$i]->getKind() === OdoReading::RESET
+				|| $readings[$i]->getValue() >= $readings[$i - 1]->getValue()) {
 				continue;
 			}
 			if ($readings[$i]->getOrigin() !== self::OBSERVED) {

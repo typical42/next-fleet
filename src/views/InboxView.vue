@@ -3,7 +3,6 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
-import { t } from '@nextcloud/l10n'
 import { generateUrl } from '@nextcloud/router'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcEmptyContent from '@nextcloud/vue/components/NcEmptyContent'
@@ -16,6 +15,7 @@ import InboxSheet from '../components/InboxSheet.vue'
 import { attachDocument, thumbnailUrl } from '../services/api.js'
 import { useInboxStore } from '../store/inbox.js'
 import { shortDate } from '../utils/format.js'
+import { t } from '../utils/l10n.js'
 
 const props = defineProps({
 	/** The fleet the navigation lists; the sheet offers those the session may file papers on. */
@@ -143,9 +143,11 @@ async function logged(entry) {
 		<NcLoadingIcon v-else-if="!loaded" />
 		<NcEmptyContent v-else-if="inbox.folder === null"
 			:name="t('nextfleet', 'No inbox folder')"
-			:description="t('nextfleet', 'Choose a folder of your own under NextFleet in your personal settings, and point the auto-upload of the Nextcloud mobile app at it. A folder that was deleted or shared with you is no inbox.')">
+			:description="t('nextfleet', 'Choose a folder of your own under NextFleet in your personal settings, and point the auto-upload of the Nextcloud mobile app at it. A folder that was deleted or shared with you cannot be the inbox.')">
 			<template #action>
-				<a class="inbox__settings button-vue" :href="settingsUrl">{{ t('nextfleet', 'Open personal settings') }}</a>
+				<NcButton :href="settingsUrl">
+					{{ t('nextfleet', 'Open personal settings') }}
+				</NcButton>
 			</template>
 		</NcEmptyContent>
 		<NcEmptyContent v-else-if="inbox.files.length === 0"

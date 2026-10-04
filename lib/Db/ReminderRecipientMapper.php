@@ -21,6 +21,11 @@ class ReminderRecipientMapper extends BaseMapper {
 		parent::__construct($db, $time, $random, 'fleet_reminder_recipients', ReminderRecipient::class);
 	}
 
+	/** `user_id` for the export; an erasure finds none to rewrite, as deleteAccount() went first. */
+	protected function accountColumns(): array {
+		return ['user_id', 'created_by'];
+	}
+
 	/**
 	 * Who one vehicle's reminders go to, in the order they were added.
 	 *
@@ -36,6 +41,29 @@ class ReminderRecipientMapper extends BaseMapper {
 			->orderBy('id');
 
 		return $this->findEntities($qb);
+	}
+
+	/**
+	 * Every vehicle whose list names somebody, or `$userId` when given. The vehicle's own
+	 * `deleted_at` is not asked: a vehicle in the trash keeps its list for an undo.
+	 *
+	 * @return list<int>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findVehicleIds(?string $userId = null): array {
+		$qb = $this->db->getQueryBuilder();
+		$qb->selectDistinct('vehicle_id')
+			->from($this->tableName)
+			->where($qb->expr()->isNull('deleted_at'))
+			->orderBy('vehicle_id');
+		if ($userId !== null) {
+			$qb->andWhere($qb->expr()->eq('user_id', $qb->createNamedParameter($userId)));
+		}
+		$result = $qb->executeQuery();
+		$ids = array_map('intval', $result->fetchAll(\PDO::FETCH_COLUMN));
+		$result->closeCursor();
+
+		return $ids;
 	}
 
 	/**

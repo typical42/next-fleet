@@ -12,6 +12,7 @@ use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\Vehicle;
+use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Exception\AccessDeniedException;
 use OCA\NextFleet\Exception\FileChangedException;
 use OCA\NextFleet\Exception\ImportChangedException;
@@ -22,10 +23,13 @@ use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\TimelineService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Db\DoesNotExistException;
+use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\Files\Folder;
 use OCP\Files\IRootFolder;
+use OCP\ICacheFactory;
 use OCP\IDBConnection;
 use OCP\IUserManager;
+use OCP\Security\ISecureRandom;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -50,12 +54,11 @@ class ImportTest extends TestCase {
 	private array $vehicleIds = [];
 
 	protected function setUp(): void {
-		$container = (new Application())->getContainer();
-		$this->import = $container->get(ImportService::class);
-		$this->vehicles = $container->get(VehicleService::class);
-		$this->fillUps = $container->get(EnergyService::class);
-		$this->timeline = $container->get(TimelineService::class);
-		$this->odometer = $container->get(OdometerService::class);
+		$this->import = \OCP\Server::get(ImportService::class);
+		$this->vehicles = \OCP\Server::get(VehicleService::class);
+		$this->fillUps = \OCP\Server::get(EnergyService::class);
+		$this->timeline = \OCP\Server::get(TimelineService::class);
+		$this->odometer = \OCP\Server::get(OdometerService::class);
 	}
 
 	/** The accounts live for the whole class, for the reason DocumentTest gives. */
@@ -199,15 +202,18 @@ class ImportTest extends TestCase {
 		$this->assertSame('electric', ((array)$preview['proposals'][0]['fields'])['energy']);
 	}
 
-	/** A fill-up of an energy the vehicle does not take would be refused, so it is unreadable. */
-	public function testAnEnergyTheVehicleDoesNotTakeIsUnreadable(): void {
+	/** A fill-up of an energy the vehicle does not take imports flagged, as the entry sheet takes it. */
+	public function testAnEnergyTheVehicleDoesNotTakeIsImportedAndFlagged(): void {
 		$vehicle = $this->vehicle(['energy_types' => ['petrol']]);
 		$file = $this->file(self::OWNER, 'fuel.csv', "Datum;Km-Stand;Spritmenge;Kosten;Tankart;Kraftstoff\n14.03.2026;52000;42,15;71,61;1;Diesel\n");
 
 		$preview = $this->import->preview(self::OWNER, $vehicle->getUuid(), $this->request($file, 'spritmonitor'));
+		$done = $this->import->import(self::OWNER, $vehicle->getUuid(), $this->request($file, 'spritmonitor', answers: ['etag' => $preview['etag']]));
 
-		$this->assertSame('{"row":2,"kind":"energy","fields":{},"outcome":"unreadable","reason":"energy","column":null}', json_encode($preview['proposals'][0]));
-		// Nor may the user answer one for a row that names none.
+		$this->assertSame(['new' => 1, 'duplicate' => 0, 'unreadable' => 0, 'creates' => 1], $preview['counts']);
+		$row = $this->timeline->one(self::OWNER, $vehicle->getUuid(), 'energy', $done['created'][0]['uuid']);
+		$this->assertSame([EnergyService::FOREIGN_ENERGY], $row['flags']);
+		// But the user may not answer one for a row that names none.
 		$unnamed = $this->file(self::OWNER, 'fuel.csv', "Datum;Km-Stand;Spritmenge;Kosten;Tankart;Kraftstoff\n14.03.2026;52000;42,15;71,61;1;Super E10\n");
 		$this->expectException(\InvalidArgumentException::class);
 		$this->import->preview(self::OWNER, $vehicle->getUuid(), $this->request($unnamed, 'spritmonitor', answers: ['energy' => 'diesel']));
@@ -357,6 +363,180 @@ class ImportTest extends TestCase {
 		$included = $this->import->import(self::OWNER, $vehicle->getUuid(), $this->request($file, answers: ['etag' => $etag, 'include_duplicates' => true]));
 		$this->assertSame(['new' => 0, 'duplicate' => 2, 'unreadable' => 2, 'creates' => 2], $included['counts']);
 		$this->assertCount(2, $included['created']);
+	}
+
+	/** A phone that lost the answer sends the import again: it gets the first one's, and no duplicates. */
+	public function testAnImportSentAgainIsAnsweredWithoutImportingTwice(): void {
+		$vehicle = $this->vehicle(['energy_types' => ['diesel']]);
+		$file = $this->file(self::OWNER, 'lubelogger-fuel.csv');
+		$request = $this->request($file, answers: ['etag' => $this->import->preview(self::OWNER, $vehicle->getUuid(), $this->request($file))['etag']]);
+		$first = $this->import->import(self::OWNER, $vehicle->getUuid(), $request);
+
+		$again = $this->import->import(self::OWNER, $vehicle->getUuid(), $request);
+
+		$this->assertSame($first, $again);
+		$this->assertCount(2, $this->timeline->page(self::OWNER, $vehicle->getUuid(), null, null)['rows']);
+	}
+
+	/**
+	 * Sent again while the first still runs: it waits on the hold, and finds the first one's answer
+	 * there. Here the answer appears as the hold is taken, as the first import's would on its commit.
+	 */
+	public function testAnImportSentAgainWhileTheFirstRunsIsAnsweredToo(): void {
+		$vehicle = $this->vehicle(['energy_types' => ['diesel']]);
+		$file = $this->file(self::OWNER, 'lubelogger-fuel.csv');
+		$request = $this->request($file, answers: ['etag' => $this->import->preview(self::OWNER, $vehicle->getUuid(), $this->request($file))['etag']]);
+		$first = $this->import->import(self::OWNER, $vehicle->getUuid(), $request);
+		$answers = \OCP\Server::get(ICacheFactory::class)->createDistributed(Application::APP_ID . '-import');
+		$remembered = $answers->get((string)$vehicle->getId());
+		$answers->remove((string)$vehicle->getId());
+
+		$again = $this->importHolding(static fn () => $answers->set((string)$vehicle->getId(), $remembered))
+			->import(self::OWNER, $vehicle->getUuid(), $request);
+
+		$this->assertSame($first, $again);
+		$this->assertCount(2, $this->timeline->page(self::OWNER, $vehicle->getUuid(), null, null)['rows']);
+	}
+
+	/** Once undone, the same file imports again: the answer remembered names entries that are gone. */
+	public function testAnUndoneImportImportsAgain(): void {
+		$vehicle = $this->vehicle(['energy_types' => ['diesel']]);
+		$file = $this->file(self::OWNER, 'lubelogger-fuel.csv');
+		$request = $this->request($file, answers: ['etag' => $this->import->preview(self::OWNER, $vehicle->getUuid(), $this->request($file))['etag']]);
+		$first = $this->import->import(self::OWNER, $vehicle->getUuid(), $request);
+		$this->import->undo(self::OWNER, $vehicle->getUuid(), ['created' => $first['created']]);
+
+		$again = $this->import->import(self::OWNER, $vehicle->getUuid(), $request);
+
+		$this->assertCount(2, $again['created']);
+		$this->assertNotSame($first['created'], $again['created']);
+		$this->assertCount(2, $this->timeline->page(self::OWNER, $vehicle->getUuid(), null, null)['rows']);
+	}
+
+	/** An entry deleted since, one by one rather than by undo, is imported again: the answer named it. */
+	public function testAnImportWhoseEntryWasDeletedSinceImportsItAgain(): void {
+		$vehicle = $this->vehicle(['energy_types' => ['diesel']]);
+		$file = $this->file(self::OWNER, 'lubelogger-fuel.csv');
+		$request = $this->request($file, answers: ['etag' => $this->import->preview(self::OWNER, $vehicle->getUuid(), $this->request($file))['etag']]);
+		$first = $this->import->import(self::OWNER, $vehicle->getUuid(), $request);
+		$gone = $first['created'][0]['uuid'];
+		$this->fillUps->delete(self::OWNER, $vehicle->getUuid(), $gone, $this->entry($vehicle, $first['created'][0])['updated_at']);
+
+		$again = $this->import->import(self::OWNER, $vehicle->getUuid(), $request);
+
+		$this->assertCount(1, $again['created']);
+		$this->assertCount(2, $this->timeline->page(self::OWNER, $vehicle->getUuid(), null, null)['rows']);
+	}
+
+	/**
+	 * An attempt rolled back after it remembered its answer - a commit a retry ran again, or one a
+	 * twin waited on - left an answer naming entries that never were. It is no answer to give.
+	 */
+	public function testAnAnswerNamingEntriesThatNeverWereIsNotGiven(): void {
+		$vehicle = $this->vehicle(['energy_types' => ['diesel']]);
+		$file = $this->file(self::OWNER, 'lubelogger-fuel.csv');
+		$request = $this->request($file, answers: ['etag' => $this->import->preview(self::OWNER, $vehicle->getUuid(), $this->request($file))['etag']]);
+		$answers = \OCP\Server::get(ICacheFactory::class)->createDistributed(Application::APP_ID . '-import');
+		$rolledBack = [
+			'request' => hash('sha256', json_encode([self::OWNER, $request], JSON_THROW_ON_ERROR)),
+			'answer' => ['counts' => ['new' => 2, 'duplicate' => 0, 'unreadable' => 2, 'creates' => 2], 'created' => [
+				['type' => 'energy', 'uuid' => '00000000-0000-4000-8000-000000000001'],
+				['type' => 'energy', 'uuid' => '00000000-0000-4000-8000-000000000002'],
+			]],
+		];
+
+		$done = $this->importHolding(static fn () => $answers->set((string)$vehicle->getId(), $rolledBack))
+			->import(self::OWNER, $vehicle->getUuid(), $request);
+
+		$this->assertNotSame($rolledBack['answer'], $done);
+		$this->assertCount(2, $this->timeline->page(self::OWNER, $vehicle->getUuid(), null, null)['rows']);
+	}
+
+	/**
+	 * A long import commits rows stamped when it began, which a sync that ran meanwhile has passed
+	 * by more than its settle window. Stamped again at the commit, they are newer than that sync.
+	 */
+	public function testAnImportsRowsAreStampedAtItsCommit(): void {
+		$vehicle = $this->vehicle(['energy_types' => ['diesel']]);
+		$file = $this->file(self::OWNER, 'lubelogger-fuel.csv');
+		$etag = $this->import->preview(self::OWNER, $vehicle->getUuid(), $this->request($file))['etag'];
+		$commit = time() + 300;
+
+		$this->importAt($commit)->import(self::OWNER, $vehicle->getUuid(), $this->request($file, answers: ['etag' => $etag]));
+
+		$this->assertSame([$commit, $commit], $this->stamps('fleet_energy', $vehicle));
+		$this->assertSame([$commit, $commit], $this->stamps('fleet_odo_readings', $vehicle));
+	}
+
+	public function testAnUndosRowsAreStampedAtItsCommit(): void {
+		$vehicle = $this->vehicle(['energy_types' => ['diesel']]);
+		$done = $this->imported($vehicle, 'lubelogger-fuel.csv');
+		$commit = time() + 300;
+
+		$this->importAt($commit)->undo(self::OWNER, $vehicle->getUuid(), ['created' => $done['created']]);
+
+		$this->assertSame([$commit, $commit], $this->stamps('fleet_energy', $vehicle));
+		$this->assertSame([$commit, $commit], $this->stamps('fleet_odo_readings', $vehicle));
+	}
+
+	/** The service on a clock that reads now when the vehicle is held, and `$commit` at the end. */
+	private function importAt(int $commit): ImportService {
+		$calls = 0;
+		$clock = $this->createMock(ITimeFactory::class);
+		$clock->method('getTime')->willReturnCallback(static function () use (&$calls, $commit): int {
+			return $calls++ === 0 ? time() : $commit;
+		});
+
+		return $this->built([ITimeFactory::class => $clock]);
+	}
+
+	/** The service, with `$held` run once as it takes the vehicle's hold. */
+	private function importHolding(\Closure $held): ImportService {
+		$vehicles = new class(\OCP\Server::get(IDBConnection::class), \OCP\Server::get(ITimeFactory::class), \OCP\Server::get(ISecureRandom::class), $held) extends VehicleMapper {
+			public function __construct(
+				IDBConnection $db,
+				ITimeFactory $time,
+				ISecureRandom $random,
+				private ?\Closure $held,
+			) {
+				parent::__construct($db, $time, $random);
+			}
+
+			public function hold(int $vehicleId): void {
+				parent::hold($vehicleId);
+				$held = $this->held;
+				$this->held = null;
+				$held !== null && $held();
+			}
+		};
+
+		return $this->built([VehicleMapper::class => $vehicles]);
+	}
+
+	/**
+	 * The service as the container builds it, but for some of what it is given.
+	 *
+	 * @param array<class-string, object> $instead by type
+	 */
+	private function built(array $instead): ImportService {
+		$args = [];
+		foreach ((new \ReflectionMethod(ImportService::class, '__construct'))->getParameters() as $parameter) {
+			$type = (string)$parameter->getType();
+			$args[] = $instead[$type] ?? \OCP\Server::get($type);
+		}
+
+		return (new \ReflectionClass(ImportService::class))->newInstanceArgs($args);
+	}
+
+	/** @return list<int> the `updated_at` of the vehicle's rows in one table */
+	private function stamps(string $table, Vehicle $vehicle): array {
+		$qb = \OCP\Server::get(IDBConnection::class)->getQueryBuilder();
+		$qb->select('updated_at')->from($table)->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicle->getId(), $qb::PARAM_INT)));
+		$result = $qb->executeQuery();
+		$stamps = array_map('intval', $result->fetchAll(\PDO::FETCH_COLUMN));
+		$result->closeCursor();
+
+		return $stamps;
 	}
 
 	/**

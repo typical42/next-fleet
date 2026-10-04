@@ -42,14 +42,18 @@ erDiagram
     VEHICLES ||--o{ ACCESS : "access through"
     VEHICLES ||--o{ BOOKINGS : "booked through"
     TRIPS ||--|| ODO_READINGS : writes
-    ENERGY ||--|| ODO_READINGS : writes
-    MAINTENANCE ||--|| ODO_READINGS : writes
+    ENERGY ||--o{ ODO_READINGS : "writes, one per counter"
+    MAINTENANCE ||--o{ ODO_READINGS : "writes, one per counter"
+    ENERGY |o--o{ DOCUMENTS : "papers"
+    MAINTENANCE |o--o{ DOCUMENTS : "papers"
+    EXPENSES |o--o{ DOCUMENTS : "papers"
+    BOOKINGS |o--o{ DOCUMENTS : "papers"
     MAINTENANCE }o--o| REMINDERS : "closes, then recurs"
     REMINDERS ||--o{ REMINDER_RECEIPTS : "one row per point, channel and recipient"
     VEHICLES ||--o{ REMINDER_RECIPIENTS : "reminders go to"
     BOOKINGS ||--o| TRIPS : becomes
     TRIPS ||--o{ AUDIT : "revisions, Logbook Mode only"
-    VEHICLES ||--o{ AUDIT : "every flip of the mode"
+    VEHICLES ||--o{ AUDIT : "mode flips, plate, country, currency, type"
 ```
 
 Tables (prefix `fleet_`; Nextcloud prepends `oc_`, so names stay under 27 characters):
@@ -66,18 +70,24 @@ Tables (prefix `fleet_`; Nextcloud prepends `oc_`, so names stay under 27 charac
 | `fleet_reminder_receipts` | `reminder_id`, `occurrence`, `point`, `channel` (app/mail), `user_id`, `sent_at` — unique per send |
 | `fleet_reminder_recipients` | `vehicle_id`, `user_id` — unique per vehicle; starts as the owner |
 | `fleet_documents` | `vehicle_id`, `file_id`, `kind` (registration/insurance/manual/receipt/photo), `linked_type`, `linked_id` |
-| `fleet_audit` | `entity`, `entity_id`, `diff_json` — only written under Logbook Mode |
+| `fleet_audit` | `entity`, `entity_id`, `diff_json` — written for a trip under Logbook Mode or set off inside a period it was on ([logbook mode](features.md#logbook-mode)), and for every mode flip and every change of a vehicle's `plate`, `jurisdiction`, `currency` or `vehicle_type`, mode or not |
 | `fleet_access` | `vehicle_id`, `grantee`, `grantee_type` (user/group), `role` (manager/driver/viewer) — one live row per grantee; a revoke soft-deletes it |
 | `fleet_bookings` | `vehicle_id`, `user_id` (the booker), `starts_at`, `starts_at_off`, `ends_at`, `ends_at_off`, `purpose`, `state` (booked/out/returned/cancelled), `out_at`, `out_at_off`, `out_odo`, `out_level`, `out_notes`, `in_at`, `in_at_off`, `in_odo`, `in_level`, `in_notes`, `trip_id` (the trip logged from it) |
 
 Money as integer cents, distances as integer km, volumes as integer millilitres, energy as integer
 watt-hours. No floats. A unit price is the one exception to cents: pumps price to a tenth of a cent,
 so `unit_price` counts tenths. Money also needs a `currency`, and business users need `vat_rate` — a report
-that mixes net and gross is useless for accounting.
+that mixes net and gross is useless for accounting. **The currency stays once an amount is recorded
+in it** — a priced fill-up, a costed record or an expense, voided ones included: a new code would
+relabel every amount without converting one. The edit is a 400 with `reason: currency_in_use` through
+either door, which the vehicle sheet words. Only a code is frozen: a vehicle with no currency, or a
+sign written before the sheet checked it, takes a code over its amounts, because naming one labels
+them, and it is what the import asks for.
 
-**`vat_rate` is nullable and null means "not stated".** Never zero. A receipt without a VAT line and
+**`vat_rate` is nullable and null means "not stated"**, never zero. A receipt without a VAT line and
 a genuinely zero-rated cost are different facts, and a report that conflates them is the mixed
-net/gross failure by another route.
+net/gross failure by another route. So 0 is a rate like any other, and an expense of a category the
+jurisdiction charges no VAT on (`IRateProvider::vatFreeCategories()`) is prefilled with it.
 
 **No column is named after a unit it might not hold.** The odometer columns are `odo`, not `km`,
 because a tractor counts hours; `fleet_energy.amount` means millilitres or watt-hours and says which
@@ -87,7 +97,9 @@ in `energy`, because a plug-in hybrid has both kinds of row. The table is `fleet
 **`engine` classifies, `energy_types` decides.** `engine` (petrol/diesel/lpg/cng/electric/hybrid) is
 for display, filtering and emission defaults. `energy_types` is the set the vehicle actually
 accepts, and it is authoritative: it decides which options the entry sheet offers and which
-consumption figures exist. A plug-in hybrid is `hybrid` / `[petrol, electric]`. A fill-up of an
+consumption figures exist. A plug-in hybrid is `hybrid` / `[petrol, electric]`. A create that sends
+no energies takes them from the engine (`VehicleService::ENGINE_ENERGIES`); an update derives
+nothing, so an owner can still empty the set. A fill-up of an
 energy outside the set is saved and flagged, as one without a total is flagged "no price"; both
 flags are computed on read (`EnergyService::flags()`), never stored.
 
@@ -117,9 +129,15 @@ the two happened last.
 **`diff_json` is `{"change": …, "fields": {…}}`**, each field a `[before, after]` pair. A creation's
 pairs all start at null; a field nobody stated is not in them, because a diff that lists what did not
 change buries what did. Anything the change itself carried — that an edit was late, that a trip was
-derived rather than observed — is a further key beside those two. The words so far: `created`,
-`edited`, `voided` and `restored` (each always with `late`, true or false) and `switched`. A Reconciliation
-Trip is `created` with `derived: true`. An edit that changed nothing writes no row.
+derived rather than observed — is a further key beside those two. The words so far: on a trip
+`created`, `edited`, `voided` and `restored` (the last three with `late`, true or false, as the rules
+of the day said; the export decides again and does not read it); on a vehicle `switched` for a save
+that flipped the mode and `edited` for one that changed a fact without a flip, and `transferred`
+with the owners' `user_id` pair, written by `occ:transfer` (below). A Reconciliation
+Trip is `created` with `derived: true`. A trip's row also carries `updated_at`, the token the change
+left the trip with: a second save in the same second moves the token past the row's `created_at`, and
+the export has to tell that from a change that left no row. An edit that changed nothing writes no
+row and no trip either, so it moves no token.
 
 There is deliberately **no `hu_due` column**. The next inspection is a reminder produced by an
 inspection scheme ([contributing](contributing.md)) — a German date in a core table would be a
@@ -137,35 +155,90 @@ are a table and not a column. It also carries a `<name>_off` for each of its use
 **Nothing purges yet.** Deleting a vehicle stamps its `deleted_at` and touches no other row: its
 readings, trips, fill-ups, maintenance records, expenses, reminders, receipts, recipients and
 access grants stay as they were, so an undo brings the vehicle back whole. No route, `occ` command
-or job removes a row. The one hard delete is taking a recipient off a list
-([Who is told](#reminder-engine)), which is not a vehicle delete. Opt-in retention will be the
-first purge, and must then take the vehicle's child rows with it.
+or job removes a row. Two hard deletes exist, and neither is a vehicle delete: taking a recipient
+off a list ([Who is told](#reminder-engine)), and a grant whose grantee was gone the moment it
+committed (below). Opt-in retention will be the first purge, and must then take the vehicle's child
+rows with it.
 
 **Deleting a Nextcloud account pseudonymises, it purges nothing**
 ([ADR 0008](adr/0008-erasing-a-driver-pseudonymises.md)). `UserDeletedListener` hands the uid to
-`ErasureService`, which replaces it with one random `erased-…` pseudonym on every table, in one
+`ErasureService`, which replaces it with one random `erased:…` pseudonym on every table, in one
 transaction: `created_by` everywhere, a vehicle's owner `user_id`, a receipt's and a booking's
 `user_id` and a user grant's `grantee`. Ownership and grants are renamed too because Nextcloud lets a deleted uid be
-taken again, and the new account must inherit nothing. The account's reminder-list entries are the
-rows that go: a deleted account receives nothing. A new table that names an account says so in its
-mapper's `accountColumns()` and joins `ErasureService`'s list.
+taken again, and the new account must inherit nothing. The `:` is outside the characters a uid may
+hold, so no account can take the pseudonym either. Erasures before 0.3.0 wrote `erased-…`; the
+repair step `ErasedPseudonyms` renames those on upgrade. One a live account carries stays, named in
+the upgrade's output, a `warning` in the log and a notification to every member of `admin`: it may
+be a real person, and deleting the account erases its rows. The notice goes once the account does.
+`VehicleAccess` answers nothing to a uid starting with `erased:`, owner or grantee: no session
+carries one, so a caller that hands one in took it off a row. The account's reminder-list entries
+are the rows that go: a deleted account receives nothing. A new table that names an account says so in its
+mapper's `accountColumns()` and joins `AccountTables`, which the erasure and the
+[personal data export](#personal-data-export) share. A transfer's audit row names both
+owners in `diff_json`, so `AuditMapper` renames the uid there too. Most accounts never used the
+app, so the erasure first asks each table for one row naming the uid (the large tables index
+`created_by`), and touches only the tables that answer. Renamed rows keep their `updated_at`, so every sync starts
+over (`SyncEpoch`) - but only when a row was renamed.
+
+**An erased owner's vehicles close** (decided 2026-10-03). Nobody is left who may decide over
+them, so in the same transaction each one, held, has every grant revoked with a revoke's rules and
+is soft-deleted; one already in the trash loses its grants too, as nobody can restore it. The rows
+stay for the retention [legal](legal.md) states. An admin who wants a pool to outlive its owner
+runs `occ nextfleet:transfer <vehicle-uuid> <new-owner-uid>` first (`TransferService`): the new
+owner must exist; every grant stands but the new owner's own, which owning makes spent; the former
+owner keeps a `viewer` grant if their account still exists; the new owner joins the recipients; a
+`transferred` audit row records it. It starts every sync over (`SyncEpoch`), because the new
+owner's client never read the grants of a vehicle it did not own.
 
 **Deleting a group revokes its grants**, for the same reason: a group made later under the same id
 must reach nothing. `GroupDeletedListener` hands the id to `GrantService::forgetGroup`, which
 revokes each of the group's grants with a revoke's rules — one transaction per vehicle under its
-hold, recipients who no longer reach `view` off the list, the grant's notification withdrawn. A
-vehicle in the trash is included, since an undo would bring its grants back.
+hold, recipients who no longer reach `view` off the list, the grant's notification withdrawn. Who
+was in the group is unreadable by then, so on `BeforeGroupDeletedEvent` the listener has
+`GrantService::noteGroup` record which recipients are members, and those count as having seen the
+car. A
+vehicle in the trash is included, since an undo would bring its grants back. A grantee deleted
+while being granted ran its listener before the grant row existed: `GrantService::grant` asks
+after the commit, under the vehicle's hold, whether the grantee still exists. If not, it removes the
+grant row, prunes recipients as a revoke does, and refuses the grant as it refuses an unknown
+grantee. Nobody was told of that grant or saw it, so no row keeps the name. It erases nothing: an external backend (LDAP) briefly out of reach answers "no
+such user" for a live account, and an erasure cannot be undone. Erasing stays
+`UserDeletedListener`'s alone.
+
+**Both finish, whatever fails.** Nothing asks for an account's erasure or a group's revokes again
+once the event has passed, so each is marked pending in app config before it starts
+(`Service\Pending`, `pending_erasure_…`/`pending_group_…`, the key a hash of the id) and unmarked
+once done. A run a crash or a database error cut short stays marked, and the hourly `PendingJob`
+runs it again. Rows already renamed or revoked match no more, so a second run changes only what
+the first left; a notification whose withdrawal was lost after the commit is dropped by
+`Notifier::prepare()` when read, as its vehicle or grant is gone. A pending erasure whose uid an
+account holds again is dropped with a `warning`: that account may be a real person, and an erasure
+cannot be undone. A pending group is revoked even if a group of that id exists again: a grant the
+owner can give again costs less than a new group inheriting the old one's cars. The mark keeps the
+time the first run began, and a grant made or changed after it stays: that is the owner's, for the
+new group. Without
+`BeforeGroupDeletedEvent` — a backend that never sent it, or the job's run — no members were
+noted, so every recipient of the vehicle who no longer reaches `view` comes off, a bookkeeper
+included.
+
+Adding a recipient and the job's round write rows naming an account, so each asks again under the
+vehicle's hold whether it exists. The erasure holds every vehicle whose list names the account
+before it deletes those entries, so one that asked before the account went commits first and its
+row is deleted or renamed with the rest. It takes those holds and its own vehicles' in one id
+order, so two erasures at once never hold crosswise.
 
 **A booking is a plan, not an Entry.** It writes no Reading and is on no timeline, logbook or
 report. Its span is half-open, `[starts_at, ends_at)`, so one ending at noon and the next starting
 at noon do not collide; only a `booked` or `out` one is live and holds the vehicle
-(`BookingMapper::findLiveOverlapping`). The handover is the booking's own two moments, so it is
+(`BookingMapper::findLiveOverlapping`). An `out` one holds `[min(starts_at, out_at), max(ends_at,
+now))`: the car is gone from the moment it was taken early until it is back, however overdue. The handover is the booking's own two moments, so it is
 columns, not a table: `out_*` at check-out, `in_*` at check-in, `level` a percentage of the main
 tank or battery. The handover writes no Reading either — the trip logged from it does, and
 `trip_id` points there.
 
 **`…/bookings`** lists a vehicle's bookings by start, every state, from a week ago unless `from`
-and `to` say otherwise; it books, changes the span or purpose (`PUT …/bookings/{booking}`, with
+and `to` say otherwise, plus every `out` one and every `returned` one without its trip whatever the
+window — the one still has to come back, the other to be logged; it books, changes the span or purpose (`PUT …/bookings/{booking}`, with
 the `updated_at` token) and cancels (`DELETE`, which keeps the row as `cancelled`). Only an
 `active` vehicle takes a booking or a change, its end must be still to come — a past booking is a
 trip — and only a `booked` one changes or is cancelled. Under the vehicle's hold a span another
@@ -178,13 +251,18 @@ refusal, not a flag.
 `active` vehicle, until its end, and is refused with 409 and that booking while another of the
 vehicle is `out` ("still with Anna"); the 409's booking carries its `state`, so the sheet tells
 "still with" from "booked by". Early is allowed but claims the hours before the start too,
-so another live booking in them refuses it the same way. Check-in needs an `out` one, on any vehicle —
+so another live booking in them refuses it the same way, and a booking into them afterwards is
+refused as one into an `out` booking's. Check-in needs an `out` one, on any vehicle —
 a car laid up while out still comes back — and answers the booking. Neither sends the `updated_at`
 token: what counts is the booking's state when the car changes hands, not what the screen showed.
 Each booking carries `flags`, worked out on read and never refusing: `odo_below` (the check-out
 counter below the vehicle's Reading at `out_at` — not its newest, which the trip logged afterwards
-moves past it — or the check-in counter below the check-out one) and `late` (checked in after
-`ends_at`).
+moves past it — or below the latest earlier check-in's whose trip is not logged yet, which no
+Reading holds; once logged, the trip is the record; or the check-in counter below the check-out one) and `late` (checked in after `ends_at`).
+Three queries read what `odo_below` measures against for a whole page
+(`BookingMapper::findCountersAtOut`), so the list and sync cost the same for one row as for many:
+the two instants per booking, each a `MAX` in the SELECT list, then the rows at them by key. A
+`MAX` in a join condition ran once per candidate row and grew with the square of the bookings.
 
 **A returned booking becomes a trip** only through the driver. While it has none it carries
 `trip_draft` — `started_*`/`ended_*` and `start_odo`/`end_odo` from the handover, the booking's
@@ -203,6 +281,8 @@ and display name, with that booking's `ends_at`/`_off` — and `my_next_booking`
 is none. The list fills them for every vehicle from one query (`BookingMapper::findPooled`), never
 one per vehicle; the single read, the update and the restore fill them too, because the screen
 replaces the vehicle it holds with their answer. Overdue is the client's to say, against the clock.
+`ever_granted` comes the same way, from one more query (`AccessMapper::everGrantedAmong`): whether anybody
+was ever given access, the rule *Entered by* follows and the screen shows Bookings by.
 
 **A boolean column is nullable and carries a default.** Nextcloud's schema check refuses a `NOT NULL`
 boolean outright — it is an integer of length 1 on the databases it supports — and NC 31 enforces
@@ -212,8 +292,14 @@ that where NC 34 no longer does. The default is what a flag nobody touched means
 database states the identity too; `(vehicle_id, <time column>)` on every child table, `(user_id)` on
 vehicles, `(vehicle_id, read_at)` on readings, `(vehicle_id, started_at)` on trips, `(vehicle_id,
 starts_at)` on bookings, `(grantee)` and `(vehicle_id)` on access, `(entity, entity_id)` on the
-audit trail, which hangs off a row rather than a vehicle.
-QBMapper hides the query, not the missing index.
+audit trail, which hangs off a row rather than a vehicle. Besides: `(vehicle_id, updated_at, id)`
+on every table sync pages through, in its order; `(created_by)` wherever an erasure or a personal
+export looks for an author; on readings `(vehicle_id, source_type, source_id)` for the Reading an
+entry wrote and `(vehicle_id, source_type, read_at)` for one source's Readings by time;
+`(vehicle_id, state)` on bookings, for who has the car. Index names stay within 27 characters and
+are unique across tables, as PostgreSQL and Oracle name them per schema.
+QBMapper hides the query, not the missing index. A list in a query goes through `Db\InList`, since
+Oracle refuses an `IN` of more than 1 000 items ([Oracle](development.md#oracle)).
 
 ### Time
 
@@ -254,11 +340,17 @@ restored a month later would never reach it. The delete's token is spent: an edi
 is a 412. A restore that matches nothing is a **412** like any other: either the row moved on, or it
 was never deleted, and both mean what you read is not what is there.
 
-**Recomputed columns stay out of it.** `fleet_vehicles.odo_value` and `fleet_odo_readings.flagged`
+**Recomputed columns check no token.** `fleet_vehicles.odo_value` and `fleet_odo_readings.flagged`
 are derived from the readings ([odometer rules](#odometer-rules)), so each is written by a statement
-of its own that moves neither `updated_at` nor the token. Otherwise an odometer entry would refuse
-the vehicle sheet that happened to be open, and two entries arriving together would tell the second
-one it lost a race it was never in.
+of its own that checks no token: two entries arriving together would otherwise tell the second one
+it lost a race it was never in. `odo_value` does not move the vehicle's token either, or an
+odometer entry would refuse the vehicle sheet that happened to be open.
+
+**A changed flag moves the Reading's token.** Until 0.3.1 it did not, and sync sent a vehicle's
+whole chain whenever one Reading changed, because it could not tell which flags had moved. Now
+settling moves `updated_at` on exactly the rows whose `flagged` changed, so sync sends those and no
+others. The price: a sheet open on a Reading while another entry changes its flag saves into a
+**412**. That is rare, and honest - the Reading is not what the sheet shows any more.
 
 On the wire the token is the vehicle's `updated_at`, and every write carries it back — a `PUT` in
 the body, a `DELETE` in the query string. A write that arrives without one is a **400**: there is
@@ -267,6 +359,13 @@ client tells the two apart by the body, not by the status: ours carries `"confli
 Nextcloud's never does. The client raises that as its own error type, so the sheet can stay open
 with the values intact ([ui](ui.md#the-entry-sheet-in-detail)) — a CSRF failure would only repeat
 itself on a retry.
+
+**A create may arrive twice** ([retried creates](api.md#retried-creates)). Under the client's
+`client_uuid`, `Once` looks the row up before the request is validated — the first create
+may have made it invalid, as a booking makes its own span taken — and again under the vehicle's
+hold, where a twin in flight has committed. A twin the hold does not order, such as two vehicle
+creates, is caught by the uuid's unique index: the insert fails, the transaction rolls back, and the
+row that won is answered.
 
 The client also learns the server's clock: every response carries the server time in a header, and
 the frontend keeps a running offset. That offset is a **diagnostic** — it lets the UI warn that a
@@ -287,9 +386,15 @@ This is where logbooks quietly break. Six rules, decided once:
    READ COMMITTED, reads its Reading.
 3. **A lower reading is a flag, not an error.** Cluster swaps, engine changes and imports really do
    reset the counter — and the app cannot tell one from a typo. So the row is saved as `reading`,
-   `flagged`, and the timeline offers the follow-up question: cluster swap, or a mistake? Until it
-   is answered the flag stands and the segment is broken, exactly like `missed_previous`. Only an
-   answered `reset` starts a new segment.
+   `flagged`, and the timeline offers the follow-up question on the Entry's row: *Counter
+   replaced* or *Typo*. Until it is answered the flag stands and the segment is broken, exactly
+   like `missed_previous`. *Typo* opens the Entry's sheet to fix the number. *Counter replaced*
+   is `POST …/readings/{reading}/reset` with the Reading's token, for any Entry's Reading, by
+   whoever may edit that Entry, and only for an Observed Reading in question: it writes `kind =
+   reset`, which is never flagged and starts a new segment. A distance sums its segments: what
+   the old counter ran up to the swap plus what the new one ran since. A consumption segment over
+   a swap yields no number, and a Gap is measured from the swap, never across it. An edit that
+   changes the number makes it a `reading` again, so the question is asked afresh.
 4. **`value` is km or engine hours**, per vehicle. Trailers count neither, tractors and generators
    count hours. A km vehicle — a truck, say — may also count engine hours: `second_unit = h`
    switches on a second chain of Readings (`counter = second`; null reads as `main`). Each chain is
@@ -356,7 +461,11 @@ Reading (CONTEXT.md). Listing the rest would show every trip twice. Voided rows 
 entirely; the Fahrtenbuch export asks its own question.
 
 A trip row also carries `missing`, the fields its ruleset requires and it leaves unstated
-([logbook mode](features.md#logbook-mode)).
+([logbook mode](features.md#logbook-mode)), and `flags`, computed on read. `overlap`: another live
+trip of the vehicle shares part of its span; ends that only touch do not. `overtaken`: a
+Reconciliation Trip overlapped by a trip entered after it, which now counts those kilometres twice.
+The row offers *Void trip* for it. One query per page finds the overlapping trips, those on other
+pages included.
 
 The kinds are `odometer`, `trip`, `energy`, `maintenance` and `expense`, ranked in that order. A
 fill-up or maintenance row carries `readings`, the Readings it wrote (none to two, one per
@@ -401,27 +510,41 @@ nothing else, so a renderer that broke its promise to load nothing still could n
 **The core decides what is in it, the country how it reads.** `LogbookExport` hands a
 `LogbookReport` to the jurisdiction's `IReportRenderer`: the trips that set off in the year by their
 local date ([time](#time)), voided ones included, each with what its ruleset finds missing and its
-late changes, the periods the mode was on, and the ruleset's source URL. The periods are read off
-the vehicle's flips ([logbook mode](features.md#logbook-mode)): the first flip's `before` says
-whether the vehicle was created under the mode, and with no flip the column says it. A jurisdiction
-with no renderer answers 404, not an empty page that would pass for a logbook.
+late changes, the periods the mode was on with the plates carried in each, and the ruleset's source
+URL. The periods are read off the vehicle's flips ([logbook mode](features.md#logbook-mode)): the
+first flip's `before` says whether the vehicle was created under the mode, and with no flip the
+column says it. The plates are read off the same trail: the header names today's, and each period
+names the one it was kept under and when a new one took over inside it, because the receipts carry
+the old. A jurisdiction with no renderer answers 404, not an empty page that would pass for a logbook.
 
 **A late change is on its trip's line.** The law accepts later changes that are documented, and one
-the auditor cannot see is not. So each line carries its trip's audit rows with `late: true`
-(edits, voids and restores), read for the whole year in one batched query. The page says when, what
+the auditor cannot see is not. So each line carries its trip's late audit rows (edits, voids and
+restores), read for the whole year in one batched query. **Late is decided at export**, against the
+export's own rules: a change is late when it came more than the lock delay after the earliest end
+the trail had stated by then, or after the trip was entered if that is earlier. The row's stored
+`late` answered the rules of its day and is not read, and an `ended_at` set far ahead no longer
+stops the clock. A later edit that moves the end back accuses itself, not the changes before it. The page says when, what
 each edited field said before, and for a restore since when the trip had been voided: a restore
 months later would otherwise erase the void without a trace. A late void is the line's own
-`Storniert` note, stated once. A change inside the lock delay is still the entry being made and is
+`Annulliert` note, stated once. A change inside the lock delay is still the entry being made and is
 not listed. Each change also carries the trip's offsets as they stood before it, walked back from the
 trip through every later row, so a time it replaced reads in the offset it was entered in.
+
+**A change that left no row is on its line too.** Every change to a trip set off inside a period
+writes a row, so a trip whose `updated_at` is newer than the token its newest row left it — with no
+row, than its own `created_at` — was changed around the app, by a statement run against the
+database. The Fahrtenbuch says *Geändert ohne Protokoll am* and when. Not marked: a change made
+before the trip's period began, when no logbook covered it yet, and a trip whose newest row is
+older than the token key, which cannot say. Defence in depth, not a rule anything relies on.
 
 **What the page says outside the mode.** Every trip in the year is listed, but only a trip that set
 off inside a period states what it lacks. That is the app's one rule
 ([logbook mode](features.md#logbook-mode)) asked of the mode as it stood when the trip set off, not
 as it stands now: the timeline answers for today, the export for a year, and an auditor must not
 read "incomplete" on months no logbook was kept for. A period runs from its flip on up to, not including, its flip off. The
-server's own instants — when a trip was entered, voided, when the mode flipped — carry no offset and
-are printed as UTC and labelled so. The trips are sorted into the year by their local date, so a
+server's own instants — when a trip was entered, voided, when the mode flipped — carry no offset, so
+they print in the reader's Nextcloud time zone (`IDateTimeZone`) with the offset of that day written
+beside them (`LogbookReport::$zone`): the trips next to them are in their own offsets. The trips are sorted into the year by their local date, so a
 period is stated when it overlaps the year widened by the furthest offsets, fourteen hours east and
 twelve west: exactly the instants some trip of the year could set off at.
 
@@ -443,9 +566,15 @@ where `mileage_claim` is set on the vehicle's jurisdiction and the vehicle count
 their local date, voided ones left out, and hands a `MileageClaim` to the jurisdiction's
 `IClaimRenderer`. Each line is the trip's kilometres (`Trip::kilometres()`, the figure the
 Fahrtenbuch prints) times `IRateProvider::mileageRateAt()` for the vehicle type on the trip's local
-day, in tenths of a cent, rounded half up to the cent. A trip with no rate for its day or no
-kilometres prints "not stated" and stays out of the total, which is null when no line has an
-amount. There is no claim (404) where the jurisdiction has no rates or no renderer, or the vehicle
+day, in tenths of a cent, rounded half up to the cent on the absolute value. A trip with no rate for
+its day or no kilometres prints "not stated" and stays out of the total. Counters the wrong way
+round state no kilometres: `TripService` refuses them now, and a row kept from before must not
+lower the sum. **What the tax office would not accept is listed and not summed**: a line whose trip
+leaves a field of the ruleset unstated (`Completeness::missing()`, whether or not the vehicle is
+under Logbook Mode) carries `missing`, and a Reconciliation Trip carries `reconciled`. Either keeps
+its amount out of the total, and the German page marks the line and says why. It also says the
+flat rate is only for vehicles outside the business assets. The total is null when no remaining
+line has an amount. There is no claim (404) where the jurisdiction has no rates or no renderer, or the vehicle
 counts hours. **Commutes are not on it**: they are a different deduction under different rules,
 and a sum mixing them would be wrong where nobody could see it. **A claim is the reader's**: it
 lists only the trips whose `created_by` is the reader, so on a granted car the owner's does not
@@ -468,12 +597,28 @@ deleted row of the other tables is not, since only a trip is voided rather than 
 (`amount` by `energy`), tenths of a cent for `unit_price`, basis points for `vat_rate`, the counter
 in `odo_unit`. A money column has `currency` beside it. An instant is its local wall clock
 (`started`, `YYYY-MM-DD HH:MM`) plus its offset in minutes (`started_offset_min`). Booleans are 1
-and 0, an unstated value an empty cell. So nothing depends on the reader's decimal separator.
+and 0, an unstated value an empty cell. So nothing depends on the reader's decimal separator. Every
+row ends in `entered_by`, the display name of its author by the timeline's rule (`EnteredBy`): empty
+on a vehicle nobody else was ever given access to. A trip also carries `created_at`, the server's
+clock in UTC (`YYYY-MM-DD HH:MM:SS`).
 
 **The file is for a spreadsheet** (`Csv`): UTF-8 with a BOM, `,`, CRLF, a cell quoted when it holds a
 separator, quote or line break. A string starting with `=`, `+`, `-`, `@`, tab or CR gets a leading
 `'` ([security](security.md)). Only strings are defused: a number is ours, and a negative amount
 stays a number.
+
+### Personal data export
+
+One person's data, as Nextcloud's *user_migration* app exports an account (`FleetMigrator`, an
+`IMigrator`). It writes `nextfleet/<table>.json` for every table that names an account
+(`AccountTables`, the list the erasure rewrites): each row whose account column holds the uid,
+deleted rows included, with every column as stored. A grant counts when it names the account as
+grantee, a transfer's audit row when its diff names it as an owner. A grant to a group the account
+is in does not name it and is not exported.
+
+**Export only.** An import writes a line saying NextFleet does not restore, and reads nothing:
+whose vehicle a row belongs to cannot be decided on a server with other people and vehicles. A throw
+would fail every other app's import with it.
 
 ### Documents
 
@@ -504,14 +649,24 @@ since does not come back: like attaching, restoring takes a live row only.
 
 **A listed document carries** `uuid`, `kind`, `file_id`, `name`, `mime`, `linked_type`,
 `linked_uuid`, and `may`: `detach` where the caller may take it off. The name is looked up by id
-wherever the file lives now, in whoever's Files hold it, so a move is followed. A deleted file, trash bin included, lists with `name` and `mime` null: the
-row stays, and the screen says the file is gone.
+in the attacher's own Files, so a move within them is followed; each file once per list or sync
+page, however many rows it is on. A file that is no longer there lists with `name` and `mime`
+null: deleted (trash bin included), moved into a share, a group folder or an external storage, or
+its attacher erased. A paper is the attacher's word for their own file, so a file that left them
+is not served from wherever it went, even onto another account's home storage, as a received share
+or `occ files:transfer-ownership` puts it: that account never attached it. The row stays, and the
+screen says the file is no longer in the attacher's Files.
 
 **The download** is `GET /vehicles/{uuid}/documents/{document}`, outside `/api` beside the CSV
-because it is a link. It takes VIEW, so a driver gets the owner's file without a share. A deleted
-file is a 404. The file always goes out as an attachment, with `nosniff` and a CSP that runs
-nothing ([security](security.md#hostile-content)). The file is found through the accounts the
-mount cache says hold it, not `IRootFolder::getById`: in a web request that searches only the
+because it is a link. It takes VIEW, so a driver gets the owner's file without a share. It serves
+the file only while it is still the attacher's own, as attaching would take it, asked live:
+anything else is a 404. The list asks less often: a file's name and type, or that it is no longer
+the attacher's, are kept five minutes in the distributed cache (`OwnFiles::shown()`), since
+mounting the attacher's Files per paper made long lists slow. So a list may name a file for five
+minutes after it was renamed, moved away or deleted; its download is refused at once.
+The file always goes out as an attachment, with `nosniff` and a CSP that runs nothing
+([security](security.md#hostile-content)). The file is found through `getUserFolder` of the
+paper's `created_by`, not `IRootFolder::getById`: in a web request that searches only the
 signed-in account's mounts, and a driver's include none of the owner's. The screen fetches the file
 rather than following the link, so a refusal is said in place (`src/utils/papers.js`): a link
 followed into a 404 replaces the app with the refusal's JSON.
@@ -590,15 +745,18 @@ answers), the unreadable rows' `reasons`, the first 50 proposals, and the file's
   file is read again.
 - **What the vehicle says is not asked.** Money is in the vehicle's currency; a row in another is
   unreadable. A sign stands for every currency written with it, so `$` is never the euro
-  (`Values::mayName`). The energy is asked only for rows that name none, which is every LubeLogger row and
+  (`Values::mayName`). A vehicle currency that is no code, written before the vehicle sheet
+  checked it, leaves out each row with money (`currency`, no column) and nothing else. The energy is asked only for rows that name none, which is every LubeLogger row and
   a Spritmonitor row whose `Kraftstoff` code or word decides nothing, and only of a vehicle that
   takes several. Meanwhile the rows are read with the first, as an open date order is read day
   first (`Answers::energy`). A vehicle with no energy type yet takes no fuel import.
 - **A Spritmonitor cost type is a code** with a default meaning (`SpritmonitorImporter`), which
   the user may change; a text without one is asked. A purchase price and a refund are no running
   cost and are never imported.
-- **A fill-up of an energy the vehicle does not take is unreadable** (`energy`), because the
-  fill-up's own rule would refuse it.
+- **A fill-up of an energy the vehicle does not take is imported**, flagged `foreign_energy` as the
+  entry sheet's is.
+- **A date before 1970 is unreadable** (`date`): no entry route takes one, so the preview leaves
+  it out rather than the import failing on it.
 - **A duplicate** is a live entry of the same kind on the same local day with the same counter or,
   where either has none, the same amount (`Duplicates`); a fill-up also of the same energy, an
   odometer entry on the same counter chain. Of each kind, only the entries from two days before
@@ -609,9 +767,10 @@ answers), the unreadable rows' `reasons`, the first 50 proposals, and the file's
 **The import**, `POST /api/vehicles/{uuid}/import`, takes the preview's body plus the `etag` it
 answered. It reads the file again and writes what the preview counted as `creates`.
 
-- **409 when the etag moved**: the user agreed to counts that no longer describe the file, so the
-  screen previews again. **400 while a question is open**: the rows were read with a provisional
-  answer.
+- **409 when the etag moved**, before the read or during it: the user agreed to counts that no
+  longer describe the file, so the screen previews again. The preview answers the etag it found
+  before reading, and the import looks the file up again once it has read it. **400 while a
+  question is open**: the rows were read with a provisional answer.
 - **One transaction under the hold.** Duplicates are marked again inside it, so an entry somebody
   logged since the preview is a duplicate now. Each row goes through its entry service's `add()`,
   the same write `record()` makes, entered by the caller. A row the service refuses stops the whole
@@ -623,6 +782,13 @@ answered. It reads the file again and writes what the preview counted as `create
 - **The answer is the import's identity**: the counts, and every created entry as `{type, uuid}`
   in file order, `type` being the timeline's. Undoing an import names that list; nothing else
   records it.
+- **Sent again, it is answered, not imported** ([retried creates](api.md#retried-creates)). The
+  last import's answer is kept per vehicle in the distributed cache, under a hash of the caller and
+  the request, the `etag` in it. It is written under the hold before the commit and looked for again
+  under the hold, so a twin that waited there finds it; a rollback removes it.
+- **Stamped at the commit.** Every row the import wrote gets `updated_at` again just before the
+  commit (`BaseMapper::restamp()`). An import longer than sync's two-minute settle window would
+  otherwise commit rows older than a sync that ran meanwhile and passed them.
 
 **The undo**, `POST /api/vehicles/{uuid}/import/undo`, takes that list as `created` and
 soft-deletes every entry on it, all or nothing, under the hold. It takes `edit`, as the import did.
@@ -634,31 +800,33 @@ soft-deletes every entry on it, all or nothing, under the hold. It takes `edit`,
   is gone, the rest are deleted one by one.
 - **Through the services' own deletes.** Each entry goes through its service's `remove()`, the
   write `delete()` makes, so a fill-up's or a record's Readings go with it. Inside
-  `OdometerService::batch()`, the chains settle once, after the last.
+  `OdometerService::batch()`, the chains settle once, after the last. Its rows are stamped at the
+  commit, as the import's are.
 
 **From a script**, `occ nextfleet:import <uid> <vehicle-uuid> <path> --importer= --record-type=
 --units=km,l [--date-order=] [--energy=] [--map=text:choice …] [--include-duplicates] [--dry-run]`
 builds the screen's request and runs it as that user, through the same `ImportService`: a preview,
 printed, then the import with its etag unless `--dry-run`. The path is resolved in the user's Files
 and the file then checked as a picked one, so a share is refused here too. `tz` is the user's zone,
-else the server's (`UserZone`). A refusal exits 1 with its reason. There is no undo command; `-v`
+else the server's (`UserZone`). A refusal exits 1 with its reason, and so does a `--map` text the
+file does not hold, which can only be a typo. There is no undo command; `-v`
 prints the created list the undo route takes.
 
 ## Nextcloud integration
 
 | Concern | Mechanism |
 |---|---|
-| Identity, ACL | `OCP\IUserSession`, `IGroupManager`. Every query runs through `VehicleAccess::may` from M1 on: owner, or a row in `fleet_access` with a sufficient role ([ADR 0001](adr/0001-own-access-table.md)); the strongest row wins and none narrows another. Five operations: `view` (viewer, driver, manager), `log` (driver, manager: add an entry, change one you entered), `edit` (manager: vehicle settings, reminders, recipients, the vehicle's own documents, any entry), `delete` (manager: delete any entry) and `own` (the owner alone: access, deleting and restoring the vehicle). A route that names one vehicle asks `may`; a route that lists them asks `reachable` instead, so the widening is one query and not one per row. An Entry route asks for `log`, then `VehicleService::change` for the Entry it found: `edit` or `delete`, or `log` alone when its `created_by` is the caller. The vehicle JSON carries `may`, the caller's operations, from the same rows, plus `book` where they hold `log` on an `active` vehicle — the booking rule as a word to hide by, not a sixth operation — and each timeline row carries `may` too — `edit` and `delete`, or neither, as `VehicleService::changes` reads them off the vehicle with no further query; the UI hides by these ([screens follow the role](ui.md#screens-follow-the-role)). On a vehicle with any `fleet_access` row, revoked ones included, timeline rows and the logbook name who entered each Entry from its `created_by` (`EnteredBy`, [who entered it](ui.md#who-entered-it)). `…/grants` lists, grants, re-roles (`PUT …/grants/{grant}`) and revokes, all `own`, each answering with the list and each grantee's display name. A grantee is a user or a group the instance has, never the owner, and one the admin's sharing settings let the owner share with — none while the Share API is off or the owner is excluded from sharing; under "members only" a user sharing a group with the owner, minus the exempt groups, or a group the owner is in, and no group at all where group sharing is off — read as core's own share checks read them; any other is the same 400 as nobody. Granting one again changes the role. A revoke takes off the reminder recipients who no longer reach `view`; a grant adds none. A new grant notifies the user, or each member the group has then, never the owner; the notification's object is the grant, so a revoke withdraws it, and `Notifier::prepare()` names owner, vehicle and role as they stand when it is read. A role change sends nothing. `…/access` is the caller's own, at `view`: `GET` answers their own grant's role and each group that reaches the vehicle; `DELETE` leaves, giving back only the grant in their own name, with a revoke's rules (recipients, notification). Through a group there is nothing to leave — a personal opt-out would be a weaker row beating a stronger one — and the owner holds no grant, so both 404. A deleted group's grants are revoked ([data model](#data-model)). A booking route asks for `view` to list and `log` for the rest, then `VehicleAccess::mayBooking` for the booking it found: `edit`, or `log` alone when the caller is the booker — the Entry rule with the booker in the author's place, not a sixth operation. Each listed booking carries `may`: `edit`, `cancel`, `check_out`, `check_in`, `log_trip` and `attach` as its state and that rule allow; a trip logged from a booking takes the same rule. A document route asks for `log`, then the rule of the Entry or booking the paper hangs on, or `edit` for the vehicle's own ([documents](#documents)). A cancel by anyone but the booker notifies the booker; the notification's object is the booking, `Notifier::prepare()` drops it once the booking is no longer cancelled, and deleting the vehicle withdraws it (`BookingNotices`). |
+| Identity, ACL | `OCP\IUserSession`, `IGroupManager`. Every query runs through `VehicleAccess::may` from M1 on: owner, or a row in `fleet_access` with a sufficient role ([ADR 0001](adr/0001-own-access-table.md)); the strongest row wins and none narrows another. Five operations: `view` (viewer, driver, manager), `log` (driver, manager: add an entry, change one you entered), `edit` (manager: vehicle settings, reminders, recipients, the vehicle's own documents, any entry), `delete` (manager: delete any entry) and `own` (the owner alone: access, deleting and restoring the vehicle). A route that names one vehicle asks `may`; a route that lists them asks `reachable` instead, so the widening is one query and not one per row. An Entry route asks for `log`, then `VehicleService::change` for the Entry it found: `edit` or `delete`, or `log` alone when its `created_by` is the caller. The vehicle JSON carries `may`, the caller's operations, from the same rows, plus `book` where they hold `log` on an `active` vehicle — the booking rule as a word to hide by, not a sixth operation — and each timeline row carries `may` too — `edit` and `delete`, or neither, as `VehicleService::changes` reads them off the vehicle with no further query; the UI hides by these ([screens follow the role](ui.md#screens-follow-the-role)). On a vehicle with any `fleet_access` row, revoked ones included, timeline rows and the logbook name who entered each Entry from its `created_by` (`EnteredBy`, [who entered it](ui.md#who-entered-it)). `…/grants` lists, grants, re-roles (`PUT …/grants/{grant}`) and revokes, all `own`, each answering with the list and each grantee's display name. A grantee is a user or a group the instance has, never the owner, and one the admin's sharing settings let the owner reach — none while the Share API is off or the owner is excluded from sharing; under "members only" a user sharing a group with the owner, minus the exempt groups, or a group the owner is in, and no group at all where group sharing is off — read as core's own share checks read them; any other is the same 400 as nobody. Granting one again changes the role. A revoke takes off the reminder recipients who reached `view` before it and do not after; one who never did, such as a bookkeeper on the owner's list, stays. Taking a member out of a group does the same for each car the group reached when they left, since no revoke runs; a queued job does it (`GroupMemberRemovedListener`, `ForgetMemberJob`, `GrantService::forgetMember`), so a group admin's click waits on no vehicle, and it counts grants revoked since, as deleting the group before cron came round revokes them. A grant adds none. A new grant notifies the user at once, or each member the group has when a queued job runs (`GrantNoticeJob`; a grant revoked by then tells nobody), never the owner; the notification's object is the grant, so a revoke withdraws it, and `Notifier::prepare()` names owner, vehicle and role as they stand when it is read, or drops it once the reader no longer reaches `view`, as a former group member does. A role change sends nothing. `…/access` is the caller's own, at `view`: `GET` answers their own grant's role, each group that reaches the vehicle, and `holders`, who reads the vehicle — the owner (role `owner`), then each grant — by display name and role, without uids, leaving out a grantee the instance no longer has; empty for the owner and for a caller who holds nothing; `DELETE` leaves, giving back only the grant in their own name, with a revoke's rules (recipients, notification). Through a group there is nothing to leave — a personal opt-out would be a weaker row beating a stronger one — and the owner holds no grant, so both 404. A deleted group's grants are revoked ([data model](#data-model)). A booking route asks for `view` to list and `log` for the rest, then `VehicleAccess::mayBooking` for the booking it found: `edit`, or `log` alone when the caller is the booker — the Entry rule with the booker in the author's place, not a sixth operation. Each listed booking carries `may`: `edit`, `cancel`, `check_out`, `check_in`, `log_trip` and `attach` as its state and that rule allow; a trip logged from a booking takes the same rule. A document route asks for `log`, then the rule of the Entry or booking the paper hangs on, or `edit` for the vehicle's own ([documents](#documents)). A cancel by anyone but the booker notifies the booker, without naming who cancelled ([legal](legal.md)); the notification's object is the booking, `Notifier::prepare()` drops it once the booking is no longer cancelled, and deleting the vehicle withdraws it (`BookingNotices`). |
 | Reminders → push | Own `TimedJob` (hourly) evaluates due reminders, then `OCP\Notification\IManager` + an `INotifier`. It reaches the phone through the Nextcloud app. |
 | Reminders → mail | `OCP\Mail\IMailer` + `IEMailTemplate`, using the server's configured SMTP. Digest, not one mail per item. |
 | Files, receipts | `OCP\Files\IRootFolder`. A vehicle's folder is created as `/Fleet/<plate> — <make model>/` for humans who browse Files, and then **referenced only by `folder_file_id`**. A plate change renames it best-effort; a failed rename, or a user who moved the folder themselves, breaks nothing. Documents are `file_id` too. |
-| …but served by us | Downloads go **through our controller**, so access follows the vehicle's access grant, not the file's. Otherwise a receipt on a shared car is invisible to the other driver unless the owner shares their folder. A `file_id` survives a move but not a delete — handle the missing node instead of 500ing. |
+| …but served by us | Downloads go **through our controller**, so access follows the vehicle's access grant, not the file's. Otherwise a receipt on a car others have access to is invisible to the other driver unless the owner shares their folder. A `file_id` survives a move but not a delete — handle the missing node instead of 500ing. |
 | Talk (optional) | Post due items into a fleet room, only when the Talk app is present. In the backlog, cheap, and very much the reason someone runs Nextcloud. |
 | Activity stream | `OCA\Activity` provider — optional, after v1. |
 | Dashboard | `OCP\Dashboard\IAPIWidgetV2` over `ReminderService::due()`: the overview's reminder read (`fleet()`), open ones only, in the overview's urgency order, sorted in PHP because the widget has no browser code. It runs no query of its own. It lists red and amber only: the dashboard is what needs you now. |
 | Unified search | `OCP\Search\IProvider`: find a vehicle by plate (separators ignored), manufacturer or model, among the ones `VehicleService::list` gives the searcher, disposed ones left out. Vehicles only: searching trip purposes or notes would take the access check somewhere nobody tests it. |
-| Settings | Personal settings (default jurisdiction, "I reclaim VAT", grid factor). The mail cadence is per vehicle. |
-| CLI | `occ nextfleet:import` imports a CSV export as the user it names ([import](#import)); `occ nextfleet:seed` writes a demo fleet ([development](development.md)). |
+| Settings | Personal settings (default jurisdiction, "I reclaim VAT", grid factor, the [inbox](#the-inbox) folder). The mail cadence is per vehicle. |
+| CLI | `occ nextfleet:import` imports a CSV export as the user it names ([import](#import)); `occ nextfleet:transfer` hands a vehicle to another account ([data model](#data-model)); `occ nextfleet:seed` writes a demo fleet ([development](development.md)). |
 
 **No calendar.** Public `OCP` on NC 31–34 can create a calendar event but cannot update or delete
 one. A reminder that is changed, snoozed or completed would leave an event that still rings, so
@@ -720,7 +888,8 @@ last 90 days: flagged Readings do not count, and a lower unflagged value is an a
 the pace starts again there. It needs two Readings 30 days apart and a rising counter; the day is
 where it reaches the due km, and never earlier than today. A due km already reached has no
 estimate; the state says it is due. Without a pace the screen says "not enough data yet". The state
-never reads it.
+never reads it. Only the window is read, for every listed vehicle in one query; the state reads the
+newest value off the vehicle's `odo_value`.
 
 **What the sheet writes.** `…/reminders` takes the mode, the due date or km, the lead, the warning
 points and the recurrence; the state and the occurrence are the engine's. A template fills what the
@@ -756,21 +925,35 @@ Withdrawing the work takes the occurrence back, in the same transaction:
 `…/recipients` lists it, `POST` adds an account (`user_id`), `DELETE …/recipients/{recipient}`
 takes one off, the owner included, and each answers with the list as it now stands. Reading the list
 takes `EDIT` as writing it does: who gets told is the managers' business, and the sheet shows the
-list only to whoever may change it. An added account must exist; being on the list grants nothing,
-since Vehicle Access decides what the notification's link opens. A removal is a hard delete, so the
-same account can be added again under the unique index. The mail cadence is the vehicle's
+list only to whoever may change it. An added account must exist and, since a reminder names the
+plate, be one the sharing settings let the caller reach — the grantee rule (`Sharable`), the same 400 as a missing
+account. Whoever already reaches `view`, the caller included, knows the plate and is always
+accepted. Before 0.3.1 neither was asked, so the upgrade from there takes off every recipient the
+owner may not share with who does not see the vehicle (repair step `StrangerRecipients`). It runs
+only while the installed version is below 0.3.1: a later `occ maintenance:repair` must not drop
+people because an admin tightened sharing. Being on the list grants nothing, since Vehicle Access
+decides what the notification's link opens. A removal is a hard delete, so the
+same account can be added again under the unique index. A removal, and a prune by a revoke, a
+leave or a member leaving a group, withdraws the reminder notifications that account was sent for
+the vehicle, after the commit (`NotificationService::withdrawFrom`). Their receipts stay, so being
+added again tells them the next point, not one already told. `Notifier::prepare()` also drops a
+reminder notice whose reader is no longer on the list. The mail cadence is the vehicle's
 `reminder_mail`, written with the vehicle like any other column.
 
 **The job.** `ReminderJob` runs hourly (`info.xml`) and hands the round to `NotificationService`.
-Each vehicle not disposed of is held, one transaction each; every live reminder is evaluated at
+One query finds each vehicle not disposed of that has a reminder neither done nor dismissed, with
+its recipients (`VehicleMapper::findReminded()`); a fleet's other vehicles cost the job nothing.
+Each is held, one transaction each, and read again under the hold; every live reminder is evaluated at
 `ITimeFactory`'s now against the newest main-chain value, and a state that changed is persisted.
 The newest point reached goes to each recipient once: the `app` receipt is claimed first, and only
 a new receipt sends. So a run missed for a day skips the points in between, and a second run
 sends nothing. Sending waits for the commit, so a rollback cannot leave a notification without its
-receipt. A vehicle that fails is logged and the round goes on.
+receipt. A vehicle that fails is logged and the round goes on; so does a send that fails, whose
+receipt is then deleted so the next run tries it again. Both catch errors as well as exceptions,
+so the digest always runs.
 
-- The notification stores parameters — vehicle, plate, template key or title, due date and km —
-  and `Notifier::prepare()` translates them in the reader's language and locale. It links to
+- The notification stores parameters — vehicle, plate, template key or title, due date and km,
+  occurrence — and `Notifier::prepare()` translates them in the reader's language and locale. It links to
   `…/apps/nextfleet/?vehicle=<uuid>` only for someone with `VIEW`; everyone else on the list gets
   the plate and title. It has no actions.
 - Its object is the reminder. A new point replaces the recipient's old one. A point already sent
@@ -779,12 +962,25 @@ receipt. A vehicle that fails is logged and the round goes on.
   deleting, and a maintenance record closing the reminder or being withdrawn. Deleting the vehicle
   takes back every one of its reminders' notifications, since the job no longer reads it, and
   its grants' too (`GrantNotices`); an undo sends nothing, and the next round tells what is still
-  due.
+  due. Each of these withdraws after its commit — a maintenance record's write through
+  `AfterCommit`, so a refused one takes nothing back — and the job sends after its own, so a
+  notice can go out after the change that ended it. `Notifier::prepare()` therefore drops a
+  reminder notice whose reminder is deleted, done, dismissed or snoozed, or no longer has the
+  occurrence, due date or due km the notice names. A notice from before 0.3.1 names no
+  occurrence; the rest decides.
 - `laid_up` evaluates and persists but sends nothing. Back to `active`, the point it stands at has
   no receipt yet, so it sends once. `disposed` is not evaluated at all.
 - A receipt is per point and occurrence, and the schema has no more. A snooze that ends on a point
-  already sent therefore sends nothing until the next point. An edit that moves the due date
-  without changing the point leaves the sent text with the old date.
+  already sent therefore sends nothing until the next point.
+- An edit that moves a point — a new due date moves every date point, a new due km both km points,
+  a new `lead_odo` the km warning, a warning ticked on or off its own point
+  (`ReminderEngine::moved()`) — lets those points ring again where they now fall
+  (`NotificationService::rearm()`). Their `app` receipts go. A recipient whose standing notice is
+  for a moved point has it withdrawn after the commit and loses every `app` receipt of the
+  occurrence, so the next round tells them where the reminder now stands; unticking the day that
+  rang leaves "due on" standing, as above. A notice for a point the edit left alone stays. A
+  `mail` receipt of a moved point is kept under `~<point>`: the point is news again, and the mail
+  still counts for the day.
 
 **The digest.** After the notifications, the job hands the round to `MailService`. Each enabled
 recipient with an address gets at most one mail a day, from 07:00 in their time zone (`core`
@@ -793,9 +989,16 @@ whose `reminder_mail` falls that day — daily, weekly on Monday, monthly on the
 recipient's day — and has news: a point this user has no `mail` receipt for. No news, no mail. The
 points are the ones the notification tells, and the lines say what it says, without the plate
 (`ReminderWords`), grouped under each vehicle's plate; the plate links only for someone with
-`VIEW`. The receipts are claimed under each vehicle's hold and the mail is sent in the same
-transaction, so a refused mail rolls them back: the notification has its own receipt and stays,
-and the next run tries again. A day counts as mailed by its newest `mail` receipt up to now.
+`VIEW`. The receipts are claimed under each vehicle's hold, one vehicle at a time, and the mail is
+sent after those commits, so no vehicle waits on the mail server. A refused or failed mail deletes
+the receipts it claimed: the notification has its own receipt and stays, and the next run tries
+again. One recipient's failure leaves the others' mail. A day counts as mailed by its newest `mail`
+receipt up to now. A day is checked once: the user value `nextfleet` `digest_checked` names the
+recipient's local day whose check went through, mail or none, and a hash of the vehicles on their
+list then; later runs that day skip them while the list is the same. News found after it on those
+vehicles goes with the next mail; a vehicle that joins the list, added or given its first live
+reminder, is checked that day. Before, every hour re-evaluated every vehicle of every recipient
+with nothing new.
 
 The same prediction could warn on a leasing mileage overrun. That is in the
 [backlog](features.md#feature-backlog) rather than a planned milestone: it needs the contract's end
@@ -811,7 +1014,8 @@ fill-up B: sum the amounts of every fill-up *after* A up to and including B, div
 their own, and a vehicle's first fill-up yields no consumption at all.
 
 - A `missed_previous` flag (paid cash, forgot the receipt) **skips** the segment. So does a flagged
-  or derived reading at either end, or an end without a counter ([odometer rules](#odometer-rules)).
+  or derived reading at either end, an end without a counter, or a counter replaced in between
+  ([odometer rules](#odometer-rules)).
   A gap must produce no number rather than a wrong one.
 - Each energy is a chain of its own, and the distance is always the main counter's: per 100 km, or
   per hour on a vehicle counted in hours. A truck that also counts engine hours is measured against
@@ -822,13 +1026,23 @@ their own, and a vehicle's first fill-up yields no consumption at all.
   rule stays as it is and simply rarely fires for electricity. Alongside it, show a **rolling
   wall-side kWh/100 km** over all charges in the period, labelled approximate and noted as
   including charging losses. Two honestly-labelled numbers beat one that is silently wrong on most
-  rows. It is every live charge with its time in the period, over the main counter's newest
-  unflagged Reading in the period minus its oldest; no charge or no such distance, no figure. On a
-  hybrid that distance includes the kilometres driven on fuel, one more reason it is approximate.
+  rows. It is every live charge with its time in the period, over the period's distance (below);
+  no charge or no such distance, no figure. On a hybrid that distance includes the kilometres
+  driven on fuel, one more reason it is approximate.
 - **EVs count from the wall.** kWh drawn ≠ kWh stored — AC charging loses 10–20 %. Home vs. public
   is a separate dimension, not a correction factor.
 - **Hybrids show both figures side by side**, driven by `energy_types`. A blended number means
   nothing to anybody.
+
+**A period's distance** runs from where the counter stood at its start — the newest unflagged
+Reading at or before it, or the first one after when there is none — to the newest unflagged
+Reading at or before its end. So consecutive months add up to the year, and a month with one
+Reading in it still moved. An answered reset in between ends one segment and starts the next, and
+the segments add up ([rule 3](#odometer-rules)). A segment that ran backwards hides a question
+nobody answered, so the period has no distance. `ConsumptionService::distance()` reads the two
+ends, the resets between them and the end of each segment a reset closes, one indexed lookup
+each — never the whole chain. The resets are filtered by `kind`, which no index names: the
+database scans the period's index range and hands back only those few rows.
 
 **Cost per 100 km** = energy + maintenance + expenses in the period ÷ km driven in the period, × 100.
 Show it next to energy-only cost per 100 km; the distance between the two is the actual story of the vehicle.
@@ -847,11 +1061,14 @@ them (`Asia/Calcutta`). Each cost also states its maintenance total and its expe
 category, in the sheet's order, then any word the sheet does not offer, then the uncategorised:
 they are unstated, not "other". The
 three bands are energy, maintenance and the expenses' sum. An empty month has no cost, like any
-empty period.
+empty period. The thirteen costs come from one read of each table over the year and one
+`ConsumptionService::distances()` call, which looks each month edge up once; the holding's distance
+is read once for all of them. The year costs the same number of queries however long the
+vehicle's history is (`KpiTest`).
 
 **TCO** adds depreciation: (purchase − estimated residual) ÷ km over the holding period. Both fields
 are optional, and an empty field hides the KPI rather than inventing it. The holding period's
-distance is the main counter's newest unflagged Reading minus its oldest, ever — not the period's.
+distance is the main counter's distance over its whole life, segments summed — not the period's.
 Neither price carries a VAT rate, so both count as entered, net preference or not. This is the
 number that decides buy vs. lease, and none of the tools in
 [the prior art](features.md#what-existing-tools-teach-us) shows it.

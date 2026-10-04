@@ -6,6 +6,8 @@
 import { getRequestToken } from '@nextcloud/auth'
 import { generateOcsUrl, generateUrl, imagePath } from '@nextcloud/router'
 
+import { t } from '../utils/l10n.js'
+
 /**
  * A vehicle as it travels: the JSON keys are the column names, so what a client reads is what it
  * may send back (docs/architecture.md#data-model).
@@ -41,6 +43,8 @@ import { generateOcsUrl, generateUrl, imagePath } from '@nextcloud/router'
  *   - who has the car checked out, and the end of their booking; null while it is not out
  * @property {{uuid: string, starts_at: number, starts_at_off: number, ends_at: number, ends_at_off: number}|null} [my_next_booking]
  *   - the session's own next booking of it within seven days, not yet taken; null when none
+ * @property {boolean} [ever_granted] - whether anybody but the owner has or had access: the rule
+ *   "Entered by" follows, and the screen shows Bookings by it
  */
 
 /**
@@ -54,7 +58,9 @@ import { generateOcsUrl, generateUrl, imagePath } from '@nextcloud/router'
  * @property {number} value - in the unit of its counter: `odo_unit` on `main`, `second_unit` on `second`
  * @property {string} origin - `observed` when somebody read it, `derived` when it was computed
  * @property {boolean} flagged - it contradicts the reading before it on the same counter
+ * @property {'reading'|'reset'} kind - `reset` once somebody answered that the counter was replaced
  * @property {'main'|'second'} counter - which of the vehicle's chains it is on
+ * @property {number} updated_at - the token a write to it is checked against
  */
 
 /**
@@ -132,7 +138,7 @@ import { generateOcsUrl, generateUrl, imagePath } from '@nextcloud/router'
  * @property {Reading[]} [readings] - the Readings a fill-up or maintenance record left, one per
  *   counter it was given
  * @property {string[]} [flags] - what a fill-up is flagged for: `foreign_energy`, `no_price`,
- *   `overfilled`
+ *   `overfilled`; what a trip is: `overlap`, `overtaken`
  * @property {string[]} [missing] - what a trip's jurisdiction requires and it leaves unstated,
  *   measured on every vehicle
  * @property {Consumption|null} [consumption] - the segment a fill-up closes, or null when it closes
@@ -375,12 +381,12 @@ import { generateOcsUrl, generateUrl, imagePath } from '@nextcloud/router'
  * The options travel with the values because a dropdown needs both.
  *
  * @typedef {object} Settings
- * @property {{ jurisdiction: string, dismissed_hints: string[], reclaim_vat: boolean, kpi_period: string, grid_factor: number|null, inbox_folder: number|null }} preferences -
+ * @property {{ jurisdiction: string, dismissed_hints: string[], dismissed_logbook_hints: string[], reclaim_vat: boolean, kpi_period: string, grid_factor: number|null, inbox_folder: number|null }} preferences -
  *   this user's own choices: the country new vehicles are kept under, the vehicles whose "complete
  *   this vehicle" hint they have answered, whether cost figures are net of VAT, the period the
  *   vehicle header shows, their electricity's grams of CO₂ per kWh (null for the country's), and
  *   the file id of their inbox folder (null for none; kept even once the folder is gone)
- * @property {{ key: string, name: string, logbook_export: boolean, mileage_claim: boolean, grid_factor: {grams: number, year: number, source: string}|null }[]} jurisdictions -
+ * @property {{ key: string, name: string, logbook_export: boolean, mileage_claim: boolean, logbook_rules: boolean, grid_factor: {grams: number, year: number, source: string}|null }[]} jurisdictions -
  *   the registered countries, English, whether each prints a logbook and a mileage claim, and its grid average
  */
 
@@ -503,6 +509,30 @@ export class ChangedError extends Error {}
 export class LockedError extends Error {}
 
 /**
+ * The request never reached the server: no signal, or no network at all. Its message is already the
+ * person's words, since every screen shows it as a refusal's.
+ */
+export class OfflineError extends Error {}
+
+/**
+ * A request the server refused for a reason it names (`currency_in_use`, `end_below_start`,
+ * `ends_in_future`, `not_in_question`, `no_energy`), which the screen puts into words; the message is the
+ * server's, English, for a log.
+ */
+export class RefusedError extends Error {
+
+	/**
+	 * @param {string} message - the server's words
+	 * @param {string} reason - the reason word
+	 */
+	constructor(message, reason) {
+		super(message)
+		this.reason = reason
+	}
+
+}
+
+/**
  * A file an import will not read at all (docs/security.md). It carries the server's reason word
  * and the row reading stopped at, which the screen puts into words (src/utils/imports.js).
  */
@@ -543,10 +573,18 @@ export async function getVehicle(uuid) {
 }
 
 /**
+ * What a create may carry besides its fields.
+ *
+ * @typedef {object} Retried
+ * @property {string} [client_uuid] - the uuid the client picked for the new row: a create sent
+ *   again under it answers that row instead of writing another (docs/api.md#retried-creates)
+ */
+
+/**
  * Add a vehicle. What the sheet leaves out the server decides, so the answer is what the client
  * keeps rather than what it sent.
  *
- * @param {Partial<Vehicle>} fields - the four the create sheet asks for (docs/ui.md)
+ * @param {Partial<Vehicle> & Retried} fields - the four the create sheet asks for (docs/ui.md)
  * @return {Promise<Vehicle>} the vehicle as the server made it, identity and token included
  */
 export async function createVehicle(fields) {
@@ -606,6 +644,20 @@ export async function recordReading(uuid, entry) {
 }
 
 /**
+ * Answer a Reading in question with "the counter was replaced": it becomes a `reset` and starts a
+ * new segment (docs/architecture.md#odometer-rules, rule 3). Any Entry's Reading.
+ *
+ * @param {string} uuid - the vehicle the counter belongs to
+ * @param {{uuid: string, updated_at: number}} reading - the Reading as it was read
+ * @return {Promise<Reading>} the Reading as a reset, under its new token
+ * @throws {ConflictError} when it moved on since it was read
+ * @throws {RefusedError} `not_in_question` when the chain no longer questions it
+ */
+export async function resetReading(uuid, reading) {
+	return request('POST', `/api/vehicles/${uuid}/readings/${reading.uuid}/reset`, { updated_at: reading.updated_at })
+}
+
+/**
  * Record one trip. Like a Reading it hangs off its vehicle and carries no token — a trip is
  * written, and under Logbook Mode revised through the audit trail rather than overwritten
  * (docs/architecture.md#concurrency).
@@ -636,6 +688,9 @@ export async function tripPrefill(uuid) {
  * @property {string[]} places - starting points and destinations in one list, each once, latest first
  * @property {string[]} purposes - as places
  * @property {string[]} partners - as places
+ * @property {string|null} category - the one the caller last entered on this vehicle, or none
+ * @property {{end_odo: number|null, ended_at: number, ended_at_off: number}|null} last - how the
+ *   vehicle's last trip ended: its end counter as stated, none for one logged by distance
  */
 
 /**
@@ -901,6 +956,15 @@ export async function removeRecipient(uuid, userId) {
  * @property {string|null} role - the role of their own grant, null when they have none
  * @property {{grantee: string, display_name: string, role: string}[]} groups - each group that
  *   reaches the vehicle, with its role
+ * @property {Holder[]} [holders] - who reads the vehicle; empty for the owner and for a caller who
+ *   holds nothing
+ */
+
+/**
+ * @typedef {object} Holder
+ * @property {string} display_name - the uid is not sent
+ * @property {'user'|'group'} grantee_type - an account or a group
+ * @property {string} role - a grant's role, or `owner`
  */
 
 /**
@@ -1410,16 +1474,25 @@ export async function savePreferences(fields) {
  * @return {Promise<any>} the parsed answer
  */
 async function request(method, path, body) {
-	const response = await fetch(generateUrl(`/apps/nextfleet${path}`), {
-		method,
-		headers: {
-			'Content-Type': 'application/json',
-			requesttoken: getRequestToken() ?? '',
-		},
-		// A read has no body at all. `JSON.stringify(undefined)` is `undefined`, but spelling it
-		// out keeps a future `null` from travelling as the string "null".
-		body: body === undefined ? undefined : JSON.stringify(body),
-	})
+	let response
+	try {
+		response = await fetch(generateUrl(`/apps/nextfleet${path}`), {
+			method,
+			headers: {
+				'Content-Type': 'application/json',
+				requesttoken: getRequestToken() ?? '',
+			},
+			// A read has no body at all. `JSON.stringify(undefined)` is `undefined`, but spelling it
+			// out keeps a future `null` from travelling as the string "null".
+			body: body === undefined ? undefined : JSON.stringify(body),
+		})
+	} catch (error) {
+		// fetch's one way of saying the network is gone, worded differently by every browser.
+		if (error instanceof TypeError) {
+			throw new OfflineError(t('nextfleet', 'No connection to the server. Everything you typed is still here — try again when you have signal.'))
+		}
+		throw error
+	}
 
 	const answer = await parse(response)
 	if (response.ok) {
@@ -1456,6 +1529,9 @@ function refusal(response, answer) {
 	}
 	if (response.status === 423) {
 		return new LockedError(answer?.message ?? 'Locked')
+	}
+	if (response.status === 400 && typeof answer?.reason === 'string') {
+		return new RefusedError(answer.message, answer.reason)
 	}
 
 	return new Error(answer?.message ?? `The server answered ${response.status}`)

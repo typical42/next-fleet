@@ -8,6 +8,7 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Import;
 
+use OCA\NextFleet\Exception\RefusedException;
 use OCA\NextFleet\Service\VehicleService;
 
 /**
@@ -15,6 +16,12 @@ use OCA\NextFleet\Service\VehicleService;
  * one is the request's fault, not a row's.
  */
 final class Answers {
+	/**
+	 * The refusal the import sheet words itself (RefusedException), in the words the entry sheet
+	 * shows beside its disabled *Energy*. The message says the same, for `occ` and other clients.
+	 */
+	public const NO_ENERGY = 'no_energy';
+
 	/**
 	 * @param array<string, mixed> $answers
 	 * @param string $dimension a key of Values::UNITS
@@ -42,7 +49,7 @@ final class Answers {
 	public static function energy(array $answers): array {
 		$energies = array_key_exists('energies', $answers) ? $answers['energies'] : VehicleService::ENERGIES;
 		if (!is_array($energies) || $energies === [] || array_diff($energies, VehicleService::ENERGIES) !== []) {
-			throw new \InvalidArgumentException('The vehicle takes no energy yet; set its energy types first');
+			throw new RefusedException('Choose the energy this vehicle takes under Edit vehicle first.', self::NO_ENERGY);
 		}
 		$energies = array_values($energies);
 		$energy = $answers['energy'] ?? null;
@@ -58,17 +65,20 @@ final class Answers {
 	}
 
 	/**
+	 * The vehicle's currency, upper-cased. One that is still no code is not refused here: it
+	 * costs the rows with money (Cells::money()), not a file that has none.
+	 *
 	 * @param array<string, mixed> $answers
-	 * @return ?string the vehicle's ISO 4217 code, null when it states none
+	 * @return ?string null when the vehicle states none
 	 * @throws \InvalidArgumentException
 	 */
 	public static function currency(array $answers): ?string {
 		$currency = $answers['currency'] ?? null;
-		if ($currency !== null && (!is_string($currency) || preg_match('/^[A-Z]{3}$/', $currency) !== 1)) {
-			throw new \InvalidArgumentException('currency is an ISO 4217 code');
+		if ($currency !== null && !is_string($currency)) {
+			throw new \InvalidArgumentException('currency is the vehicle\'s');
 		}
 
-		return $currency;
+		return $currency === null ? null : strtoupper(trim($currency));
 	}
 
 	/**

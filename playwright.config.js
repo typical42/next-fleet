@@ -13,9 +13,15 @@ import { defineConfig } from '@playwright/test'
 // re-measure the same file on every other major and double the slowest suite in the repo.
 const only34 = /@nc34/
 
+/** @type {{ name: string, baseURL: string, grepInvert?: RegExp }[]} */
 const majors = [
 	{ name: 'nc34', baseURL: process.env.NEXTFLEET_URL_NC34 ?? 'http://localhost:8080' },
 	{ name: 'nc31', baseURL: process.env.NEXTFLEET_URL_NC31 ?? 'http://localhost:8081', grepInvert: only34 },
+	// The weekly smoke run's majors (.docker/weekly/compose.yml), there only when given an address.
+	...['32', '33'].flatMap((major) => {
+		const baseURL = process.env[`NEXTFLEET_URL_NC${major}`]
+		return baseURL ? [{ name: `nc${major}`, baseURL, grepInvert: only34 }] : []
+	}),
 ]
 
 // The run's account (tests/e2e/accounts.js). Every worker loads this file again, so the runner

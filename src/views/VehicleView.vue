@@ -3,7 +3,6 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
-import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import { useHotKey } from '@nextcloud/vue/composables/useHotKey'
 import { computed, ref, watch } from 'vue'
@@ -22,6 +21,7 @@ import { useVehiclesStore } from '../store/index.js'
 import { may } from '../utils/access.js'
 import { nameOf, subtitleOf } from '../utils/format.js'
 import { holderWords, nextBookingWords } from '../utils/pool.js'
+import { t } from '../utils/l10n.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -71,15 +71,29 @@ const papers = ref([])
 const timeline = ref(null)
 const kpis = ref(null)
 const bookings = ref(null)
+const documents = ref(null)
 
 /**
- * Reads the list and the figures back after a write, and the bookings: a trip logged, voided or
- * restored changes what its booking's row says.
+ * Reads back what a write can change: the list and the figures always, the bookings unless it was
+ * an expense. A booking's row names its trip and whether its counter fell below the one at
+ * check-out, so every write that moves the counter can change it; an expense moves none.
+ *
+ * @param {unknown} [entry] - what the sheet wrote; not read here
+ * @param {string} [kind] - which kind it wrote; none for an import, which moves the counter
  */
-function written() {
+function written(entry, kind) {
 	timeline.value?.reload()
 	kpis.value?.reload()
+	if (kind !== 'expense') {
+		bookings.value?.reload()
+	}
+}
+
+/** A leave the vehicle stayed through changed the role; each list's rows carry what it may do. */
+function regranted() {
+	timeline.value?.reload()
 	bookings.value?.reload()
+	documents.value?.reload()
 }
 
 // The shell keeps one vehicle screen and swaps the vehicle under it (src/App.vue); a sheet on the
@@ -115,7 +129,7 @@ useHotKey('n', () => {
 					{{ nextBookingWords(vehicle) }}
 				</p>
 				<!-- Under the name rather than among the actions: it is about whose car this is. -->
-				<LeaveVehicle :vehicle="vehicle" />
+				<LeaveVehicle :vehicle="vehicle" @kept="regranted" />
 			</div>
 			<div class="vehicle__actions">
 				<NcButton v-if="logs" variant="primary" @click="entering = true">
@@ -137,7 +151,9 @@ useHotKey('n', () => {
 
 		<DueBanner :vehicle="vehicle" @done="closing = $event" />
 
-		<VehicleBookings ref="bookings"
+		<!-- A booking keeps others off the car: on one nobody else has or had access to, there are none. -->
+		<VehicleBookings v-if="vehicle.ever_granted"
+			ref="bookings"
 			:vehicle="vehicle"
 			:papers="papers"
 			@changed="store.refresh(vehicle.uuid)"
@@ -145,14 +161,16 @@ useHotKey('n', () => {
 			@open="opened = $event" />
 
 		<!-- Above the timeline, which scrolls on without end. -->
-		<VehicleDocuments :vehicle="vehicle" @listed="papers = $event" />
+		<VehicleDocuments ref="documents" :vehicle="vehicle" @listed="papers = $event" />
 
 		<!-- One timeline of everything that happened to this vehicle, which is the question people
 		     actually ask (docs/ui.md). -->
 		<Timeline ref="timeline"
 			:vehicle="vehicle"
 			:papers="papers"
-			@open="opened = $event" />
+			@open="opened = $event"
+			@new="entering = true"
+			@import="importing = true" />
 
 		<EntrySheet v-if="entering"
 			:vehicle="vehicle"

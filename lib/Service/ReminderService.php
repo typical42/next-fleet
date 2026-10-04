@@ -34,6 +34,8 @@ use OCP\IDBConnection;
 class ReminderService {
 	use TTransactional;
 
+	/** The numbers a reminder is set with, each under its bound (docs/security.md). */
+	private const BOUNDS = ['due_odo' => Field::COUNTER, 'lead_odo' => Field::COUNTER, 'recur_months' => Field::MONTHS, 'recur_odo' => Field::COUNTER];
 	/**
 	 * The states a reminder is still open in, most urgent first. A snooze silences it, so it sinks
 	 * below one merely planned.
@@ -50,6 +52,7 @@ class ReminderService {
 		private ITimeFactory $time,
 		private IDBConnection $db,
 		private NotificationService $notifications,
+		private AfterCommit $after,
 	) {
 	}
 
@@ -111,12 +114,20 @@ class ReminderService {
 	 * @throws \OCP\DB\Exception
 	 */
 	private function fleetBeside(string $userId): array {
-		$rows = [];
+		$byId = [];
 		foreach ($this->fleet->list($userId) as $vehicle) {
-			if ($vehicle->getLifecycle() === Vehicle::DISPOSED) {
-				continue;
+			if ($vehicle->getLifecycle() !== Vehicle::DISPOSED) {
+				$byId[(int)$vehicle->getId()] = $vehicle;
 			}
-			foreach ($this->listed($vehicle) as $row) {
+		}
+		// Every vehicle's reminders and pace in one query each, however large the fleet.
+		$reminders = $this->reminders->findByVehicles(array_keys($byId));
+		$now = $this->time->now();
+		$paces = $this->paces(array_merge(...array_values($reminders)), $now);
+
+		$rows = [];
+		foreach ($byId as $vehicleId => $vehicle) {
+			foreach ($this->wiredAt($vehicle, $reminders[$vehicleId] ?? [], $paces[$vehicleId] ?? [], $now) as $row) {
 				$rows[] = ['vehicle' => $vehicle, 'reminder' => $row];
 			}
 		}
@@ -142,18 +153,45 @@ class ReminderService {
 	 */
 	public function wired(Vehicle $vehicle, array $reminders): array {
 		$now = $this->time->now();
-		$today = $this->today();
-		// Only a reminder by km reads the chain, so a vehicle without one skips the query.
-		$chain = array_filter($reminders, static fn (Reminder $r): bool => $r->getMode() !== Reminder::DATE) === []
-			? []
-			: $this->readings->findChain((int)$vehicle->getId(), OdoReading::MAIN);
-		// The newest value, flagged or not, as dismiss() reads it. The chain is oldest first.
-		$odo = $chain === [] ? null : $chain[array_key_last($chain)]->getValue();
+
+		return $this->wiredAt($vehicle, $reminders, $this->paces($reminders, $now)[(int)$vehicle->getId()] ?? [], $now);
+	}
+
+	/**
+	 * The main chains a pace is read off (ReminderEngine::estimate()), for the vehicles these
+	 * reminders hang off - only the window, not the whole chain, and only where a reminder goes
+	 * by km. `$now` is the one wiredAt() estimates at, so the window ends where it looks.
+	 *
+	 * @param list<Reminder> $reminders
+	 * @return array<int, list<OdoReading>> by vehicle
+	 * @throws \OCP\DB\Exception
+	 */
+	private function paces(array $reminders, \DateTimeImmutable $now): array {
+		$ids = [];
+		foreach ($reminders as $reminder) {
+			if ($reminder->getMode() !== Reminder::DATE) {
+				$ids[$reminder->getVehicleId()] = true;
+			}
+		}
+		$at = $now->getTimestamp();
+
+		return $this->readings->findMainWithin(array_keys($ids), $at - ReminderEngine::PACE_WINDOW, $at);
+	}
+
+	/**
+	 * @param list<Reminder> $reminders
+	 * @param list<OdoReading> $pace the vehicle's main chain over the pace window
+	 * @return list<NextFleetListedReminder>
+	 */
+	private function wiredAt(Vehicle $vehicle, array $reminders, array $pace, \DateTimeImmutable $now): array {
+		$today = $now->format('Y-m-d');
+		// The newest value, flagged or not, as the odometer caches it on every write.
+		$odo = $vehicle->getOdoValue();
 
 		return array_map(
 			static fn (Reminder $reminder): array => [
 				'state' => ReminderEngine::evaluate($reminder, $today, $odo)['state'],
-				'estimate' => ReminderEngine::estimate($reminder, $chain, $now),
+				'estimate' => ReminderEngine::estimate($reminder, $pace, $now),
 			] + $reminder->jsonSerialize(),
 			$reminders,
 		);
@@ -198,8 +236,28 @@ class ReminderService {
 	 */
 	public function create(string $userId, string $vehicleUuid, array $fields): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
+		$once = Once::of(
+			$fields,
+			$this->reminders,
+			static fn (Reminder $row): bool => $row->getVehicleId() === (int)$vehicle->getId(),
+			static fn (Reminder $row): array => $row->jsonSerialize(),
+		);
 
+		return $once->run(fn (): array => $this->insert($userId, $vehicle, $fields, $once));
+	}
+
+	/**
+	 * What create() writes once it knows the request is no retry.
+	 *
+	 * @param array<string, mixed> $fields
+	 * @param Once<Reminder> $once
+	 * @return NextFleetReminder
+	 * @throws \InvalidArgumentException
+	 * @throws \OCP\DB\Exception
+	 */
+	private function insert(string $userId, Vehicle $vehicle, array $fields, Once $once): array {
 		$reminder = new Reminder();
+		$once->stamp($reminder);
 		$reminder->setVehicleId((int)$vehicle->getId());
 		$reminder->setCreatedBy($userId);
 		$reminder->setState(Reminder::PLANNED);
@@ -211,8 +269,9 @@ class ReminderService {
 		$this->apply($reminder, $fields, $template);
 
 		// Retried for the reason TripService::record() gives.
-		$written = $this->atomicRetry(function () use ($vehicle, $reminder): Reminder {
+		$written = $this->atomicRetry(function () use ($vehicle, $reminder, $once): Reminder {
 			$this->vehicles->hold((int)$vehicle->getId());
+			$once->check();
 
 			return $this->reminders->insert($reminder);
 		}, $this->db);
@@ -237,13 +296,21 @@ class ReminderService {
 	public function update(string $userId, string $vehicleUuid, string $reminderUuid, int $expectedUpdatedAt, array $fields): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
 
-		return $this->atomicRetry(function () use ($vehicle, $reminderUuid, $expectedUpdatedAt, $fields): array {
+		[$updated, $told] = $this->atomicRetry(function () use ($vehicle, $reminderUuid, $expectedUpdatedAt, $fields): array {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$reminder = $this->reminders->findOnVehicle((int)$vehicle->getId(), $reminderUuid);
+			$was = clone $reminder;
 			$this->apply($reminder, $fields, null);
+			$updated = $this->reminders->updateChecked($reminder, $expectedUpdatedAt);
 
-			return $this->reminders->updateChecked($reminder, $expectedUpdatedAt)->jsonSerialize();
+			return [$updated, $this->notifications->rearm($was, $updated)];
 		}, $this->db);
+		// After the commit, as the sweep sends: a rollback would leave the receipt and no notice.
+		foreach ($told as $recipient) {
+			$this->notifications->withdraw($updated, $recipient);
+		}
+
+		return $updated->jsonSerialize();
 	}
 
 	/**
@@ -385,7 +452,8 @@ class ReminderService {
 
 	/**
 	 * Closes the reminder's occurrence with a maintenance record. One that recurs moves on from
-	 * the record's own day and counter (rule 4); one that does not is done.
+	 * the record's own day and counter (rule 4); one that does not is done. For a caller inside an
+	 * AfterCommit run: the withdrawal waits for its commit.
 	 *
 	 * @throws \InvalidArgumentException if it recurs by km and the record states no counter
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException
@@ -402,12 +470,12 @@ class ReminderService {
 			$reminder->setState(Reminder::DONE);
 		}
 		$this->reminders->updateChecked($reminder, $reminder->getUpdatedAt());
-		$this->notifications->withdraw($reminder);
+		$this->after->defer(fn () => $this->notifications->withdraw($reminder));
 	}
 
 	/**
 	 * Takes back what closeBy() did with this record, when nothing has moved the reminder since.
-	 * A deleted reminder is left as it was deleted.
+	 * A deleted reminder is left as it was deleted. The withdrawal waits, as closeBy()'s does.
 	 *
 	 * @return bool whether it was taken back
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException
@@ -424,7 +492,7 @@ class ReminderService {
 		$this->reevaluate($reminder);
 		$this->reminders->updateChecked($reminder, $reminder->getUpdatedAt());
 		// The occurrence it sent for is gone, and the job sees no state change to take it back.
-		$this->notifications->withdraw($reminder);
+		$this->after->defer(fn () => $this->notifications->withdraw($reminder));
 
 		return true;
 	}
@@ -590,11 +658,12 @@ class ReminderService {
 	}
 
 	/**
+	 * @param key-of<self::BOUNDS> $column
 	 * @param array<string, mixed> $fields
 	 * @throws \InvalidArgumentException
 	 */
 	private static function count(string $column, array $fields): ?int {
-		$value = Field::read($column, 'count', null, $fields[$column] ?? null);
+		$value = Field::read($column, 'count', self::BOUNDS[$column], $fields[$column] ?? null);
 
 		return is_int($value) ? $value : null;
 	}

@@ -65,12 +65,12 @@ class ComposeStackTest extends TestCase {
 	}
 
 	/**
-	 * docs/development.md names five: the database, both Nextcloud majors the M0 gate
-	 * loads, the cron runner that makes reminders fire, and the SMTP sink.
+	 * docs/development.md names six: the database, both Nextcloud majors the M0 gate
+	 * loads, a cron runner for each, and the SMTP sink.
 	 */
 	public function testTheStackDeclaresTheServicesTheDocsDescribe(): void {
 		$this->assertSame(
-			['app', 'app31', 'cron', 'db', 'mail'],
+			['app', 'app31', 'cron', 'cron31', 'db', 'mail'],
 			$this->sortedServiceNames(),
 		);
 	}
@@ -150,6 +150,24 @@ class ComposeStackTest extends TestCase {
 	}
 
 	/**
+	 * Without its own runner a major's background jobs fall behind: reminders wait for a
+	 * page load, and expired file locks pile up until a reused E2E path answers 423.
+	 *
+	 * @dataProvider cronRunners
+	 */
+	public function testEveryMajorHasACronRunnerOnItsOwnInstall(string $web, string $cron): void {
+		$this->assertSame($this->service($web)['image'], $this->service($cron)['image']);
+		$this->assertSame(['/cron.sh'], (array)($this->service($cron)['entrypoint'] ?? []));
+		$this->assertSame($this->namedVolumes($web), $this->namedVolumes($cron));
+	}
+
+	/** @return iterable<string, list<string>> */
+	public static function cronRunners(): iterable {
+		yield 'app' => ['app', 'cron'];
+		yield 'app31' => ['app31', 'cron31'];
+	}
+
+	/**
 	 * A shared schema or a shared html volume means whichever major starts second runs
 	 * `occ upgrade` against the other's install, and the gate then tests one version twice.
 	 */
@@ -176,7 +194,9 @@ class ComposeStackTest extends TestCase {
 	/** @return iterable<string, list<string>> */
 	public static function nextcloudServices(): iterable {
 		yield from self::webServices();
-		yield 'cron' => ['cron'];
+		foreach (self::cronRunners() as [, $cron]) {
+			yield $cron => [$cron];
+		}
 	}
 
 	/** @return iterable<string, list<string>> */

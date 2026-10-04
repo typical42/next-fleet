@@ -122,14 +122,14 @@ class SeedCommand extends Command {
 				['days' => 160, 'type' => 'tyres', 'title' => 'Winter tyres fitted', 'vendor' => 'Reifen Müller', 'cost' => 8900, 'vat_rate' => 1900],
 				['days' => 45, 'type' => 'inspection', 'title' => 'HU/AU', 'vendor' => 'TÜV Süd', 'cost' => 14700, 'vat_rate' => 1900],
 			],
-			// Insurance, tax and the fine carry no VAT and state no rate, as the sheet prefills them;
-			// neither does the toll. The net figure counts all four gross and says so.
+			// Insurance, tax and the fine carry no VAT and state 0, as the sheet prefills them. Nobody
+			// stated the toll's rate, so the net figure counts it gross and says so.
 			'expenses' => [
-				['days' => 340, 'category' => 'insurance', 'amount' => 68400, 'notes' => 'Liability and partial cover'],
-				['days' => 330, 'category' => 'tax', 'amount' => 21400],
+				['days' => 340, 'category' => 'insurance', 'amount' => 68400, 'vat_rate' => 0, 'notes' => 'Liability and partial cover'],
+				['days' => 330, 'category' => 'tax', 'amount' => 21400, 'vat_rate' => 0],
 				['days' => 200, 'category' => 'parking', 'amount' => 1850, 'vat_rate' => 1900],
 				['days' => 140, 'category' => 'toll', 'amount' => 1150, 'notes' => 'Brenner motorway'],
-				['days' => 60, 'category' => 'fine', 'amount' => 3000, 'notes' => '11 km/h too fast'],
+				['days' => 60, 'category' => 'fine', 'amount' => 3000, 'vat_rate' => 0, 'notes' => '11 km/h too fast'],
 			],
 			// One business trip for the mileage claim to value and one private trip it leaves out.
 			// The first sets off where the fill-up left the counter and the second where the first
@@ -171,14 +171,17 @@ class SeedCommand extends Command {
 				'notes' => 'Cluster replaced under warranty; the counter starts over.',
 			],
 			// A counter that goes backwards because the instrument cluster was swapped: the row
-			// is kept and flagged, and the timeline asks about it (rule 3). The swap is more than
-			// a year back, so the header's default period has a distance to divide by.
+			// is kept and flagged, and the timeline asks about it (rule 3). The swap and a reading
+			// of the new counter after it are more than a year back, so the header's default
+			// period starts on the new counter and has a distance to divide by: an unanswered swap
+			// inside it would leave the period no distance at all.
 			'readings' => [
 				['days' => 700, 'value' => 18400],
 				['days' => 600, 'value' => 24950],
 				['days' => 510, 'distance' => 3200],
 				['days' => 450, 'value' => 31020],
 				['days' => 390, 'value' => 9800],
+				['days' => 375, 'value' => 10300],
 				['days' => 300, 'value' => 12400],
 				['days' => 210, 'distance' => 3600],
 				['days' => 120, 'value' => 19700],
@@ -214,7 +217,7 @@ class SeedCommand extends Command {
 				['days' => 175, 'type' => 'service', 'title' => 'Annual service', 'vendor' => 'Volvo Car Center', 'cost' => 42000, 'vat_rate' => 1900, 'odo' => 17200],
 			],
 			'expenses' => [
-				['days' => 320, 'category' => 'insurance', 'amount' => 92000],
+				['days' => 320, 'category' => 'insurance', 'amount' => 92000, 'vat_rate' => 0],
 				['days' => 110, 'category' => 'parking', 'amount' => 2400, 'notes' => 'Airport, three days'],
 			],
 			// The sticker question answered, three weeks out: a month past its first warning
@@ -263,7 +266,7 @@ class SeedCommand extends Command {
 				['days' => 140, 'type' => 'service', 'title' => '500-hour service', 'vendor' => 'Landtechnik Huber', 'cost' => 86000, 'vat_rate' => 1900, 'odo' => 1566],
 			],
 			'expenses' => [
-				['days' => 300, 'category' => 'insurance', 'amount' => 41000],
+				['days' => 300, 'category' => 'insurance', 'amount' => 41000, 'vat_rate' => 0],
 			],
 		],
 		[
@@ -284,8 +287,8 @@ class SeedCommand extends Command {
 			// total for the period, with no distance to divide them by.
 			'readings' => [],
 			'expenses' => [
-				['days' => 330, 'category' => 'insurance', 'amount' => 12400],
-				['days' => 325, 'category' => 'tax', 'amount' => 3730],
+				['days' => 330, 'category' => 'insurance', 'amount' => 12400, 'vat_rate' => 0],
+				['days' => 325, 'category' => 'tax', 'amount' => 3730, 'vat_rate' => 0],
 			],
 		],
 		[
@@ -374,7 +377,7 @@ class SeedCommand extends Command {
 			],
 			// Whether a toll carries VAT depends on who levies it, so nobody stated a rate.
 			'expenses' => [
-				['days' => 335, 'category' => 'insurance', 'amount' => 245000],
+				['days' => 335, 'category' => 'insurance', 'amount' => 245000, 'vat_rate' => 0],
 				['days' => 275, 'category' => 'toll', 'amount' => 38450, 'notes' => 'Truck toll, one quarter'],
 			],
 			// A truck is inspected every 12 months where a car has 24, which the scheme decides
@@ -447,16 +450,20 @@ class SeedCommand extends Command {
 	}
 
 	protected function execute(InputInterface $input, OutputInterface $output): int {
-		$userId = (string)$input->getArgument('user');
-		if (!$this->users->userExists($userId)) {
-			$output->writeln('<error>No such user: ' . $userId . '</error>');
+		$asked = (string)$input->getArgument('user');
+		// The uid as stored: a backend may find `Anna` for `anna`, and GrantService compares the
+		// stored one with the owner's.
+		$userId = $this->users->get($asked)?->getUID();
+		if ($userId === null) {
+			$output->writeln('<error>No such user: ' . $asked . '</error>');
 
 			return self::FAILURE;
 		}
-		/** @var string|null $driver */
-		$driver = $input->getOption('grant-to');
-		if ($driver !== null && ($driver === $userId || !$this->users->userExists($driver))) {
-			$output->writeln('<error>Cannot give access to ' . $driver . ': not another user</error>');
+		/** @var string|null $grantTo */
+		$grantTo = $input->getOption('grant-to');
+		$driver = $grantTo === null ? null : $this->users->get($grantTo)?->getUID();
+		if ($grantTo !== null && ($driver === null || $driver === $userId)) {
+			$output->writeln('<error>Cannot give access to ' . $grantTo . ': not another user</error>');
 
 			return self::FAILURE;
 		}
@@ -534,7 +541,18 @@ class SeedCommand extends Command {
 
 		if ($driver !== null) {
 			$uuid = $uuids[self::GRANTED['plate']];
-			$this->grants->grant($userId, $uuid, ['grantee' => $driver, 'grantee_type' => 'user', 'role' => 'driver']);
+			try {
+				$this->grants->grant($userId, $uuid, ['grantee' => $driver, 'grantee_type' => 'user', 'role' => 'driver']);
+			} catch (\InvalidArgumentException) {
+				// Both accounts exist and differ (checked above), so only the admin's sharing
+				// settings are left to refuse: GrantService answers "no user you may grant to" alike.
+				$output->writeln('<error>Did not give ' . $driver . ' access to ' . self::GRANTED['plate']
+					. ': the sharing settings do not let ' . $userId . ' share with ' . $driver
+					. '. Sharing is off for ' . $userId . ', or "share only with group members" is on and the two share no group.'
+					. ' The fleet is seeded, without a trip or booking of theirs.</error>');
+
+				return self::FAILURE;
+			}
 			$this->trips->record($driver, $uuid, $this->driven(self::GRANTED['trip']));
 			$this->bookings->book($driver, $uuid, $this->booked(self::GRANTED['booking']));
 			$output->writeln('Gave ' . $driver . ' access to ' . self::GRANTED['plate'] . ' as a driver, with one trip and one booking of theirs.');

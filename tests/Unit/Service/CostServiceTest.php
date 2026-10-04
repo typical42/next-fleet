@@ -71,7 +71,7 @@ class CostServiceTest extends TestCase {
 
 	public function testTcoAddsTheDepreciationPerHundredKilometresOverTheHoldingPeriod(): void {
 		$this->reading(-500, 5000);
-		$this->reading(100, 10000);
+		$this->reading(0, 10000);
 		$this->reading(900, 11000);
 		$this->reading(1500, 15000);
 		$this->fill(8000, 1900);
@@ -263,6 +263,27 @@ class CostServiceTest extends TestCase {
 		$this->assertNull($cost['energy_value']);
 	}
 
+	/**
+	 * The Costs screen's months and year in one read: each row counts in the period it fell in,
+	 * and only there, and every period spreads the holding's depreciation over the same distance.
+	 */
+	public function testManyPeriodsEachCountTheRowsThatFellInThem(): void {
+		$this->reading(0, 10000);
+		$this->reading(1000, 11000);
+		$this->reading(2000, 13000);
+		$this->fill(8000, null);
+		$this->maintain(12000, null);
+		$this->records[0]->setDoneAt(1500);
+
+		$costs = $this->service()->periods($this->vehicle(purchase: 3000000, residual: 1000000), [[0, 1000], [1000, 2000], [0, 2000]], false);
+
+		$this->assertSame([8000, 0, 8000], array_column($costs, 'energy'));
+		$this->assertSame([0, 12000, 12000], array_column($costs, 'maintenance'));
+		$this->assertSame([1000, 2000, 3000], array_column($costs, 'distance'));
+		// 2 000 000 cents over 3 000 km is 66 666.67 per 100 km, beside each period's own cost.
+		$this->assertEqualsWithDelta([800.0 + 200000 / 3, 600.0 + 200000 / 3, 20000 / 30 + 200000 / 3], array_column($costs, 'tco'), 0.001);
+	}
+
 	/** @return array<string, mixed> */
 	private function of(Vehicle $vehicle, bool $net = false): array {
 		return $this->service()->of($vehicle, 0, 1000, $net);
@@ -276,7 +297,7 @@ class CostServiceTest extends TestCase {
 		$expenses = $this->createMock(ExpenseMapper::class);
 		$expenses->method('findBetween')->willReturnCallback(fn (): array => $this->expenses);
 		$readings = $this->createMock(OdoReadingMapper::class);
-		$readings->method('findChain')->willReturnCallback(fn (): array => $this->readingRows);
+		FakeChain::onto($readings, fn (): array => $this->readingRows);
 
 		return new CostService(new ConsumptionService($energy, $readings), $energy, $maintenance, $expenses);
 	}

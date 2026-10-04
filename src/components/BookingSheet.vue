@@ -3,7 +3,6 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
-import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcDateTimePickerNative from '@nextcloud/vue/components/NcDateTimePickerNative'
 import NcDialog from '@nextcloud/vue/components/NcDialog'
@@ -13,6 +12,8 @@ import { computed, ref } from 'vue'
 
 import { BookingConflictError, changeBooking, ConflictError, createBooking, listBookings } from '../services/api.js'
 import { formatSpan, formatWhen } from '../utils/format.js'
+import { t } from '../utils/l10n.js'
+import { refusalWords, spanFault } from '../utils/pool.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -65,18 +66,18 @@ const action = computed(() => {
 
 const note = computed(() => {
 	if (clash.value !== null) {
-		const name = { value: clash.value.user_name, escape: false }
-
-		// A car still out is in somebody's hands, not just on their calendar: say whose, and when it is due back.
-		return {
-			type: 'error',
-			text: clash.value.state === 'out'
-				? t('nextfleet', 'With {name} until {when}', { name, when: { value: formatWhen(clash.value.ends_at, clash.value.ends_at_off), escape: false } })
-				: t('nextfleet', 'Booked by {name}, {span}', {
-					name,
-					span: { value: formatSpan(clash.value.starts_at, clash.value.starts_at_off, clash.value.ends_at, clash.value.ends_at_off), escape: false },
-				}),
+		const name = clash.value.user_name
+		const span = formatSpan(clash.value.starts_at, clash.value.starts_at_off, clash.value.ends_at, clash.value.ends_at_off)
+		let text = t('nextfleet', 'Booked by {name}, {span}', { name, span })
+		// A car still out is in somebody's hands, not just on their calendar: say whose, and when it is
+		// due back - or, overdue, that it still is out, since "until" a time gone by would be wrong.
+		if (clash.value.state === 'out') {
+			text = clash.value.ends_at * 1000 > Date.now()
+				? t('nextfleet', 'With {name} until {when}', { name, when: formatWhen(clash.value.ends_at, clash.value.ends_at_off) })
+				: t('nextfleet', 'Still with {name}, booked {span}', { name, span })
 		}
+
+		return { type: 'error', text }
 	}
 	if (failure.value) {
 		return { type: 'error', text: failure.value }
@@ -94,13 +95,19 @@ const note = computed(() => {
  * @return {Record<string, unknown>} the span, each end at its own offset, and the purpose
  */
 function fields() {
-	const lost = t('nextfleet', 'A booking carries the moment it starts and the moment it ends.')
+	const lost = t('nextfleet', 'A booking needs a start and an end.')
+	const from = stated(start.value, lost)
+	const until = stated(end.value, lost)
+	const fault = spanFault(from, until, props.booking)
+	if (fault !== null) {
+		throw new Error(fault)
+	}
 
 	return {
-		starts_at: seconds(stated(start.value, lost)),
-		starts_at_off: offset(start.value),
-		ends_at: seconds(stated(end.value, lost)),
-		ends_at_off: offset(end.value),
+		starts_at: seconds(from),
+		starts_at_off: offset(from),
+		ends_at: seconds(until),
+		ends_at_off: offset(until),
 		purpose: purpose.value,
 	}
 }
@@ -122,7 +129,7 @@ async function save() {
 		} else if (error instanceof ConflictError) {
 			stale.value = true
 		} else {
-			failure.value = error.message
+			failure.value = refusalWords(error.message) ?? error.message
 		}
 	} finally {
 		saving.value = false

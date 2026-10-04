@@ -24,6 +24,7 @@ class ProfileTest extends JurisdictionTestCase {
 		return [
 			'car' => ['car', 24, 36],
 			'van' => ['van', 24, 24],
+			'motorcycle' => ['motorcycle', 24, 24],
 			'truck' => ['truck', 12, 12],
 			'tractor' => ['tractor', 12, 12],
 			'trailer' => ['trailer', 24, 24],

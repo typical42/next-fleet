@@ -43,6 +43,11 @@ class EnergyMapper extends BaseMapper {
 		return $this->findEntities($qb);
 	}
 
+	/** @throws \OCP\DB\Exception */
+	public function hasMoney(int $vehicleId): bool {
+		return $this->anySet($vehicleId, ['unit_price', 'total']);
+	}
+
 	/**
 	 * Every live fill-up of one vehicle, oldest first - the order a full-to-full segment is read in
 	 * (docs/architecture.md#numbers-consumption-cost-emissions). Not bounded: the first fill-up

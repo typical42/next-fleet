@@ -24,6 +24,7 @@ use OCP\AppFramework\Http\DataResponse;
 use OCP\Constants;
 use OCP\Files\Folder;
 use OCP\Files\IRootFolder;
+use OCP\Files\Node;
 use OCP\IConfig;
 use OCP\IDBConnection;
 use OCP\IRequest;
@@ -52,7 +53,11 @@ class InboxTest extends TestCase {
 	 * mounts up once per process, so a share made later would not show.
 	 */
 	private const SHAREE = 'nextfleet-test-inbox-sharee';
-	private const ACCOUNTS = [self::OWNER, self::OTHER, self::SHAREE];
+	/** As the sharee: a share mounted inside their inbox folder. */
+	private const NESTER = 'nextfleet-test-inbox-nester';
+	/** As the sharee: moves their inbox folder into a share they receive. */
+	private const MOVER = 'nextfleet-test-inbox-mover';
+	private const ACCOUNTS = [self::OWNER, self::OTHER, self::SHAREE, self::NESTER, self::MOVER];
 
 	private DocumentService $documents;
 	private VehicleService $vehicles;
@@ -72,9 +77,8 @@ class InboxTest extends TestCase {
 	}
 
 	protected function setUp(): void {
-		$container = (new Application())->getContainer();
-		$this->documents = $container->get(DocumentService::class);
-		$this->vehicles = $container->get(VehicleService::class);
+		$this->documents = \OCP\Server::get(DocumentService::class);
+		$this->vehicles = \OCP\Server::get(VehicleService::class);
 	}
 
 	protected function tearDown(): void {
@@ -189,21 +193,35 @@ class InboxTest extends TestCase {
 	 */
 	public function testASharedFolderIsRefusedAndNothingIsStored(): void {
 		$theirs = $this->folder(self::OTHER);
-		$shares = \OCP\Server::get(IShareManager::class);
-		$share = $shares->newShare()
-			->setNode($theirs)
-			->setShareType(IShare::TYPE_USER)
-			->setSharedWith(self::SHAREE)
-			->setSharedBy(self::OTHER)
-			->setShareOwner(self::OTHER)
-			->setPermissions(Constants::PERMISSION_ALL);
-		$share = $shares->createShare($share);
-		$shares->acceptShare($share, self::SHAREE);
-		$seen = \OCP\Server::get(IRootFolder::class)->getUserFolder(self::SHAREE)->getFirstNodeById($theirs->getId());
-		$this->assertInstanceOf(Folder::class, $seen, 'the share did not reach the sharee\'s Files, so this test proves nothing');
+		$this->receive(self::SHAREE, $theirs);
 
 		$this->assertSame(Http::STATUS_BAD_REQUEST, $this->choose(self::SHAREE, $theirs->getId())->getStatus());
 		$this->assertNull($this->settings(self::SHAREE)->index()->getData()['preferences']['inbox_folder']);
+	}
+
+	/** A share moved into the inbox folder is somebody else's, as attaching would say. */
+	public function testAShareInsideTheFolderIsNotListed(): void {
+		$seen = $this->receive(self::NESTER, $this->folder(self::OTHER)->newFile('Fremd.pdf', '%PDF-1.4 test'));
+		$inbox = $this->folder(self::NESTER);
+		$mine = $this->file($inbox, 'Beleg.pdf', 1750000000);
+		$seen->move($inbox->getPath() . '/Fremd.pdf');
+		$this->assertTrue($inbox->nodeExists('Fremd.pdf'), 'the shared file is not in the inbox folder, so this test proves nothing');
+		$this->choose(self::NESTER, $inbox->getId());
+
+		$this->assertSame([$mine], array_column($this->inbox(self::NESTER)['files'], 'file_id'));
+	}
+
+	/** Moved into a share after it was chosen, the folder is the sharer's: no inbox, rather than theirs. */
+	public function testAFolderMovedIntoAReceivedShareReadsAsNone(): void {
+		$seen = $this->receive(self::MOVER, $this->folder(self::OTHER));
+		$inbox = $this->folder(self::MOVER);
+		$this->file($inbox, 'Beleg.pdf', 1750000000);
+		$this->assertSame(Http::STATUS_OK, $this->choose(self::MOVER, $inbox->getId())->getStatus());
+
+		$moved = $inbox->move($seen->getPath() . '/Belege');
+		$this->assertSame($inbox->getId(), $moved->getId(), 'the move made a new folder, so this test proves nothing');
+
+		$this->assertSame(['folder' => null, 'files' => [], 'count' => 0], $this->inbox(self::MOVER));
 	}
 
 	/**
@@ -242,7 +260,7 @@ class InboxTest extends TestCase {
 
 	/** Nothing registers these classes, so the container has to build them from their types alone. */
 	public function testTheControllerIsBuiltFromItsConstructorTypesAlone(): void {
-		$this->assertInstanceOf(InboxController::class, (new Application())->getContainer()->get(InboxController::class));
+		$this->assertInstanceOf(InboxController::class, \OCP\Server::get(InboxController::class));
 	}
 
 	private function choose(string $uid, mixed $folderId): DataResponse {
@@ -254,7 +272,7 @@ class InboxTest extends TestCase {
 		$answer = (new InboxController(
 			Application::APP_ID,
 			$this->createMock(IRequest::class),
-			(new Application())->getContainer()->get(InboxService::class),
+			\OCP\Server::get(InboxService::class),
 			$this->session($uid),
 		))->index();
 		$this->assertSame(Http::STATUS_OK, $answer->getStatus());
@@ -272,7 +290,7 @@ class InboxTest extends TestCase {
 		return new PreferencesController(
 			Application::APP_ID,
 			$request,
-			(new Application())->getContainer()->get(PreferencesService::class),
+			\OCP\Server::get(PreferencesService::class),
 			$this->session($uid),
 		);
 	}
@@ -284,6 +302,26 @@ class InboxTest extends TestCase {
 		$session->method('getUser')->willReturn($user);
 
 		return $session;
+	}
+
+	/**
+	 * `$node` shared by OTHER with `$sharee`, as it shows in the sharee's Files. Once per sharee: the
+	 * server sets their mounts up on the first look.
+	 */
+	private function receive(string $sharee, Node $node): Node {
+		$shares = \OCP\Server::get(IShareManager::class);
+		$share = $shares->newShare()
+			->setNode($node)
+			->setShareType(IShare::TYPE_USER)
+			->setSharedWith($sharee)
+			->setSharedBy(self::OTHER)
+			->setShareOwner(self::OTHER)
+			->setPermissions($node instanceof Folder ? Constants::PERMISSION_ALL : Constants::PERMISSION_READ | Constants::PERMISSION_UPDATE | Constants::PERMISSION_SHARE);
+		$shares->acceptShare($shares->createShare($share), $sharee);
+		$seen = \OCP\Server::get(IRootFolder::class)->getUserFolder($sharee)->getFirstNodeById($node->getId());
+		$this->assertNotNull($seen, 'the share did not reach the sharee\'s Files, so this test proves nothing');
+
+		return $seen;
 	}
 
 	/** A folder of its own for each call, since the accounts outlive a test. */

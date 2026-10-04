@@ -53,11 +53,13 @@ class ExpenseController extends OCSController {
 	 * @param string|null $category insurance, tax, toll, parking, fine, lease or other
 	 * @param int|null $vat_rate basis points; null is not stated, never zero
 	 * @param string|null $notes what it was
-	 * @return DataResponse<Http::STATUS_CREATED, NextFleetExpense, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
+	 * @param string|null $client_uuid a uuid of the client's for the new row: a retry under it answers that row
+	 * @return DataResponse<Http::STATUS_CREATED, NextFleetExpense, array{}>|DataResponse<Http::STATUS_OK, NextFleetExpense, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
 	 * @throws OCSForbiddenException the caller may not log on this vehicle
 	 * @throws OCSNotFoundException no such vehicle
 	 *
 	 * 201: the Expense
+	 * 200: the Expense an earlier create under the same `client_uuid` wrote
 	 * 400: a field is not what it holds; the message names it
 	 * 412: the vehicle changed meanwhile; send it again
 	 */
@@ -71,9 +73,10 @@ class ExpenseController extends OCSController {
 		mixed $category = null,
 		mixed $vat_rate = null,
 		mixed $notes = null,
+		mixed $client_uuid = null,
 	): DataResponse {
-		return $this->write(fn (): DataResponse => new DataResponse(
-			$this->service->record($this->userId(), $uuid, $this->request->getParams()),
+		return $this->write(fn (): DataResponse => $this->created(
+			fn (): array => $this->service->record($this->userId(), $uuid, $this->request->getParams()),
 			Http::STATUS_CREATED,
 		));
 	}
@@ -81,7 +84,7 @@ class ExpenseController extends OCSController {
 	/**
 	 * What an Expense form starts from
 	 *
-	 * The VAT rate on the day `at` falls on, or none for a category the jurisdiction charges no VAT
+	 * The VAT rate on the day `at` falls on, or 0 for a category the jurisdiction charges no VAT
 	 * on.
 	 *
 	 * @param string $uuid the vehicle's uuid

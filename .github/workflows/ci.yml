@@ -60,12 +60,20 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '20'
+          node-version: '24'
           cache: npm
 
       - run: npm ci
       - run: npm run lint
       - run: npm test
+
+      # The runner's clock is UTC, where a local date and a UTC date are one day. Behind UTC
+      # all year, a spec that mixes them fails here.
+      - name: npm test, in Los Angeles
+        env:
+          TZ: America/Los_Angeles
+        run: npm test
+
       - run: npm run build
 
       # @nextcloud/vite-config's polyfill chain carries seven low-severity advisories with
@@ -80,7 +88,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '20'
+          node-version: '24'
           cache: npm
 
       - run: npm ci
@@ -113,6 +121,118 @@ jobs:
 
       - run: npm run test:e2e
 
+  # The job above meets 31 and 34. A component the bundle needs that 32 or 33 lacks would reach
+  # users unseen, so weekly the two majors between load the app and take a vehicle and a reading.
+  e2e-weekly:
+    name: Playwright smoke, NC 32 and NC 33
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    # Three minutes of specs after a cold install; a stalled one should not hold the runner.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+
+      - name: Start both majors
+        run: docker compose -f .docker/weekly/compose.yml up -d --wait
+
+      - name: Enable the app on both majors
+        run: |
+          for service in app32 app33; do
+            docker compose -f .docker/weekly/compose.yml exec -T -u www-data "$service" php occ app:enable nextfleet
+            docker compose -f .docker/weekly/compose.yml exec -T -u www-data "$service" php occ app:disable firstrunwizard
+          done
+
+      - name: The gate and the M1 slice
+        env:
+          NEXTFLEET_URL_NC32: http://localhost:8032
+          NEXTFLEET_URL_NC33: http://localhost:8033
+        # The files first: `--project` takes every word after it as a project name.
+        run: npx playwright test tests/e2e/m0-gate.spec.js tests/e2e/m1-slice.spec.js --project nc32 --project nc33
+
+  # The one test of what users keep across a release. Run only at release time, a change that
+  # breaks it would be found then; weekly, it is found that week.
+  upgrade:
+    name: Upgrade check from ${{ matrix.base }}, ${{ matrix.db }}
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    # A run takes about ten minutes; a hung `occ upgrade` should not hold the runner for six hours.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        db: [mariadb, pgsql]
+        # The two versions a user may run from source: 0.2.0 and 0.3.0. Once a release is out,
+        # its tag replaces them.
+        base: [27142b4, a0ca1f0]
+    steps:
+      # The base version is a commit, and the script builds it in a worktree.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          cache: npm
+
+      - run: npm run package
+
+      - name: Install fresh and over the base version
+        env:
+          DB: ${{ matrix.db }}
+          BASE: ${{ matrix.base }}
+        run: npm run upgrade-check -- --db "$DB" build/artifacts/nextfleet-*.tar.gz "$BASE"
+
+  # Oracle needs oci8, which no official image carries, so it runs on its own stack
+  # (docs/development.md#oracle) and weekly only: the build fetches Oracle's client.
+  oracle:
+    name: NC 34 on Oracle
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    # A cold run builds, starts Oracle and runs the suite in about 15 minutes; a stalled start
+    # should not hold the runner for GitHub's six hours.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.1'
+          coverage: none
+
+      # The stack mounts the checkout as the app, vendor/ included.
+      - run: composer install --no-progress
+
+      - name: Start the stack
+        run: docker compose -f .docker/oracle/compose.yml up -d --build --wait
+
+      - name: Install Nextcloud on Oracle, enable the app, seed
+        run: |
+          docker compose -f .docker/oracle/compose.yml exec -T -u www-data app php occ maintenance:install --database=oci --database-host=oracle --database-name=FREEPDB1 \
+            --database-user=nextcloud --database-pass=nextcloud --admin-user=admin --admin-pass=admin
+          docker compose -f .docker/oracle/compose.yml exec -T -u www-data app php occ app:enable nextfleet
+          docker compose -f .docker/oracle/compose.yml exec -T -u www-data app php occ nextfleet:seed admin
+
+      # www-data cannot write to the runner's checkout, where the result cache would go.
+      - name: Test against the server
+        run: >-
+          docker compose -f .docker/oracle/compose.yml exec -T -u www-data
+          -w /var/www/html/custom_apps/nextfleet app
+          php vendor/bin/phpunit -c phpunit.integration.xml --do-not-cache-result
+
+      - name: Container logs
+        if: failure()
+        run: docker compose -f .docker/oracle/compose.yml logs --no-color
+
   reuse:
     name: reuse lint
     runs-on: ubuntu-24.04
@@ -126,13 +246,15 @@ jobs:
     name: Pick the matrix
     runs-on: ubuntu-24.04
     env:
-      # Two on every pull request: the oldest combination is where breakage hides, so it
-      # belongs here rather than in a nightly nobody reads.
+      # The oldest combination is where breakage hides, so it belongs on every pull request
+      # rather than in a nightly nobody reads. SQLite is what a first try runs on, and it
+      # accepts the least.
       ON_PULL_REQUEST: >-
         [{"nextcloud": "stable31", "php": "8.1", "db": "mariadb"},
-         {"nextcloud": "stable34", "php": "8.5", "db": "mariadb"}]
+         {"nextcloud": "stable34", "php": "8.5", "db": "mariadb"},
+         {"nextcloud": "stable34", "php": "8.5", "db": "sqlite"}]
 
-      # Merging adds the two databases a pull request skips.
+      # Merging adds the database a pull request skips.
       ON_PUSH: >-
         [{"nextcloud": "stable31", "php": "8.1", "db": "mariadb"},
          {"nextcloud": "stable34", "php": "8.5", "db": "mariadb"},
@@ -256,6 +378,11 @@ jobs:
       - name: Enable the app
         run: php occ app:enable nextfleet
 
+      # docs/development.md#testing. Weekly only: the app store is a download.
+      - name: Install user_migration
+        if: github.event_name == 'schedule'
+        run: php occ app:install user_migration
+
       - name: Test
         working-directory: apps/nextfleet
         run: composer run test
@@ -268,9 +395,12 @@ jobs:
           NEXTCLOUD_ROOT: ${{ github.workspace }}
         run: composer run test:integration
 
-      # The API suite is a client, and a checkout is no web server. PHP's own is enough for one
-      # client calling in turn; it lives until the job ends. status.php answers once it listens.
+      # The API suite is a client, and a checkout is no web server. PHP's own is enough; it lives
+      # until the job ends. status.php answers once it listens. One worker serves one request at a
+      # time, and the race the suite sends would then never meet, so it gets four.
       - name: Serve Nextcloud
+        env:
+          PHP_CLI_SERVER_WORKERS: 4
         run: |
           php -S localhost:8080 > "$RUNNER_TEMP/php-server.log" 2>&1 &
           timeout 30 sh -c 'until curl -fsS http://localhost:8080/status.php > /dev/null; do sleep 1; done'

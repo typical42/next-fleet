@@ -74,7 +74,8 @@ class Gaps {
 	/**
 	 * What the claim is measured against, among the first `$count` Readings: the newest a trip wrote,
 	 * or with none the newest of all. Never the trip's own - it sits at its end, which is among them
-	 * only when the journey ended the moment it began.
+	 * only when the journey ended the moment it began. Never one from before an answered reset:
+	 * the claim is on the new counter (rule 3), so the reset is the oldest base there is.
 	 *
 	 * @param list<OdoReading> $readings
 	 * @return ?int its index
@@ -86,6 +87,9 @@ class Gaps {
 				$newest ??= $index;
 			} elseif (!self::wroteIt($readings[$index], $tripId)) {
 				return $index;
+			}
+			if ($readings[$index]->getKind() === OdoReading::RESET) {
+				return $newest;
 			}
 		}
 

@@ -16,8 +16,6 @@ use OCA\NextFleet\Db\ReminderMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
-use OCP\AppFramework\Db\TTransactional;
-use OCP\IDBConnection;
 
 /**
  * Everything a Maintenance Record is written under. Its counters follow the fill-up's rules
@@ -26,8 +24,6 @@ use OCP\IDBConnection;
  * @psalm-import-type NextFleetMaintenance from \OCA\NextFleet\ResponseDefinitions
  */
 class MaintenanceService {
-	use TTransactional;
-
 	/** The kinds of work a record can be (CONTEXT.md). "service" is one of them, never the class. */
 	public const TYPES = ['service', 'repair', 'inspection', 'tyres', 'upgrade'];
 
@@ -38,14 +34,14 @@ class MaintenanceService {
 	 * @var array<string, array{string, string, int|list<string>|null}>
 	 */
 	private const WRITABLE = [
-		'done_at' => ['setDoneAt', 'count', null],
+		'done_at' => ['setDoneAt', 'count', Field::MOMENT],
 		'done_at_off' => ['setDoneAtOff', 'offset', null],
 		'type' => ['setType', 'word', self::TYPES],
 		'title' => ['setTitle', 'text', 255],
 		'vendor' => ['setVendor', 'text', 255],
-		'cost' => ['setCost', 'count', null],
-		'vat_rate' => ['setVatRate', 'count', null],
-		'notes' => ['setNotes', 'text', null],
+		'cost' => ['setCost', 'count', Field::MONEY],
+		'vat_rate' => ['setVatRate', 'count', Field::RATE],
+		'notes' => ['setNotes', 'text', Field::TEXT],
 	];
 
 	/**
@@ -65,7 +61,7 @@ class MaintenanceService {
 		private Jurisdictions $jurisdictions,
 		private ReminderService $reminders,
 		private ReminderMapper $reminderRows,
-		private IDBConnection $db,
+		private AfterCommit $after,
 	) {
 	}
 
@@ -81,13 +77,21 @@ class MaintenanceService {
 	 */
 	public function record(string $userId, string $vehicleUuid, array $fields): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
+		$once = Once::of(
+			$fields,
+			$this->records,
+			static fn (Maintenance $row): bool => $row->getVehicleId() === (int)$vehicle->getId(),
+			fn (Maintenance $row): array => self::wire($row, $this->closed($row)),
+		);
 
-		// Retried for the reason TripService::record() gives. The replay builds a fresh row.
-		return $this->atomicRetry(function () use ($userId, $vehicle, $fields): array {
+		// Retried for the reason TripService::record() gives. The replay builds a fresh row. Run
+		// through AfterCommit, so closing a reminder takes back its notice only once committed.
+		return $once->run(fn (): array => $this->after->run(function () use ($userId, $vehicle, $fields, $once): array {
 			$this->vehicles->hold((int)$vehicle->getId());
+			$once->check();
 
-			return $this->add($vehicle, $userId, $fields);
-		}, $this->db);
+			return $this->add($vehicle, $userId, $fields, $once);
+		}));
 	}
 
 	/**
@@ -95,19 +99,21 @@ class MaintenanceService {
 	 * EnergyService::add() is.
 	 *
 	 * @param array<string, mixed> $fields
+	 * @param Once<Maintenance>|null $once the client's uuid for the row, if it sent one
 	 * @return NextFleetMaintenance the row as written, in its wire form
 	 * @throws \InvalidArgumentException if a field is not what its column holds
 	 * @throws \OCP\DB\Exception
 	 */
-	public function add(Vehicle $vehicle, string $userId, array $fields): array {
+	public function add(Vehicle $vehicle, string $userId, array $fields, ?Once $once = null): array {
 		$record = new Maintenance();
+		$once?->stamp($record);
 		$record->setVehicleId((int)$vehicle->getId());
 		$record->setCreatedBy($userId);
 		$this->apply($vehicle, $record, $fields);
 		$closes = $this->reminders->closable((int)$vehicle->getId(), $fields['closes'] ?? null, null);
 		$record->setReminderId($closes?->getId());
 		$written = $this->records->insert($record);
-		$this->follow($vehicle, $userId, $written);
+		$this->follow($vehicle, $userId, $written, true);
 		if ($closes !== null) {
 			$this->reminders->closeBy($closes, $written);
 		}
@@ -131,7 +137,7 @@ class MaintenanceService {
 	public function update(string $userId, string $vehicleUuid, string $recordUuid, int $expectedUpdatedAt, array $fields): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
-		return $this->atomicRetry(function () use ($userId, $vehicle, $recordUuid, $expectedUpdatedAt, $fields): array {
+		return $this->after->run(function () use ($userId, $vehicle, $recordUuid, $expectedUpdatedAt, $fields): array {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$record = $this->records->findOnVehicle((int)$vehicle->getId(), $recordUuid);
 			$this->fleet->change($userId, VehicleAccess::EDIT, $vehicle, $record->getCreatedBy());
@@ -154,7 +160,7 @@ class MaintenanceService {
 			}
 
 			return self::wire($edited, $closes);
-		}, $this->db);
+		});
 	}
 
 	/**
@@ -169,13 +175,13 @@ class MaintenanceService {
 	public function delete(string $userId, string $vehicleUuid, string $recordUuid, int $expectedUpdatedAt): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
-		return $this->atomicRetry(function () use ($userId, $vehicle, $recordUuid, $expectedUpdatedAt): array {
+		return $this->after->run(function () use ($userId, $vehicle, $recordUuid, $expectedUpdatedAt): array {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$record = $this->records->findOnVehicle((int)$vehicle->getId(), $recordUuid);
 			$this->fleet->change($userId, VehicleAccess::DELETE, $vehicle, $record->getCreatedBy());
 
 			return $this->remove($vehicle, $userId, $record, $expectedUpdatedAt);
-		}, $this->db);
+		});
 	}
 
 	/**
@@ -209,7 +215,7 @@ class MaintenanceService {
 	public function restore(string $userId, string $vehicleUuid, string $recordUuid, int $expectedUpdatedAt): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
-		return $this->atomicRetry(function () use ($userId, $vehicle, $recordUuid, $expectedUpdatedAt): array {
+		return $this->after->run(function () use ($userId, $vehicle, $recordUuid, $expectedUpdatedAt): array {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$record = $this->records->findAnyOnVehicle((int)$vehicle->getId(), $recordUuid);
 			$this->fleet->change($userId, VehicleAccess::DELETE, $vehicle, $record->getCreatedBy());
@@ -225,7 +231,7 @@ class MaintenanceService {
 			}
 
 			return self::wire($back, $closes);
-		}, $this->db);
+		});
 	}
 
 	/**
@@ -253,7 +259,7 @@ class MaintenanceService {
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException
 	 * @throws \OCP\DB\Exception
 	 */
-	private function follow(Vehicle $vehicle, string $userId, Maintenance $record): void {
+	private function follow(Vehicle $vehicle, string $userId, Maintenance $record, bool $fresh = false): void {
 		$this->odometer->followEntry(
 			$vehicle,
 			$userId,
@@ -264,6 +270,7 @@ class MaintenanceService {
 			$record->getOdo(),
 			$record->getSecondOdo(),
 			$record->getDeletedAt() !== null,
+			$fresh,
 		);
 	}
 
@@ -281,7 +288,7 @@ class MaintenanceService {
 	 */
 	public function prefill(string $userId, string $vehicleUuid, array $fields): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
-		$at = Field::read('at', 'count', null, $fields['at'] ?? null);
+		$at = Field::read('at', 'count', Field::MOMENT, $fields['at'] ?? null);
 		$off = Field::read('off', 'offset', null, $fields['off'] ?? null);
 		if (!is_int($at) || !is_int($off)) {
 			throw new \InvalidArgumentException('at and off are the moment a prefill is for');

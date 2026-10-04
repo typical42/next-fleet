@@ -8,7 +8,6 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Integration;
 
-use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\Energy;
 use OCA\NextFleet\Db\EnergyMapper;
 use OCA\NextFleet\Db\Expense;
@@ -48,7 +47,7 @@ class CostMappersTest extends TestCase {
 
 	/** @template T of object @param class-string<T> $class @return T */
 	private function get(string $class): object {
-		return (new Application())->getContainer()->get($class);
+		return \OCP\Server::get($class);
 	}
 
 	public function testAFillUpRoundTrips(): void {

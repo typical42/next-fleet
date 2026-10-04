@@ -115,30 +115,26 @@ class CiWorkflowTest extends TestCase {
 	}
 
 	/**
-	 * Two: the oldest combination is where breakage hides, so it belongs on every pull
-	 * request rather than in a nightly nobody reads.
+	 * The oldest combination is where breakage hides, so it belongs on every pull request rather
+	 * than in a nightly nobody reads. SQLite too: it is the database a first try runs on, and it
+	 * is the one that accepts the least.
 	 */
-	public function testEveryPullRequestRunsTheOldestAndTheNewestCombination(): void {
+	public function testEveryPullRequestRunsTheOldestAndTheNewestCombinationAndSqlite(): void {
 		$this->assertSame(
 			[
 				['nextcloud' => 'stable31', 'php' => '8.1', 'db' => 'mariadb'],
 				['nextcloud' => 'stable34', 'php' => '8.5', 'db' => 'mariadb'],
+				['nextcloud' => 'stable34', 'php' => '8.5', 'db' => 'sqlite'],
 			],
 			$this->combinations('pull_request'),
 		);
 	}
 
-	/** "Merge to main: add PostgreSQL and SQLite, on NC 34." */
-	public function testMergingToMainAddsPostgresqlAndSqliteOnNextcloud34(): void {
+	/** "Merge to main: add PostgreSQL, on NC 34." */
+	public function testMergingToMainAddsPostgresqlOnNextcloud34(): void {
 		$added = $this->added($this->combinations('pull_request'), $this->combinations('push'));
 
-		$this->assertSame(
-			[
-				['nextcloud' => 'stable34', 'php' => '8.5', 'db' => 'pgsql'],
-				['nextcloud' => 'stable34', 'php' => '8.5', 'db' => 'sqlite'],
-			],
-			$added,
-		);
+		$this->assertSame([['nextcloud' => 'stable34', 'php' => '8.5', 'db' => 'pgsql']], $added);
 	}
 
 	/**
@@ -208,6 +204,33 @@ class CiWorkflowTest extends TestCase {
 	}
 
 	/**
+	 * The API suite sends two requests at once (ClientTest's race). PHP's server takes one at a
+	 * time unless told to fork workers, and then the two would simply queue.
+	 */
+	public function testTheServerServesMoreThanOneRequestAtOnce(): void {
+		$serving = array_values(array_filter(
+			(array)$this->job('server')['steps'],
+			static fn (mixed $step): bool => str_contains((string)(((array)$step)['run'] ?? ''), 'php -S'),
+		));
+		$this->assertCount(1, $serving, 'the server job starts no web server');
+
+		$this->assertGreaterThanOrEqual(2, (int)(((array)($serving[0]['env'] ?? []))['PHP_CLI_SERVER_WORKERS'] ?? 1));
+	}
+
+	/** UserMigrationTest skips without user_migration, so somewhere it must not: weekly. */
+	public function testTheWeeklyServerJobInstallsUserMigrationBeforeTheIntegrationSuite(): void {
+		$installs = array_values(array_filter(
+			(array)$this->job('server')['steps'],
+			static fn (mixed $step): bool => str_contains((string)(((array)$step)['run'] ?? ''), 'php occ app:install user_migration'),
+		));
+		$this->assertCount(1, $installs, 'the server job never installs user_migration');
+		$this->assertSame("github.event_name == 'schedule'", $installs[0]['if'] ?? null);
+
+		$script = $this->script('server');
+		$this->assertLessThan(strpos($script, 'composer run test:integration'), strpos($script, 'php occ app:install user_migration'));
+	}
+
+	/**
 	 * openapi.json is the contract a client is built against (docs/api.md). Generated from the
 	 * code, it drifts the moment somebody forgets to regenerate it, so CI regenerates it and fails
 	 * on any difference from the committed one.
@@ -220,6 +243,96 @@ class CiWorkflowTest extends TestCase {
 		$compare = strpos($script, 'git diff --exit-code -- openapi.json');
 		$this->assertIsInt($compare, 'the static job does not compare openapi.json');
 		$this->assertLessThan($compare, $generate);
+	}
+
+	/**
+	 * Oracle is supported in code and measured weekly, on the stack docs/development.md#oracle
+	 * describes: only there does the oci8 image install, migrate, seed and run the integration
+	 * suite. Weekly only - the image build fetches Oracle's client and takes minutes.
+	 */
+	public function testOracleRunsWeeklyThroughTheIntegrationSuite(): void {
+		$this->assertSame("github.event_name == 'schedule'", $this->job('oracle')['if'] ?? null);
+		$script = $this->script('oracle');
+
+		$steps = [
+			'docker compose -f .docker/oracle/compose.yml up -d --build --wait',
+			'--database=oci',
+			'php occ app:enable nextfleet',
+			'php occ nextfleet:seed admin',
+			'php vendor/bin/phpunit -c phpunit.integration.xml',
+		];
+		$at = -1;
+		foreach ($steps as $step) {
+			$found = strpos($script, $step);
+			$this->assertIsInt($found, "the oracle job never runs '$step'");
+			$this->assertGreaterThan($at, $found, "'$step' runs out of order");
+			$at = $found;
+		}
+	}
+
+	/**
+	 * The E2E job meets 31 and 34 only, so a component the bundle needs that 32 or 33 lacks would
+	 * reach users unseen. Weekly, a smoke run there: the app loads, and a vehicle and a reading go
+	 * in through the screen, on the stack docs/development.md#testing describes.
+	 */
+	public function testTheWeeklyRunSmokesTheEndToEndOnNextcloud32And33(): void {
+		$job = $this->job('e2e-weekly');
+		$this->assertSame("github.event_name == 'schedule'", $job['if'] ?? null);
+		$script = $this->script('e2e-weekly');
+
+		$steps = [
+			'npm run build',
+			'docker compose -f .docker/weekly/compose.yml up -d --wait',
+			'php occ app:enable nextfleet',
+			'npx playwright test tests/e2e/m0-gate.spec.js tests/e2e/m1-slice.spec.js --project nc32 --project nc33',
+		];
+		$at = -1;
+		foreach ($steps as $step) {
+			$found = strpos($script, $step);
+			$this->assertIsInt($found, "the weekly E2E job never runs '$step'");
+			$this->assertGreaterThan($at, $found, "'$step' runs out of order");
+			$at = $found;
+		}
+		$this->assertStringContainsString('for service in app32 app33', $script, 'the app is not enabled on both majors');
+	}
+
+	/**
+	 * The upgrade check is the one test of what users keep across a release. Run only by hand at
+	 * release time, a change that breaks it would be found then; weekly, it is found that week, on
+	 * both databases the script knows.
+	 */
+	public function testTheWeeklyRunChecksTheUpgradeOnMariadbAndPostgresql(): void {
+		$job = $this->job('upgrade');
+		$this->assertSame("github.event_name == 'schedule'", $job['if'] ?? null);
+		$this->assertSame(['mariadb', 'pgsql'], $job['strategy']['matrix']['db'] ?? null);
+		// 0.2.0 and 0.3.0, the two a user may run from source (CHANGELOG, "For apps, scripts and admins").
+		$this->assertSame(['27142b4', 'a0ca1f0'], $job['strategy']['matrix']['base'] ?? null);
+
+		$checkout = $job['steps'][0] ?? [];
+		$this->assertStringStartsWith('actions/checkout@', (string)($checkout['uses'] ?? ''));
+		$this->assertSame(0, $checkout['with']['fetch-depth'] ?? null, 'the base commit is not in a shallow clone');
+
+		$script = $this->script('upgrade');
+		$package = strpos($script, 'npm run package');
+		$check = strpos($script, 'npm run upgrade-check -- --db "$DB" build/artifacts/nextfleet-*.tar.gz "$BASE"');
+		$this->assertIsInt($package, 'the upgrade job builds no package');
+		$this->assertIsInt($check, 'the upgrade job never runs the check on the matrix database');
+		$this->assertLessThan($check, $package);
+	}
+
+	/**
+	 * A runner's clock is UTC, where a local date and a UTC date are the same day, so a spec that
+	 * mixes them passes there. Los Angeles is behind UTC all year, so a run there shows the mix.
+	 */
+	public function testTheFrontendJobAlsoRunsVitestBehindUtc(): void {
+		$zones = [];
+		foreach ((array)$this->job('frontend')['steps'] as $step) {
+			if (($step['run'] ?? null) === 'npm test') {
+				$zones[] = $step['env']['TZ'] ?? 'the runner\'s';
+			}
+		}
+
+		$this->assertSame(['the runner\'s', 'America/Los_Angeles'], $zones);
 	}
 
 	private function script(string $job): string {

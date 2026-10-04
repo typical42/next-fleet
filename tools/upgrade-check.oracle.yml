@@ -1,0 +1,26 @@
+# SPDX-FileCopyrightText: 2026 Johannes Kolb
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# Oracle under tools/upgrade-check.compose.yml, NC 34 alone (docs/development.md#release). The
+# image cannot install on Oracle by itself, so the script installs it.
+
+services:
+  db:
+    image: gvenzl/oracle-free:23-slim-faststart
+    environment:
+      ORACLE_PASSWORD: oracle
+      APP_USER: nextcloud
+      APP_USER_PASSWORD: nextcloud
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  app34:
+    build: ../.docker/oracle
+    image: nextfleet-oracle-app:34
+    # Not installed yet when it is up; the script installs it.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost/status.php"]

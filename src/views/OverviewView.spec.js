@@ -147,12 +147,12 @@ describe('the overview', () => {
 		vi.mocked(listFleetReminders).mockResolvedValue(/** @type {any} */ ([
 			{ uuid: 'r-1', vehicle: 'v-2', template_key: null, title: 'Insurance renewal', mode: 'date', due_date: '2026-09-01', due_odo: null, state: 'overdue', estimate: null },
 		]))
-		const wrapper = rows([{ ...VEHICLE, owned_by: null }, { ...VEHICLE, uuid: 'v-2', plate: 'M-AB 1', owned_by: 'Anna Adler' }])
+		const wrapper = rows([{ ...VEHICLE, owned_by: null }, { ...VEHICLE, uuid: 'v-2', plate: 'M-AB 1', owned_by: 'Anna O\'Brien' }])
 		await flushPromises()
 
 		const listed = wrapper.findAll('.overview__list li')
 		expect(listed.map((row) => row.find('b').text())).toEqual(['M-AB 1', 'B-XY 123'])
-		expect(listed[0].find('.overview__owner').text()).toBe('Owned by Anna Adler')
+		expect(listed[0].find('.overview__owner').text()).toBe('Owned by Anna O\'Brien')
 		expect(listed[1].find('.overview__owner').exists()).toBe(false)
 	})
 
@@ -160,7 +160,7 @@ describe('the overview', () => {
 	it('says who has a car that is out, and until when', async () => {
 		vi.setSystemTime(new Date('2026-10-02T12:00:00Z'))
 		const wrapper = rows([
-			{ ...VEHICLE, out_with: { user_id: 'anna', user_name: 'Anna Adler', ends_at: FRIDAY_SIX_PM, ends_at_off: 120 } },
+			{ ...VEHICLE, out_with: { user_id: 'anna', user_name: 'Anna O\'Brien', ends_at: FRIDAY_SIX_PM, ends_at_off: 120 } },
 			{ ...VEHICLE, uuid: 'v-2', plate: 'M-AB 1', out_with: { user_id: 'me', user_name: 'Me', ends_at: FRIDAY_SIX_PM, ends_at_off: 120 } },
 			{ ...VEHICLE, uuid: 'v-3', plate: 'M-AB 2', out_with: null },
 		])
@@ -168,7 +168,7 @@ describe('the overview', () => {
 
 		const holders = wrapper.findAll('.overview__list li').map((row) => row.find('.overview__holder'))
 		// The test run's locale is American English.
-		expect(holders[0].text()).toBe('With Anna Adler until Fri, 10/02, 06:00 PM')
+		expect(holders[0].text()).toBe('With Anna O\'Brien until Fri, 10/02, 06:00 PM')
 		expect(holders[1].text()).toBe('With you until Fri, 10/02, 06:00 PM')
 		expect(holders[2].exists()).toBe(false)
 	})
@@ -176,11 +176,11 @@ describe('the overview', () => {
 	/** Not given back by its end: the row says so in words, not by colour alone. */
 	it('says a car still out past its end is overdue', async () => {
 		vi.setSystemTime(new Date('2026-10-03T08:00:00Z'))
-		const wrapper = rows([{ ...VEHICLE, out_with: { user_id: 'anna', user_name: 'Anna Adler', ends_at: FRIDAY_SIX_PM, ends_at_off: 120 } }])
+		const wrapper = rows([{ ...VEHICLE, out_with: { user_id: 'anna', user_name: 'Anna O\'Brien', ends_at: FRIDAY_SIX_PM, ends_at_off: 120 } }])
 		await flushPromises()
 
 		const holder = wrapper.find('.overview__holder')
-		expect(holder.text()).toBe('With Anna Adler, overdue since Fri, 10/02, 06:00 PM')
+		expect(holder.text()).toBe('With Anna O\'Brien, overdue since Fri, 10/02, 06:00 PM')
 		expect(holder.classes()).toContain('overview__holder--overdue')
 	})
 

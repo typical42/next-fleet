@@ -1,11 +1,11 @@
 {
   "name": "nextfleet",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "license": "AGPL-3.0-or-later",
   "type": "module",
   "engines": {
-    "node": "^20.19.0 || >=22.12.0"
+    "node": "^22.22 || >=24"
   },
   "browserslist": [
     "extends @nextcloud/browserslist-config"
@@ -48,7 +48,7 @@
     "@nextcloud/stylelint-config": "^3.2.2",
     "@nextcloud/vite-config": "^2.5.4",
     "@playwright/test": "^1.63.0",
-    "@types/node": "^20.19.43",
+    "@types/node": "^22.20.5",
     "@vitejs/plugin-vue": "^6.0.8",
     "@vue/test-utils": "^2.5.0",
     "browserslist": "^4.24.0",

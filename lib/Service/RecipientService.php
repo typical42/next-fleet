@@ -8,10 +8,12 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Service;
 
+use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\ReminderRecipient;
 use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
+use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Db\TTransactional;
 use OCP\IDBConnection;
 use OCP\IUserManager;
@@ -31,6 +33,9 @@ class RecipientService {
 		private VehicleService $fleet,
 		private VehicleMapper $vehicles,
 		private IUserManager $users,
+		private Sharable $sharable,
+		private VehicleAccess $access,
+		private NotificationService $notifications,
 		private IDBConnection $db,
 	) {
 	}
@@ -48,23 +53,25 @@ class RecipientService {
 	/**
 	 * Puts one account on the list. Being on it grants nothing: the notification carries the
 	 * plate and the title, and Vehicle Access decides what its link opens. Adding somebody already
-	 * on it changes nothing.
+	 * on it changes nothing. The plate goes only to whom the caller may share with, as a grant
+	 * does, or to whoever sees the vehicle and knows it already - the caller included.
 	 *
 	 * @return list<NextFleetRecipient> the list as it now stands
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not edit this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
-	 * @throws \InvalidArgumentException if the instance has no such account
+	 * @throws \InvalidArgumentException if the instance has no such account, or none the caller may share with
 	 * @throws \OCP\DB\Exception
 	 */
 	public function add(string $userId, string $vehicleUuid, mixed $recipient): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
-		$account = is_string($recipient) ? $this->users->get($recipient) : null;
-		if ($account === null) {
-			throw new \InvalidArgumentException('user_id is not an account on this instance');
-		}
 		// The backend finds an account in any case; stored as sent, `Admin` beside `admin` would be
 		// one person told twice.
-		$recipient = $account->getUID();
+		$recipient = is_string($recipient) ? $this->users->get($recipient)?->getUID() : null;
+		// One answer for both, for the reason GrantService::grantee() gives.
+		if ($recipient === null || (!$this->sharable->reaches($userId, $recipient, Access::USER)
+			&& !$this->access->may($recipient, VehicleAccess::VIEW, $vehicle))) {
+			throw new \InvalidArgumentException('user_id is not an account on this instance');
+		}
 
 		// Retried for the reason TripService::record() gives.
 		$this->atomicRetry(function () use ($userId, $vehicle, $recipient): void {
@@ -73,6 +80,11 @@ class RecipientService {
 				if ($one->getUserId() === $recipient) {
 					return;
 				}
+			}
+			// Asked again under the hold: an account deleted since get() found it was erased off
+			// every list already, and this row would wait for whoever takes the uid next.
+			if (!$this->users->userExists($recipient)) {
+				throw new \InvalidArgumentException('user_id is not an account on this instance');
 			}
 
 			$row = new ReminderRecipient();
@@ -87,7 +99,8 @@ class RecipientService {
 
 	/**
 	 * Takes one account off the list, the owner's included; nothing keeps the list from ending up
-	 * empty, which sends nothing. Somebody not on it is already off it.
+	 * empty, which sends nothing. Somebody not on it is already off it. What they were sent goes
+	 * with them, after the commit, as the sweep sends.
 	 *
 	 * @return list<NextFleetRecipient> the list as it now stands
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not edit this vehicle
@@ -100,8 +113,51 @@ class RecipientService {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$this->recipients->deleteByUser((int)$vehicle->getId(), $recipient);
 		}, $this->db);
+		$this->notifications->withdrawFrom((int)$vehicle->getId(), $recipient);
 
 		return $this->of($vehicle);
+	}
+
+	/**
+	 * Takes off every list whoever add() would refuse there now: neither the owner may share with
+	 * them nor do they see the vehicle. Before 0.3.1 add() asked neither, so the plate may have
+	 * gone to people the admin's sharing settings keep apart; the upgrade from there runs this
+	 * once (lib/Repair/StrangerRecipients.php). Each vehicle under its hold, as remove() does.
+	 *
+	 * @return int how many entries went
+	 * @throws \OCP\DB\Exception
+	 */
+	public function dropStrangers(): int {
+		$dropped = 0;
+		foreach ($this->recipients->findVehicleIds() as $vehicleId) {
+			/** @var list<string> $gone */
+			$gone = $this->atomicRetry(function () use ($vehicleId): array {
+				$this->vehicles->hold($vehicleId);
+				try {
+					$vehicle = $this->vehicles->findAnyById($vehicleId);
+				} catch (DoesNotExistException) {
+					// No vehicle is ever deleted for good; an orphan must not fail the upgrade.
+					return [];
+				}
+				$gone = [];
+				foreach ($this->recipients->findByVehicle($vehicleId) as $recipient) {
+					$uid = $recipient->getUserId();
+					if (!$this->sharable->reaches($vehicle->getUserId(), $uid, Access::USER)
+						&& !$this->access->may($uid, VehicleAccess::VIEW, $vehicle)) {
+						$this->recipients->deleteByUser($vehicleId, $uid);
+						$gone[] = $uid;
+					}
+				}
+
+				return $gone;
+			}, $this->db);
+			foreach ($gone as $uid) {
+				$this->notifications->withdrawFrom($vehicleId, $uid);
+			}
+			$dropped += count($gone);
+		}
+
+		return $dropped;
 	}
 
 	/**

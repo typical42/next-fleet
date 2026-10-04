@@ -3,7 +3,6 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
-import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcDialog from '@nextcloud/vue/components/NcDialog'
 import NcEmptyContent from '@nextcloud/vue/components/NcEmptyContent'
@@ -11,12 +10,14 @@ import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import NcRadioGroup from '@nextcloud/vue/components/NcRadioGroup'
 import NcRadioGroupButton from '@nextcloud/vue/components/NcRadioGroupButton'
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 
-import { closeGap, ConflictError, readGaps, readTimeline } from '../services/api.js'
+import { closeGap, ConflictError, readGaps, readTimeline, RefusedError, resetReading } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
+import { may } from '../utils/access.js'
 import { formatCount, formatMonth, fullMoment, monthKey } from '../utils/format.js'
 import TimelineRow from './TimelineRow.vue'
+import { t } from '../utils/l10n.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -30,15 +31,32 @@ const props = defineProps({
 })
 
 // A tapped row, for the screen to open the sheet on (src/views/VehicleView.vue).
-defineEmits(['open'])
+defineEmits(['open', 'new', 'import'])
 
 const store = useVehiclesStore()
 
 /** The chip. The empty one is every kind, which is the absent parameter (src/services/api.js). */
 const chip = ref('')
 
-/** @type {import('vue').Ref<import('../services/api.js').Entry[]>} */
-const rows = ref([])
+/**
+ * How many pages are on screen at most. Years of entries scrolled through would otherwise put
+ * thousands of rows in the page; the ones above go as the next come, and stay in hand to come
+ * back. What is shown keeps its reading order, so a keyboard walks it as before.
+ */
+const WINDOW = 4
+
+/**
+ * Every page read so far, in order, each row marked raw: a row is replaced, never changed in
+ * place, so Vue need not watch every field of thousands.
+ *
+ * @type {import('vue').ShallowRef<import('../services/api.js').Entry[][]>}
+ */
+const pages = shallowRef([])
+/** The first page on screen. */
+const first = ref(0)
+const rows = computed(() => pages.value.slice(first.value, first.value + WINDOW).flat())
+/** Pages already read below the ones on screen, which the way down shows before reading more. */
+const below = computed(() => first.value + WINDOW < pages.value.length)
 /** Where the next page starts, or null when the page in hand is the last one. */
 const next = ref(null)
 const loading = ref(false)
@@ -59,8 +77,9 @@ const chips = computed(() => [
 	{ value: 'odometer', label: t('nextfleet', 'Odometer') },
 	{ value: 'energy', label: t('nextfleet', 'Energy') },
 	{ value: 'maintenance', label: t('nextfleet', 'Maintenance') },
-	// Energy and maintenance cost money too, but have chips of their own; this one is the rest.
-	{ value: 'expense', label: t('nextfleet', 'Costs') },
+	// Energy and maintenance cost money too, but have chips of their own; this one is the rest. Not
+	// "Costs": that is the header's button, which opens the whole bill.
+	{ value: 'expense', label: t('nextfleet', 'Expenses') },
 ])
 
 /**
@@ -141,19 +160,69 @@ const question = computed(() => {
 	}
 
 	return t('nextfleet', 'Record {distance} driven between {from} and {to} as one private trip?', {
-		distance: { value: `${formatCount(gap.distance)} ${props.vehicle.odo_unit}`, escape: false },
-		from: { value: fullMoment(gap.from_at, gap.from_at_off), escape: false },
-		to: { value: fullMoment(gap.to_at, gap.to_at_off), escape: false },
+		distance: `${formatCount(gap.distance)} ${props.vehicle.odo_unit}`,
+		from: fullMoment(gap.from_at, gap.from_at_off),
+		to: fullMoment(gap.to_at, gap.to_at_off),
 	})
 })
 
-/** The bottom of the list, and what "more on scroll" watches for. */
-const sentinel = ref(null)
-/** @type {IntersectionObserver|null} */
-let observer = null
+/**
+ * An element whose coming into view asks `onSeen`: the ends of the list. It comes and goes with
+ * the pages, so the observer follows it rather than being set up once. A browser without one still
+ * has the button inside it.
+ *
+ * @param {() => void} onSeen - what its coming into view asks for
+ * @return {{element: import('vue').Ref<HTMLElement|null>, again: () => void}} the element's ref,
+ *     and a way to ask the question again
+ */
+function sentinelOf(onSeen) {
+	const element = ref(null)
+	/** @type {IntersectionObserver|null} */
+	let observer = null
+
+	watch(element, (now) => {
+		observer?.disconnect()
+		observer = null
+		if (now === null || typeof IntersectionObserver === 'undefined') {
+			return
+		}
+
+		observer = new IntersectionObserver((entries) => {
+			if (entries.some((entry) => entry.isIntersecting)) {
+				onSeen()
+			}
+		})
+		observer.observe(now)
+	})
+	onBeforeUnmount(() => observer?.disconnect())
+
+	return {
+		element,
+		// An element that never leaves the viewport fires no second intersection, so a page that
+		// did not fill the screen would leave the rest of the list unreachable. Asking the observer
+		// the question again is what unsticks it.
+		again() {
+			if (element.value !== null && observer !== null) {
+				observer.unobserve(element.value)
+				observer.observe(element.value)
+			}
+		},
+	}
+}
+
+// A refused page stops the scrolling from asking the server again: it would ask on every pixel and
+// get the same answer. The button inside the sentinel is what still asks, which is why the retry
+// does not go through here. Pages already read below are no question to the server.
+const end = sentinelOf(() => (below.value || failure.value === '') && more())
+const start = sentinelOf(() => newer())
+// What the template's refs bind to.
+const sentinel = end.element
+const topSentinel = start.element
+
+/** The section, whose rows keep the reader's place while the window moves (shift()). */
+const root = ref(null)
 
 onMounted(reload)
-onBeforeUnmount(() => observer?.disconnect())
 
 // A chip is a different question and is asked from the top: a cursor the previous chip handed out
 // names a place in an order the narrower list does not have (docs/architecture.md#the-timeline).
@@ -170,26 +239,6 @@ watch([chip, () => props.vehicle.uuid, () => props.vehicle.logbook_mode === true
 // list; the Entry it brought back is a row this one lacks.
 watch(() => store.restored, reload)
 
-// The sentinel comes and goes with the next page, so the observer follows it rather than being set
-// up once. A browser without one still has the button inside it.
-watch(sentinel, (element) => {
-	observer?.disconnect()
-	observer = null
-	if (element === null || typeof IntersectionObserver === 'undefined') {
-		return
-	}
-
-	observer = new IntersectionObserver((entries) => {
-		// A refused page stops the scrolling from asking again: it would ask on every pixel and get
-		// the same answer. The button inside the sentinel is what still asks, which is why the
-		// retry does not go through here.
-		if (entries.some((entry) => entry.isIntersecting) && failure.value === '') {
-			more()
-		}
-	})
-	observer.observe(element)
-})
-
 /**
  * Which list is being read, bumped by every question that replaces it - another chip, another
  * vehicle, a write to read back. A page in the air when one of those lands is an answer to a
@@ -205,7 +254,8 @@ let asked = 0
  */
 async function reload() {
 	asked += 1
-	rows.value = []
+	pages.value = []
+	first.value = 0
 	next.value = null
 	unread.value = true
 	gaps.value = null
@@ -214,25 +264,69 @@ async function reload() {
 }
 
 /**
- * The next page, from where the last one stopped. Both ways on lead here: the bottom of the list
- * coming into view, and the button sitting in it.
+ * The next page, from where the last one stopped: one already read if the window is above it, else
+ * the server's. Both ways on lead here: the bottom of the list coming into view, and the button
+ * sitting in it.
  *
  * @return {Promise<void>} when it is in
  */
 async function more() {
-	// One page at a time. A second request while the first is in the air would ask from the cursor
-	// the first has not answered with yet, and land the same rows twice.
-	if (!loading.value) {
+	if (below.value) {
+		await shift(1)
+	} else if (!loading.value) {
+		// One page at a time. A second request while the first is in the air would ask from the
+		// cursor the first has not answered with yet, and land the same rows twice.
 		await page(asked)
 	}
+	end.again()
+}
 
-	// An element that never leaves the viewport fires no second intersection, so a page that did
-	// not fill the screen would leave the rest of the list unreachable. Asking the observer the
-	// question again is what unsticks it.
-	if (sentinel.value !== null && observer !== null) {
-		observer.unobserve(sentinel.value)
-		observer.observe(sentinel.value)
+/**
+ * The page above the window back on screen, from what was read: the server is not asked twice.
+ *
+ * @return {Promise<void>} when it is shown
+ */
+async function newer() {
+	if (first.value > 0) {
+		await shift(-1)
 	}
+	start.again()
+}
+
+/**
+ * Moves the window by one page and keeps the reader's place: the first row of a page on screen
+ * before and after stays where it was on screen. Browsers that anchor scrolling do this
+ * themselves, and then nothing moves here; the rest would jump by a page of rows.
+ *
+ * @param {1|-1} by - down or up
+ * @return {Promise<void>} when it has moved
+ */
+async function shift(by) {
+	const kept = by > 0 ? pages.value[first.value].length : 0
+	/** @type {HTMLElement|undefined} */
+	const anchor = root.value?.querySelectorAll('.timeline__rows > li')[kept]
+	const before = anchor?.getBoundingClientRect().top ?? 0
+	first.value += by
+	await nextTick()
+	const moved = anchor?.isConnected ? anchor.getBoundingClientRect().top - before : 0
+	if (moved !== 0) {
+		scrollerOf(anchor).scrollBy(0, moved)
+	}
+}
+
+/**
+ * @param {HTMLElement} element - an element in the list
+ * @return {Element} what scrolls it: the app content in Nextcloud, the document elsewhere
+ */
+function scrollerOf(element) {
+	for (let node = element.parentElement; node !== null; node = node.parentElement) {
+		const overflow = getComputedStyle(node).overflowY
+		if ((overflow === 'auto' || overflow === 'scroll') && node.scrollHeight > node.clientHeight) {
+			return node
+		}
+	}
+
+	return document.scrollingElement ?? document.documentElement
 }
 
 /**
@@ -257,9 +351,14 @@ async function page(question) {
 			return
 		}
 
-		rows.value = [...rows.value, ...answered.rows]
+		// A reader who went back up while the page was on its way stays there; it waits below.
+		const atEnd = !below.value
+		pages.value = [...pages.value, answered.rows.map((row) => markRaw(row))]
 		next.value = answered.next
 		gaps.value = found
+		if (atEnd && below.value) {
+			await shift(1)
+		}
 	} catch (error) {
 		if (question === asked) {
 			failure.value = error.message
@@ -318,11 +417,57 @@ async function confirm() {
 	}
 }
 
+/** Why the last answer offered on a row - a void, a counter replaced - did not go through. */
+const rowFailure = ref('')
+
+/**
+ * Voids a Reconciliation Trip a later trip overtook, from the row that says so, and holds the way
+ * back as the sheet's void does (store.strike()). Read again either way: the row it voided goes,
+ * or the one that moved is shown as it is now.
+ *
+ * @param {import('../services/api.js').Entry} entry - the row
+ * @return {Promise<void>} when it is voided and the list read again, or the refusal is on screen
+ */
+async function strike(entry) {
+	rowFailure.value = ''
+	try {
+		await store.strike(props.vehicle.uuid, 'trip', entry.trip)
+	} catch (error) {
+		rowFailure.value = error instanceof ConflictError
+			? t('nextfleet', 'This trip has changed since it was read. The timeline shows it as it is now.')
+			: error.message
+	}
+	await reload()
+}
+
+/**
+ * Answers a Reading in question with "the counter was replaced" (docs/architecture.md#odometer-rules,
+ * rule 3). Read again either way: the answer moves the flags, the Gaps and the distances around it.
+ *
+ * @param {import('../services/api.js').Reading} reading - the Reading the row asked about
+ * @return {Promise<void>} when it is answered and the list read again, or the refusal is on screen
+ */
+async function answerReplaced(reading) {
+	rowFailure.value = ''
+	try {
+		await resetReading(props.vehicle.uuid, reading)
+	} catch (error) {
+		if (error instanceof ConflictError) {
+			rowFailure.value = t('nextfleet', 'This reading has changed since it was read. The timeline shows it as it is now.')
+		} else if (error instanceof RefusedError && error.reason === 'not_in_question') {
+			rowFailure.value = t('nextfleet', 'This reading is no longer in question. The timeline shows it as it is now.')
+		} else {
+			rowFailure.value = error.message
+		}
+	}
+	await reload()
+}
+
 defineExpose({ reload })
 </script>
 
 <template>
-	<section class="timeline">
+	<section ref="root" class="timeline">
 		<div class="timeline__head">
 			<h3>{{ t('nextfleet', 'Timeline') }}</h3>
 			<!-- The chips are one choice out of six, which is what a radio group is - and it is the
@@ -335,18 +480,36 @@ defineExpose({ reload })
 			</NcRadioGroup>
 		</div>
 
+		<NcNoteCard v-if="rowFailure" type="error" :text="rowFailure" />
+
 		<NcEmptyContent v-if="groups.length === 0 && !unread && failure === ''"
 			:name="t('nextfleet', 'Nothing recorded yet')"
-			:description="t('nextfleet', 'What happens to this vehicle is listed here, newest first.')" />
+			:description="t('nextfleet', 'What happens to this vehicle is listed here, newest first.')">
+			<!-- Empty states do the teaching (docs/ui.md): the two ways to a first row. The import is
+			     the edit sheet's, so it asks what that sheet asks. -->
+			<template #action>
+				<NcButton v-if="may(vehicle, 'log')" variant="primary" @click="$emit('new')">
+					{{ t('nextfleet', 'New entry') }}
+				</NcButton>
+				<NcButton v-if="may(vehicle, 'edit') && vehicle.lifecycle !== 'disposed'" @click="$emit('import')">
+					{{ t('nextfleet', 'Import from a file…') }}
+				</NcButton>
+			</template>
+		</NcEmptyContent>
+
+		<div v-if="first > 0" ref="topSentinel" class="timeline__more">
+			<NcButton @click="newer">
+				{{ t('nextfleet', 'Show newer entries') }}
+			</NcButton>
+		</div>
 
 		<div v-for="group in groups" :key="group.key" class="timeline__group">
 			<!-- Sticky, so the month a row belongs to is on screen however far down the list somebody
 			     has scrolled (docs/ui.md). -->
 			<h4 class="timeline__month">
 				{{ group.month }}
-				<!-- The figure is ours, and Vue escapes what it interpolates. -->
 				<span v-if="group.gap" class="timeline__gap">
-					{{ t('nextfleet', '{distance} unaccounted', { distance: { value: group.gap, escape: false } }) }}
+					{{ t('nextfleet', '{distance} unaccounted for', { distance: group.gap }) }}
 				</span>
 			</h4>
 			<ul class="timeline__rows">
@@ -357,14 +520,17 @@ defineExpose({ reload })
 					:gap="entry.trip === undefined ? null : gapOf.get(entry.trip.uuid) ?? null"
 					:papers="papersOf.get(entryKey(entry.type, entry[entry.type].uuid)) ?? []"
 					@close-gap="ask"
-					@open="$emit('open', $event)" />
+					@open="$emit('open', $event)"
+					@reset="answerReplaced"
+					@void="strike" />
 			</ul>
 		</div>
 
-		<div v-if="next !== null || failure !== ''" ref="sentinel" class="timeline__more">
-			<NcNoteCard v-if="failure" type="error" :text="failure" />
-			<NcButton :disabled="loading" @click="more">
-				{{ failure ? t('nextfleet', 'Try again') : t('nextfleet', 'Load more') }}
+		<div v-if="next !== null || below || failure !== ''" ref="sentinel" class="timeline__more">
+			<!-- The refusal is the next page's, so it shows where that page would come. -->
+			<NcNoteCard v-if="failure && !below" type="error" :text="failure" />
+			<NcButton :disabled="loading && !below" @click="more">
+				{{ failure && !below ? t('nextfleet', 'Try again') : t('nextfleet', 'Load more') }}
 			</NcButton>
 		</div>
 		<NcLoadingIcon v-else-if="loading" class="timeline__waiting" />

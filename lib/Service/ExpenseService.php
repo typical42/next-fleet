@@ -34,12 +34,12 @@ class ExpenseService {
 	 * @var array<string, array{string, string, int|list<string>|null}>
 	 */
 	private const WRITABLE = [
-		'spent_at' => ['setSpentAt', 'count', null],
+		'spent_at' => ['setSpentAt', 'count', Field::MOMENT],
 		'spent_at_off' => ['setSpentAtOff', 'offset', null],
 		'category' => ['setCategory', 'word', self::CATEGORIES],
-		'amount' => ['setAmount', 'count', null],
-		'vat_rate' => ['setVatRate', 'count', null],
-		'notes' => ['setNotes', 'text', null],
+		'amount' => ['setAmount', 'count', Field::MONEY],
+		'vat_rate' => ['setVatRate', 'count', Field::RATE],
+		'notes' => ['setNotes', 'text', Field::TEXT],
 	];
 
 	/**
@@ -69,15 +69,22 @@ class ExpenseService {
 	 */
 	public function record(string $userId, string $vehicleUuid, array $fields): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
+		$once = Once::of(
+			$fields,
+			$this->expenses,
+			static fn (Expense $row): bool => $row->getVehicleId() === (int)$vehicle->getId(),
+			static fn (Expense $row): array => $row->jsonSerialize(),
+		);
 
 		// Held though an Expense moves no counter, so every write on a vehicle queues behind the
 		// same row (docs/architecture.md#odometer-rules, rule 2). Retried for the reason
 		// TripService::record() gives. The replay builds a fresh row.
-		return $this->atomicRetry(function () use ($userId, $vehicle, $fields): array {
+		return $once->run(fn (): array => $this->atomicRetry(function () use ($userId, $vehicle, $fields, $once): array {
 			$this->vehicles->hold((int)$vehicle->getId());
+			$once->check();
 
-			return $this->add($vehicle, $userId, $fields);
-		}, $this->db);
+			return $this->add($vehicle, $userId, $fields, $once);
+		}, $this->db));
 	}
 
 	/**
@@ -85,12 +92,14 @@ class ExpenseService {
 	 * EnergyService::add() is.
 	 *
 	 * @param array<string, mixed> $fields
+	 * @param Once<Expense>|null $once the client's uuid for the row, if it sent one
 	 * @return NextFleetExpense the row as written, in its wire form
 	 * @throws \InvalidArgumentException if a field is not what its column holds
 	 * @throws \OCP\DB\Exception
 	 */
-	public function add(Vehicle $vehicle, string $userId, array $fields): array {
+	public function add(Vehicle $vehicle, string $userId, array $fields, ?Once $once = null): array {
 		$expense = new Expense();
+		$once?->stamp($expense);
 		$expense->setVehicleId((int)$vehicle->getId());
 		$expense->setCreatedBy($userId);
 		self::apply($expense, $fields);
@@ -193,8 +202,8 @@ class ExpenseService {
 
 	/**
 	 * What the sheet prefills an Expense with (docs/ui.md): the VAT rate of the vehicle's
-	 * jurisdiction on the day of the expense, or none for a category the jurisdiction charges no
-	 * VAT on.
+	 * jurisdiction on the day of the expense, or 0 for a category the jurisdiction charges no VAT
+	 * on - a stated rate, where null would leave the net figures counting it gross.
 	 *
 	 * @param array<string, mixed> $fields `at` and `off`: the moment the sheet is on; `category`
 	 *                                     when one is picked
@@ -206,7 +215,7 @@ class ExpenseService {
 	 */
 	public function prefill(string $userId, string $vehicleUuid, array $fields): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
-		$at = Field::read('at', 'count', null, $fields['at'] ?? null);
+		$at = Field::read('at', 'count', Field::MOMENT, $fields['at'] ?? null);
 		$off = Field::read('off', 'offset', null, $fields['off'] ?? null);
 		if (!is_int($at) || !is_int($off)) {
 			throw new \InvalidArgumentException('at and off are the moment a prefill is for');
@@ -214,6 +223,6 @@ class ExpenseService {
 		$category = Field::read('category', 'word', self::CATEGORIES, $fields['category'] ?? null);
 		$free = $this->jurisdictions->get($vehicle->getJurisdiction())->rates()?->vatFreeCategories() ?? [];
 
-		return ['vat_rate' => in_array($category, $free, true) ? null : $this->jurisdictions->vatRateAt($vehicle->getJurisdiction(), $at, $off)];
+		return ['vat_rate' => in_array($category, $free, true) ? 0 : $this->jurisdictions->vatRateAt($vehicle->getJurisdiction(), $at, $off)];
 	}
 }

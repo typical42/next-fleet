@@ -206,10 +206,42 @@ describe('the inbox sheet', () => {
 		expect(button(wrapper, 'New fill-up')).toBeDefined()
 	})
 
-	it('says so when no vehicle takes papers from the session', async () => {
+	/** The same search as the documents section (src/utils/owners.js): a receipt filed late belongs far back. */
+	it('searches the whole history for what it belongs to, once per vehicle', async () => {
+		const OLDER = { ...WORK, occurred_at: 1705316400, maintenance: { uuid: 'm-0', title: 'Timing belt' } }
+		vi.mocked(readTimeline).mockImplementation(async (uuid, { type, cursor }) => type !== 'maintenance' || uuid !== 'v-2'
+			? { rows: type === 'energy' && uuid === 'v-2' ? [FILL] : [], next: null }
+			: cursor === null ? { rows: [WORK], next: 'c-2' } : { rows: [OLDER], next: null })
+		const wrapper = await sheet({ preferred: 'v-2' })
+		vi.mocked(listBookings).mockClear()
+
+		await select(wrapper, 'Belongs to').vm.$emit('search', 'belt')
+		await select(wrapper, 'Belongs to').vm.$emit('search', 'timing belt')
+		await flushPromises()
+
+		expect(select(wrapper, 'Belongs to').props('options').map((/** @type {any} */ one) => one.id)).toEqual(['m-0'])
+		expect(listBookings).toHaveBeenCalledOnce()
+		expect(listBookings).toHaveBeenCalledWith('v-2', { from: 0 })
+
+		await select(wrapper, 'Belongs to').vm.$emit('search', '')
+		expect(select(wrapper, 'Belongs to').props('options').map((/** @type {any} */ one) => one.id)).toEqual(['b-1', 'e-1', 'm-1'])
+	})
+
+	/** Their own may lie further back than the newest pages, where only a search reaches. */
+	it('offers a driver with nothing of their own among the newest the search', async () => {
+		vi.mocked(readTimeline).mockResolvedValue({ rows: [], next: null })
+		vi.mocked(listBookings).mockResolvedValue([])
+
+		const wrapper = await sheet({ preferred: 'v-2' })
+
+		expect(select(wrapper, 'Belongs to').props('options')).toEqual([])
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('You can attach a paper only to an entry or a booking of your own. None is among the newest; type to search older ones.')
+	})
+
+	it('says so when no vehicle takes documents from the session', async () => {
 		const wrapper = await sheet({ vehicles: [VIEWED] })
 
 		expect(attachButton(wrapper).props('disabled')).toBe(true)
-		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('None of your vehicles takes papers from you.')
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('You cannot attach documents to any of your vehicles.')
 	})
 })

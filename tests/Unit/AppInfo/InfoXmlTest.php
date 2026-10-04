@@ -10,6 +10,8 @@ namespace OCA\NextFleet\Tests\Unit\AppInfo;
 
 use DOMDocument;
 use LibXMLError;
+use OCP\BackgroundJob\QueuedJob;
+use OCP\BackgroundJob\TimedJob;
 use OCP\Settings\ISettings;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Console\Command\Command;
@@ -85,6 +87,20 @@ class InfoXmlTest extends TestCase {
 	}
 
 	/**
+	 * The store shows the coming version's section and no other unreleased one, so a second
+	 * `not released` section is news nobody reads. 0.2.0 and 0.3.0 never went out: 0.3.1, the
+	 * first release, says everything the app does (docs/development.md#release).
+	 */
+	public function testOnlyTheComingVersionIsUnreleased(): void {
+		$info = simplexml_load_file(self::ROOT . '/appinfo/info.xml');
+		$this->assertNotFalse($info);
+
+		preg_match_all('/^## (\S+) — not released$/m', (string)file_get_contents(self::ROOT . '/CHANGELOG.md'), $unreleased);
+
+		$this->assertSame([], array_values(array_diff($unreleased[1], [(string)$info->version])));
+	}
+
+	/**
 	 * docs/legal.md: another project's name never stands alone, as a feature or a selling point.
 	 * It only says what a file is, as the import screen labels it.
 	 */
@@ -95,6 +111,19 @@ class InfoXmlTest extends TestCase {
 		foreach ($info->description as $description) {
 			$bare = preg_replace('/\bCSV\s+\((LubeLogger|Spritmonitor)(\s+format|-Format)\)/', '', (string)$description);
 			$this->assertDoesNotMatchRegularExpression('/Drivvo|LubeLogger|Spritmonitor/i', (string)$bare);
+		}
+	}
+
+	/**
+	 * CONTEXT.md: giving someone access to a vehicle is a grant, not a share. Nextcloud's own
+	 * sharing is a different thing with different rules, so the listing must not promise it.
+	 */
+	public function testSpeaksOfGrantsNotShares(): void {
+		$info = simplexml_load_file(self::ROOT . '/appinfo/info.xml');
+		$this->assertNotFalse($info);
+
+		foreach ($info->xpath('/info/summary | /info/description') ?: [] as $text) {
+			$this->assertDoesNotMatchRegularExpression('/\bshar(e|es|ed|ing)\b|\bteil(en|t|e)\b/i', (string)$text);
 		}
 	}
 
@@ -164,14 +193,22 @@ class InfoXmlTest extends TestCase {
 		);
 	}
 
-	/** The same again for the job list: an unlisted job never runs, and no reminder is sent. */
-	public function testEveryBackgroundJobIsRegistered(): void {
+	/**
+	 * The same again for the job list: an unlisted timed job never runs, and no reminder is sent.
+	 * A queued job is added with its argument when there is work for it; listed, it would run once
+	 * with none.
+	 */
+	public function testEveryTimedJobIsRegisteredAndNoQueuedOne(): void {
 		$info = simplexml_load_file(self::ROOT . '/appinfo/info.xml');
 		$this->assertNotFalse($info);
 
 		$jobs = [];
 		foreach (glob(self::ROOT . '/lib/BackgroundJob/*.php') ?: [] as $file) {
-			$jobs[] = 'OCA\\NextFleet\\BackgroundJob\\' . basename($file, '.php');
+			$class = 'OCA\\NextFleet\\BackgroundJob\\' . basename($file, '.php');
+			$this->assertTrue(is_subclass_of($class, TimedJob::class) || is_subclass_of($class, QueuedJob::class), $class . ' is neither timed nor queued');
+			if (is_subclass_of($class, TimedJob::class)) {
+				$jobs[] = $class;
+			}
 		}
 
 		$this->assertNotEmpty($jobs);

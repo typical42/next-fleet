@@ -28,7 +28,7 @@ final class ReminderEngine {
 	private const RANK = [Reminder::PLANNED => 0, Reminder::WARNED => 1, Reminder::DUE => 2, Reminder::OVERDUE => 3];
 
 	/** The pace looks back 90 days and needs 30 of them (rule 5). */
-	private const PACE_WINDOW = 90 * 86400;
+	public const PACE_WINDOW = 90 * 86400;
 	private const PACE_FLOOR = 30 * 86400;
 
 	/**
@@ -86,6 +86,26 @@ final class ReminderEngine {
 	}
 
 	/**
+	 * The points an edit moved, in evaluate()'s order: each one falls on another day or km now, or
+	 * was ticked on or off. A receipt for one of them names a point that is no longer where it was.
+	 *
+	 * @return list<string>
+	 */
+	public static function moved(Reminder $was, Reminder $is): array {
+		$day = $was->getDueDate()?->format('Y-m-d') !== $is->getDueDate()?->format('Y-m-d');
+		$km = $was->getDueOdo() !== $is->getDueOdo();
+
+		return array_keys(array_filter([
+			self::MONTH_BEFORE => $day || $was->getWarnMonthBefore() !== $is->getWarnMonthBefore(),
+			self::MONTH_START => $day || $was->getWarnMonthStart() !== $is->getWarnMonthStart(),
+			self::DUE_DATE => $day || $was->getWarnDueDate() !== $is->getWarnDueDate(),
+			self::OVERDUE => $day,
+			self::ODO => $km || $was->getLeadOdo() !== $is->getLeadOdo(),
+			self::ODO_DUE => $km,
+		]));
+	}
+
+	/**
 	 * Takes back advance() from that base, when the reminder still stands where it put it: the
 	 * record that moved it on was withdrawn. The planned due is not kept, so the occurrence comes
 	 * back due at the base itself.
@@ -127,7 +147,8 @@ final class ReminderEngine {
 	 * The day the pace of the main chain reaches the due km (rule 5). Display only: the state
 	 * never reads it.
 	 *
-	 * @param list<OdoReading> $chain the main chain, in findChain()'s order
+	 * @param list<OdoReading> $chain the main chain, in findChain()'s order, at least over the
+	 *                                last PACE_WINDOW
 	 * @param \DateTimeImmutable $now its zone is the zone of the day returned
 	 * @return ?string a plain day, YYYY-MM-DD, never before today; null without an honest pace
 	 */

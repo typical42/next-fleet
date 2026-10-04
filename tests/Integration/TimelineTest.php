@@ -8,7 +8,6 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Integration;
 
-use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\TripMapper;
@@ -25,7 +24,6 @@ use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\IDBConnection;
 use OCP\IUserManager;
 use PHPUnit\Framework\TestCase;
-use Psr\Container\ContainerInterface;
 
 /**
  * The timeline against the real database: what the two queries behind it actually select, and what
@@ -40,7 +38,6 @@ class TimelineTest extends TestCase {
 	/** An account, since a grantee has to exist on the instance. */
 	private const DRIVER = 'nextfleet-test-timeline-ben';
 
-	private ContainerInterface $container;
 	private TimelineService $timeline;
 	private TripService $trips;
 	private TripMapper $tripRows;
@@ -59,12 +56,11 @@ class TimelineTest extends TestCase {
 	}
 
 	protected function setUp(): void {
-		$container = $this->container = (new Application())->getContainer();
-		$this->timeline = $container->get(TimelineService::class);
-		$this->trips = $container->get(TripService::class);
-		$this->tripRows = $container->get(TripMapper::class);
-		$this->odometer = $container->get(OdometerService::class);
-		$this->vehicles = $container->get(VehicleService::class);
+		$this->timeline = \OCP\Server::get(TimelineService::class);
+		$this->trips = \OCP\Server::get(TripService::class);
+		$this->tripRows = \OCP\Server::get(TripMapper::class);
+		$this->odometer = \OCP\Server::get(OdometerService::class);
+		$this->vehicles = \OCP\Server::get(VehicleService::class);
 
 		$this->forgetTestRows();
 		$this->uuid = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 123'])->getUuid();
@@ -171,6 +167,29 @@ class TimelineTest extends TestCase {
 	}
 
 	/**
+	 * Overlap against real SQL: two trips sharing part of their span are both flagged, the voided
+	 * one beside them is not counted, and the trip that sets off as the second arrives is clear.
+	 */
+	public function testTripsWhoseSpansOverlapAreFlaggedOnRead(): void {
+		$first = $this->trip(1750000000, 120450);
+		$second = $this->trip(1750005000, 120500);
+		$next = $this->trip(1750010400, 120600);
+		$voided = $this->trip(1750011000, 120700);
+		$this->tripRows->softDelete($voided, $voided->getUpdatedAt());
+
+		$flags = [];
+		foreach ($this->timeline->page(self::AUTHOR, $this->uuid, null, null)['rows'] as $row) {
+			$flags[$row['trip']->getUuid()] = $row['flags'];
+		}
+
+		$this->assertSame([
+			$next->getUuid() => [],
+			$second->getUuid() => ['overlap'],
+			$first->getUuid() => ['overlap'],
+		], $flags);
+	}
+
+	/**
 	 * Paging over both tables against real SQL. The first page is asked for with no cursor, which
 	 * is `PHP_INT_MAX` on a BIGINT column, and the boundary falls inside one instant that a trip
 	 * and an Odometer Entry share - the case the cursor's tie-break exists for, and the one a
@@ -265,9 +284,9 @@ class TimelineTest extends TestCase {
 	 * not rows of their own.
 	 */
 	public function testTheCostTablesJoinTheOneOrderWithTheirReadings(): void {
-		$energy = $this->container->get(EnergyService::class);
-		$maintenance = $this->container->get(MaintenanceService::class);
-		$expenses = $this->container->get(ExpenseService::class);
+		$energy = \OCP\Server::get(EnergyService::class);
+		$maintenance = \OCP\Server::get(MaintenanceService::class);
+		$expenses = \OCP\Server::get(ExpenseService::class);
 
 		$trip = $this->trip(1750000000, 120450);
 		$fill = $energy->record(self::AUTHOR, $this->uuid, [
@@ -309,7 +328,7 @@ class TimelineTest extends TestCase {
 	 * partial in between counted and a deleted fill-up not.
 	 */
 	public function testAFillUpClosingASegmentCarriesItsConsumption(): void {
-		$energy = $this->container->get(EnergyService::class);
+		$energy = \OCP\Server::get(EnergyService::class);
 		$fill = fn (int $at, int $amount, bool $full, int $odo): array => $energy->record(self::AUTHOR, $this->uuid, [
 			'filled_at' => $at, 'filled_at_off' => 120, 'energy' => 'diesel', 'amount' => $amount,
 			'full_tank' => $full, 'odo' => $odo,
@@ -332,7 +351,7 @@ class TimelineTest extends TestCase {
 	 * an Entry, and a deleted row is not there.
 	 */
 	public function testOneEntryReadsBackAsItsRow(): void {
-		$energy = $this->container->get(EnergyService::class);
+		$energy = \OCP\Server::get(EnergyService::class);
 		$fill = $energy->record(self::AUTHOR, $this->uuid, [
 			'filled_at' => 1750100000, 'filled_at_off' => 120, 'energy' => 'diesel', 'amount' => 40000, 'odo' => 120500,
 		]);
@@ -355,8 +374,8 @@ class TimelineTest extends TestCase {
 
 	/** A maintenance record names the reminder it closed, for the sheet that edits it. */
 	public function testAMaintenanceRowNamesTheReminderItClosed(): void {
-		$maintenance = $this->container->get(MaintenanceService::class);
-		$oil = $this->container->get(ReminderService::class)->create(self::AUTHOR, $this->uuid, ['title' => 'Oil', 'mode' => 'date', 'due_date' => '2027-01-31']);
+		$maintenance = \OCP\Server::get(MaintenanceService::class);
+		$oil = \OCP\Server::get(ReminderService::class)->create(self::AUTHOR, $this->uuid, ['title' => 'Oil', 'mode' => 'date', 'due_date' => '2027-01-31']);
 		$closing = $maintenance->record(self::AUTHOR, $this->uuid, ['done_at' => 1750200000, 'done_at_off' => 120, 'title' => 'Oil change', 'closes' => $oil['uuid']]);
 		$plain = $maintenance->record(self::AUTHOR, $this->uuid, ['done_at' => 1750300000, 'done_at_off' => 120, 'title' => 'Wipers']);
 
@@ -375,7 +394,7 @@ class TimelineTest extends TestCase {
 		$this->trip(1750000000, 120450);
 		$this->assertSame([null], array_column($this->timeline->page(self::AUTHOR, $this->uuid, null, null)['rows'], 'entered_by'));
 
-		$this->container->get(GrantService::class)->grant(self::AUTHOR, $this->uuid, ['grantee' => self::DRIVER, 'grantee_type' => 'user', 'role' => 'driver']);
+		\OCP\Server::get(GrantService::class)->grant(self::AUTHOR, $this->uuid, ['grantee' => self::DRIVER, 'grantee_type' => 'user', 'role' => 'driver']);
 		$driven = $this->odometer->record(self::DRIVER, $this->uuid, ['read_at' => 1750100000, 'read_at_off' => 120, 'value' => 120500]);
 
 		$rows = $this->timeline->page(self::AUTHOR, $this->uuid, null, null)['rows'];
@@ -400,7 +419,7 @@ class TimelineTest extends TestCase {
 	public function testTheServiceIsBuiltFromItsConstructorTypesAlone(): void {
 		$this->assertInstanceOf(
 			TimelineService::class,
-			(new Application())->getContainer()->get(TimelineService::class),
+			\OCP\Server::get(TimelineService::class),
 		);
 	}
 }

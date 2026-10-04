@@ -14,14 +14,17 @@ use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Exception\AccessDeniedException;
 use OCA\NextFleet\Exception\BookingConflictException;
+use OCA\NextFleet\Exception\CurrencyInUseException;
 use OCA\NextFleet\Exception\FileChangedException;
 use OCA\NextFleet\Exception\ImportChangedException;
 use OCA\NextFleet\Exception\ImportRefusedException;
+use OCA\NextFleet\Exception\RefusedException;
 use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\BookingService;
 use OCA\NextFleet\Service\DocumentService;
 use OCA\NextFleet\Service\GrantService;
 use OCA\NextFleet\Service\ImportService;
+use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\PreferencesService;
 use OCA\NextFleet\Service\RecipientService;
 use OCA\NextFleet\Service\ReminderService;
@@ -130,6 +133,7 @@ class TwinAnswersTest extends TestCase {
 		yield 'not yours' => [new AccessDeniedException('no'), Http::STATUS_FORBIDDEN];
 		yield 'lost a race' => [new StaleUpdateException('stale'), Http::STATUS_PRECONDITION_FAILED];
 		yield 'a bad field' => [new \InvalidArgumentException('plate is too long'), Http::STATUS_BAD_REQUEST];
+		yield 'a currency in use' => [new CurrencyInUseException('currency stays'), Http::STATUS_BAD_REQUEST];
 	}
 
 	/**
@@ -186,8 +190,16 @@ class TwinAnswersTest extends TestCase {
 			static fn (object $c): DataResponse => $c->import(self::UUID), new LockedException('import.csv'), Http::STATUS_LOCKED];
 		yield 'an undo naming an entry the import did not leave' => [Controller\ImportController::class, ImportService::class, 'undo',
 			static fn (object $c): DataResponse => $c->undo(self::UUID), new ImportChangedException('energy e is not a live entry of the caller\'s on this vehicle'), Http::STATUS_CONFLICT];
+		yield 'an import that lost a race' => [Controller\ImportController::class, ImportService::class, 'import',
+			static fn (object $c): DataResponse => $c->import(self::UUID), new StaleUpdateException('stale'), Http::STATUS_PRECONDITION_FAILED];
+		yield 'an undo that lost a race' => [Controller\ImportController::class, ImportService::class, 'undo',
+			static fn (object $c): DataResponse => $c->undo(self::UUID), new StaleUpdateException('stale'), Http::STATUS_PRECONDITION_FAILED];
 		yield 'an undo of no import\'s list' => [Controller\ImportController::class, ImportService::class, 'undo',
 			static fn (object $c): DataResponse => $c->undo(self::UUID), new \InvalidArgumentException('created is the list an import answered'), Http::STATUS_BAD_REQUEST];
+		yield 'a trip that drove backwards' => [Controller\TripController::class, TripService::class, 'update',
+			static fn (object $c): DataResponse => $c->update(self::UUID, self::ROW), new RefusedException('end_odo is below start_odo', TripService::END_BELOW_START), Http::STATUS_BAD_REQUEST];
+		yield 'a reset of a reading nobody questioned' => [Controller\OdometerController::class, OdometerService::class, 'reset',
+			static fn (object $c): DataResponse => $c->reset(self::UUID, self::ROW), new RefusedException('not in question', OdometerService::NOT_IN_QUESTION), Http::STATUS_BAD_REQUEST];
 		yield 'a preference it may not take' => [Controller\PreferencesController::class, PreferencesService::class, 'write',
 			static fn (object $c): DataResponse => $c->update(), new \InvalidArgumentException('kpi_period is one of …'), Http::STATUS_BAD_REQUEST];
 	}

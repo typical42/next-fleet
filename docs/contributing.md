@@ -38,11 +38,11 @@ for the country `Jurisdictions::DEFAULT` names, naming another first. A key nobo
 resolves to `generic` rather than throwing: a vehicle registered under a country a later release
 dropped must still open.
 
-A seam is filled by the milestone that needs it ([milestones](../plan.md#milestones)) — the profile
-in M1, the logbook ruleset in M2, the VAT rate in M3 — and the classes waiting for the later ones sit in
-`lib/Jurisdiction/De/` empty and wired to nothing. A profile reaches its country's ruleset through
-`IJurisdiction::logbookRules()`, which answers null where there is none; the core asks the vehicle's
-jurisdiction and never the class.
+Each seam was filled by the milestone that needed it ([milestones](../plan.md#milestones)) — the
+profile in M1, the logbook ruleset in M2, the VAT rate in M3 — and Germany now fills every one. A
+new country fills only those its rules need. A profile reaches its country's ruleset through
+`IJurisdiction::logbookRules()`, which answers null where there is none, as every optional seam
+does; the core asks the vehicle's jurisdiction and never the class.
 
 **The generic profile is the other one.** Metric units, no currency, no logbook ruleset, no inspection
 scheme, no rates — but a plain logbook, in the reader's language, because a trip listing needs no
@@ -67,8 +67,7 @@ that it does.
   including for a UK vehicle. Conversion happens at the edges.
 - **Jurisdiction is per vehicle**, not per instance: a fleet crosses borders, and a leased car
   registered abroad keeps its own rules. It is not asked for when a vehicle is created — it defaults
-  from the user's personal setting, and is changed in the vehicle's edit sheet until the sidebar
-  exists ([interface](ui.md#details-that-decide-whether-it-feels-easy)).
+  from the user's personal setting, and is changed in the vehicle's edit sheet ([interface](ui.md#details-that-decide-whether-it-feels-easy)).
 - **Validation returns findings, not exceptions** ([data model](architecture.md#data-model)). A
   ruleset says "this trip has no purpose and your jurisdiction requires one" — the record is still
   saved, still flagged, still fixable.

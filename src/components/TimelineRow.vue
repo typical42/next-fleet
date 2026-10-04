@@ -4,7 +4,6 @@
 -->
 <script setup>
 import { mdiPaperclip } from '@mdi/js'
-import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcIconSvgWrapper from '@nextcloud/vue/components/NcIconSvgWrapper'
 import { computed, ref } from 'vue'
@@ -13,6 +12,7 @@ import { documentUrl } from '../services/api.js'
 import { may } from '../utils/access.js'
 import { savePaper } from '../utils/papers.js'
 import { categoryWord, entryName, fieldWords, formatConsumption, formatCount, formatEnergyAmount, formatMoney, isoInstant, maintenanceWord, shortDate } from '../utils/format.js'
+import { t } from '../utils/l10n.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Entry>} */
@@ -36,7 +36,8 @@ const props = defineProps({
 })
 
 // `open` is the row itself, tapped: the Entry is edited in the sheet it was entered in (docs/ui.md).
-defineEmits(['closeGap', 'open'])
+// `reset` answers a Reading in question with "the counter was replaced".
+defineEmits(['closeGap', 'open', 'reset', 'void'])
 
 /**
  * The sheet the row opens is where an Entry is edited, voided or deleted, so a row the reader may not
@@ -61,12 +62,19 @@ const energy = computed(() => props.entry.energy)
 const maintenance = computed(() => props.entry.maintenance)
 const expense = computed(() => props.entry.expense)
 
-/** What each of EnergyService::flags() reads as. */
+/** What each of EnergyService::flags() and TimelineService::withOverlaps() reads as. */
 const FLAG_WORDS = {
 	foreign_energy: t('nextfleet', 'Not an energy this vehicle takes'),
 	no_price: t('nextfleet', 'No price'),
 	overfilled: t('nextfleet', 'More than the vehicle holds'),
+	overlap: t('nextfleet', 'Overlaps another trip'),
 }
+
+/**
+ * A Reconciliation Trip a later trip overlaps counts that trip's kilometres twice. Said with its fix,
+ * so the overlap is not said again beside it.
+ */
+const overtaken = computed(() => (props.entry.flags ?? []).includes('overtaken'))
 
 // A trip is placed where it set off and a Reading where it was read (lib/Service/TimelineService.php),
 // and the day is the one the offset it was entered at puts it on - not the one the reader's own
@@ -131,8 +139,10 @@ const tail = computed(() => {
 	return []
 })
 
-/** What a fill-up is flagged for, computed on read by the server, each as words. */
-const flagWords = computed(() => (props.entry.flags ?? []).map((flag) => FLAG_WORDS[flag] ?? flag))
+/** What a fill-up or a trip is flagged for, computed on read by the server, each as words. */
+const flagWords = computed(() => (props.entry.flags ?? [])
+	.filter((flag) => flag !== 'overtaken' && !(flag === 'overlap' && overtaken.value))
+	.map((flag) => FLAG_WORDS[flag] ?? flag))
 
 /**
  * A Reading that contradicts the chain before it is flagged rather than corrected
@@ -140,15 +150,21 @@ const flagWords = computed(() => (props.entry.flags ?? []).map((flag) => FLAG_WO
  * (docs/ui.md). An Entry's question is the Readings it left on the counter, because the Entry and
  * those Readings are one row.
  */
-const inQuestion = computed(() => {
+const ownReadings = computed(() => {
 	const own = odometer.value ?? props.entry.reading
-	const readings = own ? [own] : props.entry.readings ?? []
 
-	return readings.some((reading) => reading.flagged === true)
+	return own ? [own] : props.entry.readings ?? []
 })
 
+const inQuestion = computed(() => ownReadings.value.some((reading) => reading.flagged === true))
+
+/** The Reading rule 3's question is put about, for whoever may answer it (OdometerService::reset()). */
+const questioned = computed(() => (may(props.entry, 'edit')
+	? ownReadings.value.find((reading) => reading.flagged === true && reading.origin === 'observed') ?? null
+	: null))
+
 /** Said only under Logbook Mode (docs/features.md#logbook-mode). */
-const missingWords = computed(() => (props.vehicle.logbook_mode === true ? fieldWords(props.entry.missing ?? []) : ''))
+const missingWords = computed(() => (props.vehicle.logbook_mode === true ? fieldWords(props.entry.missing ?? [], props.vehicle.odo_unit) : ''))
 </script>
 
 <template>
@@ -176,35 +192,53 @@ const missingWords = computed(() => (props.vehicle.logbook_mode === true ? field
 			<span v-if="inQuestion" class="row__flag">{{ t('nextfleet', 'In question') }}</span>
 			<template v-if="missingWords">
 				<span class="row__flag">{{ t('nextfleet', 'Incomplete') }}</span>
-				<!-- The words are ours, and Vue escapes what it interpolates. -->
-				<span>{{ t('nextfleet', 'Still missing: {fields}', { fields: { value: missingWords, escape: false } }) }}</span>
+				<span>{{ t('nextfleet', 'Still missing: {fields}', { fields: missingWords }) }}</span>
 			</template>
 			<!-- Only on a vehicle others use (TimelineService::withEnteredBy()). -->
-			<span v-if="entry.entered_by">{{ t('nextfleet', 'Entered by {name}', { name: { value: entry.entered_by, escape: false } }) }}</span>
+			<span v-if="entry.entered_by">{{ t('nextfleet', 'Entered by {name}', { name: entry.entered_by }) }}</span>
 		</span>
 		<span v-if="papers.length > 0" class="row__papers">
 			<template v-for="paper in papers" :key="paper.uuid">
 				<a v-if="paper.name !== null"
 					:href="documentUrl(vehicle.uuid, paper.uuid)"
-					:aria-label="t('nextfleet', 'Open {name}', { name: { value: paper.name, escape: false } })"
+					:aria-label="t('nextfleet', 'Open {name}', { name: paper.name })"
 					:title="paper.name"
 					@click.prevent="save(paper)">
 					<NcIconSvgWrapper :path="mdiPaperclip" :size="20" />
 				</a>
-				<span v-else class="row__flag">{{ t('nextfleet', 'The file is gone from Files') }}</span>
+				<span v-else class="row__flag">{{ t('nextfleet', 'The file is no longer in the Files of whoever attached it') }}</span>
 			</template>
 			<span v-if="unsaved" class="row__flag">{{ unsaved }}</span>
 		</span>
 		<!-- Offered on the trip that opened the Gap, because a Gap is closed one at a time (CONTEXT.md). -->
 		<span v-if="unaccounted" class="row__gap">
 			<span class="row__flag">
-				{{ t('nextfleet', '{distance} unaccounted before this trip', { distance: { value: unaccounted, escape: false } }) }}
+				{{ t('nextfleet', '{distance} unaccounted for before this trip', { distance: unaccounted }) }}
 			</span>
 			<NcButton v-if="may(vehicle, 'log')"
 				variant="tertiary"
 				size="small"
 				@click="$emit('closeGap', gap)">
 				{{ t('nextfleet', 'Close gap') }}
+			</NcButton>
+		</span>
+		<!-- Rule 3's two answers. A typo is fixed where the Entry was entered, so it opens the sheet. -->
+		<span v-if="questioned" class="row__gap row__question">
+			<span class="row__flag">{{ t('nextfleet', 'Was the counter replaced, or is this a typo?') }}</span>
+			<NcButton variant="tertiary" size="small" @click="$emit('reset', questioned)">
+				{{ t('nextfleet', 'Counter replaced') }}
+			</NcButton>
+			<NcButton variant="tertiary" size="small" @click="$emit('open', entry)">
+				{{ t('nextfleet', 'Typo') }}
+			</NcButton>
+		</span>
+		<span v-if="overtaken" class="row__gap">
+			<span class="row__flag">{{ t('nextfleet', 'Reconciliation overtaken') }}</span>
+			<NcButton v-if="may(entry, 'delete')"
+				variant="tertiary"
+				size="small"
+				@click="$emit('void', entry)">
+				{{ t('nextfleet', 'Void trip') }}
 			</NcButton>
 		</span>
 	</li>

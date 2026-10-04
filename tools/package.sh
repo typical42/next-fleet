@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 # Builds the app store tarball, build/artifacts/nextfleet-<version>.tar.gz, unsigned.
-# Signing is a maintainer's step on a machine that holds the key (docs/security.md).
+# Signing is a later release step, with the key kept off CI (docs/development.md#release).
 #
 # It copies a list rather than the tree: PHP has no runtime dependencies, so the tarball is our
 # own code and the bundle, nothing else. tests/Unit/PackageTest.php fails when a top-level entry
@@ -31,9 +31,18 @@ mkdir -p "$stage" build/artifacts
 # Word splitting is the point: SHIP is a list.
 # shellcheck disable=SC2086
 cp -R $SHIP "$stage"/
+# The build maps every chunk back to src/. A map serves our source to anyone who asks the server
+# for it, and the bundle runs without it.
+find "$stage" -name '*.map' -delete
 tar --sort=name --owner=0 --group=0 --numeric-owner -czf "$tarball" -C build/stage nextfleet
 
 for needed in appinfo/info.xml js/nextfleet-main.mjs js/nextfleet-settings.mjs; do
 	tar -tzf "$tarball" "nextfleet/$needed" >/dev/null
 done
+# No pipe: sh has no pipefail, and a failed listing would pass for an empty one.
+tar -tzf "$tarball" >build/stage/contents
+if grep -q '\.map$' build/stage/contents; then
+	echo "a source map is in $tarball" >&2
+	exit 1
+fi
 echo "$tarball"

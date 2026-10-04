@@ -183,12 +183,32 @@ describe('parseDecimal', () => {
 	})
 
 	/**
-	 * More digits than the column keeps, or a grouped thousand, is a question for the driver rather
-	 * than a number to round: `1.234,5` could be either reading of the marks.
+	 * A German receipt groups thousands with a point and marks the decimals with a comma. A point
+	 * alone groups where it cannot be the decimal mark: three digits after it in a field that keeps
+	 * two. In a field that keeps three, `25.000` is twenty-five litres.
+	 */
+	it('reads a point that groups thousands where nothing else can be meant', () => {
+		expect(parseDecimal('1.234,56', 2)).toBe(123456)
+		expect(parseDecimal('1.234,5', 3)).toBe(1234500)
+		expect(parseDecimal('25.000', 2)).toBe(2500000)
+		expect(parseDecimal('1.234.567', 2)).toBe(123456700)
+		expect(parseDecimal('1.234.567,8', 3)).toBe(1234567800)
+		expect(parseDecimal('25.000', 3)).toBe(25000)
+	})
+
+	/**
+	 * More digits than the column keeps, or a grouping it cannot read without guessing, is a
+	 * question for the driver rather than a number to round.
 	 */
 	it('says nothing about a field it cannot read without guessing', () => {
 		expect(parseDecimal('1,2345', 3)).toBeNull()
-		expect(parseDecimal('1.234,5', 3)).toBeNull()
+		expect(parseDecimal('1,234.56', 2)).toBeNull()
+		expect(parseDecimal('1.23,4', 2)).toBeNull()
+		expect(parseDecimal('12.34.5', 2)).toBeNull()
+		expect(parseDecimal('1.234,567', 2)).toBeNull()
+		expect(parseDecimal('1234.567,8', 3)).toBeNull()
+		// No thousand starts with a nought, so this is a price per litre typed into a field of cents.
+		expect(parseDecimal('0.123', 2)).toBeNull()
 		expect(parseDecimal('-5', 2)).toBeNull()
 		expect(parseDecimal('full', 2)).toBeNull()
 		expect(parseDecimal('', 2)).toBeNull()

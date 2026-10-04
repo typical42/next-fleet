@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Service;
 
 use OCA\NextFleet\AppInfo\Application;
+use OCA\NextFleet\Db\BaseEntity;
 use OCA\NextFleet\Db\Energy;
 use OCA\NextFleet\Db\EnergyMapper;
 use OCA\NextFleet\Db\Expense;
@@ -25,12 +26,15 @@ use Psr\Log\LoggerInterface;
  * machine-readable path beside the printed one (docs/adr/0005-no-pdf-library.md).
  */
 class ExportService {
-	/** Each file's header. An instant is two columns: its wall clock and its offset in minutes. */
+	/**
+	 * Each file's header. An instant someone entered is two columns: its wall clock and its offset
+	 * in minutes. A trip's `created_at` is the server's clock, one column in UTC.
+	 */
 	private const HEADERS = [
-		'trips' => ['uuid', 'started', 'started_offset_min', 'ended', 'ended_offset_min', 'start_odo', 'end_odo', 'distance', 'odo_unit', 'from', 'to', 'purpose', 'partner', 'category', 'reconciled', 'voided'],
-		'energy' => ['uuid', 'filled', 'filled_offset_min', 'odo', 'second_odo', 'odo_unit', 'energy', 'amount', 'unit_price', 'total', 'currency', 'vat_rate', 'full_tank', 'missed_previous', 'station', 'is_dc', 'location_kind'],
-		'maintenance' => ['uuid', 'done', 'done_offset_min', 'odo', 'second_odo', 'odo_unit', 'type', 'title', 'vendor', 'cost', 'currency', 'vat_rate', 'notes'],
-		'expenses' => ['uuid', 'spent', 'spent_offset_min', 'category', 'amount', 'currency', 'vat_rate', 'notes'],
+		'trips' => ['uuid', 'started', 'started_offset_min', 'ended', 'ended_offset_min', 'start_odo', 'end_odo', 'distance', 'odo_unit', 'from', 'to', 'purpose', 'partner', 'category', 'reconciled', 'voided', 'created_at', 'entered_by'],
+		'energy' => ['uuid', 'filled', 'filled_offset_min', 'odo', 'second_odo', 'odo_unit', 'energy', 'amount', 'unit_price', 'total', 'currency', 'vat_rate', 'full_tank', 'missed_previous', 'station', 'is_dc', 'location_kind', 'entered_by'],
+		'maintenance' => ['uuid', 'done', 'done_offset_min', 'odo', 'second_odo', 'odo_unit', 'type', 'title', 'vendor', 'cost', 'currency', 'vat_rate', 'notes', 'entered_by'],
+		'expenses' => ['uuid', 'spent', 'spent_offset_min', 'category', 'amount', 'currency', 'vat_rate', 'notes', 'entered_by'],
 	];
 
 	public function __construct(
@@ -39,6 +43,7 @@ class ExportService {
 		private EnergyMapper $energy,
 		private MaintenanceMapper $maintenance,
 		private ExpenseMapper $expenses,
+		private EnteredBy $enteredBy,
 		private LoggerInterface $logger,
 	) {
 	}
@@ -64,10 +69,10 @@ class ExportService {
 		$id = (int)$vehicle->getId();
 		[$start, $end] = LocalYear::window($year);
 		$rows = match ($table) {
-			'trips' => array_map(static fn (Trip $row): ?array => self::trip($vehicle, $year, $row), $this->trips->findAnyStartedBetween($id, $start, $end)),
-			'energy' => array_map(static fn (Energy $row): ?array => self::fillUp($vehicle, $year, $row), $this->energy->findBetween($id, $start, $end)),
-			'maintenance' => array_map(static fn (Maintenance $row): ?array => self::record($vehicle, $year, $row), $this->maintenance->findBetween($id, $start, $end)),
-			'expenses' => array_map(static fn (Expense $row): ?array => self::expense($vehicle, $year, $row), $this->expenses->findBetween($id, $start, $end)),
+			'trips' => $this->rows($vehicle, $year, $this->trips->findAnyStartedBetween($id, $start, $end), self::trip(...)),
+			'energy' => $this->rows($vehicle, $year, $this->energy->findBetween($id, $start, $end), self::fillUp(...)),
+			'maintenance' => $this->rows($vehicle, $year, $this->maintenance->findBetween($id, $start, $end), self::record(...)),
+			'expenses' => $this->rows($vehicle, $year, $this->expenses->findBetween($id, $start, $end), self::expense(...)),
 		};
 		$rows = array_values(array_filter($rows, static fn (?array $row): bool => $row !== null));
 
@@ -85,6 +90,29 @@ class ExportService {
 			'name' => self::fileName($vehicle, $year, $table),
 			'body' => Csv::of(self::HEADERS[$table], $rows),
 		];
+	}
+
+	/**
+	 * Each row ends in `entered_by`, which follows the timeline's rule (`EnteredBy::names()`).
+	 *
+	 * @template E of BaseEntity
+	 * @param list<E> $entities
+	 * @param \Closure(Vehicle, int, E): ?list<int|string|null> $row
+	 * @return list<?list<int|string|null>>
+	 * @throws \OCP\DB\Exception
+	 */
+	private function rows(Vehicle $vehicle, int $year, array $entities, \Closure $row): array {
+		$names = $this->enteredBy->names($vehicle, array_map(static fn (BaseEntity $entity): string => $entity->getCreatedBy(), $entities));
+
+		return array_map(/** @param E $entity */ static function (BaseEntity $entity) use ($vehicle, $year, $row, $names): ?array {
+			$fields = $row($vehicle, $year, $entity);
+			if ($fields === null) {
+				return null;
+			}
+			$fields[] = $names === null ? null : $names[$entity->getCreatedBy()] ?? $entity->getCreatedBy();
+
+			return $fields;
+		}, $entities);
 	}
 
 	/**
@@ -115,6 +143,7 @@ class ExportService {
 			$trip->getCategory(),
 			(int)$trip->getReconciled(),
 			(int)($trip->getDeletedAt() !== null),
+			gmdate('Y-m-d H:i:s', $trip->getCreatedAt()),
 		];
 	}
 

@@ -32,9 +32,10 @@ vi.mock('../services/api.js', async (original) => ({
 }))
 
 const OWNER = ['view', 'log', 'edit', 'delete', 'own']
-const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', lifecycle: 'active', may: OWNER }
+const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', lifecycle: 'active', may: OWNER, ever_granted: true }
 
 const reload = vi.fn()
+const relist = vi.fn()
 /** The Bookings section, standing in with the one thing the screen calls on it. */
 const Bookings = defineComponent({
 	name: 'VehicleBookings',
@@ -42,6 +43,17 @@ const Bookings = defineComponent({
 	emits: ['log', 'open', 'changed'],
 	setup(_, { expose }) {
 		expose({ reload })
+		return () => h('div')
+	},
+})
+
+/** The documents section, standing in with the one thing the screen calls on it. */
+const Documents = defineComponent({
+	name: 'VehicleDocuments',
+	props: { vehicle: { type: Object, required: true } },
+	emits: ['listed'],
+	setup(_, { expose }) {
+		expose({ reload: relist })
 		return () => h('div')
 	},
 })
@@ -57,7 +69,7 @@ function screen(more = {}) {
 	// and a stub has no reading to do.
 	return shallowMount(VehicleView, {
 		props: { vehicle: VEHICLE, ...more },
-		global: { renderStubDefaultSlot: true, stubs: { Timeline: false, KpiHeader: false, VehicleBookings: Bookings } },
+		global: { renderStubDefaultSlot: true, stubs: { Timeline: false, KpiHeader: false, VehicleBookings: Bookings, VehicleDocuments: Documents } },
 	})
 }
 
@@ -227,6 +239,19 @@ describe('the vehicle screen', () => {
 		expect(wrapper.findComponent(EntrySheet).exists()).toBe(false)
 	})
 
+	/** The empty timeline's two buttons open the two sheets that write a first row. */
+	it('opens the entry sheet or the import from the empty timeline', async () => {
+		const wrapper = screen()
+		await flushPromises()
+
+		await wrapper.findComponent(Timeline).vm.$emit('new')
+		expect(/** @type {any} */ (wrapper.findComponent(EntrySheet)).props('entry')).toBeNull()
+		await wrapper.findComponent(EntrySheet).vm.$emit('close')
+
+		await wrapper.findComponent(Timeline).vm.$emit('import')
+		expect(wrapper.findComponent(ImportSheet).exists()).toBe(true)
+	})
+
 	/** The header states the figures of the vehicle on screen, and a write moves them. */
 	it('reads the header figures back once an entry is written', async () => {
 		const wrapper = screen()
@@ -240,6 +265,35 @@ describe('the vehicle screen', () => {
 		await flushPromises()
 
 		expect(readKpis).toHaveBeenCalledTimes(4)
+	})
+
+	/**
+	 * A booking's row says whether its counter fell below the one at check-out, so any write that
+	 * moves the counter can change it - and an expense, which moves none, reads it back for nothing.
+	 */
+	it('reads the bookings back after a write that moves the counter, and not after an expense', async () => {
+		const wrapper = screen()
+		await flushPromises()
+
+		press(document.body, 'n')
+		await wrapper.vm.$nextTick()
+		await wrapper.findComponent(EntrySheet).vm.$emit('saved', { uuid: 'x-1' }, 'expense')
+		await flushPromises()
+		expect(reload).not.toHaveBeenCalled()
+
+		await wrapper.findComponent(EntrySheet).vm.$emit('saved', { uuid: 'e-1' }, 'energy')
+		await button(wrapper, 'Edit vehicle').vm.$emit('click')
+		await sheet(wrapper).vm.$emit('import')
+		await wrapper.findComponent(ImportSheet).vm.$emit('imported')
+		await flushPromises()
+
+		expect(reload).toHaveBeenCalledTimes(2)
+	})
+
+	/** A booking keeps others off the car; on one nobody else has or had access to, there are none. */
+	it('shows Bookings only on a vehicle somebody else has or had access to', () => {
+		expect(screen().findComponent(Bookings).exists()).toBe(true)
+		expect(screen({ vehicle: { ...VEHICLE, ever_granted: false } }).findComponent(Bookings).exists()).toBe(false)
 	})
 
 	/** A save is done with, so the sheet goes; the screen already reads the store for the rest. */
@@ -370,6 +424,19 @@ describe('who has the car', () => {
 		expect(wrapper.find('.vehicle__next').exists()).toBe(false)
 	})
 
+	/** Leaving a direct grant while a group still reaches the car changes the role, and each row's actions. */
+	it('reads the timeline, the bookings and the documents back once a leave kept the vehicle', async () => {
+		const wrapper = screen()
+		await flushPromises()
+
+		await wrapper.findComponent(LeaveVehicle).vm.$emit('kept')
+		await flushPromises()
+
+		expect(readTimeline).toHaveBeenCalledTimes(2)
+		expect(reload).toHaveBeenCalledTimes(1)
+		expect(relist).toHaveBeenCalledTimes(1)
+	})
+
 	/** A booking made, taken or given back changes the header, which reads the vehicle. */
 	it('reads the vehicle back once the bookings section wrote', async () => {
 		vi.mocked(getVehicle).mockResolvedValue(/** @type {any} */ ({ ...VEHICLE, out_with: null }))
@@ -393,7 +460,7 @@ describe('a booking becomes a trip', () => {
 		await wrapper.findComponent(Bookings).vm.$emit('log', BACK)
 		const sheet = /** @type {any} */ (wrapper.getComponent(EntrySheet))
 		expect(sheet.props('booking')).toEqual(BACK)
-		await sheet.vm.$emit('saved')
+		await sheet.vm.$emit('saved', { uuid: 't-1' }, 'trip')
 		await sheet.vm.$emit('close')
 		await flushPromises()
 
@@ -410,7 +477,7 @@ describe('a booking becomes a trip', () => {
 		await wrapper.findComponent(Bookings).vm.$emit('open', row)
 		const sheet = /** @type {any} */ (wrapper.getComponent(EntrySheet))
 		expect(sheet.props('entry')).toEqual(row)
-		await sheet.vm.$emit('saved')
+		await sheet.vm.$emit('saved', undefined, 'trip')
 
 		expect(reload).toHaveBeenCalledTimes(1)
 	})

@@ -25,9 +25,9 @@ vi.mock('../services/api.js', async (original) => ({
 const OWNED = { uuid: 'v-1', may: ['view', 'log', 'edit', 'delete', 'own'] }
 
 /** @type {import('../services/api.js').Grant} */
-const ANNA = { uuid: 'g-1', grantee: 'anna', grantee_type: 'user', display_name: 'Anna', role: 'driver' }
+const ANNA = { uuid: 'g-1', grantee: 'anna', grantee_type: 'user', display_name: 'Anna O\'Brien', role: 'driver' }
 /** @type {import('../services/api.js').Grant} */
-const CREW = { uuid: 'g-2', grantee: 'crew', grantee_type: 'group', display_name: 'The Crew', role: 'viewer' }
+const CREW = { uuid: 'g-2', grantee: 'crew', grantee_type: 'group', display_name: 'R&D', role: 'viewer' }
 
 /**
  * @param {object} [vehicle] - the vehicle the sheet edits
@@ -80,10 +80,10 @@ describe('the Access section', () => {
 		const wrapper = await section()
 
 		expect(listGrants).toHaveBeenCalledWith('v-1')
-		expect(rows(wrapper)).toEqual(['Anna', 'The Crew'])
+		expect(rows(wrapper)).toEqual(['Anna O\'Brien', 'R&D'])
 		expect(wrapper.findAll('.grants__type').map((one) => one.text())).toEqual(['Account', 'Group'])
-		expect(select(wrapper, 'Role of Anna').props('modelValue').label).toBe('Driver')
-		expect(select(wrapper, 'Role of The Crew').props('modelValue').label).toBe('Viewer')
+		expect(select(wrapper, 'Role of Anna O\'Brien').props('modelValue').label).toBe('Driver')
+		expect(select(wrapper, 'Role of R&D').props('modelValue').label).toBe('Viewer')
 	})
 
 	/** A manager edits the vehicle but never its access, so the sheet shows them nothing of it. */
@@ -105,7 +105,7 @@ describe('the Access section', () => {
 	it('offers the accounts and groups core finds, telling them apart', async () => {
 		vi.mocked(searchGrantees).mockResolvedValue([
 			{ grantee: 'ben', grantee_type: 'user', display_name: 'Ben' },
-			{ grantee: 'ben', grantee_type: 'group', display_name: 'Ben\'s team' },
+			{ grantee: 'r&d', grantee_type: 'group', display_name: 'Ben\'s team' },
 		])
 		const wrapper = await section()
 
@@ -114,9 +114,9 @@ describe('the Access section', () => {
 
 		expect(searchGrantees).toHaveBeenCalledWith('ben')
 		const options = wrapper.findComponent(NcSelectUsers).props('options')
-		expect(options.map((/** @type {any} */ one) => one.id)).toEqual(['user:ben', 'group:ben'])
+		expect(options.map((/** @type {any} */ one) => one.id)).toEqual(['user:ben', 'group:r&d'])
 		expect(options[0]).toMatchObject({ displayName: 'Ben', user: 'ben' })
-		expect(options[1]).toMatchObject({ displayName: 'Ben\'s team', isNoUser: true })
+		expect(options[1]).toMatchObject({ displayName: 'Ben\'s team', subname: 'Group r&d', isNoUser: true })
 	})
 
 	it('keeps the matches for what was typed last, whichever answer comes last', async () => {
@@ -137,7 +137,7 @@ describe('the Access section', () => {
 	})
 
 	it('gives the one picked access with the role chosen, and starts over', async () => {
-		vi.mocked(searchGrantees).mockResolvedValue([{ grantee: 'crew', grantee_type: 'group', display_name: 'The Crew' }])
+		vi.mocked(searchGrantees).mockResolvedValue([{ grantee: 'crew', grantee_type: 'group', display_name: 'R&D' }])
 		vi.mocked(listGrants).mockResolvedValue([ANNA])
 		vi.mocked(addGrant).mockResolvedValue([ANNA, { ...CREW, role: 'manager' }])
 		const wrapper = await section()
@@ -151,8 +151,10 @@ describe('the Access section', () => {
 		await flushPromises()
 
 		expect(addGrant).toHaveBeenCalledWith('v-1', expect.objectContaining({ grantee: 'crew', grantee_type: 'group' }), 'manager')
-		expect(rows(wrapper)).toEqual(['Anna', 'The Crew'])
+		expect(rows(wrapper)).toEqual(['Anna O\'Brien', 'R&D'])
 		expect(wrapper.findComponent(NcSelectUsers).props('modelValue')).toBeNull()
+		// Somebody else has access from now on, which the vehicle screen shows Bookings by.
+		expect(wrapper.emitted('granted')).toHaveLength(1)
 	})
 
 	it('offers a driver first, the role a car is lent for', async () => {
@@ -166,34 +168,51 @@ describe('the Access section', () => {
 		vi.mocked(changeGrant).mockResolvedValue([{ ...ANNA, role: 'manager' }, CREW])
 		const wrapper = await section()
 
-		await select(wrapper, 'Role of Anna').vm.$emit('update:modelValue', { id: 'manager', label: 'Manager' })
+		await select(wrapper, 'Role of Anna O\'Brien').vm.$emit('update:modelValue', { id: 'manager', label: 'Manager' })
 		await flushPromises()
 
 		expect(changeGrant).toHaveBeenCalledWith('v-1', 'g-1', 'manager')
-		expect(select(wrapper, 'Role of Anna').props('modelValue').id).toBe('manager')
+		expect(select(wrapper, 'Role of Anna O\'Brien').props('modelValue').id).toBe('manager')
 	})
 
 	/** Revoking may take people off the recipients, which the sheet shows beside this section. */
-	it('removes a grant and tells the sheet', async () => {
+	it('asks once, then removes a grant and tells the sheet', async () => {
 		vi.mocked(revokeGrant).mockResolvedValue([CREW])
 		const wrapper = await section()
 
-		await button(wrapper, 'Remove Anna').vm.$emit('click')
+		await button(wrapper, 'Remove Anna O\'Brien').vm.$emit('click')
+		await flushPromises()
+		expect(revokeGrant).not.toHaveBeenCalled()
+		expect(wrapper.find('.grants__question').text()).toBe('Anna O\'Brien loses access to this vehicle.')
+
+		await button(wrapper, 'Remove access').vm.$emit('click')
 		await flushPromises()
 
 		expect(revokeGrant).toHaveBeenCalledWith('v-1', 'g-1')
-		expect(rows(wrapper)).toEqual(['The Crew'])
+		expect(rows(wrapper)).toEqual(['R&D'])
 		expect(wrapper.emitted('revoked')).toHaveLength(1)
+		expect(wrapper.find('.grants__question').exists()).toBe(false)
+	})
+
+	it('keeps the grant when the question is cancelled', async () => {
+		const wrapper = await section()
+
+		await button(wrapper, 'Remove Anna O\'Brien').vm.$emit('click')
+		await button(wrapper, 'Cancel').vm.$emit('click')
+
+		expect(wrapper.find('.grants__question').exists()).toBe(false)
+		expect(button(wrapper, 'Remove Anna O\'Brien')).toBeDefined()
+		expect(revokeGrant).not.toHaveBeenCalled()
 	})
 
 	it('says so when a change is refused and keeps the list as it was', async () => {
 		vi.mocked(changeGrant).mockRejectedValue(new Error('role is one of viewer, driver, manager'))
 		const wrapper = await section()
 
-		await select(wrapper, 'Role of Anna').vm.$emit('update:modelValue', { id: 'owner', label: 'Owner' })
+		await select(wrapper, 'Role of Anna O\'Brien').vm.$emit('update:modelValue', { id: 'owner', label: 'Owner' })
 		await flushPromises()
 
 		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('Access was not changed: role is one of viewer, driver, manager')
-		expect(select(wrapper, 'Role of Anna').props('modelValue').id).toBe('driver')
+		expect(select(wrapper, 'Role of Anna O\'Brien').props('modelValue').id).toBe('driver')
 	})
 })

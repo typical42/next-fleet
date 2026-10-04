@@ -3,9 +3,10 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-import { getCanonicalLocale, t } from '@nextcloud/l10n'
+import { getCanonicalLocale } from '@nextcloud/l10n'
 
 import { formatCount, formatDay, nameOf, parseDay } from './format.js'
+import { t } from './l10n.js'
 
 /** @typedef {import('../services/api.js').Reminder} Reminder */
 
@@ -175,7 +176,15 @@ const WORK = { oil_change: 'service', brake_fluid: 'service', tyre_swap: 'tyres'
 export function closedByDefault(reminders, type) {
 	const first = openByUrgency(reminders)[0]
 
-	return first !== undefined && type !== null && WORK[first.template_key ?? ''] === type ? first.uuid : null
+	return first !== undefined && type !== null && workOf(first) === type ? first.uuid : null
+}
+
+/**
+ * @param {Reminder} reminder - one listed reminder
+ * @return {string|null} the maintenance type its work is, or none for an own title
+ */
+export function workOf(reminder) {
+	return WORK[reminder.template_key ?? ''] ?? null
 }
 
 /**

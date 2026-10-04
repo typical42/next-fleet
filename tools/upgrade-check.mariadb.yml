@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: 2026 Johannes Kolb
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# MariaDB under tools/upgrade-check.compose.yml: one server, a schema per major.
+
+services:
+  db:
+    image: mariadb:11
+    command: --transaction-isolation=READ-COMMITTED
+    environment:
+      MARIADB_ROOT_PASSWORD: root
+      MARIADB_DATABASE: nextcloud
+      MARIADB_USER: nextcloud
+      MARIADB_PASSWORD: nextcloud
+    volumes:
+      - ../.docker/db-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  app34:
+    environment:
+      MYSQL_HOST: db
+      MYSQL_USER: nextcloud
+      MYSQL_PASSWORD: nextcloud
+      MYSQL_DATABASE: nextcloud
+
+  app31:
+    environment:
+      MYSQL_HOST: db
+      MYSQL_USER: nextcloud
+      MYSQL_PASSWORD: nextcloud
+      MYSQL_DATABASE: nextcloud31

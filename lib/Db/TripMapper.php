@@ -73,6 +73,47 @@ class TripMapper extends BaseMapper {
 	}
 
 	/**
+	 * One vehicle's live trip that set off last, whoever entered it: where the next one sets off.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findLatest(int $vehicleId): ?Trip {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->tableName)
+			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->isNull('deleted_at'))
+			->orderBy('started_at', 'DESC')
+			->addOrderBy('id', 'DESC')
+			->setMaxResults(1);
+
+		return $this->findEntities($qb)[0] ?? null;
+	}
+
+	/**
+	 * The live trip one person entered last on one vehicle - entered, not dated: the category they
+	 * chose most recently. A Reconciliation Trip is not theirs to have chosen, so it is passed over.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findLatestEnteredBy(int $vehicleId, string $userId): ?Trip {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->tableName)
+			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->eq('created_by', $qb->createNamedParameter($userId)))
+			->andWhere($qb->expr()->isNull('deleted_at'))
+			->andWhere($qb->expr()->orX(
+				$qb->expr()->isNull('reconciled'),
+				$qb->expr()->eq('reconciled', $qb->createNamedParameter(false, IQueryBuilder::PARAM_BOOL)),
+			))
+			->orderBy('id', 'DESC')
+			->setMaxResults(1);
+
+		return $this->findEntities($qb)[0] ?? null;
+	}
+
+	/**
 	 * The trips of one vehicle that set off in `[from, to)`, oldest first as findAllForVehicle()
 	 * orders them - voided ones included. This is the Fahrtenbuch export's own question
 	 * (docs/features.md#logbook-mode): a voided trip is listed there, as voided.
@@ -89,6 +130,26 @@ class TripMapper extends BaseMapper {
 			->andWhere($qb->expr()->lt('started_at', $qb->createNamedParameter($to, IQueryBuilder::PARAM_INT)))
 			->orderBy('started_at', 'ASC')
 			->addOrderBy('id', 'ASC');
+
+		return $this->findEntities($qb);
+	}
+
+	/**
+	 * One vehicle's live trips whose span meets `(from, to)`: they set off before `to` and arrive
+	 * after `from`. Ends that only touch do not meet - one trip arriving where the next sets off is
+	 * how a vehicle is driven.
+	 *
+	 * @return list<Trip>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findOverlapping(int $vehicleId, int $from, int $to): array {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->tableName)
+			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->isNull('deleted_at'))
+			->andWhere($qb->expr()->lt('started_at', $qb->createNamedParameter($to, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->gt('ended_at', $qb->createNamedParameter($from, IQueryBuilder::PARAM_INT)));
 
 		return $this->findEntities($qb);
 	}

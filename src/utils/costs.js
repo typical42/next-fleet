@@ -3,9 +3,10 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-import { getCanonicalLocale, t } from '@nextcloud/l10n'
+import { getCanonicalLocale } from '@nextcloud/l10n'
 
 import { expenseWord, formatMoney } from './format.js'
+import { t } from './l10n.js'
 
 /**
  * Three bands and no more: six are unreadable at 320 px. Expenses are one band here and itemised in
@@ -131,7 +132,7 @@ export function co2Of(co2, locale = getCanonicalLocale()) {
 	}
 
 	const kilograms = new Intl.NumberFormat(locale, { style: 'unit', unit: 'kilogram', maximumFractionDigits: 0 })
-	const notes = [t('nextfleet', 'An estimate: what was tanked or charged, times its emission factor')]
+	const notes = [t('nextfleet', 'An estimate: what was filled up or charged, times its emission factor')]
 	const sources = [{
 		label: co2.year === null ? t('nextfleet', 'Fuel factors') : t('nextfleet', 'Fuel factors {year}', { year: co2.year }),
 		href: co2.source,

@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Service;
 
 use OCA\NextFleet\AppInfo\Application;
+use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\Audit;
 use OCA\NextFleet\Db\AuditMapper;
 use OCA\NextFleet\Db\Booking;
@@ -19,6 +20,7 @@ use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Exception\AccessDeniedException;
+use OCA\NextFleet\Exception\CurrencyInUseException;
 use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCP\AppFramework\Db\DoesNotExistException;
@@ -36,9 +38,18 @@ class VehicleService {
 	use TTransactional;
 
 	/** CONTEXT.md's vocabulary, and the only words these columns take. */
-	public const VEHICLE_TYPES = ['car', 'van', 'truck', 'trailer', 'tractor', 'generator'];
+	public const VEHICLE_TYPES = ['car', 'motorcycle', 'van', 'truck', 'trailer', 'tractor', 'generator'];
 	private const ENGINES = ['petrol', 'diesel', 'lpg', 'cng', 'electric', 'hybrid'];
 	public const ENERGIES = ['petrol', 'diesel', 'lpg', 'cng', 'electric'];
+	/** What a new vehicle takes when the request names no energy: a gas car starts on petrol. */
+	private const ENGINE_ENERGIES = [
+		'petrol' => ['petrol'],
+		'diesel' => ['diesel'],
+		'lpg' => ['petrol', 'lpg'],
+		'cng' => ['petrol', 'cng'],
+		'electric' => ['electric'],
+		'hybrid' => ['petrol', 'electric'],
+	];
 	/** Kilometres or engine hours - a tractor counts neither in km nor in miles. */
 	private const ODO_UNITS = ['km', 'h'];
 	/** A second counter is engine hours beside kilometres, and nothing else. */
@@ -48,7 +59,8 @@ class VehicleService {
 	/**
 	 * The columns a request may set, each with the setter it reaches and what it has to look
 	 * like: `text` with the column's own length, `word` and `set` against a vocabulary,
-	 * `number` and `count` (never negative) as integers, `date` as one calendar day.
+	 * `number` and `count` (never negative) as integers, `date` as one calendar day, `currency`
+	 * as an ISO 4217 code in capitals.
 	 *
 	 * What is missing is the point. `uuid` is the identity and `user_id`/`created_by` the
 	 * provenance, so a request cannot choose them; `odo_value` and `second_value` are caches recomputed from the
@@ -64,22 +76,22 @@ class VehicleService {
 		'vehicle_type' => ['setVehicleType', 'word', self::VEHICLE_TYPES],
 		'engine' => ['setEngine', 'word', self::ENGINES],
 		'energy_types' => ['setEnergyTypes', 'set', self::ENERGIES],
-		'tank_ml' => ['setTankMl', 'count', null],
-		'battery_wh' => ['setBatteryWh', 'count', null],
+		'tank_ml' => ['setTankMl', 'count', Field::CAPACITY],
+		'battery_wh' => ['setBatteryWh', 'count', Field::CAPACITY],
 		'first_reg' => ['setFirstReg', 'date', null],
 		'disposed_at' => ['setDisposedAt', 'date', null],
 		'vin' => ['setVin', 'text', 32],
 		'odo_unit' => ['setOdoUnit', 'word', self::ODO_UNITS],
 		'second_unit' => ['setSecondUnit', 'word', self::SECOND_UNITS],
-		'purchase_price' => ['setPurchasePrice', 'number', null],
-		'residual_est' => ['setResidualEst', 'number', null],
-		'currency' => ['setCurrency', 'text', 3],
+		'purchase_price' => ['setPurchasePrice', 'number', Field::MONEY],
+		'residual_est' => ['setResidualEst', 'number', Field::MONEY],
+		'currency' => ['setCurrency', 'currency', null],
 		'jurisdiction' => ['setJurisdiction', 'text', 8],
 		'logbook_mode' => ['setLogbookMode', 'flag', null],
 		'lifecycle' => ['setLifecycle', 'word', self::LIFECYCLES],
-		'retention_months' => ['setRetentionMonths', 'count', null],
+		'retention_months' => ['setRetentionMonths', 'count', Field::MONTHS],
 		'color' => ['setColor', 'text', 32],
-		'notes' => ['setNotes', 'text', null],
+		'notes' => ['setNotes', 'text', Field::TEXT],
 		'reminder_mail' => ['setReminderMail', 'word', self::MAIL_CADENCES],
 	];
 
@@ -102,10 +114,24 @@ class VehicleService {
 
 	/**
 	 * What kind of change the audit row records, a key in `diff_json` rather than a column
-	 * (docs/architecture.md#data-model). This service writes the one kind: the Logbook Mode
-	 * switch being flipped.
+	 * (docs/architecture.md#data-model): the Logbook Mode switch being flipped, or one of the
+	 * vehicle's `FACTS` changed without one.
 	 */
 	private const SWITCHED = 'switched';
+	private const EDITED = 'edited';
+
+	/**
+	 * The columns a logbook or a cost is read under, each with its getter: their history is kept
+	 * mode or not, because the Fahrtenbuch prints the plate valid in each period and an auditor
+	 * asks when the country or the currency changed. In `WRITABLE`'s order, which is the order a row
+	 * lists them in.
+	 */
+	private const FACTS = [
+		'plate' => 'getPlate',
+		'vehicle_type' => 'getVehicleType',
+		'currency' => 'getCurrency',
+		'jurisdiction' => 'getJurisdiction',
+	];
 
 	/** How far ahead the reader's own next booking is named (docs/ui.md). */
 	private const WEEK = 7 * 86400;
@@ -125,6 +151,8 @@ class VehicleService {
 		private BookingMapper $bookings,
 		private ITimeFactory $time,
 		private IUserManager $users,
+		private MoneyRows $money,
+		private AccessMapper $grants,
 	) {
 	}
 
@@ -133,7 +161,32 @@ class VehicleService {
 	 * @throws \OCP\DB\Exception
 	 */
 	public function create(string $userId, array $fields): Vehicle {
+		$once = Once::of(
+			$fields,
+			$this->mapper,
+			// Answered to its owner only: a uuid is no way into somebody else's vehicle.
+			static fn (Vehicle $row): bool => $row->getUserId() === $userId,
+			function (Vehicle $row) use ($userId): Vehicle {
+				$row->setMay($this->access->operations($userId, $row));
+
+				return $row;
+			},
+		);
+
+		return $once->run(fn (): Vehicle => $this->insert($userId, $fields, $once));
+	}
+
+	/**
+	 * What create() writes once it knows the request is no retry.
+	 *
+	 * @param array<string, mixed> $fields
+	 * @param Once<Vehicle> $once
+	 * @throws \InvalidArgumentException
+	 * @throws \OCP\DB\Exception
+	 */
+	private function insert(string $userId, array $fields, Once $once): Vehicle {
 		$vehicle = new Vehicle();
+		$once->stamp($vehicle);
 		$vehicle->setUserId($userId);
 		$vehicle->setCreatedBy($userId);
 		$jurisdiction = $this->jurisdictionOf($userId, $fields);
@@ -150,6 +203,12 @@ class VehicleService {
 		$vehicle->setOdoUnit($profile->odoUnit());
 		$vehicle->setCurrency($profile->currency());
 		$this->apply($vehicle, $fields);
+		// The create sheet asks for the engine only; without energies *Energy* has nothing to
+		// offer. An edit derives nothing: there the owner chose, emptying included.
+		$engine = $vehicle->getEngine();
+		if (($vehicle->getEnergyTypes() ?? []) === [] && $engine !== null) {
+			$vehicle->setEnergyTypes(self::ENGINE_ENERGIES[$engine] ?? null);
+		}
 
 		// The owner is where the reminders go until somebody edits the list, which is what the
 		// migration gave every vehicle that existed before it.
@@ -212,14 +271,26 @@ class VehicleService {
 	 * @throws DoesNotExistException
 	 * @throws AccessDeniedException if the user may not edit this vehicle
 	 * @throws StaleUpdateException if the row has changed since
+	 * @throws CurrencyInUseException if the currency changes on a vehicle with amounts in it
+	 * @throws \InvalidArgumentException if a field is not what its column holds
 	 * @throws \OCP\DB\Exception
 	 */
 	public function update(string $userId, string $uuid, int $expectedUpdatedAt, array $fields): Vehicle {
 		$vehicle = $this->reach($userId, VehicleAccess::EDIT, $uuid);
-		$was = $vehicle->getLogbookMode() === true;
+		$was = clone $vehicle;
 		$this->apply($vehicle, $fields);
 
 		$written = $this->atomic(function () use ($userId, $vehicle, $expectedUpdatedAt, $was): Vehicle {
+			// docs/architecture.md#data-model. Only a code is frozen: amounts under none, or under a
+			// sign from before the check, are labelled by naming one, which the import asks for.
+			// Under the hold every money write takes, so one racing this edit is seen.
+			$frozen = $was->getCurrency();
+			if ($frozen !== null && Field::isCurrency($frozen) && $vehicle->getCurrency() !== $frozen) {
+				$this->mapper->hold((int)$vehicle->getId());
+				if ($this->money->exist((int)$vehicle->getId())) {
+					throw new CurrencyInUseException('currency stays once the vehicle has costs recorded in it');
+				}
+			}
 			$written = $this->mapper->updateChecked($vehicle, $expectedUpdatedAt);
 			$this->trail($userId, $written, $was);
 
@@ -232,15 +303,16 @@ class VehicleService {
 	}
 
 	/**
-	 * The audit row a flip of the Logbook Mode leaves on the vehicle, and the only row this
-	 * service writes: the mode is what the export reads the periods it was on off
+	 * The audit row a save leaves on the vehicle when it flipped the Logbook Mode or changed one of
+	 * its `FACTS`. The mode is what the export reads the periods it was on off
 	 * (docs/features.md#logbook-mode), and a flip nobody recorded would leave the export with
 	 * trips it cannot place on either side of it.
 	 *
-	 * Only a flip. An update that states the mode it already had changed nothing, and a trail
-	 * that says otherwise makes an auditor count periods that never began. `null` and `false`
-	 * are the same answer here - the column is three-valued (docs/architecture.md#data-model),
-	 * but a vehicle nobody ever switched is off, not in a third state.
+	 * Only a change. A sheet sends every column on every save (docs/ui.md), and a trail that
+	 * records a mode it already had makes an auditor count periods that never began. `null` and
+	 * `false` are the same answer here - the column is three-valued
+	 * (docs/architecture.md#data-model), but a vehicle nobody ever switched is off, not in a third
+	 * state.
 	 *
 	 * Where the first period begins is not a row: a vehicle created with the mode already on
 	 * has been under it since it was created, which is `created_at` and nothing this has to
@@ -248,12 +320,22 @@ class VehicleService {
 	 *
 	 * Inside the caller's transaction on purpose, the reason TripService::trail() gives.
 	 *
-	 * @param bool $was the mode as the row carried it before the request was applied
+	 * @param Vehicle $was the row as it was before the request was applied
 	 * @throws \OCP\DB\Exception
 	 */
-	private function trail(string $userId, Vehicle $vehicle, bool $was): void {
+	private function trail(string $userId, Vehicle $vehicle, Vehicle $was): void {
+		$fields = [];
+		foreach (self::FACTS as $column => $getter) {
+			if ($was->$getter() !== $vehicle->$getter()) {
+				$fields[$column] = [$was->$getter(), $vehicle->$getter()];
+			}
+		}
+		$before = $was->getLogbookMode() === true;
 		$now = $vehicle->getLogbookMode() === true;
-		if ($now === $was) {
+		if ($before !== $now) {
+			$fields['logbook_mode'] = [$before, $now];
+		}
+		if ($fields === []) {
 			return;
 		}
 
@@ -261,16 +343,13 @@ class VehicleService {
 		$row->setCreatedBy($userId);
 		$row->setEntity(Audit::VEHICLE);
 		$row->setEntityId((int)$vehicle->getId());
-		$row->setDiffJson(['change' => self::SWITCHED, 'fields' => ['logbook_mode' => [$was, $now]]]);
+		$row->setDiffJson(['change' => $before !== $now ? self::SWITCHED : self::EDITED, 'fields' => $fields]);
 		$this->audit->insert($row);
 	}
 
 	/**
-	 * Takes back what the vehicle's reminders have sent: the job no longer reads a deleted
-	 * vehicle, so nothing else ever would. Its grants' and cancelled bookings' notices go too, as
-	 * litter of the same kind. After the delete stands, the reason NotificationService::sweep()
-	 * gives. A restore sends nothing back; the next round tells
-	 * whatever is still due.
+	 * A restore sends nothing back that withdraw() took; the next round tells whatever is still
+	 * due.
 	 *
 	 * @param int $expectedUpdatedAt the `updated_at` the client read
 	 * @throws DoesNotExistException
@@ -283,13 +362,25 @@ class VehicleService {
 			$this->reach($userId, VehicleAccess::OWN, $uuid),
 			$expectedUpdatedAt,
 		);
+		$this->withdraw($deleted);
+
+		return $deleted;
+	}
+
+	/**
+	 * Takes back what a deleted vehicle's reminders have sent: the job no longer reads a deleted
+	 * vehicle, so nothing else ever would. Its live grants' and cancelled bookings' notices go
+	 * too, as litter of the same kind. After the delete stands, the reason
+	 * NotificationService::sweep() gives.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	public function withdraw(Vehicle $deleted): void {
 		foreach ($this->reminders->findByVehicle((int)$deleted->getId()) as $reminder) {
 			$this->notifications->withdraw($reminder);
 		}
 		$this->grantNotices->withdrawAll($deleted);
 		$this->bookingNotices->withdrawAll($deleted);
-
-		return $deleted;
 	}
 
 	/**
@@ -403,9 +494,9 @@ class VehicleService {
 	}
 
 	/**
-	 * Who has each car, and the reader's own next booking of it within a week (docs/ui.md), in
-	 * one query for the whole list rather than one per vehicle. A booking is seen with `view`,
-	 * which every vehicle handed out is.
+	 * Who has each car, the reader's own next booking of it within a week, and whether anybody was
+	 * ever given access, the rule its Bookings show by (docs/ui.md): one query each for the whole
+	 * list rather than per vehicle. A booking is seen with `view`, which every vehicle handed out is.
 	 *
 	 * @param list<Vehicle> $vehicles
 	 * @param array<string, string> $names the names already looked up, by uid
@@ -415,6 +506,9 @@ class VehicleService {
 		$byId = [];
 		foreach ($vehicles as $vehicle) {
 			$byId[(int)$vehicle->getId()] = $vehicle;
+		}
+		foreach ($this->grants->everGrantedAmong(array_keys($byId)) as $id) {
+			$byId[$id]->setEverGranted(true);
 		}
 		$now = $this->time->getTime();
 		foreach ($this->bookings->findPooled(array_keys($byId), $userId, $now, $now + self::WEEK) as $booking) {
@@ -465,6 +559,11 @@ class VehicleService {
 			if (!array_key_exists($column, $fields)) {
 				continue;
 			}
+			// A sheet sends the whole vehicle back: a currency from before currency() checked it
+			// stays until somebody changes it.
+			if ($column === 'currency' && $fields[$column] !== null && $fields[$column] === $vehicle->getCurrency()) {
+				continue;
+			}
 
 			$value = $this->read($column, $kind, $limit, $fields[$column]);
 			if ($value === null && in_array($column, self::REQUIRED, true)) {
@@ -490,6 +589,8 @@ class VehicleService {
 	 * @throws \InvalidArgumentException
 	 */
 	private function read(string $column, string $kind, int|array|null $limit, mixed $value): string|int|bool|array|\DateTime|null {
+		// Before the empty check, as Field::read() does it.
+		$bound = in_array($kind, ['text', 'number', 'count'], true) ? Field::bound($column, $limit) : 0;
 		if (is_string($value)) {
 			$value = trim($value);
 		}
@@ -498,15 +599,32 @@ class VehicleService {
 		}
 
 		return match ($kind) {
-			'text' => Field::text($column, $value, is_int($limit) ? $limit : null),
+			'text' => Field::text($column, $value, $bound),
 			'word' => Field::word($column, $value, is_array($limit) ? $limit : []),
 			'set' => $this->set($column, $value, is_array($limit) ? $limit : []),
-			'number' => $this->number($column, $value, false),
-			'count' => $this->number($column, $value, true),
+			'number' => $this->number($column, $value, false, $bound),
+			'count' => $this->number($column, $value, true, $bound),
 			'flag' => Field::flag($column, $value),
 			'date' => Field::day($column, $value),
+			'currency' => self::currency($column, $value),
 			default => throw new \InvalidArgumentException($column . ' has no readable kind'),
 		};
+	}
+
+	/**
+	 * A sign or a name would leave the costs without a currency to add up in and an import
+	 * without one to check against (lib/Import/Cells.php). Rows written before this check keep
+	 * theirs (apply()).
+	 *
+	 * @throws \InvalidArgumentException
+	 */
+	private static function currency(string $column, mixed $value): string {
+		$code = is_string($value) ? strtoupper($value) : '';
+		if (!Field::isCurrency($code)) {
+			throw new \InvalidArgumentException($column . ' is a three-letter ISO 4217 code, such as EUR');
+		}
+
+		return $code;
 	}
 
 	/**
@@ -528,13 +646,16 @@ class VehicleService {
 	}
 
 	/** @throws \InvalidArgumentException */
-	private function number(string $column, mixed $value, bool $unsigned): int {
+	private function number(string $column, mixed $value, bool $unsigned, int $max): int {
 		$number = filter_var($value, FILTER_VALIDATE_INT);
 		if ($number === false) {
 			throw new \InvalidArgumentException($column . ' is a whole number');
 		}
 		if ($unsigned && $number < 0) {
 			throw new \InvalidArgumentException($column . ' is never negative');
+		}
+		if (abs($number) > $max) {
+			throw new \InvalidArgumentException($column . ' is ' . ($unsigned ? '' : '-' . $max . ' at least and ') . $max . ' at most');
 		}
 
 		return $number;

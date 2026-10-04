@@ -20,11 +20,14 @@ final class MileageClaim {
 	/**
 	 * `$lines` is oldest first. On each, `kilometres` is null where the driver stated none, `rate`
 	 * is null where the table does not cover the trip's day, and `amount` in cents is null when
-	 * either is. `$total` and `$kilometres` count only lines with an amount, and are null when no
-	 * line has one: "not stated", never a claim of nothing.
+	 * either is. `missing` names the fields the ruleset requires and the trip leaves unstated, and
+	 * `reconciled` marks a Reconciliation Trip; either keeps the line out of the sums, amount or
+	 * not. Both are optional for a renderer written before them, and absent means neither.
+	 * `$total` and `$kilometres` count only the lines that remain with an amount, and are null when
+	 * none does: "not stated", never a claim of nothing.
 	 *
 	 * @param int $year the local calendar year the trips set off in (docs/architecture.md#time)
-	 * @param list<array{trip: Trip, kilometres: ?int, rate: ?int, amount: ?int}> $lines
+	 * @param list<array{trip: Trip, kilometres: ?int, rate: ?int, amount: ?int, missing?: list<string>, reconciled?: bool}> $lines
 	 * @param ?int $total cents of the jurisdiction's currency
 	 * @param string $sourceUrl where the rate is written down
 	 */

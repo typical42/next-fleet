@@ -9,14 +9,20 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Tests\Integration;
 
 use OCA\NextFleet\AppInfo\Application;
+use OCA\NextFleet\Db\Energy;
+use OCA\NextFleet\Db\EnergyMapper;
+use OCA\NextFleet\Db\OdoReading;
+use OCA\NextFleet\Db\OdoReadingMapper;
 use OCA\NextFleet\Jurisdiction\De\RateProvider;
 use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\ExpenseService;
 use OCA\NextFleet\Service\KpiService;
 use OCA\NextFleet\Service\MaintenanceService;
+use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\IConfig;
 use OCP\IDBConnection;
+use OCP\Security\ISecureRandom;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -25,6 +31,8 @@ use PHPUnit\Framework\TestCase;
  * It writes to the instance it runs against (docs/development.md#testing).
  */
 class KpiTest extends TestCase {
+	use CountsQueries;
+
 	/** Not a Nextcloud account: `user_id` is a string column with no key on it. */
 	private const OWNER = 'nextfleet-test-alice';
 
@@ -36,13 +44,12 @@ class KpiTest extends TestCase {
 	private IConfig $config;
 
 	protected function setUp(): void {
-		$container = (new Application())->getContainer();
-		$this->energy = $container->get(EnergyService::class);
-		$this->expenses = $container->get(ExpenseService::class);
-		$this->maintenance = $container->get(MaintenanceService::class);
-		$this->kpis = $container->get(KpiService::class);
-		$this->vehicles = $container->get(VehicleService::class);
-		$this->config = $container->get(IConfig::class);
+		$this->energy = \OCP\Server::get(EnergyService::class);
+		$this->expenses = \OCP\Server::get(ExpenseService::class);
+		$this->maintenance = \OCP\Server::get(MaintenanceService::class);
+		$this->kpis = \OCP\Server::get(KpiService::class);
+		$this->vehicles = \OCP\Server::get(VehicleService::class);
+		$this->config = \OCP\Server::get(IConfig::class);
 		$this->forgetTestRows();
 	}
 
@@ -213,6 +220,94 @@ class KpiTest extends TestCase {
 		$this->energy->record(self::OWNER, $uuid, ['filled_at' => 1740000000, 'filled_at_off' => 60, 'energy' => 'diesel', 'amount' => 40000]);
 
 		$this->assertNull($this->kpis->year(self::OWNER, $uuid, '2025', ['tz' => 'Europe/Berlin'])['co2']);
+	}
+
+	/**
+	 * The Costs screen opens on a vehicle with years behind it as fast as on a new one: thirteen
+	 * period edges and a handful of lookups, never a pass over the whole chain.
+	 */
+	public function testAYearReadsAsManyQueriesForALongHistoryAsForAShortOne(): void {
+		$short = $this->priced();
+		$this->history($short, 3);
+		$long = $this->priced();
+		$this->history($long, 3000);
+
+		$this->kpis->year(self::OWNER, $short, '2025', ['tz' => 'Europe/Berlin']);
+		$few = self::queriesOf(fn () => $this->kpis->year(self::OWNER, $short, '2025', ['tz' => 'Europe/Berlin']));
+		$many = self::queriesOf(fn () => $this->kpis->year(self::OWNER, $long, '2025', ['tz' => 'Europe/Berlin']));
+
+		$this->assertSame($few, $many, '6 000 Readings cost what 6 do');
+		// 27 when written: thirteen edges, three tables, the holding's distance, the consumption.
+		$this->assertLessThanOrEqual(30, $many);
+		$this->assertNotNull($this->kpis->year(self::OWNER, $long, '2025', ['tz' => 'Europe/Berlin'])['year']['cost']['tco']);
+	}
+
+	/** A diesel with a price, a residual and a fill-up a month in 2025, so every figure is read. */
+	private function priced(): string {
+		$uuid = $this->vehicles->create(self::OWNER, [
+			'plate' => 'B-XY 123',
+			'energy_types' => ['diesel'],
+			'currency' => 'EUR',
+			'purchase_price' => 2000000,
+			'residual_est' => 500000,
+		])->getUuid();
+		for ($month = 0; $month < 12; $month++) {
+			$this->energy->record(self::OWNER, $uuid, ['filled_at' => 1736000000 + $month * 2600000, 'filled_at_off' => 60, 'energy' => 'diesel', 'amount' => 40000, 'total' => 6000, 'full_tank' => true, 'odo' => 900000 + $month * 1000]);
+		}
+
+		return $uuid;
+	}
+
+	/**
+	 * `$fills` full tanks before 2025, each with its Reading, and as many Readings of the driver's
+	 * own between them. Written past the services: 6 000 entries one by one would settle the chain
+	 * 6 000 times.
+	 */
+	private function history(string $uuid, int $fills): void {
+		$vehicleId = (int)$this->vehicles->reach(self::OWNER, 'view', $uuid)->getId();
+		$energy = \OCP\Server::get(EnergyMapper::class);
+		$readings = \OCP\Server::get(OdoReadingMapper::class);
+		$db = \OCP\Server::get(IDBConnection::class);
+		$db->beginTransaction();
+		for ($i = 0; $i < $fills; $i++) {
+			$at = 1500000000 + $i * 50000;
+			$fill = new Energy();
+			$fill->setUuid(\OCP\Server::get(ISecureRandom::class)->generate(32, ISecureRandom::CHAR_LOWER));
+			$fill->setVehicleId($vehicleId);
+			$fill->setFilledAt($at);
+			$fill->setFilledAtOff(60);
+			$fill->setEnergy('diesel');
+			$fill->setAmount(40000);
+			$fill->setTotal(6000);
+			$fill->setFullTank(true);
+			$fill->setCreatedAt($at);
+			$fill->setUpdatedAt($at);
+			$fill->setCreatedBy(self::OWNER);
+			$energy->insert($fill);
+			$readings->insert($this->reading($vehicleId, $at, $i * 200, OdoReading::ENERGY, (int)$fill->getId()));
+			$readings->insert($this->reading($vehicleId, $at + 25000, $i * 200 + 100, OdoReading::MANUAL, null));
+		}
+		$db->commit();
+	}
+
+	private function reading(int $vehicleId, int $at, int $value, string $sourceType, ?int $sourceId): OdoReading {
+		$reading = new OdoReading();
+		$reading->setUuid(\OCP\Server::get(ISecureRandom::class)->generate(32, ISecureRandom::CHAR_LOWER));
+		$reading->setVehicleId($vehicleId);
+		$reading->setReadAt($at);
+		$reading->setReadAtOff(60);
+		$reading->setValue($value);
+		$reading->setKind(OdoReading::READING);
+		$reading->setOrigin(OdometerService::OBSERVED);
+		$reading->setFlagged(false);
+		$reading->setSourceType($sourceType);
+		$reading->setSourceId($sourceId);
+		$reading->setCounter(OdoReading::MAIN);
+		$reading->setCreatedAt($at);
+		$reading->setUpdatedAt($at);
+		$reading->setCreatedBy(self::OWNER);
+
+		return $reading;
 	}
 
 	/** @return iterable<string, array{string, string}> */

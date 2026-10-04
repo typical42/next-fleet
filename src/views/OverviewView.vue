@@ -3,7 +3,6 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
-import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcEmptyContent from '@nextcloud/vue/components/NcEmptyContent'
 import NcListItem from '@nextcloud/vue/components/NcListItem'
@@ -15,6 +14,7 @@ import { listFleetReminders } from '../services/api.js'
 import { formatOdometer, nameOf, subtitleOf } from '../utils/format.js'
 import { holderWords } from '../utils/pool.js'
 import { dueWords, fleetByUrgency, light, reminderTitle, stateWord } from '../utils/reminders.js'
+import { t } from '../utils/l10n.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle[]>} */
@@ -82,8 +82,8 @@ useHotKey('n', () => emit('new'))
 					<span class="overview__light" :class="`overview__light--${light(next)}`">
 						{{ next ? stateWord(next.state) : t('nextfleet', 'Nothing due') }}
 					</span>
-					<!-- First after the light: the line truncates at 320 px, and who has the car
-					     now is what somebody about to take it opens the app for. -->
+					<!-- First after the light: who has the car now is what somebody about to take
+					     it opens the app for. -->
 					<span v-if="holder"
 						class="overview__holder"
 						:class="{ 'overview__holder--overdue': holder.overdue }">
@@ -155,5 +155,21 @@ useHotKey('n', () => emit('new'))
 .overview__next,
 .overview__made {
 	margin-inline-start: calc(var(--default-grid-baseline) * 2);
+}
+
+/* NcListItem keeps the subname to one line and cuts it with an ellipsis; at 320 px that cut what
+   comes due. Here it wraps, a part at a time, and the row grows to the lines it needs. */
+.overview__list :deep(.list-item__anchor) {
+	height: auto;
+	min-height: var(--list-item-height);
+}
+
+.overview__list :deep(.list-item-content__subname) {
+	white-space: normal;
+}
+
+.overview__list :deep(.list-item-content__subname) > span {
+	display: inline-block;
+	max-width: 100%;
 }
 </style>

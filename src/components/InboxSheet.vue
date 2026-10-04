@@ -3,7 +3,6 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
-import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcDialog from '@nextcloud/vue/components/NcDialog'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
@@ -13,7 +12,8 @@ import { computed, ref, watch } from 'vue'
 import { attachDocument, NotFoundError } from '../services/api.js'
 import { may } from '../utils/access.js'
 import { DOCUMENT_KINDS, documentKindWord, nameOf } from '../utils/format.js'
-import { readOwners } from '../utils/owners.js'
+import { ownerSearch, readOwners } from '../utils/owners.js'
+import { t } from '../utils/l10n.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Waiting>} */
@@ -42,6 +42,7 @@ const kind = ref('receipt')
 
 /** @type {import('vue').Ref<import('../utils/owners.js').Owner[]>} */
 const owners = ref([])
+const { offered: found, searching, lookFor, reset } = ownerSearch(() => /** @type {{id: string}} */ (vehicle.value).id, owners)
 /** @type {import('vue').Ref<import('../utils/owners.js').Owner|null>} */
 const belongs = ref(null)
 const reading = ref(false)
@@ -65,6 +66,7 @@ let asked = 0
 async function listOwners() {
 	const question = ++asked
 	owners.value = []
+	reset()
 	belongs.value = null
 	readFailure.value = ''
 	if (vehicle.value === null) {
@@ -157,7 +159,7 @@ function dismiss() {
 		</p>
 		<NcNoteCard v-if="offered.length === 0"
 			type="info"
-			:text="t('nextfleet', 'None of your vehicles takes papers from you.')" />
+			:text="t('nextfleet', 'You cannot attach documents to any of your vehicles.')" />
 		<template v-else>
 			<NcSelect v-model="vehicle"
 				:options="offered"
@@ -170,22 +172,29 @@ function dismiss() {
 				:clearable="false"
 				label="label"
 				@update:model-value="kind = $event?.id ?? kind" />
-			<NcSelect v-if="owners.length > 0"
-				v-model="belongs"
-				:options="owners"
-				:input-label="t('nextfleet', 'Belongs to')"
-				:placeholder="keepsVehicle ? t('nextfleet', 'The vehicle itself') : t('nextfleet', 'Choose an entry or a booking')"
-				:clearable="keepsVehicle"
-				label="label" />
-			<template v-else-if="readFailure">
+			<template v-if="readFailure">
 				<NcNoteCard type="error" :text="readFailure" />
 				<NcButton @click="listOwners">
 					{{ t('nextfleet', 'Try again') }}
 				</NcButton>
 			</template>
-			<NcNoteCard v-else-if="!keepsVehicle && !reading"
-				type="info"
-				:text="t('nextfleet', 'You can attach a paper only to an entry or a booking of your own, and there is none yet.')" />
+			<template v-else-if="!reading">
+				<!-- As in the documents section: the newest rows, then the whole history once something is
+				     typed. Without `edit` a row must be chosen, and the session's own may lie further back. -->
+				<NcNoteCard v-if="!keepsVehicle && owners.length === 0"
+					type="info"
+					:text="t('nextfleet', 'You can attach a paper only to an entry or a booking of your own. None is among the newest; type to search older ones.')" />
+				<NcSelect v-if="owners.length > 0 || !keepsVehicle"
+					v-model="belongs"
+					:options="found"
+					:filterable="false"
+					:loading="searching"
+					:input-label="t('nextfleet', 'Belongs to')"
+					:placeholder="keepsVehicle ? t('nextfleet', 'The vehicle itself') : t('nextfleet', 'Choose an entry or a booking')"
+					:clearable="keepsVehicle"
+					label="label"
+					@search="lookFor" />
+			</template>
 			<p class="inbox-sheet__lead">
 				{{ t('nextfleet', 'Not entered yet? Log it from this file:') }}
 			</p>

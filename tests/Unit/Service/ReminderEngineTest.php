@@ -330,4 +330,29 @@ class ReminderEngineTest extends TestCase {
 		$this->assertSame('2026-11-09', ReminderEngine::estimate(self::byOdo(12000, 1000), $chain, self::now()));
 		$this->assertSame('2026-11-10', ReminderEngine::estimate(self::byOdo(12000, 1000), $chain, $berlin));
 	}
+
+	/** @return array<string, array{\Closure(Reminder): void, list<string>}> */
+	public static function edits(): array {
+		return [
+			'a new due date moves every date point' => [static fn (Reminder $r) => $r->setDueDate(new \DateTime('2027-04-30')), ['month_before', 'month_start', 'due_date', 'overdue']],
+			'a warning ticked off moves its own point' => [static fn (Reminder $r) => $r->setWarnMonthBefore(false), ['month_before']],
+			'a warning ticked on too' => [static fn (Reminder $r) => $r->setWarnMonthStart(true), ['month_start']],
+			'and the day itself' => [static fn (Reminder $r) => $r->setWarnDueDate(false), ['due_date']],
+			'a new due km moves both km points' => [static fn (Reminder $r) => $r->setDueOdo(13000), ['odo', 'odo_due']],
+			'a new lead moves the warning by km' => [static fn (Reminder $r) => $r->setLeadOdo(2000), ['odo']],
+			'a new title moves nothing' => [static fn (Reminder $r) => $r->setTitle('Tyres'), []],
+		];
+	}
+
+	/** An edit that moves a point lets it ring again (NotificationService::rearm()). */
+	#[DataProvider('edits')]
+	public function testAnEditMovesThePointsItChanges(\Closure $edit, array $moved): void {
+		$was = self::byOdo(12000, 1000);
+		$was->setMode(Reminder::EITHER);
+		$was->setDueDate(new \DateTime('2027-03-31'));
+		$is = clone $was;
+		$edit($is);
+
+		$this->assertSame($moved, ReminderEngine::moved($was, $is));
+	}
 }

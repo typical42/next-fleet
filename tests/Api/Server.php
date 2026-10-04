@@ -83,6 +83,55 @@ final class Server {
 	 * @param array<string, mixed> $params
 	 */
 	public function ocs(Account $as, string $verb, string $path, array $params = []): Answer {
+		[$path, $headers, $body] = self::ocsCall($verb, $path, $params);
+
+		return $this->request($verb, $path, $as, $headers, $body);
+	}
+
+	/**
+	 * OCS calls sent at once, each on its own connection, answered in the order given: what two
+	 * devices tapping together do, for a race the server has to settle.
+	 *
+	 * @param list<array{string, string, array<string, mixed>}> $calls verb, path, parameters
+	 * @return list<Answer>
+	 */
+	public function race(Account $as, array $calls): array {
+		$multi = curl_multi_init();
+		$handles = [];
+		$received = [];
+		foreach ($calls as $i => [$verb, $path, $params]) {
+			[$path, $headers, $body] = self::ocsCall($verb, $path, $params);
+			$received[$i] = [];
+			$handles[$i] = $this->handle($verb, $path, $as, $headers, $body, $received[$i]);
+			curl_multi_add_handle($multi, $handles[$i]);
+		}
+		do {
+			$status = curl_multi_exec($multi, $running);
+			if ($running > 0) {
+				curl_multi_select($multi);
+			}
+		} while ($running > 0 && $status === CURLM_OK);
+		// Hands each transfer's result to its handle, for curl_errno() below.
+		while (curl_multi_info_read($multi) !== false) {
+		}
+
+		$answers = [];
+		foreach ($handles as $i => $curl) {
+			// A failed transfer still has content, an empty string: only its error number tells.
+			$response = curl_errno($curl) === 0 ? curl_multi_getcontent($curl) : false;
+			$answers[] = $this->answer($calls[$i][0], $calls[$i][1], $curl, $response, $received[$i]);
+			curl_multi_remove_handle($multi, $curl);
+		}
+		curl_multi_close($multi);
+
+		return $answers;
+	}
+
+	/**
+	 * @param array<string, mixed> $params
+	 * @return array{string, list<string>, ?string} the full path, the headers, the body
+	 */
+	private static function ocsCall(string $verb, string $path, array $params): array {
 		$headers = ['OCS-APIRequest: true', 'Accept: application/json'];
 		$body = null;
 		if ($verb === 'POST' || $verb === 'PUT') {
@@ -92,12 +141,22 @@ final class Server {
 			$path .= '?' . http_build_query($params);
 		}
 
-		return $this->request($verb, self::OCS . $path, $as, $headers, $body);
+		return [self::OCS . $path, $headers, $body];
 	}
 
 	/** @param list<string> $headers */
 	public function request(string $verb, string $path, ?Account $as, array $headers = [], ?string $body = null): Answer {
 		$received = [];
+		$curl = $this->handle($verb, $path, $as, $headers, $body, $received);
+
+		return $this->answer($verb, $path, $curl, curl_exec($curl), $received);
+	}
+
+	/**
+	 * @param list<string> $headers
+	 * @param array<string, string> $received filled with the answer's headers as they arrive
+	 */
+	private function handle(string $verb, string $path, ?Account $as, array $headers, ?string $body, array &$received): \CurlHandle {
 		$curl = curl_init($this->url . $path);
 		curl_setopt_array($curl, [
 			CURLOPT_CUSTOMREQUEST => $verb,
@@ -119,7 +178,11 @@ final class Server {
 			curl_setopt($curl, CURLOPT_POSTFIELDS, $body);
 		}
 
-		$response = curl_exec($curl);
+		return $curl;
+	}
+
+	/** @param array<string, string> $received */
+	private function answer(string $verb, string $path, \CurlHandle $curl, string|bool|null $response, array $received): Answer {
 		if (!is_string($response)) {
 			throw new \RuntimeException("$verb $path: " . curl_error($curl));
 		}

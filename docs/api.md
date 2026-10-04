@@ -54,7 +54,7 @@ are named in `lib/ResponseDefinitions.php`.
 | Status | Means | Where the reason is |
 | --- | --- | --- |
 | 200, 201 | Done; 201 for a new row | `data` is the row |
-| 400 | The request is wrong: a field, a missing `updated_at` | `data.message` |
+| 400 | The request is wrong: a field, a missing `updated_at` | `data.message`; `data.reason` on the few a client may word itself, so far `currency_in_use`, `end_below_start`, `ends_in_future`, `not_in_question`, `no_energy` |
 | 401 | No login, or a wrong or revoked app password: Nextcloud's, before the app runs | `meta.message`; Nextcloud 31 answers it as XML whatever `Accept` says |
 | 403 | The caller's role does not cover this | `meta.message`, `data` empty |
 | 404 | No such vehicle or row, or not on this vehicle | `meta.message`, `data` empty |
@@ -73,6 +73,26 @@ or POST, in the query string of a DELETE. Each answers the row with its new `upd
 next write carries ([concurrency](architecture.md#concurrency)). A delete answers the token its
 restore takes.
 
+## Retried creates
+
+A phone that loses the answer to a create cannot tell whether the row landed. So every create —
+vehicle, reading, trip, fill-up, maintenance record, expense, reminder, booking, document, grant —
+takes an optional `client_uuid`: a uuid the client picks for the new row. The row gets it as its
+`uuid`, in lowercase. A second create with the same `client_uuid` on the same vehicle writes
+nothing and answers that row, 200 with the body a create gives, as the row now stands. What the
+second request says differently is ignored. A row deleted since answers with its `deleted_at` set:
+the create did happen, and a retry does not undo the delete. Documents and grants answer their
+list, as always.
+
+The field is `client_uuid`, not `uuid`: a body field would replace the route's `{uuid}`, the
+vehicle's. A `client_uuid` that another vehicle's row (or another owner's vehicle) holds is a 400,
+`client_uuid is taken`. Pick a fresh one per row: version 4, from a secure random source.
+
+An import sent again — same request, same file at the same `etag`, within an hour — answers the
+first import's answer instead of importing twice, also while the first still runs. An undo forgets
+it, and so does deleting any entry it names: the next import brings that entry back. This needs a memory cache on the server. Without one the retry imports again: it finds every row
+a duplicate, and writes them a second time if it includes duplicates.
+
 ## Time and units
 
 The wire carries what the database stores ([data model](architecture.md#data-model)):
@@ -85,7 +105,9 @@ The wire carries what the database stores ([data model](architecture.md#data-mod
 - **Amounts are integers** in their stored unit: cents with the vehicle's `currency`, kilometres
   or hours by the vehicle's `odo_unit`, millilitres, watt-hours. `unit_price` counts tenths of a
   cent. Nothing is converted for the caller. The figures of `…/kpis` and `…/costs/{year}` are the
-  one exception: worked out, not stored, some of them are floats.
+  one exception: worked out, not stored, some of them are floats. So a vehicle's currency code is
+  refused with a 400 once it has an amount recorded in it
+  ([data model](architecture.md#data-model)).
 
 ## Routes
 
@@ -97,6 +119,7 @@ Under `/api/v1/vehicles`:
 | `/{uuid}` | GET, PUT, DELETE |
 | `/{uuid}/restore` | POST |
 | `/{uuid}/readings`, `/{uuid}/readings/{reading}`, `…/restore` | GET list, POST; PUT, DELETE; POST |
+| `/{uuid}/readings/{reading}/reset` | POST — a Reading in question answered as a counter replaced; 400 `not_in_question` otherwise |
 | `/{uuid}/trips`, `/{uuid}/trips/{trip}`, `…/restore` | POST; PUT, DELETE; POST |
 | `/{uuid}/trips/prefill` | GET |
 | `/{uuid}/energy`, `/{uuid}/energy/{fillUp}`, `…/restore` | POST; PUT, DELETE; POST |
@@ -113,11 +136,14 @@ Under `/api/v1/vehicles`:
 | `/{uuid}/reminder-templates` | GET |
 | `/{uuid}/recipients`, `/{uuid}/recipients/{recipient}` | GET, POST; DELETE |
 | `/{uuid}/grants`, `/{uuid}/grants/{grant}` | GET, POST; PUT, DELETE |
-| `/{uuid}/access` | GET what the caller holds, DELETE to leave it |
+| `/{uuid}/access` | GET what the caller holds and who reads the vehicle (`holders`, by name and role), DELETE to leave it |
 | `/{uuid}/documents`, `/{uuid}/documents/{document}`, `…/restore` | GET, POST; DELETE; POST |
 | `/{uuid}/import/preview`, `/{uuid}/import`, `/{uuid}/import/undo` | POST, which writes nothing; POST with the preview's `etag`; POST with the import's `created` ([architecture](architecture.md#import)) |
 | `/{uuid}/bookings`, `/{uuid}/bookings/{booking}` | GET, POST; PUT, DELETE (a cancel) |
 | `/{uuid}/bookings/{booking}/check-out`, `…/check-in` | POST |
+
+`{fillUp}` names an Energy Entry. The [glossary](../CONTEXT.md) avoids the word as a type name, but
+v1 keeps it: the baseline froze the paths, and a renamed one is a path gone ([below](#what-v1-promises)).
 
 And beside them, under `/api/v1`: `/reminders` (GET, every vehicle's at once), `/preferences` (GET,
 PUT), `/inbox` (GET) and `/sync` (GET, [below](#sync)).
@@ -142,7 +168,7 @@ sends no cursor; every answer hands out the one the next call sends.
 | `unreachable` | The vehicles the last answer listed that the caller no longer reaches: revoked, left, or in the trash. The client drops them and their rows |
 | `cursor` | What the next call sends. Opaque; one the route did not hand out is a 400 |
 | `more` | Another page waits: call again with `cursor` now |
-| `reset` | An account was erased since the cursor: its rows were pseudonymised and kept their `updated_at`. The client drops what it holds and starts from this answer |
+| `reset` | An erasure since the cursor pseudonymised rows, which kept their `updated_at`, or an admin transferred a vehicle. The client drops what it holds and starts from this answer |
 
 Each item of `changes` is `vehicle_uuid`, `uuid`, `updated_at`, `deleted_at` and `row`: the row as
 its own list route answers it, or null for a deleted row - a tombstone. `grants` come for the caller's
@@ -153,11 +179,13 @@ own vehicles only.
   every row younger than the mark comes again next time. The client upserts by `uuid`, keeping the
   higher `updated_at`.
 - **Whole where a token cannot tell.** A vehicle the client does not hold yet - new, granted, granted
-  again, restored - comes with every live row. When one Reading of a vehicle changed, all its live
-  Readings come: settling the counter re-flags them without moving their tokens.
+  again, restored - comes with every live row. A Reading whose flag a later entry changed comes
+  too: the change moves its token ([concurrency](architecture.md#concurrency)).
 - **Paging.** `limit` rows a page, 500 unless named, 1 to 2000, in (`updated_at`, table, `id`)
-  order. Outside that range Nextcloud 34 refuses the request itself, as a 500; on 31 it is our 400.
-  What a run covers counts as held once its last page, `more: false`, is answered.
+  order. Outside that range NC 31 answers our 400, and NC 34 refuses the request itself, as a 500;
+  32 and 33 are unverified. Treat both as the client's own error: sending it again will not help.
+  What a run covers counts as held once its last page, `more: false`, is answered. The server merges
+  the tables a few rows at a time, so a page reads about twice its rows at most.
 - **As of the call.** A field worked out on read - a fill-up's or a booking's `flags`, `may`, a
   paper's `name`, a reminder's `state` and `estimate` - is what it was when its row was sent, and
   comes again only with the row.
@@ -205,7 +233,9 @@ where the service wants it.
 
 v1 only grows. A client built against it keeps working: no path, method or media type goes, no
 answer loses a field or a success status, no field changes its type or may suddenly be null or
-missing, and no request needs a field or parameter it did not need. New routes, new fields in an
+missing, and no request needs a field or parameter it did not need. A request field takes no
+narrower range and loses no value of its `enum`; an answer field gains none. A map's values
+(`additionalProperties`) and a `oneOf`'s members do not change at all. New routes, new fields in an
 answer, new optional parameters and new refusals are not a break. Anything else is a v2.
 
 The promise covers what the document cannot show, too: a token and its 412, the sync protocol with

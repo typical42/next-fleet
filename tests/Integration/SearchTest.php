@@ -41,9 +41,8 @@ class SearchTest extends TestCase {
 		// The router links only to a loaded app's routes. A search request has loaded it; the CLI
 		// has not, and every link would come back as the bare server URL.
 		\OCP\Server::get(IAppManager::class)->loadApp(Application::APP_ID);
-		$container = (new Application())->getContainer();
-		$this->provider = $container->get(VehicleSearchProvider::class);
-		$this->vehicles = $container->get(VehicleService::class);
+		$this->provider = \OCP\Server::get(VehicleSearchProvider::class);
+		$this->vehicles = \OCP\Server::get(VehicleService::class);
 		$this->forgetTestRows();
 	}
 

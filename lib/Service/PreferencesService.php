@@ -12,7 +12,6 @@ use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Jurisdiction\IJurisdiction;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCP\Files\Folder;
-use OCP\Files\IRootFolder;
 use OCP\IConfig;
 
 /**
@@ -36,6 +35,13 @@ class PreferencesService {
 	 * vehicle, because the question is about one vehicle's missing fields and not about hints.
 	 */
 	private const DISMISSED = 'dismissed_hints';
+	/**
+	 * The vehicles whose Logbook Mode question this user has answered (docs/ui.md), kept apart
+	 * from the missing details: one says nothing about the other.
+	 */
+	private const DISMISSED_LOGBOOK = 'dismissed_logbook_hints';
+	/** One config value holds each list, so it has a bound like any field (docs/security.md). */
+	private const MAX_DISMISSED = 1_000;
 
 	/**
 	 * Whether this user's cost figures are net of VAT (docs/architecture.md). A person's answer
@@ -71,7 +77,7 @@ class PreferencesService {
 	public function __construct(
 		private IConfig $config,
 		private Jurisdictions $jurisdictions,
-		private IRootFolder $root,
+		private OwnFiles $files,
 	) {
 	}
 
@@ -94,7 +100,8 @@ class PreferencesService {
 					self::JURISDICTION,
 					Jurisdictions::DEFAULT,
 				),
-				self::DISMISSED => $this->dismissed($userId),
+				self::DISMISSED => $this->dismissed($userId, self::DISMISSED),
+				self::DISMISSED_LOGBOOK => $this->dismissed($userId, self::DISMISSED_LOGBOOK),
 				self::RECLAIM_VAT => $this->config->getUserValue($userId, Application::APP_ID, self::RECLAIM_VAT, '0') === '1',
 				self::KPI_PERIOD => $this->period($userId),
 				self::GRID_FACTOR => $this->gridFactor($userId),
@@ -113,6 +120,9 @@ class PreferencesService {
 					'name' => $profile->displayName(),
 					'logbook_export' => $profile->logbookRenderer() !== null,
 					'mileage_claim' => $profile->claimRenderer() !== null && $profile->rates() !== null,
+					// A ruleset means a tax office to keep the logbook for, so the overview asks
+					// whether to switch Logbook Mode on (src/components/CompleteHint.vue).
+					'logbook_rules' => $profile->logbookRules() !== null,
 					'grid_factor' => $profile->rates()?->gridFactor(),
 				],
 				$this->jurisdictions->all(),
@@ -136,8 +146,10 @@ class PreferencesService {
 		if (array_key_exists(self::JURISDICTION, $fields)) {
 			$values[self::JURISDICTION] = $this->registeredKey($fields[self::JURISDICTION]);
 		}
-		if (array_key_exists(self::DISMISSED, $fields)) {
-			$values[self::DISMISSED] = json_encode($this->uuids($fields[self::DISMISSED]), JSON_THROW_ON_ERROR);
+		foreach ([self::DISMISSED, self::DISMISSED_LOGBOOK] as $key) {
+			if (array_key_exists($key, $fields)) {
+				$values[$key] = json_encode($this->uuids($key, $fields[$key]), JSON_THROW_ON_ERROR);
+			}
 		}
 		if (array_key_exists(self::RECLAIM_VAT, $fields)) {
 			// A JSON boolean and nothing looser: "no", 0 or "false" would each read as some answer.
@@ -183,15 +195,18 @@ class PreferencesService {
 	 * @return list<string>
 	 * @throws \InvalidArgumentException
 	 */
-	private function uuids(mixed $value): array {
+	private function uuids(string $key, mixed $value): array {
 		if (!is_array($value)) {
-			throw new \InvalidArgumentException(self::DISMISSED . ' is a list of vehicle uuids');
+			throw new \InvalidArgumentException($key . ' is a list of vehicle uuids');
+		}
+		if (count($value) > self::MAX_DISMISSED) {
+			throw new \InvalidArgumentException($key . ' holds ' . self::MAX_DISMISSED . ' vehicles at most');
 		}
 
 		$uuids = [];
 		foreach ($value as $uuid) {
 			if (!is_string($uuid) || preg_match('/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/', $uuid) !== 1) {
-				throw new \InvalidArgumentException(self::DISMISSED . ' holds something that is no vehicle uuid');
+				throw new \InvalidArgumentException($key . ' holds something that is no vehicle uuid');
 			}
 
 			$uuids[] = $uuid;
@@ -207,9 +222,9 @@ class PreferencesService {
 	 *
 	 * @return list<string>
 	 */
-	private function dismissed(string $userId): array {
+	private function dismissed(string $userId, string $key): array {
 		$stored = json_decode(
-			$this->config->getUserValue($userId, Application::APP_ID, self::DISMISSED, '[]'),
+			$this->config->getUserValue($userId, Application::APP_ID, $key, '[]'),
 			true,
 		);
 
@@ -248,9 +263,9 @@ class PreferencesService {
 	 * folder moves.
 	 */
 	private function ownFolder(string $userId, int $folderId): ?Folder {
-		$node = $this->root->getUserFolder($userId)->getFirstNodeById($folderId);
+		$node = $this->files->mine($userId, $folderId);
 
-		return $node instanceof Folder && OwnFiles::owns($userId, $node) ? $node : null;
+		return $node instanceof Folder ? $node : null;
 	}
 
 	/**

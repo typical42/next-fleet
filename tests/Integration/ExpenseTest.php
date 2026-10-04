@@ -8,7 +8,7 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Integration;
 
-use OCA\NextFleet\AppInfo\Application;
+use OCA\NextFleet\Db\ExpenseMapper;
 use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\ExpenseService;
 use OCA\NextFleet\Service\OdometerService;
@@ -32,10 +32,9 @@ class ExpenseTest extends TestCase {
 	private VehicleService $vehicles;
 
 	protected function setUp(): void {
-		$container = (new Application())->getContainer();
-		$this->expenses = $container->get(ExpenseService::class);
-		$this->odometer = $container->get(OdometerService::class);
-		$this->vehicles = $container->get(VehicleService::class);
+		$this->expenses = \OCP\Server::get(ExpenseService::class);
+		$this->odometer = \OCP\Server::get(OdometerService::class);
+		$this->vehicles = \OCP\Server::get(VehicleService::class);
 		$this->forgetTestRows();
 	}
 
@@ -99,6 +98,22 @@ class ExpenseTest extends TestCase {
 		$this->expenses->record(self::OWNER, $vehicle->getUuid(), ['spent_at' => 1750000000, 'spent_at_off' => 120]);
 	}
 
+	/**
+	 * A rate of 0 is stated, and stays 0 through the column and an edit: a database or an entity
+	 * that turned it into null would count a VAT-free insurance gross.
+	 */
+	public function testARateOfZeroComesBackAsZero(): void {
+		$uuid = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123'])->getUuid();
+		$written = $this->expenses->record(self::OWNER, $uuid, $this->spend(['category' => 'insurance', 'vat_rate' => 0]));
+		$rows = \OCP\Server::get(ExpenseMapper::class);
+
+		$this->assertSame(0, $rows->findAnyByUuid($written['uuid'])->getVatRate());
+
+		$edited = $this->expenses->update(self::OWNER, $uuid, $written['uuid'], $written['updated_at'], $this->spend(['vat_rate' => 0, 'notes' => 'HUK']));
+		$this->assertSame(0, $edited['vat_rate']);
+		$this->assertSame(0, $rows->findAnyByUuid($written['uuid'])->getVatRate());
+	}
+
 	/** A category outside the seven is a client that did not use the sheet's list. */
 	public function testAnUnknownCategoryIsRefused(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
@@ -117,14 +132,15 @@ class ExpenseTest extends TestCase {
 	}
 
 	/**
-	 * A category the jurisdiction charges no VAT on opens with no rate, since a stated rate is
-	 * never zero; the others keep the day's rate.
+	 * A category the jurisdiction charges no VAT on opens at a rate of 0: that is a stated fact,
+	 * where null would say nobody knows and the net figures would count it gross. The others keep
+	 * the day's rate.
 	 */
-	public function testAVatFreeCategoryIsPrefilledWithNoRate(): void {
+	public function testAVatFreeCategoryIsPrefilledWithZero(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'jurisdiction' => 'de']);
 		$moment = ['at' => 1750000000, 'off' => 120];
 
-		$this->assertSame(['vat_rate' => null], $this->expenses->prefill(self::OWNER, $vehicle->getUuid(), $moment + ['category' => 'insurance']));
+		$this->assertSame(['vat_rate' => 0], $this->expenses->prefill(self::OWNER, $vehicle->getUuid(), $moment + ['category' => 'insurance']));
 		$this->assertSame(['vat_rate' => 1900], $this->expenses->prefill(self::OWNER, $vehicle->getUuid(), $moment + ['category' => 'toll']));
 		$this->assertSame(['vat_rate' => 1900], $this->expenses->prefill(self::OWNER, $vehicle->getUuid(), $moment + ['category' => '']));
 	}

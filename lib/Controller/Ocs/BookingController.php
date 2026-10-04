@@ -72,11 +72,13 @@ class BookingController extends OCSController {
 	 * @param int|null $ends_at required: unix seconds, after `starts_at` and still to come
 	 * @param int|null $ends_at_off required: its UTC offset in minutes
 	 * @param string|null $purpose what it is booked for
-	 * @return DataResponse<Http::STATUS_CREATED, NextFleetBooking, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_CONFLICT, NextFleetBookingConflict, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
+	 * @param string|null $client_uuid a uuid of the client's for the new row: a retry under it answers that row
+	 * @return DataResponse<Http::STATUS_CREATED, NextFleetBooking, array{}>|DataResponse<Http::STATUS_OK, NextFleetBooking, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_CONFLICT, NextFleetBookingConflict, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
 	 * @throws OCSForbiddenException the caller may not log on this vehicle
 	 * @throws OCSNotFoundException no such vehicle
 	 *
 	 * 201: the booking
+	 * 200: the booking an earlier create under the same `client_uuid` wrote
 	 * 400: a field is not what it holds, or the vehicle is not in service
 	 * 409: another booking holds part of the span
 	 * 412: never for a create; listed because every write can answer it
@@ -90,9 +92,10 @@ class BookingController extends OCSController {
 		mixed $ends_at = null,
 		mixed $ends_at_off = null,
 		mixed $purpose = null,
+		mixed $client_uuid = null,
 	): DataResponse {
-		return $this->booked(fn (): DataResponse => new DataResponse(
-			$this->service->book($this->userId(), $uuid, $this->request->getParams()),
+		return $this->booked(fn (): DataResponse => $this->created(
+			fn (): array => $this->service->book($this->userId(), $uuid, $this->request->getParams()),
 			Http::STATUS_CREATED,
 		));
 	}

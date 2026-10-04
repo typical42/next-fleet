@@ -14,7 +14,7 @@ import { flushPromises, shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ConflictError, createVehicle, deleteVehicle, getPreferences, getVehicle, listReminders, recordReading, reminderTemplates, updateEntry, updateVehicle } from '../services/api.js'
+import { ConflictError, RefusedError, createVehicle, deleteVehicle, getPreferences, getVehicle, listReminders, recordReading, reminderTemplates, savePreferences, updateEntry, updateVehicle } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
 import { formatDay } from '../utils/format.js'
 import InspectionSticker from './InspectionSticker.vue'
@@ -35,6 +35,7 @@ vi.mock('../services/api.js', async (original) => ({
 	listReminders: vi.fn(),
 	recordReading: vi.fn(),
 	reminderTemplates: vi.fn(),
+	savePreferences: vi.fn(),
 	updateEntry: vi.fn(),
 	updateVehicle: vi.fn(),
 }))
@@ -82,7 +83,7 @@ async function sheet(vehicle = null) {
 		// what they do in their own slot, so the stubs render theirs.
 		global: {
 			renderStubDefaultSlot: true,
-			stubs: { NcDialog: { template: '<div><slot /><slot name="actions" /></div>' } },
+			stubs: { NcDialog: { template: '<div><div class="body"><slot /></div><div class="actions"><slot name="actions" /></div></div>' } },
 		},
 	})
 	await flushPromises()
@@ -164,8 +165,8 @@ beforeEach(() => {
 	setActivePinia(createPinia())
 	vi.resetAllMocks()
 	vi.mocked(getPreferences).mockResolvedValue({
-		preferences: { jurisdiction: 'de', dismissed_hints: [], reclaim_vat: false, kpi_period: 'last-12', grid_factor: null, inbox_folder: null },
-		jurisdictions: [{ key: 'de', name: 'Germany', logbook_export: true, mileage_claim: true, grid_factor: null }, { key: 'generic', name: 'Generic', logbook_export: false, mileage_claim: false, grid_factor: null }],
+		preferences: { jurisdiction: 'de', dismissed_hints: [], dismissed_logbook_hints: [], reclaim_vat: false, kpi_period: 'last-12', grid_factor: null, inbox_folder: null },
+		jurisdictions: [{ key: 'de', name: 'Germany', logbook_export: true, mileage_claim: true, logbook_rules: true, grid_factor: null }, { key: 'generic', name: 'Generic', logbook_export: false, mileage_claim: false, logbook_rules: false, grid_factor: null }],
 	})
 	// No inspection unless a case asks for one (the HU/AU cases below).
 	vi.mocked(reminderTemplates).mockResolvedValue([])
@@ -184,7 +185,9 @@ beforeEach(() => {
 		value: 148320,
 		origin: 'observed',
 		flagged: false,
+		kind: 'reading',
 		counter: 'main',
+		updated_at: 1700000000,
 	})
 })
 
@@ -405,6 +408,21 @@ describe('the vehicle sheet, editing', () => {
 		expect(after.props('cadence')).toBe('monthly')
 	})
 
+	/** The first grant changes `ever_granted`, which the vehicle screen shows Bookings by. */
+	it('reads the vehicle back once its first grant went through', async () => {
+		vi.mocked(getVehicle).mockResolvedValue(/** @type {any} */ ({ ...VEHICLE, ever_granted: true }))
+		const wrapper = await sheet({ ...VEHICLE, ever_granted: false })
+
+		await /** @type {any} */ (wrapper.findComponent(VehicleGrants)).vm.$emit('granted')
+		await flushPromises()
+		expect(getVehicle).toHaveBeenCalledWith('v-1')
+
+		vi.mocked(getVehicle).mockClear()
+		await wrapper.setProps({ vehicle: { ...VEHICLE, ever_granted: true } })
+		await /** @type {any} */ (wrapper.findComponent(VehicleGrants)).vm.$emit('granted')
+		expect(getVehicle).not.toHaveBeenCalled()
+	})
+
 	/** The unit a Reading was counted in is what its number means, so a counted vehicle keeps it. */
 	it('keeps the unit of a vehicle that has readings when it becomes a tractor', async () => {
 		const wrapper = await sheet({ ...VEHICLE, odo_value: 48200 })
@@ -471,6 +489,35 @@ describe('the vehicle sheet, editing', () => {
 		await flushPromises()
 
 		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ logbook_mode: true }))
+	})
+
+	/**
+	 * A flip here answers the overview's logbook question too (src/components/CompleteHint.vue):
+	 * switched on and off again, the vehicle is not asked a second time. A save that leaves the
+	 * mode alone answers nothing.
+	 */
+	it('counts a flip of the mode as the answer to the logbook question', async () => {
+		vi.mocked(updateVehicle).mockImplementation(async (vehicle) => /** @type {any} */ (vehicle))
+		vi.mocked(savePreferences).mockResolvedValue(/** @type {any} */ ({ preferences: { dismissed_hints: [], dismissed_logbook_hints: [VEHICLE.uuid] }, jurisdictions: [] }))
+
+		const untouched = await sheet(VEHICLE)
+		await saveButton(untouched).vm.$emit('click')
+		await flushPromises()
+		expect(savePreferences).not.toHaveBeenCalled()
+
+		const wrapper = await sheet(VEHICLE)
+		await toggle(wrapper, 'Logbook mode').vm.$emit('update:modelValue', true)
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(savePreferences).toHaveBeenCalledWith({ dismissed_logbook_hints: [VEHICLE.uuid] })
+	})
+
+	/** The rules it invokes are an aid nobody checked in law, and the hint says so where it is chosen. */
+	it('says beside the switch that no lawyer reviewed the mode', async () => {
+		const wrapper = await sheet(VEHICLE)
+
+		expect(toggle(wrapper, 'Logbook mode').props('description')).toContain('Not reviewed by a lawyer.')
 	})
 
 	/** A vehicle already under the mode opens with the switch saying so. */
@@ -615,9 +662,9 @@ describe('the vehicle sheet, editing', () => {
 	it('offers the countries the server registered, in a word the bundle translates', async () => {
 		const wrapper = await sheet(VEHICLE)
 
-		expect(dropdown(wrapper, 'Jurisdiction').props('options'))
+		expect(dropdown(wrapper, 'Country').props('options'))
 			.toEqual([{ id: 'de', label: 'Germany' }, { id: 'generic', label: 'Generic' }])
-		expect(dropdown(wrapper, 'Jurisdiction').props('modelValue').id).toBe('de')
+		expect(dropdown(wrapper, 'Country').props('modelValue').id).toBe('de')
 	})
 
 	/**
@@ -627,9 +674,9 @@ describe('the vehicle sheet, editing', () => {
 	it('keeps offering the country the vehicle is already kept under', async () => {
 		const wrapper = await sheet({ ...VEHICLE, jurisdiction: 'zz' })
 
-		expect(dropdown(wrapper, 'Jurisdiction').props('options').map((/** @type {{id: string}} */ o) => o.id))
+		expect(dropdown(wrapper, 'Country').props('options').map((/** @type {{id: string}} */ o) => o.id))
 			.toEqual(['de', 'generic', 'zz'])
-		expect(dropdown(wrapper, 'Jurisdiction').props('modelValue').id).toBe('zz')
+		expect(dropdown(wrapper, 'Country').props('modelValue').id).toBe('zz')
 	})
 
 	/** The list is a convenience; a sheet that cannot read it still edits the vehicle in hand. */
@@ -638,7 +685,7 @@ describe('the vehicle sheet, editing', () => {
 
 		const wrapper = await sheet(VEHICLE)
 
-		expect(dropdown(wrapper, 'Jurisdiction').props('modelValue').id).toBe('de')
+		expect(dropdown(wrapper, 'Country').props('modelValue').id).toBe('de')
 		await saveButton(wrapper).vm.$emit('click')
 		await flushPromises()
 
@@ -664,6 +711,17 @@ describe('the vehicle sheet, editing', () => {
 		// A field the server judged is not a token that moved: reading the vehicle back would
 		// answer the same values and the retry would be refused for the same reason.
 		expect(getVehicle).not.toHaveBeenCalled()
+	})
+
+	/** A currency the costs are already in is refused by the server and said in the sheet's words. */
+	it('says why the currency cannot change once costs are recorded', async () => {
+		vi.mocked(updateVehicle).mockRejectedValue(new RefusedError('currency stays once the vehicle has costs recorded in it', 'currency_in_use'))
+		const wrapper = await sheet(VEHICLE)
+
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('The currency cannot change any more: costs are already recorded in it for this vehicle.')
 	})
 
 	/** Litres, kWh and euros on screen, the column's integer on the wire - either decimal mark. */
@@ -695,6 +753,39 @@ describe('the vehicle sheet, editing', () => {
 		expect(field(wrapper, 'Tank size (l)').props('modelValue')).toBe('55 litres')
 		expect(updateVehicle).not.toHaveBeenCalled()
 		expect(wrapper.emitted('saved')).toBeUndefined()
+	})
+
+	/** The server keeps only a three-letter code; a sign is asked about in words before it is sent. */
+	it('refuses a currency that is no code without writing', async () => {
+		const wrapper = await sheet(VEHICLE)
+
+		await field(wrapper, 'Currency').vm.$emit('update:modelValue', '€')
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('That is not a currency code such as EUR.')
+		expect(updateVehicle).not.toHaveBeenCalled()
+	})
+
+	/** A sign stored before the check stays until somebody changes it, so a rename still saves. */
+	it('sends back a currency from before the check untouched', async () => {
+		const wrapper = await sheet({ ...VEHICLE, currency: '€' })
+
+		await field(wrapper, 'Colour').vm.$emit('update:modelValue', 'green')
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ currency: '€', color: 'green' }))
+	})
+
+	it('sends a currency typed in lower case as its code', async () => {
+		const wrapper = await sheet(VEHICLE)
+
+		await field(wrapper, 'Currency').vm.$emit('update:modelValue', 'chf')
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ currency: 'CHF' }))
 	})
 
 	/**
@@ -786,6 +877,15 @@ describe('the vehicle sheet, editing', () => {
 		expect(wrapper.emitted('saved')).toBeUndefined()
 	})
 
+	/** Away from *Cancel*, so a thumb aiming at one does not land on the other. */
+	it('puts the delete at the end of the sheet, not among its actions', async () => {
+		const wrapper = await sheet(VEHICLE)
+
+		const body = wrapper.find('.body').findAllComponents(NcButton)
+		expect(body.at(-1)?.text()).toBe('Delete vehicle')
+		expect(wrapper.find('.actions').findAllComponents(NcButton).map((/** @type {any} */ one) => one.text())).not.toContain('Delete vehicle')
+	})
+
 	/** Deleting takes `own`: a manager edits the car and the car stays the owner's. */
 	it('offers a manager no delete', async () => {
 		const wrapper = await sheet(MANAGED)
@@ -845,6 +945,15 @@ describe('the vehicle sheet, creating', () => {
 			.toContain('truck')
 	})
 
+	/** Every type the server takes is offered, in its words; a motorcycle counts kilometres. */
+	it('offers a motorcycle, which counts kilometres', async () => {
+		const wrapper = await sheet()
+
+		expect(dropdown(wrapper, 'Vehicle type').props('options')).toContainEqual({ id: 'motorcycle', label: 'Motorcycle' })
+		await dropdown(wrapper, 'Vehicle type').vm.$emit('update:modelValue', { id: 'motorcycle', label: 'Motorcycle' })
+		expect(dropdown(wrapper, 'Counter unit').props('modelValue').id).toBe('km')
+	})
+
 	/** A tractor or a generator counts hours; the person may still say otherwise. */
 	it('counts hours once a tractor or a generator is chosen, and still lets the unit change', async () => {
 		const wrapper = await sheet()
@@ -880,6 +989,7 @@ describe('the vehicle sheet, creating', () => {
 		await flushPromises()
 
 		expect(createVehicle).toHaveBeenCalledWith({
+			client_uuid: expect.any(String),
 			plate: 'M-EV 7',
 			manufacturer: '',
 			model: '',
@@ -889,6 +999,26 @@ describe('the vehicle sheet, creating', () => {
 		})
 		expect(recordReading).toHaveBeenCalledWith('v-new', expect.objectContaining({ value: 148320 }))
 		expect(emitted(wrapper, 'created').uuid).toBe('v-new')
+	})
+
+	/** A retry names the vehicle and the Reading the first try would have written (docs/api.md#retried-creates). */
+	it('sends the same client uuids on a retry', async () => {
+		vi.mocked(createVehicle).mockRejectedValueOnce(new Error('No connection'))
+		const wrapper = await sheet()
+		await field(wrapper, 'Registration plate').vm.$emit('update:modelValue', 'M-EV 7')
+		await field(wrapper, 'Counter reading').vm.$emit('update:modelValue', '148.320')
+
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		const [[first], [again]] = vi.mocked(createVehicle).mock.calls
+		expect(first.client_uuid).toMatch(/^[0-9a-f-]{36}$/)
+		expect(again.client_uuid).toBe(first.client_uuid)
+		const reading = /** @type {{client_uuid: string}} */ (vi.mocked(recordReading).mock.calls[0][1]).client_uuid
+		expect(reading).toMatch(/^[0-9a-f-]{36}$/)
+		expect(reading).not.toBe(first.client_uuid)
 	})
 
 	/** A field nobody can read is a question for the driver, not a vehicle created without it. */

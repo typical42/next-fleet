@@ -3,9 +3,10 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-import { getCanonicalLocale, t } from '@nextcloud/l10n'
+import { getCanonicalLocale } from '@nextcloud/l10n'
 
 import { energyWord, formatConsumption, formatCount, formatMoney, formatOdometer, formatWallSide } from './format.js'
+import { t } from './l10n.js'
 
 /**
  * @typedef {object} Tile
@@ -59,7 +60,7 @@ export function periodTilesOf(vehicle, now, before, locale = getCanonicalLocale(
 		/** @type {(value: number) => string} */
 		const write = (value) => formatConsumption({ value, per: consumption.per }, consumption.energy, locale)
 		tiles.push({
-			label: t('nextfleet', '{energy} consumption', { energy: { value: energyWord(consumption.energy), escape: false } }),
+			label: t('nextfleet', '{energy} consumption', { energy: energyWord(consumption.energy) }),
 			figure: write(consumption.value),
 			change: changeOf(consumption.value, before?.consumption.find((one) => one.energy === consumption.energy && one.per === consumption.per)?.value, write),
 			notes: [],
@@ -113,7 +114,7 @@ function costTiles(cost, before, locale) {
 	const notes = [
 		...(cost.net ? [t('nextfleet', 'Net of VAT')] : []),
 		...(cost.incomplete ? [t('nextfleet', 'Incomplete: a fill-up in the period has no price')] : []),
-		...(cost.unstated ? [t('nextfleet', 'Rows without a VAT rate count gross')] : []),
+		...(cost.unstated ? [t('nextfleet', 'Entries without a VAT rate count gross')] : []),
 	]
 	const perDistance = cost.distance !== null
 	/** @type {(cents: number) => string} */
@@ -148,7 +149,7 @@ function costTiles(cost, before, locale) {
 	return [
 		tile(t('nextfleet', 'Cost'), 'value', notes),
 		tile(t('nextfleet', 'Energy cost'), 'energy_value', notes),
-		...(cost.tco === null ? [] : [tile(t('nextfleet', 'TCO'), 'tco', [])]),
+		...(cost.tco === null ? [] : [tile(t('nextfleet', 'Total cost of ownership'), 'tco', [])]),
 	]
 }
 
@@ -169,5 +170,5 @@ function changeOf(now, before, write) {
 	const size = write(Math.abs(now - before))
 	const sign = size === write(0) ? '±' : (now > before ? '+' : '−')
 
-	return t('nextfleet', '{change} vs. the period before', { change: { value: `${sign}${size}`, escape: false } })
+	return t('nextfleet', '{change} vs. the period before', { change: `${sign}${size}` })
 }

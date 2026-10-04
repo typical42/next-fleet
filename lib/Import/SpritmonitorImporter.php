@@ -176,8 +176,10 @@ final class SpritmonitorImporter implements IImporter {
 		$defaults = [];
 		if ($recordType === 'fuel') {
 			$named = array_map(self::energy(...), $column('Kraftstoff') ?: ['']);
+			// Asked of every file, so a vehicle with no energy type refuses one that names each fuel.
 			// Only a row that names no fuel takes the user's; a file that names every one asks nothing.
-			[$answered, $open] = in_array(null, $named, true) ? Answers::energy($answers) : ['', []];
+			[$answered, $asked] = Answers::energy($answers);
+			$open = in_array(null, $named, true) ? $asked : [];
 			$read = self::fuel($answers, $distance, $answered, $named);
 		} else {
 			$categories = array_values(array_unique(array_filter(
@@ -204,6 +206,7 @@ final class SpritmonitorImporter implements IImporter {
 		foreach ($rows as $number => $row) {
 			$cells = new Cells($row, $columns, $marks, $order, $zone, $currency);
 			try {
+				$cells->fits($header);
 				[$kind, $fields] = $read($cells);
 				$all[] = new Proposal($kind, array_filter($fields, static fn (mixed $field): bool => $field !== null), $number);
 			} catch (UnreadableCellException $e) {
@@ -354,7 +357,7 @@ final class SpritmonitorImporter implements IImporter {
 						?? (mb_strlen($text) <= self::TITLE_LENGTH ? $text : $cells->refuse('Kostenart', 'too_long')),
 					'odo' => $cells->count('Km-Stand', 'distance', $distance),
 					'cost' => $amount,
-					'notes' => $notes,
+					'notes' => $cells->notes('Bemerkung', $notes),
 				]];
 			}
 
@@ -364,7 +367,7 @@ final class SpritmonitorImporter implements IImporter {
 				'category' => $what,
 				'amount' => $cells->must('Kosten', $amount),
 				// An expense has no title.
-				'notes' => Cells::lines($cells->text('Bezeichnung'), $notes),
+				'notes' => $cells->notes('Bemerkung', $cells->text('Bezeichnung'), $notes),
 			]];
 		};
 	}

@@ -38,4 +38,30 @@ class ReminderMapper extends BaseMapper {
 
 		return $this->findEntities($qb);
 	}
+
+	/**
+	 * findByVehicle() for many vehicles in one query, by vehicle.
+	 *
+	 * @param list<int> $vehicleIds
+	 * @return array<int, list<Reminder>> a vehicle without a live reminder is missing
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findByVehicles(array $vehicleIds): array {
+		if ($vehicleIds === []) {
+			return [];
+		}
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->tableName)
+			->where(InList::in($qb, 'vehicle_id', $vehicleIds, IQueryBuilder::PARAM_INT_ARRAY))
+			->andWhere($qb->expr()->isNull('deleted_at'))
+			->orderBy('id');
+
+		$byVehicle = [];
+		foreach ($this->findEntities($qb) as $reminder) {
+			$byVehicle[$reminder->getVehicleId()][] = $reminder;
+		}
+
+		return $byVehicle;
+	}
 }

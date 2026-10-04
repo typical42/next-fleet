@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: 2026 Johannes Kolb
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# PostgreSQL under tools/upgrade-check.compose.yml: one server, a database per major.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: root
+    volumes:
+      - ./upgrade-check.pgsql.sql:/docker-entrypoint-initdb.d/10-nextcloud.sql:ro
+    healthcheck:
+      # Over TCP: the image runs its init scripts on a server that listens on the socket alone,
+      # so a check on the socket passes before the databases below exist.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  app34:
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_USER: nextcloud
+      POSTGRES_PASSWORD: nextcloud
+      POSTGRES_DB: nextcloud
+
+  app31:
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_USER: nextcloud
+      POSTGRES_PASSWORD: nextcloud
+      POSTGRES_DB: nextcloud31

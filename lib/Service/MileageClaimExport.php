@@ -25,6 +25,7 @@ class MileageClaimExport {
 		private VehicleService $fleet,
 		private TripMapper $trips,
 		private Jurisdictions $jurisdictions,
+		private Completeness $completeness,
 		private LoggerInterface $logger,
 	) {
 	}
@@ -74,14 +75,28 @@ class MileageClaimExport {
 			$distance = $trip->kilometres();
 			$rate = $rates->mileageRateAt($vehicle->getVehicleType(), Jurisdictions::localTime($trip->getStartedAt(), $trip->getStartedAtOff()));
 			// Rounded per line, so the lines printed add up to the sum printed.
-			$amount = $distance === null || $rate === null ? null : intdiv($distance * $rate + 5, 10);
-			if ($amount !== null) {
+			$amount = $distance === null || $rate === null ? null : self::cents($distance * $rate);
+			// The Finanzamt takes neither a trip that leaves a required field unstated nor one
+			// worked out from the counter rather than recorded as driven: listed, never summed.
+			$missing = $this->completeness->missing($vehicle, $trip);
+			$reconciled = $trip->getReconciled();
+			if ($amount !== null && $missing === [] && !$reconciled) {
 				$total = ($total ?? 0) + $amount;
 				$kilometres = ($kilometres ?? 0) + $distance;
 			}
-			$lines[] = ['trip' => $trip, 'kilometres' => $distance, 'rate' => $rate, 'amount' => $amount];
+			$lines[] = ['trip' => $trip, 'kilometres' => $distance, 'rate' => $rate, 'amount' => $amount, 'missing' => $missing, 'reconciled' => $reconciled];
 		}
 
 		return $renderer->render(new MileageClaim($vehicle, $year, $lines, $total, $kilometres, $rates->mileageSourceUrl()));
+	}
+
+	/**
+	 * Tenths of a cent to cents, half up on the absolute value: `intdiv` alone truncates towards
+	 * zero, which rounds a negative half the other way.
+	 */
+	private static function cents(int $tenths): int {
+		$cents = intdiv(abs($tenths) + 5, 10);
+
+		return $tenths < 0 ? -$cents : $cents;
 	}
 }

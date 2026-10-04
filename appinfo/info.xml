@@ -8,8 +8,8 @@
   <id>nextfleet</id>
   <name>NextFleet</name>
   <name lang="de">NextFleet</name>
-  <summary>Vehicle fleet management</summary>
-  <summary lang="de">Fuhrparkverwaltung</summary>
+  <summary>A logbook for your vehicles</summary>
+  <summary lang="de">Fahrtenbuch für Ihre Fahrzeuge</summary>
   <description><![CDATA[
 Keep the paperwork for your vehicles in your own Nextcloud: mileage, fuel and charging, costs,
 service and inspection dates, a trip log, and who has the car when.
@@ -23,8 +23,8 @@ service and inspection dates, a trip log, and who has the car when.
   a mail digest and a dashboard widget.
 - **Trip log** with the fields a German Fahrtenbuch needs, and the mileage claim for business
   trips, both printed from the browser. Other countries get a plain logbook.
-- **Share a vehicle.** Give a user or a group access as viewer, driver or manager, within the
-  admin's sharing settings. A driver enters their own trips and costs, and each entry says who
+- **Give others access to a vehicle.** Let a user or a group in as viewer, driver or manager, as
+  far as your admin's settings allow. A driver enters their own trips and costs, and each entry says who
   entered it.
 - **Bookings and handover.** Book the car for a time, take it and give it back with the counter,
   the tank or battery level and a note. Giving it back fills in the trip.
@@ -39,7 +39,8 @@ service and inspection dates, a trip log, and who has the car when.
 - **A QR sticker** for the glovebox opens the entry sheet on that vehicle.
 - **Nextcloud's search** finds a vehicle by its plate, manufacturer or model.
 
-Your data stays on your server. No tracking, no GPS, no cloud service in between.
+Your data stays on your server, except reminder mails, which go out through the server's mail
+account. No tracking, no GPS, no cloud service in between.
 
 **No legal review.** NextFleet helps you keep a logbook. It does not promise the result satisfies
 any tax office, auditor or court. The rules and rates come from public sources, may be wrong and
@@ -50,18 +51,17 @@ Verwalten Sie die Unterlagen Ihrer Fahrzeuge in Ihrer eigenen Nextcloud: Kilomet
 und Strom, Kosten, Wartungs- und Untersuchungstermine, ein Fahrtenbuch und wer das Fahrzeug wann
 hat.
 
-- **Kilometerstand, der aufgeht.** Ablesungen werden als Verlauf gespeichert, nicht als laufende
+- **Kilometerstände, die stimmen.** Ablesungen werden als Verlauf gespeichert, nicht als laufende
   Summe. Wer eine Strecke einträgt, bekommt einen abgeleiteten Stand; ein abgelesener Stand hat
   Vorrang.
-- **Kosten und Verbrauch** in Cent, Millilitern und Wattstunden — keine gerundeten Fließkommazahlen.
-  Ein Jahr je Fahrzeug als Monatsbalken und Tabelle, mit den Gesamtbetriebskosten und einer
-  CO₂-Schätzung. Fahrten, Tankvorgänge, Wartung und Ausgaben lassen sich als CSV exportieren.
+- **Kosten und Verbrauch** ohne Rundungsfehler. Ein Jahr je Fahrzeug als Monatsbalken und
+  Tabelle, mit den Gesamtbetriebskosten und einer CO₂-Schätzung. Fahrten, Tankvorgänge, Wartung und Ausgaben lassen sich als CSV exportieren.
 - **Erinnerungen** an HU/AU, Wartung oder was Sie selbst benennen, nach Datum oder nach Strecke,
   als Benachrichtigung, Mail-Zusammenfassung und Dashboard-Widget.
 - **Fahrtenbuch** mit den Feldern, die es in Deutschland braucht, und die Aufstellung der
-  Dienstfahrten für die Kilometerpauschale, beide aus dem Browser gedruckt. Andere Länder bekommen
+  geschäftlichen Fahrten für die Kilometerpauschale, beide aus dem Browser gedruckt. Andere Länder bekommen
   ein schlichtes Fahrtenbuch.
-- **Fahrzeuge teilen.** Geben Sie einer Person oder einer Gruppe Zugriff als Betrachter, Fahrer
+- **Zugriff auf ein Fahrzeug gewähren.** Geben Sie einer Person oder einer Gruppe Zugriff als Betrachter, Fahrer
   oder Verwalter, im Rahmen der Freigabe-Einstellungen Ihrer Administration. Fahrer tragen ihre
   eigenen Fahrten und Kosten ein, und jeder Eintrag zeigt, wer ihn eingetragen hat.
 - **Buchungen und Übergabe.** Buchen Sie das Fahrzeug für eine Zeit, übernehmen Sie es und geben
@@ -80,14 +80,15 @@ hat.
 - **Ein QR-Aufkleber** fürs Handschuhfach öffnet die Eingabe für genau dieses Fahrzeug.
 - **Die Suche von Nextcloud** findet ein Fahrzeug nach Kennzeichen, Hersteller oder Modell.
 
-Die Daten bleiben auf Ihrem Server. Kein Tracking, kein GPS, kein Dienst dazwischen.
+Die Daten bleiben auf Ihrem Server, bis auf Erinnerungsmails, die über das Mailkonto des Servers
+verschickt werden. Kein Tracking, kein GPS, kein Dienst dazwischen.
 
 **Keine juristische Prüfung.** NextFleet hilft beim Führen eines Fahrtenbuchs. Es sichert nicht zu,
 dass das Ergebnis von einem Finanzamt, einer Prüferin oder einem Gericht anerkannt wird. Die Regeln
 und Sätze stammen aus öffentlichen Quellen, können falsch sein und veralten. Fragen Sie Ihre eigene
 Beraterin oder Ihren Berater, bevor Sie sich darauf verlassen.
   ]]></description>
-  <version>0.3.0</version>
+  <version>0.3.1</version>
   <licence>AGPL-3.0-or-later</licence>
   <author>Johannes Kolb</author>
   <namespace>NextFleet</namespace>
@@ -111,11 +112,19 @@ Beraterin oder Ihren Berater, bevor Sie sich darauf verlassen.
     <nextcloud min-version="31" max-version="34"/>
   </dependencies>
   <background-jobs>
+    <job>OCA\NextFleet\BackgroundJob\PendingJob</job>
     <job>OCA\NextFleet\BackgroundJob\ReminderJob</job>
   </background-jobs>
+  <repair-steps>
+    <post-migration>
+      <step>OCA\NextFleet\Repair\ErasedPseudonyms</step>
+      <step>OCA\NextFleet\Repair\StrangerRecipients</step>
+    </post-migration>
+  </repair-steps>
   <commands>
     <command>OCA\NextFleet\Command\SeedCommand</command>
     <command>OCA\NextFleet\Command\ImportCommand</command>
+    <command>OCA\NextFleet\Command\TransferCommand</command>
   </commands>
   <settings>
     <personal>OCA\NextFleet\Settings\Personal</personal>

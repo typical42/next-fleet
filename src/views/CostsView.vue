@@ -3,7 +3,6 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
-import { t } from '@nextcloud/l10n'
 import NcActionButton from '@nextcloud/vue/components/NcActionButton'
 import NcActions from '@nextcloud/vue/components/NcActions'
 import NcButton from '@nextcloud/vue/components/NcButton'
@@ -17,6 +16,7 @@ import { usePreferencesStore } from '../store/preferences.js'
 import { BANDS, bandWord, barsOf, co2Of, tableOf } from '../utils/costs.js'
 import { formatMoney, nameOf } from '../utils/format.js'
 import { periodTilesOf } from '../utils/kpis.js'
+import { t } from '../utils/l10n.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -106,7 +106,7 @@ async function reload() {
 <template>
 	<div class="costs">
 		<div class="costs__header">
-			<h2>{{ t('nextfleet', 'Costs of {vehicle}', { vehicle: { value: nameOf(vehicle), escape: false } }) }}</h2>
+			<h2>{{ t('nextfleet', 'Costs of {vehicle}', { vehicle: nameOf(vehicle) }) }}</h2>
 			<div class="costs__actions">
 				<!-- The year on screen, whatever is in it: an empty file is still the answer. -->
 				<NcActions :menu-name="t('nextfleet', 'Export')" :force-name="true">

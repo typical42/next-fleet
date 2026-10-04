@@ -167,6 +167,7 @@ final class LubeLoggerImporter implements IImporter {
 		foreach ($rows as $number => $row) {
 			$cells = new Cells($row, $columns, $marks, $order ?? 'dmy', $zone, $currency);
 			try {
+				$cells->fits($header);
 				$fields = array_filter($read($cells), static fn (mixed $field): bool => $field !== null);
 				$all[] = new Proposal(self::kind($recordType), $fields, $number);
 			} catch (UnreadableCellException $e) {
@@ -219,11 +220,10 @@ final class LubeLoggerImporter implements IImporter {
 	 */
 	private function reader(string $recordType, array $answers): \Closure {
 		$distance = in_array('units', $this->questions($recordType), true) ? Answers::unit($answers, 'distance') : '';
-		$join = Cells::lines(...);
 
 		return match ($recordType) {
 			'fuel' => $this->fuel($answers, $distance),
-			'tax' => static function (Cells $cells) use ($join): array {
+			'tax' => static function (Cells $cells): array {
 				$at = $cells->must('Date', $cells->moment('Date'));
 
 				return [
@@ -231,10 +231,10 @@ final class LubeLoggerImporter implements IImporter {
 					'spent_at_off' => $at['off'],
 					'category' => 'tax',
 					'amount' => $cells->must('Cost', $cells->money('Cost')),
-					'notes' => $join($cells->text('Description'), $cells->text('Notes'), $cells->text('Tags')),
+					'notes' => $cells->notes('Notes', $cells->text('Description'), $cells->text('Notes'), $cells->text('Tags')),
 				];
 			},
-			'supplies' => function (Cells $cells) use ($join): array {
+			'supplies' => function (Cells $cells): array {
 				$at = $cells->must('Date', $cells->moment('Date'));
 				$part = $cells->text('PartNumber');
 				$supplier = $cells->text('PartSupplier');
@@ -245,7 +245,8 @@ final class LubeLoggerImporter implements IImporter {
 					'spent_at_off' => $at['off'],
 					'category' => 'other',
 					'amount' => $cells->must('Cost', $cells->money('Cost')),
-					'notes' => $join(
+					'notes' => $cells->notes(
+						'Notes',
 						$cells->text('Description'),
 						// TRANSLATORS: a line in an imported expense's notes; %s is the part number
 						$part === null ? null : $this->l->t('Part number: %s', [$part]),
@@ -267,7 +268,7 @@ final class LubeLoggerImporter implements IImporter {
 					'value' => $cells->must('Odometer', $cells->count('Odometer', 'distance', $distance)),
 				];
 			},
-			default => static function (Cells $cells) use ($recordType, $distance, $join): array {
+			default => static function (Cells $cells) use ($recordType, $distance): array {
 				$at = $cells->must('Date', $cells->moment('Date'));
 
 				return [
@@ -277,7 +278,7 @@ final class LubeLoggerImporter implements IImporter {
 					'title' => $cells->must('Description', $cells->text('Description', self::TITLE_LENGTH)),
 					'odo' => $cells->count('Odometer', 'distance', $distance),
 					'cost' => $cells->money('Cost'),
-					'notes' => $join($cells->text('Notes'), $cells->text('Tags')),
+					'notes' => $cells->notes('Notes', $cells->text('Notes'), $cells->text('Tags')),
 				];
 			},
 		};

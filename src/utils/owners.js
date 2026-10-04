@@ -3,10 +3,11 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-import { t } from '@nextcloud/l10n'
+import { computed, ref } from 'vue'
 
 import { listBookings, readTimeline } from '../services/api.js'
 import { entryName, formatDate, formatSpan, isoInstant } from './format.js'
+import { t } from './l10n.js'
 
 /**
  * A row a paper may belong to, as *Belongs to* offers it.
@@ -88,7 +89,7 @@ function owners(entries, bookings) {
 		.filter((booking) => booking.may.includes('attach'))
 		.map((booking) => {
 			const label = t('nextfleet', 'Booking, {span}', {
-				span: { value: formatSpan(booking.starts_at, booking.starts_at_off, booking.ends_at, booking.ends_at_off), escape: false },
+				span: formatSpan(booking.starts_at, booking.starts_at_off, booking.ends_at, booking.ends_at_off),
 			})
 			return {
 				id: booking.uuid,
@@ -151,4 +152,59 @@ export function matching(options, search) {
 	const wanted = search.toLocaleLowerCase().split(/\s+/).filter(Boolean)
 
 	return options.filter((one) => wanted.every((word) => one.words.includes(word)))
+}
+
+/**
+ * The search of "Belongs to", as the documents section and the inbox sheet both offer it: the
+ * newest rows until something is typed, then the whole history, read on the first keystroke after
+ * each `reset()` and only then, since it takes a page per fifty rows of each kind.
+ *
+ * @param {() => string} vehicle - the vehicle searched, as it is now
+ * @param {import('vue').Ref<Owner[]>} newest - what `readOwners()` gave
+ * @return {{offered: import('vue').ComputedRef<Owner[]>, searching: import('vue').ComputedRef<boolean>, lookFor: (typed: string) => void, reset: () => void}}
+ * what the select offers, whether the history is still on the way, the select's `search`
+ * handler, and the start of a new dialog or vehicle
+ */
+export function ownerSearch(vehicle, newest) {
+	const search = ref('')
+	/** @type {import('vue').Ref<Owner[]|null>} */
+	const history = ref(null)
+	/** @type {Promise<void>|null} */
+	let reading = null
+
+	/** @param {string} typed - what is in the search field now */
+	function lookFor(typed) {
+		search.value = typed
+		if (typed.trim() === '' || reading !== null) {
+			return
+		}
+		history.value = null
+		const asked = reading = readHistory(vehicle())
+			.then((all) => {
+				// A dialog or vehicle picked since has its own history to read.
+				if (reading === asked) {
+					history.value = all
+				}
+			}, () => {
+				// Nothing found this time, and the next keystroke asks again.
+				if (reading === asked) {
+					history.value = []
+					reading = null
+				}
+			})
+	}
+
+	/** A new dialog, or a new vehicle in it: its history is its own. */
+	function reset() {
+		search.value = ''
+		history.value = null
+		reading = null
+	}
+
+	return {
+		offered: computed(() => search.value.trim() === '' ? newest.value : matching(history.value ?? [], search.value)),
+		searching: computed(() => search.value.trim() !== '' && history.value === null),
+		lookFor,
+		reset,
+	}
 }

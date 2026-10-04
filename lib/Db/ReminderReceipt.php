@@ -30,6 +30,11 @@ use OCP\DB\Types;
 class ReminderReceipt extends BaseEntity {
 	public const APP = 'app';
 	public const MAIL = 'mail';
+	/**
+	 * Prefixed to the point of a mail an edit moved past: the point is claimable again, and the
+	 * mail still counts for the day (ReminderReceiptMapper::retire()).
+	 */
+	public const MOVED = '~';
 
 	protected int $reminderId = 0;
 	protected int $occurrence = 0;

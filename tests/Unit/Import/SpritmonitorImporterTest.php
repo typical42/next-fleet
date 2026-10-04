@@ -8,6 +8,7 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Unit\Import;
 
+use OCA\NextFleet\Exception\RefusedException;
 use OCA\NextFleet\Import\CsvReader;
 use OCA\NextFleet\Import\Proposal;
 use OCA\NextFleet\Import\Proposals;
@@ -110,6 +111,20 @@ class SpritmonitorImporterTest extends TestCase {
 		$this->importer->columns('trips', ['Datum']);
 	}
 
+	/** A vehicle with no energy type yet takes no fuel import, however well the file names its fuels. */
+	public function testAVehicleWithoutAnEnergyTypeTakesNoFuelFile(): void {
+		$answers = ['energies' => []] + self::DE;
+		unset($answers['energy']);
+
+		try {
+			$this->proposeCsv('fuel', "Datum;Spritmenge;Kraftstoff\n01.03.2026;40;Diesel\n", $answers);
+			$this->fail('A fuel file went into a vehicle that takes no energy');
+		} catch (RefusedException $e) {
+			// The reason lets the sheet say it in the entry sheet's words (src/utils/imports.js).
+			$this->assertSame('no_energy', $e->reason);
+		}
+	}
+
 	public function testAGermanFuelExportPlacesWhatAnEnergyEntryHoldsAndNamesTheRest(): void {
 		[$header] = $this->file('spritmonitor-fuel.csv');
 
@@ -181,6 +196,15 @@ class SpritmonitorImporterTest extends TestCase {
 			array_intersect_key($full->fields, ['energy' => 0, 'odo' => 0, 'amount' => 0, 'total' => 0, 'full_tank' => 0]),
 		);
 		$this->assertFalse($partial->fields['full_tank']);
+	}
+
+	/** The escape took the line break, so the next row became part of the note. */
+	public function testANoteEndingInALoneBackslashThatSwallowedTheNextRowIsUnreadable(): void {
+		$proposals = $this->proposeCsv('fuel', "Datum;Spritmenge;Bemerkung\n14.03.2026;30;Waschanlage\\\n15.03.2026;20;\n");
+
+		$this->assertCount(1, $proposals->all);
+		$swallowed = $proposals->all[0];
+		$this->assertSame([Proposal::UNREADABLE, 'cells', null, 2], [$swallowed->outcome, $swallowed->reason, $swallowed->column, $swallowed->row]);
 	}
 
 	public function testTheFillTypeSaysFullPartialOrFirstAndAnythingElseIsUnreadable(): void {

@@ -4,7 +4,6 @@
 -->
 <script setup>
 import { FilePickerClosed, getFilePickerBuilder } from '@nextcloud/dialogs'
-import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcCheckboxRadioSwitch from '@nextcloud/vue/components/NcCheckboxRadioSwitch'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
@@ -15,6 +14,7 @@ import { computed, onMounted, ref } from 'vue'
 
 import { getPreferences, readInbox, savePreferences } from '../services/api.js'
 import { jurisdictionWord, parseWhole } from '../utils/format.js'
+import { t } from '../utils/l10n.js'
 
 /** The registered countries, as the server named them. @type {import('vue').Ref<{ key: string, name: string }[]>} */
 const offered = ref([])
@@ -50,7 +50,7 @@ const gridHelp = computed(() => {
 	const averages = offered.value
 		.filter(({ grid_factor: average }) => average !== null)
 		.map(({ key, name, grid_factor: average }) => t('nextfleet', '{country} {grams} g/kWh in {year}', {
-			country: { value: jurisdictionWord(key, name), escape: false },
+			country: jurisdictionWord(key, name),
 			grams: average.grams,
 			year: average.year,
 		}))
@@ -58,7 +58,7 @@ const gridHelp = computed(() => {
 
 	return averages === ''
 		? t('nextfleet', 'Empty: no country states an average')
-		: t('nextfleet', 'Empty for the average of the country each vehicle is kept under: {averages}', { averages: { value: averages, escape: false } })
+		: t('nextfleet', 'Empty for the average of the country each vehicle is kept under: {averages}', { averages })
 })
 
 /** Shows what the server holds. */
@@ -70,10 +70,15 @@ function showGrid() {
 const inboxFolder = ref(null)
 /** Its path in Files, or null where it is gone. The preference holds only the id; the inbox names it. @type {import('vue').Ref<string|null>} */
 const inboxPath = ref(null)
+/** Why its path could not be read, or empty. The folder is saved all the same. */
+const inboxUnnamed = ref('')
 
 const inboxWords = computed(() => {
 	if (inboxFolder.value === null) {
 		return t('nextfleet', 'None chosen')
+	}
+	if (inboxUnnamed.value !== '') {
+		return t('nextfleet', 'Chosen, but its name could not be read: {reason}', { reason: inboxUnnamed.value })
 	}
 
 	return inboxPath.value ?? t('nextfleet', 'The folder is gone, or no longer yours alone')
@@ -90,9 +95,23 @@ function hold(settings) {
 	inboxFolder.value = settings.preferences.inbox_folder
 }
 
-/** @return {Promise<void>} when the inbox folder is named, or known to be gone */
+/**
+ * Cleared first, so the last folder's path never stands for a new one. A failed read is said where
+ * the name goes, not as a refused save.
+ *
+ * @return {Promise<void>} when the inbox folder is named, known to be gone, or unnamed
+ */
 async function nameInbox() {
-	inboxPath.value = inboxFolder.value === null ? null : (await readInbox()).folder?.path ?? null
+	inboxPath.value = null
+	inboxUnnamed.value = ''
+	if (inboxFolder.value === null) {
+		return
+	}
+	try {
+		inboxPath.value = (await readInbox()).folder?.path ?? null
+	} catch (error) {
+		inboxUnnamed.value = error.message
+	}
 }
 
 onMounted(async () => {
@@ -241,7 +260,7 @@ async function saveInbox(folder) {
 
 		<NcSelect :model-value="selected"
 			:options="options"
-			:input-label="t('nextfleet', 'Jurisdiction')"
+			:input-label="t('nextfleet', 'Country')"
 			:disabled="busy"
 			:clearable="false"
 			label="label"

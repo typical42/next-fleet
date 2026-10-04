@@ -37,17 +37,18 @@ use Psr\Log\LoggerInterface;
 /**
  * Everything that changed for one client since its last call (docs/api.md#sync), without a
  * change-log table: each row's `updated_at` is the log. What that cannot see - a cache on the
- * vehicle, a Reading's flag, a vehicle reached again - is sent whole instead, which a fleet of a
- * handful of vehicles can afford.
+ * vehicle, a vehicle reached again - is sent whole instead, which a fleet of a handful of vehicles
+ * can afford.
  *
  * @psalm-import-type NextFleetSync from ResponseDefinitions
  * @psalm-type Row = OdoReading|Trip|Energy|Maintenance|Expense|Reminder|Document|Booking|Access
  */
 class SyncService {
 	/**
-	 * The app value every erasure writes anew, at random: pseudonymised rows keep their
-	 * `updated_at` (BaseMapper::pseudonymise()), so a cursor from before one cannot see them change.
-	 * Random rather than counted, because two erasures that both read 4 would both write 5.
+	 * The app value every erasure and transfer writes anew, at random (SyncEpoch): pseudonymised
+	 * rows keep their `updated_at` (BaseMapper::pseudonymise()), so a cursor from before one cannot
+	 * see them change. Random rather than counted, because two erasures that both read 4 would both
+	 * write 5.
 	 */
 	public const EPOCH = 'sync_epoch';
 
@@ -156,9 +157,10 @@ class SyncService {
 	}
 
 	/**
-	 * Up to `$limit + 1` rows after the cursor in (`updated_at`, table, `id`) order: as many from
-	 * each table, so the first `$limit` of them all are the first of the whole, and one more says
-	 * whether there is a next page.
+	 * Up to `$limit + 1` rows after the cursor in (`updated_at`, table, `id`) order, so one more
+	 * says whether there is a next page. A merge: each table is read its share of `$limit` at a
+	 * time and read again where its rows run out, so a page builds about twice its rows at most,
+	 * however the changes fall across the tables (one row per table at least, for a tiny limit).
 	 *
 	 * @param array<int, Vehicle> $byId every reachable vehicle
 	 * @param list<int> $run the vehicles this run covers
@@ -170,22 +172,47 @@ class SyncService {
 		$whole = array_values(array_diff($run, $held));
 		// Grants are the owner's to read (VehicleAccess::OWN).
 		$owned = array_keys(array_filter($byId, static fn (Vehicle $vehicle): bool => $vehicle->getUserId() === $userId));
+		$chunk = max(1, intdiv($limit, count(SyncCursor::TABLES)));
 
-		$found = [];
+		$read = [];
+		$buffers = [];
+		$full = [];
 		foreach (SyncCursor::TABLES as $rank => $table) {
 			[$wholeHere, $heldHere] = match ($table) {
-				'readings' => [[...$whole, ...$this->readings->findVehiclesChangedSince($held, $was->since)], $held],
 				'grants' => [array_values(array_intersect($whole, $owned)), array_values(array_intersect($held, $owned))],
 				default => [$whole, $held],
 			};
-			[$afterAt, $afterId] = $was->after($table);
-			/** @var list<Row> $rows */
-			$rows = $this->tables[$table]->findChanged($wholeHere, $heldHere, $was->since, $afterAt, $afterId, $limit + 1);
-			foreach ($rows as $row) {
-				$found[] = [$row->getUpdatedAt(), $rank, (int)$row->getId(), $row];
+			$read[$rank] = function (int $afterAt, ?int $afterId) use ($table, $wholeHere, $heldHere, $was, $chunk): array {
+				/** @var list<Row> */
+				return $this->tables[$table]->findChanged($wholeHere, $heldHere, $was->since, $afterAt, $afterId, $chunk);
+			};
+			$buffers[$rank] = $read[$rank](...$was->after($table));
+			$full[$rank] = count($buffers[$rank]) === $chunk;
+		}
+
+		$found = [];
+		while (count($found) <= $limit) {
+			$next = null;
+			$head = null;
+			foreach ($buffers as $rank => $rows) {
+				if ($rows === []) {
+					continue;
+				}
+				$key = [$rows[0]->getUpdatedAt(), $rank, (int)$rows[0]->getId()];
+				if ($head === null || $key < $head) {
+					[$next, $head] = [$rank, $key];
+				}
+			}
+			if ($next === null || $head === null) {
+				break;
+			}
+			$found[] = [...$head, array_shift($buffers[$next])];
+			// A table whose last read came back full may hold the next row of the whole.
+			if ($buffers[$next] === [] && $full[$next]) {
+				$buffers[$next] = $read[$next]($head[0], $head[2]);
+				$full[$next] = count($buffers[$next]) === $chunk;
 			}
 		}
-		usort($found, static fn (array $a, array $b): int => [$a[0], $a[1], $a[2]] <=> [$b[0], $b[1], $b[2]]);
 
 		return $found;
 	}

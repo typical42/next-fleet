@@ -5,7 +5,7 @@
 
 import { expect, test } from '@playwright/test'
 
-import { add, api, appPage, audit, choice, login, open, removeVehicles, toggle } from './app.js'
+import { add, api, appPage, audit, categorise, choice, login, open, removeVehicles, toggle } from './app.js'
 
 // Every vehicle this file makes wears this prefix, and every run deletes what it finds under it
 // before starting. It has to be disjoint from every other spec file's prefix: Playwright runs the
@@ -34,12 +34,13 @@ test('a trip is entered as a counter or as a distance, and the vehicle follows e
 	// (docs/ui.md).
 	await page.getByRole('button', { name: 'New entry' }).click()
 	const entry = page.getByRole('dialog', { name: 'New entry' })
-	await expect(entry.getByRole('textbox', { name: 'Start counter' })).toHaveValue('')
-	await entry.getByRole('textbox', { name: 'Start counter' }).fill(String(starting))
-	await entry.getByRole('textbox', { name: 'End counter' }).fill(ended)
+	await expect(entry.getByRole('textbox', { name: 'Odometer at departure' })).toHaveValue('')
+	await entry.getByRole('textbox', { name: 'Odometer at departure' }).fill(String(starting))
+	await entry.getByRole('textbox', { name: 'Odometer at arrival' }).fill(ended)
 	// A combobox, not a textbox: each offers this vehicle's earlier words (docs/ui.md).
 	await entry.getByRole('combobox', { name: 'Purpose' }).fill('Kundentermin')
 	await entry.getByRole('combobox', { name: 'Destination' }).fill('Augsburg')
+	await categorise(page, entry)
 	await entry.getByRole('button', { name: 'Save' }).click()
 	await expect(entry).toBeHidden()
 
@@ -55,6 +56,7 @@ test('a trip is entered as a counter or as a distance, and the vehicle follows e
 	await page.getByRole('button', { name: 'New entry' }).click()
 	await choice(entry, 'Distance').click()
 	await entry.getByRole('textbox', { name: 'Distance' }).fill(covered)
+	await categorise(page, entry)
 	await entry.getByRole('button', { name: 'Save' }).click()
 	await expect(entry).toBeHidden()
 	await expect(page.locator('.kpis').getByText('148,484 km')).toBeVisible()
@@ -84,8 +86,9 @@ test('the timeline lists both kinds of entry, and the chips narrow it to one', a
 
 	await page.getByRole('button', { name: 'New entry' }).click()
 	const entry = page.getByRole('dialog', { name: 'New entry' })
-	await entry.getByRole('textbox', { name: 'End counter' }).fill(ended)
+	await entry.getByRole('textbox', { name: 'Odometer at arrival' }).fill(ended)
 	await entry.getByRole('combobox', { name: 'Destination' }).fill('Augsburg')
+	await categorise(page, entry)
 	await entry.getByRole('button', { name: 'Save' }).click()
 	await expect(entry).toBeHidden()
 
@@ -110,7 +113,7 @@ test('the timeline lists both kinds of entry, and the chips narrow it to one', a
 	await expect(rows).toHaveCount(2)
 })
 
-test('a trip the server refuses leaves the sheet open with every value in it', async ({ page }) => {
+test('a trip refused leaves the sheet open with every value in it', async ({ page }) => {
 	const plate = `${plates}${Date.now()}`
 	await add(page, plate, starting)
 	await page.goto(appPage)
@@ -119,11 +122,13 @@ test('a trip the server refuses leaves the sheet open with every value in it', a
 	await page.getByRole('button', { name: 'New entry' }).click()
 	const entry = page.getByRole('dialog', { name: 'New entry' })
 	await entry.getByRole('combobox', { name: 'Purpose' }).fill('Kundentermin')
-	// Neither a counter nor a distance: the journey leaves the counter with nothing to say, which
-	// is the one thing about a trip the server refuses outright (lib/Service/TripService.php).
+	await categorise(page, entry)
+	// Neither a counter nor a distance: the journey leaves the counter with nothing to say, so the
+	// sheet asks before it sends (docs/ui.md).
 	await entry.getByRole('button', { name: 'Save' }).click()
 
 	await expect(entry).toBeVisible()
+	await expect(entry.getByText('Enter the counter at the end, or the distance.')).toBeVisible()
 	await expect(entry.getByRole('combobox', { name: 'Purpose' })).toHaveValue('Kundentermin')
 	await expect(entry.getByRole('button', { name: 'Try again' })).toBeVisible()
 })
@@ -142,15 +147,16 @@ test('a business trip missing what the logbook requires is saved and asks for th
 
 	await page.getByRole('button', { name: 'New entry' }).click()
 	const entry = page.getByRole('dialog', { name: 'New entry' })
-	await entry.getByRole('textbox', { name: 'End counter' }).fill(ended)
+	await entry.getByRole('textbox', { name: 'Odometer at arrival' }).fill(ended)
 	await entry.getByRole('combobox', { name: 'Destination' }).fill('Augsburg')
+	await categorise(page, entry)
 	await entry.getByRole('button', { name: 'Save' }).click()
 	await expect(entry).toBeHidden()
 
 	const trip = page.locator('.timeline').getByRole('listitem').first()
 	await expect(trip).toContainText('Augsburg')
 	await expect(trip).toContainText('Incomplete')
-	await expect(trip).toContainText('Still missing: Start counter, Purpose, Business partner')
+	await expect(trip).toContainText('Still missing: Odometer at departure, Purpose, Business partner')
 })
 
 /**
@@ -299,7 +305,7 @@ test('a Gap is closed by one confirmed private trip', async ({ page }) => {
 
 	await page.goto(appPage)
 	await open(page, plate)
-	await expect(page.locator('.timeline__gap')).toHaveText('8 km unaccounted')
+	await expect(page.locator('.timeline__gap')).toHaveText('8 km unaccounted for')
 
 	await page.locator('.timeline').getByRole('button', { name: 'Close gap' }).click()
 	const question = page.getByRole('dialog', { name: 'Close gap' })
@@ -418,9 +424,9 @@ test.describe('at 320 x 640, in the dark', { tag: '@nc34' }, () => {
 		await open(page, plate)
 		await expect(page.locator('.timeline__month')).toHaveCount(3)
 		await expect(page.locator('.timeline__gap')).toHaveCount(1)
-		// The flagged reading's question, each business trip's missing purpose and partner, and the
-		// Gap offered for closing on the trip that opened it.
-		await expect(page.locator('.row__flag')).toHaveCount(4)
+		// The flagged reading's word and its question, each business trip's missing purpose and
+		// partner, and the Gap offered for closing on the trip that opened it.
+		await expect(page.locator('.row__flag')).toHaveCount(5)
 		await audit(page, 'the vehicle screen, timeline and all')
 	})
 

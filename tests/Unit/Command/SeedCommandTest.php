@@ -10,6 +10,7 @@ namespace OCA\NextFleet\Tests\Unit\Command;
 
 use OCA\NextFleet\Command\SeedCommand;
 use OCA\NextFleet\Command\SeedPapers;
+use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\AuditMapper;
 use OCA\NextFleet\Db\BookingMapper;
 use OCA\NextFleet\Db\OdoReading;
@@ -27,6 +28,7 @@ use OCA\NextFleet\Service\ExpenseService;
 use OCA\NextFleet\Service\GrantNotices;
 use OCA\NextFleet\Service\GrantService;
 use OCA\NextFleet\Service\MaintenanceService;
+use OCA\NextFleet\Service\MoneyRows;
 use OCA\NextFleet\Service\NotificationService;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\ReminderService;
@@ -37,6 +39,7 @@ use OCA\NextFleet\Tests\Stub\RegisteredProfiles;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\IConfig;
 use OCP\IDBConnection;
+use OCP\IUser;
 use OCP\IUserManager;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\MockObject\MockObject;
@@ -90,9 +93,20 @@ class SeedCommandTest extends TestCase {
 		$this->nextId = 1;
 
 		$this->users = $this->createMock(IUserManager::class);
+		// Whatever the case, as the database backend finds a uid.
 		$this->users->method('userExists')->willReturnCallback(
-			static fn (string $userId): bool => in_array($userId, [self::OWNER, self::DRIVER], true),
+			static fn (string $userId): bool => in_array(strtolower($userId), [self::OWNER, self::DRIVER], true),
 		);
+		$this->users->method('get')->willReturnCallback(function (string $name): ?IUser {
+			$uid = in_array(strtolower($name), [self::OWNER, self::DRIVER], true) ? strtolower($name) : null;
+			if ($uid === null) {
+				return null;
+			}
+			$user = $this->createMock(IUser::class);
+			$user->method('getUID')->willReturn($uid);
+
+			return $user;
+		});
 
 		$this->mapper = $this->createMock(VehicleMapper::class);
 		$this->mapper->method('insert')->willReturnCallback(function (Vehicle $vehicle): Vehicle {
@@ -218,6 +232,8 @@ class SeedCommandTest extends TestCase {
 			$this->createMock(BookingMapper::class),
 			$time,
 			$this->users,
+			$this->createMock(MoneyRows::class),
+			$this->createMock(AccessMapper::class),
 		);
 
 		return new CommandTester(new SeedCommand(
@@ -343,9 +359,28 @@ class SeedCommandTest extends TestCase {
 		$this->assertStringContainsString($account, $tester->getDisplay());
 	}
 
+	/**
+	 * Sharing off, or "share only with group members" and no group in common: GrantService refuses
+	 * the grant only after the fleet is written. The fleet stays, nothing is written in the
+	 * driver's name, and the run says why in a sentence instead of a stack trace.
+	 */
+	public function testAGrantTheSharingSettingsRefuseIsExplainedAfterTheFleetIsWritten(): void {
+		$tester = $this->tester();
+		$this->grants->method('grant')->willThrowException(new \InvalidArgumentException('grantee is no user you may grant to'));
+		$this->bookings->expects($this->never())->method('book');
+
+		$this->assertSame(1, $tester->execute(['user' => self::OWNER, '--grant-to' => self::DRIVER]));
+
+		$this->assertNotEmpty($this->written);
+		$this->assertSame([self::OWNER], array_values(array_unique(array_column($this->driven, 'by'))));
+		$this->assertStringContainsString('Seeded', $tester->getDisplay());
+		$this->assertStringContainsString('sharing settings', $tester->getDisplay());
+		$this->assertStringContainsString(self::DRIVER, $tester->getDisplay());
+	}
+
 	/** @return array<string, array{string}> */
 	public static function accountsNobodyCanBeGranted(): array {
-		return ['no such account' => ['nobody'], 'the owner' => [self::OWNER]];
+		return ['no such account' => ['nobody'], 'the owner' => [self::OWNER], 'the owner, spelt otherwise' => ['Alice']];
 	}
 
 	/**
@@ -496,9 +531,9 @@ class SeedCommandTest extends TestCase {
 	}
 
 	/**
-	 * Both answers to "which VAT rate": one stated, and one nobody stated, which the net figures
-	 * count gross and say so. An insurance premium carries no VAT and states no rate, as the sheet
-	 * prefills it (lib/Jurisdiction/De/RateProvider.php): a stated rate is never zero.
+	 * Every answer to "which VAT rate": the standard one, none charged, and one nobody stated,
+	 * which the net figures count gross and say so. An insurance premium carries no VAT and
+	 * states 0, as the sheet prefills it (lib/Jurisdiction/De/RateProvider.php).
 	 */
 	public function testTheExpensesStateARateOrLeaveItUnstated(): void {
 		$this->tester()->execute(['user' => self::OWNER]);
@@ -506,10 +541,10 @@ class SeedCommandTest extends TestCase {
 		$insurance = array_filter($this->costsOf('expense'), static fn (array $expense): bool => $expense['category'] === 'insurance');
 
 		$this->assertContains(null, $rates);
-		$this->assertNotContains(0, $rates);
+		$this->assertContains(0, $rates);
 		$this->assertContains(1900, $rates);
 		$this->assertNotEmpty($insurance);
-		$this->assertSame([null], array_values(array_unique(array_map(static fn (array $expense): mixed => $expense['vat_rate'] ?? null, $insurance))));
+		$this->assertSame([0], array_values(array_unique(array_map(static fn (array $expense): mixed => $expense['vat_rate'] ?? null, $insurance))));
 	}
 
 	/**

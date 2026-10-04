@@ -3,13 +3,13 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
-import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import { computed, ref, watch } from 'vue'
 
 import { ChangedError } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
 import { formatCount, nameOf } from '../utils/format.js'
+import { t } from '../utils/l10n.js'
 
 const store = useVehiclesStore()
 
@@ -23,13 +23,36 @@ const undoing = ref(false)
 
 // A refusal is about the row it was refused for. The next delete is a different row and a
 // different token, so it gets an offer that has not already failed.
-watch([() => store.deleted, () => store.struck, () => store.imported, () => store.detached], () => {
+watch([() => store.deleted, () => store.struck, () => store.imported, () => store.detached, () => store.saved], () => {
 	failure.value = ''
 })
 
-const offered = computed(() => store.deleted !== null || store.struck !== null || store.imported !== null || store.detached !== null)
+/** How long a "Saved." with nothing to take back stays: long enough to read on the move. */
+const BRIEF = 4000
+
+watch(() => store.saved, (now) => {
+	if (now !== null && now.before === null) {
+		setTimeout(() => {
+			if (store.saved === now) {
+				store.forget()
+			}
+		}, BRIEF)
+	}
+}, { immediate: true })
+
+const offered = computed(() => store.deleted !== null || store.struck !== null || store.imported !== null || store.detached !== null || store.saved !== null)
+
+// An import that created nothing, and a new Entry, have nothing to take back.
+const undoable = computed(() => !(store.imported !== null && store.imported.created.length === 0)
+	&& !(store.saved !== null && store.saved.before === null))
 
 const message = computed(() => {
+	if (store.saved !== null) {
+		return failure.value
+			? t('nextfleet', 'The change could not be undone: {reason}', { reason: failure.value })
+			: t('nextfleet', 'Saved.')
+	}
+
 	// The import's result is this toast (docs/ui.md, "Importing"). Counts as "label: number",
 	// because the catalogue has no plurals.
 	if (store.imported !== null) {
@@ -120,9 +143,8 @@ function dismiss() {
 				{{ message }}
 			</p>
 			<!-- A refused undo is refused for the row's sake and not for the click's, so the same
-			     click would be refused the same way: only the way out is left. An import that
-			     created nothing has nothing to take back. -->
-			<NcButton v-if="!failure && store.imported?.created.length !== 0"
+			     click would be refused the same way: only the way out is left. -->
+			<NcButton v-if="!failure && undoable"
 				variant="tertiary"
 				:disabled="undoing"
 				@click="undo">
@@ -146,8 +168,9 @@ function dismiss() {
 }
 
 /*
- * No timer: the token the undo carries is untimed (docs/architecture.md#concurrency), and a way
- * back that disappears on a clock is a time limit on the only way back there is.
+ * No timer on an offer: the token the undo carries is untimed (docs/architecture.md#concurrency),
+ * and a way back that disappears on a clock is a time limit on the only way back there is. A
+ * "Saved." that offers nothing holds no token, so it leaves on its own (BRIEF).
  */
 .toast {
 	position: fixed;

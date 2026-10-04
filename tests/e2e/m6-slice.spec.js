@@ -5,7 +5,7 @@
 
 import { expect, test } from '@playwright/test'
 
-import { api, appPage, login, ocs, open, opened, removeVehicles, row } from './app.js'
+import { api, appPage, categorise, login, ocs, open, opened, removeVehicles, row } from './app.js'
 
 // Disjoint from every other file's prefix, as a substring too (tests/e2e/m2-slice.spec.js says why).
 const plates = 'M6-E2E-'
@@ -109,9 +109,10 @@ test('the owner gives access, each role is offered what it may do, and access en
 	await driver.getByRole('button', { name: 'New entry' }).click()
 	const entry = driver.getByRole('dialog', { name: 'New entry' })
 	await opened(entry)
-	await entry.getByRole('textbox', { name: 'Start counter' }).fill('1040')
-	await entry.getByRole('textbox', { name: 'End counter' }).fill('1100')
+	await entry.getByRole('textbox', { name: 'Odometer at departure' }).fill('1040')
+	await entry.getByRole('textbox', { name: 'Odometer at arrival' }).fill('1100')
 	await entry.getByRole('combobox', { name: 'Destination' }).fill('Ludwigsburg')
+	await categorise(driver, entry)
 	await entry.getByRole('button', { name: 'Save' }).click()
 	await expect(entry).toBeHidden()
 
@@ -130,6 +131,7 @@ test('the owner gives access, each role is offered what it may do, and access en
 
 	// The owner takes the driver's access back, and the vehicle leaves the driver's overview.
 	await sheet.getByRole('button', { name: `Remove ${driverId}` }).click()
+	await sheet.getByRole('button', { name: 'Remove access' }).click()
 	await expect(sheet.locator('.grants__row').filter({ hasText: driverId })).toHaveCount(0)
 	await driver.goto(appPage)
 	await expect(driver.getByText('No vehicles yet')).toBeVisible()

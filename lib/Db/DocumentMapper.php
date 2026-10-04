@@ -53,7 +53,7 @@ class DocumentMapper extends BaseMapper {
 		// An empty IN () is not a predicate any of the three databases accepts.
 		$reachable = $grantedIds === [] ? $mine : $qb->expr()->orX(
 			$mine,
-			$qb->expr()->in('v.id', $qb->createNamedParameter($grantedIds, IQueryBuilder::PARAM_INT_ARRAY)),
+			InList::in($qb, 'v.id', $grantedIds, IQueryBuilder::PARAM_INT_ARRAY),
 		);
 		$qb->selectDistinct('d.file_id')
 			->from($this->tableName, 'd')

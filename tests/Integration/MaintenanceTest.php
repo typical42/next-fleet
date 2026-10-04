@@ -8,7 +8,6 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Integration;
 
-use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\OdoReading;
@@ -38,11 +37,10 @@ class MaintenanceTest extends TestCase {
 	private ReminderService $reminders;
 
 	protected function setUp(): void {
-		$container = (new Application())->getContainer();
-		$this->maintenance = $container->get(MaintenanceService::class);
-		$this->reminders = $container->get(ReminderService::class);
-		$this->odometer = $container->get(OdometerService::class);
-		$this->vehicles = $container->get(VehicleService::class);
+		$this->maintenance = \OCP\Server::get(MaintenanceService::class);
+		$this->reminders = \OCP\Server::get(ReminderService::class);
+		$this->odometer = \OCP\Server::get(OdometerService::class);
+		$this->vehicles = \OCP\Server::get(VehicleService::class);
 		$this->forgetTestRows();
 	}
 

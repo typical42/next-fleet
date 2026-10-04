@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Import;
 
 use OCA\NextFleet\Exception\UnreadableCellException;
+use OCA\NextFleet\Service\Field;
 
 /**
  * Reading one cell as what it states. Every reader takes an empty cell as nothing, as Field::read
@@ -64,20 +65,25 @@ final class Values {
 	 * A money cell as a spreadsheet or .NET's currency format writes it, `$1,234.50`,
 	 * `1.234,50 €`, `($12.00)`, `CHF 1’234.50`, `12,00 kr.`: the number left for decimal(), and the
 	 * currency mark it carried. Spaces and apostrophes between digits go too, since some locales
-	 * group thousands with them. A mark is at most three letters or signs on one side, a period
-	 * after it allowed, so words stay where they are and decimal() refuses them.
+	 * group thousands with them, and the minus sign and en dash some locales write are a minus.
+	 * A mark is at most three currency signs or letters on one side, a period after it allowed,
+	 * so words, `~` and `%` stay where they are and decimal() refuses them.
 	 *
 	 * @return array{string, ?string}
 	 */
 	public static function money(string $cell): array {
-		$text = preg_replace(['/[\s\x{00A0}\x{2009}\x{202F}]+/u', '/(?<=\d)[\'\x{2019}](?=\d)/u'], '', $cell);
+		$text = preg_replace(
+			['/[\s\x{00A0}\x{2009}\x{202F}]+/u', '/(?<=\d)[\'\x{2019}](?=\d)/u', '/[\x{2212}\x{2013}]/u'],
+			['', '', '-'],
+			$cell,
+		);
 		// Not UTF-8: CsvReader hands none such on, and decimal() refuses it unread.
 		if ($text === null) {
 			return [$cell, null];
 		}
 		$bracketed = preg_match('/^\((.*)\)$/u', $text, $inner) === 1;
 		$text = $bracketed ? $inner[1] : $text;
-		$money = '/^(?<sign>[+-]?)(?<before>[^\d.,+-]{0,3})(?<sign2>[+-]?)(?<number>[\d.,]*)(?<after>(?:[^\d.,+-]{1,3}\.?)?)$/u';
+		$money = '/^(?<sign>[+-]?)(?<before>[\p{Sc}\p{L}]{0,3})(?<sign2>[+-]?)(?<number>[\d.,]*)(?<after>(?:[\p{Sc}\p{L}]{1,3}\.?)?)$/u';
 		if (preg_match($money, $text, $parts) !== 1
 			|| ($parts['before'] !== '' && $parts['after'] !== '')
 			|| ($parts['sign'] !== '' && $parts['sign2'] !== '')
@@ -96,7 +102,7 @@ final class Values {
 	 * currencies written with it. A mark not listed may stand for any, since nothing says otherwise.
 	 */
 	public static function mayName(string $mark, string $currency): bool {
-		if (preg_match('/^[A-Z]{3}$/', $mark) === 1) {
+		if (Field::isCurrency($mark)) {
 			return $mark === $currency;
 		}
 
@@ -249,7 +255,8 @@ final class Values {
 	 * A date, optionally with its time, as the moment it names in `$zone` and that moment's own
 	 * offset in minutes (docs/architecture.md#time). A date alone is noon: whatever offset later
 	 * reads it, noon stays on its day. A time the clock skipped is refused; one it showed twice is
-	 * the first, as a browser reads a time typed into the entry sheet.
+	 * the first, as a browser reads a time typed into the entry sheet. A moment before 1970 is
+	 * refused too: no entry route takes one, and the row would fail the whole import.
 	 *
 	 * @param string $order of slash dates, `dmy` or `mdy`, from dateOrder() or the user
 	 * @return ?array{at: int, off: int}
@@ -275,7 +282,7 @@ final class Values {
 		$moment = (new \DateTimeImmutable('@0'))->setTimezone($zone)
 			->setDate((int)$year, (int)$month, (int)$day)
 			->setTime($hour, $minute, $second);
-		if ((int)$moment->format('G') !== $hour) {
+		if ((int)$moment->format('G') !== $hour || $moment->getTimestamp() < 0) {
 			throw new UnreadableCellException('date');
 		}
 

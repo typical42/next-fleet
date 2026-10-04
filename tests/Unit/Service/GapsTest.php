@@ -65,17 +65,18 @@ class GapsTest extends TestCase {
 	}
 
 	/** An Odometer Entry: a counter somebody read, with no journey around it. */
-	private function counter(int $at, int $value, bool $flagged = false): OdoReading {
-		return $this->reading($at, $value, OdoReading::MANUAL, null, $flagged);
+	private function counter(int $at, int $value, bool $flagged = false, string $kind = OdoReading::READING): OdoReading {
+		return $this->reading($at, $value, OdoReading::MANUAL, null, $flagged, $kind);
 	}
 
-	private function reading(int $at, int $value, string $sourceType, ?int $sourceId, bool $flagged = false): OdoReading {
+	private function reading(int $at, int $value, string $sourceType, ?int $sourceId, bool $flagged = false, string $kind = OdoReading::READING): OdoReading {
 		$reading = OdoReading::fromRow([
 			'id' => count($this->readingRows) + 1,
 			'vehicle_id' => self::VEHICLE_ID,
 			'read_at' => $at,
 			'read_at_off' => 120,
 			'value' => $value,
+			'kind' => $kind,
 			'flagged' => $flagged,
 			'source_type' => $sourceType,
 			'source_id' => $sourceId,
@@ -117,6 +118,25 @@ class GapsTest extends TestCase {
 			'from_at' => self::T0,
 			'from_at_off' => 120,
 			'to_at' => self::T0 + self::DAY,
+			'to_at_off' => 60,
+		]], $this->gaps()->of($this->vehicle()));
+	}
+
+	/**
+	 * After a counter was replaced, a claim is on the new counter: it is measured from the swap,
+	 * never against the old counter's last trip.
+	 */
+	public function testAfterAnAnsweredResetAClaimIsMeasuredFromTheNewCounter(): void {
+		$this->trip(self::T0, null, self::T0 + 3600, 150000);
+		$this->counter(self::T0 + self::DAY, 140000, kind: OdoReading::RESET);
+		$trip = $this->trip(self::T0 + 2 * self::DAY, 140300, self::T0 + 2 * self::DAY + 3600, 140380);
+
+		$this->assertSame([[
+			'trip' => $trip->getUuid(),
+			'distance' => 300,
+			'from_at' => self::T0 + self::DAY,
+			'from_at_off' => 120,
+			'to_at' => self::T0 + 2 * self::DAY,
 			'to_at_off' => 60,
 		]], $this->gaps()->of($this->vehicle()));
 	}

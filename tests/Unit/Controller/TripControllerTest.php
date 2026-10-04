@@ -12,6 +12,7 @@ use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Controller\TripController;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Exception\AccessDeniedException;
+use OCA\NextFleet\Exception\RefusedException;
 use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\TripService;
 use OCP\AppFramework\Db\DoesNotExistException;
@@ -104,6 +105,18 @@ class TripControllerTest extends TestCase {
 			new \InvalidArgumentException('category is one of business, private, commute'),
 			Http::STATUS_BAD_REQUEST,
 		];
+	}
+
+	/** The sheet words a backwards counter itself, so the refusal names its reason. */
+	public function testARefusalWithAReasonCarriesIt(): void {
+		$this->service->method('update')
+			->willThrowException(new RefusedException('end_odo is below start_odo', TripService::END_BELOW_START));
+		$this->params = ['updated_at' => 1750000000];
+
+		$response = $this->controller()->update(self::UUID, self::TRIP);
+
+		$this->assertSame(Http::STATUS_BAD_REQUEST, $response->getStatus());
+		$this->assertSame(['message' => 'end_odo is below start_odo', 'reason' => 'end_below_start'], $response->getData());
 	}
 
 	/** The prefill answers 200 with the words the service found, and is refused like a write. */

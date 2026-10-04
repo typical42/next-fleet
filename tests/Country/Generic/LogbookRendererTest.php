@@ -57,7 +57,7 @@ class LogbookRendererTest extends TestCase {
 	private function render(array $trips, ?array $enteredBy = null): \DOMXPath {
 		$vehicle = Vehicle::fromRow(['id' => 7, 'plate' => 'W-12345X', 'manufacturer' => 'VW', 'model' => 'Caddy', 'jurisdiction' => 'generic']);
 		$lines = array_map(static fn (Trip $trip): array => ['trip' => $trip, 'missing' => [], 'late' => []], $trips);
-		$html = (new Generic\LogbookRenderer(new Untranslated()))->render(new LogbookReport($vehicle, 2026, $lines, [], null, $enteredBy));
+		$html = (new Generic\LogbookRenderer(new Untranslated()))->render(new LogbookReport($vehicle, 2026, $lines, [], null, $enteredBy, new \DateTimeZone('Europe/Vienna')));
 
 		$document = new \DOMDocument();
 		$this->assertTrue($document->loadHTML($html, LIBXML_NOERROR));
@@ -109,22 +109,25 @@ class LogbookRendererTest extends TestCase {
 	/** On a vehicle others were given access to, each line says who entered it, before the note. */
 	public function testALineSaysWhoEnteredItWhenTheCoreNamesThem(): void {
 		$rows = $this->rows($this->render(
-			[$this->trip(), $this->trip(['created_by' => 'erased-k3x9'])],
-			['alice' => 'Alice Example', 'erased-k3x9' => 'erased-k3x9'],
+			[$this->trip(), $this->trip(['created_by' => 'erased:k3x9'])],
+			['alice' => 'Alice Example', 'erased:k3x9' => 'erased:k3x9'],
 		));
 
-		$this->assertSame(['Alice Example', 'erased-k3x9'], array_column($rows, 'Entered by'));
+		$this->assertSame(['Alice Example', 'erased:k3x9'], array_column($rows, 'Entered by'));
 		$this->assertSame(['Entered by', 'Note'], array_slice(array_keys($rows[0]), -2));
 	}
 
-	/** A voided trip stays on the page, marked, and says when: an entry that vanished says nothing. */
+	/**
+	 * A voided trip stays on the page, marked, and says when: an entry that vanished says nothing.
+	 * The server's instant reads in the reader's zone, with its offset.
+	 */
 	public function testAVoidedTripIsListedAsVoided(): void {
 		$rows = $this->rows($this->render([
 			$this->trip(['deleted_at' => 1772740800]), // 2026-03-05 20:00 UTC
 			$this->trip(),
 		]));
 
-		$this->assertSame('Voided on 2026-03-05, 20:00 UTC', $rows[0]['Note']);
+		$this->assertSame('Voided on 2026-03-05, 21:00 UTC+01:00', $rows[0]['Note']);
 		$this->assertSame('Delivery', $rows[0]['Purpose'], 'a voided line is still readable');
 		$this->assertSame('', $rows[1]['Note']);
 	}
@@ -206,7 +209,10 @@ class LogbookRendererTest extends TestCase {
 		$this->assertSame('No trips in 2026.', $this->text($this->render([]), '//table/tbody'));
 	}
 
-	/** The heading names the year, the header the vehicle, and the footer disclaims certification. */
+	/**
+	 * The heading names the year, the header the vehicle, and the footer disclaims certification
+	 * and legal review.
+	 */
 	public function testThePageNamesTheVehicleAndTheYear(): void {
 		$page = $this->render([]);
 
@@ -214,5 +220,6 @@ class LogbookRendererTest extends TestCase {
 		$this->assertStringContainsString('W-12345X', $this->text($page, '//header'));
 		$this->assertStringContainsString('VW Caddy', $this->text($page, '//header'));
 		$this->assertStringContainsString('not a certification', $this->text($page, '//footer'));
+		$this->assertStringContainsString('Not reviewed by a lawyer.', $this->text($page, '//footer'));
 	}
 }

@@ -8,7 +8,6 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Integration;
 
-use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\Document;
 use OCA\NextFleet\Db\DocumentMapper;
 use OCP\IDBConnection;
@@ -30,7 +29,7 @@ class DocumentMapperTest extends TestCase {
 
 	protected function setUp(): void {
 		$this->forgetTestRows();
-		$this->documents = (new Application())->getContainer()->get(DocumentMapper::class);
+		$this->documents = \OCP\Server::get(DocumentMapper::class);
 	}
 
 	protected function tearDown(): void {

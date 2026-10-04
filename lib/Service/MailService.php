@@ -15,7 +15,6 @@ use OCA\NextFleet\Db\Reminder;
 use OCA\NextFleet\Db\ReminderMapper;
 use OCA\NextFleet\Db\ReminderReceipt;
 use OCA\NextFleet\Db\ReminderReceiptMapper;
-use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Notification\ReminderWords;
@@ -41,10 +40,18 @@ class MailService {
 	/** The recipient's local hour from which the day's digest goes. */
 	public const HOUR = 7;
 
+	/**
+	 * The user value naming the local day a recipient's digest was last checked for, and the
+	 * vehicles it covered (checkedMark()). Once a day is checked, news found later that day on those
+	 * vehicles goes with the next mail: the job need not evaluate every vehicle of every recipient
+	 * each hour to find a day with nothing new. A vehicle that joins the list was never checked,
+	 * so it is that day.
+	 */
+	public const CHECKED = 'digest_checked';
+
 	public function __construct(
 		private VehicleMapper $vehicles,
 		private ReminderMapper $reminders,
-		private ReminderRecipientMapper $recipients,
 		private ReminderReceiptMapper $receipts,
 		private OdoReadingMapper $readings,
 		private VehicleAccess $access,
@@ -61,27 +68,29 @@ class MailService {
 	}
 
 	/**
-	 * Mails every recipient whose day it is. A recipient that fails is logged and the round goes
-	 * on; their receipts rolled back, so the news waits for the next mail.
+	 * Mails every recipient whose day it is. A recipient that fails, by exception or error, is
+	 * logged and the round goes on; their receipts are forgotten, so the next run tries again.
 	 *
 	 * @throws \OCP\DB\Exception
 	 */
 	public function digest(): void {
 		/** @var array<string, list<Vehicle>> $lists */
 		$lists = [];
-		foreach ($this->vehicles->findInService() as $vehicle) {
+		foreach ($this->vehicles->findReminded() as [$vehicle, $recipients]) {
 			if ($vehicle->getReminderMail() === Vehicle::MAIL_OFF || $vehicle->getLifecycle() !== Vehicle::ACTIVE) {
 				continue;
 			}
-			foreach ($this->recipients->findByVehicle((int)$vehicle->getId()) as $recipient) {
-				$lists[$recipient->getUserId()][] = $vehicle;
+			foreach ($recipients as $userId) {
+				$lists[$userId][] = $vehicle;
 			}
 		}
+		// A numeric uid comes back from the keys as an int.
+		$checked = $this->config->getUserValueForUsers(Application::APP_ID, self::CHECKED, array_map(strval(...), array_keys($lists)));
 
 		foreach ($lists as $userId => $vehicles) {
 			try {
-				$this->digestFor((string)$userId, $vehicles);
-			} catch (\Exception $e) {
+				$this->digestFor((string)$userId, $vehicles, $checked[$userId] ?? null);
+			} catch (\Throwable $e) {
 				$this->logger->error('Reminder digest to ' . $userId . ' was not sent', ['exception' => $e]);
 			}
 		}
@@ -89,9 +98,10 @@ class MailService {
 
 	/**
 	 * @param list<Vehicle> $vehicles
+	 * @param ?string $checked the recipient's CHECKED value
 	 * @throws \Exception
 	 */
-	private function digestFor(string $userId, array $vehicles): void {
+	private function digestFor(string $userId, array $vehicles, ?string $checked): void {
 		$user = $this->users->get($userId);
 		$address = $user?->getEMailAddress();
 		if ($user === null || !$user->isEnabled() || $address === null || $address === '') {
@@ -99,9 +109,33 @@ class MailService {
 		}
 		$now = $this->time->now();
 		$local = $now->setTimezone($this->zones->of($userId));
-		if ((int)$local->format('G') < self::HOUR) {
+		$mark = self::checkedMark($local, $vehicles);
+		if ((int)$local->format('G') < self::HOUR || $checked === $mark) {
 			return;
 		}
+		$this->check($user, $address, $vehicles, $now, $local);
+		// After the check went through: one that failed is tried again within the hour.
+		$this->config->setUserValue($userId, Application::APP_ID, self::CHECKED, $mark);
+	}
+
+	/**
+	 * The recipient's local day and a digest of the ids of the vehicles on their list.
+	 *
+	 * @param list<Vehicle> $vehicles
+	 */
+	private static function checkedMark(\DateTimeImmutable $local, array $vehicles): string {
+		return $local->format('Y-m-d') . ' ' . hash('xxh3', implode(',', array_map(static fn (Vehicle $vehicle): int => (int)$vehicle->getId(), $vehicles)));
+	}
+
+	/**
+	 * The day's digest for one recipient, if it is the day of any of their vehicles and they
+	 * have not had one today.
+	 *
+	 * @param list<Vehicle> $vehicles
+	 * @throws \Exception
+	 */
+	private function check(IUser $user, string $address, array $vehicles, \DateTimeImmutable $now, \DateTimeImmutable $local): void {
+		$userId = $user->getUID();
 		if (($this->receipts->lastSent($userId, ReminderReceipt::MAIL, $now->getTimestamp()) ?? PHP_INT_MIN) >= $local->setTime(0, 0)->getTimestamp()) {
 			return;
 		}
@@ -110,21 +144,25 @@ class MailService {
 			return;
 		}
 
-		// Sent inside the transaction: a refused mail throws, and its receipts roll back with it.
-		// The vehicles are held in id order, as findInService() gives them, so two runs cannot
-		// hold them crosswise.
-		$this->atomic(function () use ($user, $address, $vehicles): void {
-			$news = [];
+		// Claimed one vehicle at a time and sent after the commits: the fleet does not wait on the
+		// mail server. What a failed mail claimed is forgotten, so its news goes with the next one.
+		$news = [];
+		$claimed = [];
+		try {
 			foreach ($vehicles as $vehicle) {
-				$points = $this->news($vehicle, $user->getUID());
+				$points = $this->atomic(fn (): array => $this->news($vehicle, $user->getUID()), $this->db);
 				if ($points !== []) {
 					$news[] = [$vehicle, $points];
+					array_push($claimed, ...array_column($points, 2));
 				}
 			}
 			if ($news !== []) {
 				$this->send($user, $address, $news);
 			}
-		}, $this->db);
+		} catch (\Throwable $e) {
+			$this->receipts->forget($claimed);
+			throw $e;
+		}
 	}
 
 	/** Weekly on Monday, monthly on the 1st, in the recipient's own day. */
@@ -138,10 +176,10 @@ class MailService {
 	}
 
 	/**
-	 * The points of one vehicle this user has not been mailed yet, each claimed as it is found.
-	 * The state is the job's, at the server's day, as the notification's is.
+	 * The points of one vehicle this user has not been mailed yet, each claimed as it is found,
+	 * with its receipt. The state is the job's, at the server's day, as the notification's is.
 	 *
-	 * @return list<array{Reminder, string}>
+	 * @return list<array{Reminder, string, ReminderReceipt}>
 	 * @throws \OCP\DB\Exception
 	 */
 	private function news(Vehicle $vehicle, string $userId): array {
@@ -161,8 +199,9 @@ class MailService {
 		$points = [];
 		foreach ($this->reminders->findByVehicle($vehicleId) as $reminder) {
 			$point = ReminderEngine::evaluate($reminder, $now->format('Y-m-d'), $odo)['point'];
-			if ($point !== null && $this->receipts->claim($reminder, $point, ReminderReceipt::MAIL, $userId, $now->getTimestamp())) {
-				$points[] = [$reminder, $point];
+			$receipt = $point === null ? null : $this->receipts->claim($reminder, $point, ReminderReceipt::MAIL, $userId, $now->getTimestamp());
+			if ($receipt !== null) {
+				$points[] = [$reminder, (string)$point, $receipt];
 			}
 		}
 
@@ -173,7 +212,7 @@ class MailService {
 	 * In the recipient's language and locale, one block per vehicle. The vehicle links only for
 	 * someone who may see it, as the notification does.
 	 *
-	 * @param non-empty-list<array{Vehicle, list<array{Reminder, string}>}> $news
+	 * @param non-empty-list<array{Vehicle, list<array{Reminder, string, ReminderReceipt}>}> $news
 	 * @throws \RuntimeException when the mail server refused it
 	 */
 	private function send(IUser $user, string $address, array $news): void {

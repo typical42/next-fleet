@@ -9,7 +9,8 @@ import { flushPromises, shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { getPreferences, savePreferences } from '../services/api.js'
+import { getPreferences, savePreferences, updateVehicle } from '../services/api.js'
+import { useVehiclesStore } from '../store/index.js'
 import { usePreferencesStore } from '../store/preferences.js'
 import CompleteHint from './CompleteHint.vue'
 
@@ -19,6 +20,7 @@ vi.mock('../services/api.js', async (original) => ({
 	...await original(),
 	getPreferences: vi.fn(),
 	savePreferences: vi.fn(),
+	updateVehicle: vi.fn(),
 }))
 
 /** Created in the four fields the sheet asks for (docs/ui.md) and never finished. */
@@ -43,12 +45,20 @@ const DONE = {
 	currency: 'EUR',
 }
 
+/** A German vehicle with every detail in and the logbook question still open. */
+const GERMAN = { ...DONE, uuid: 'v-de', plate: 'NF-DE 200', jurisdiction: 'de', logbook_mode: false }
+
 /**
  * @param {string[]} dismissed - the hints this user has already answered
+ * @param {string[]} [logbook] - the vehicles whose logbook question this user has answered
  * @return {any} the settings envelope the server answers with
  */
-function settings(dismissed) {
-	return { preferences: { jurisdiction: 'de', dismissed_hints: dismissed }, jurisdictions: [] }
+function settings(dismissed, logbook = []) {
+	return {
+		preferences: { jurisdiction: 'de', dismissed_hints: dismissed, dismissed_logbook_hints: logbook },
+		// Only the ruled one has a tax office to keep a logbook for.
+		jurisdictions: [{ key: 'de', logbook_rules: true }, { key: 'xx', logbook_rules: true }, { key: 'generic', logbook_rules: false }],
+	}
 }
 
 /**
@@ -189,5 +199,92 @@ describe('the complete-this-vehicle hint', () => {
 		// A stub renders no props, so the card is read by what it was handed rather than by text.
 		expect(note(wrapper)?.props('type')).toBe('error')
 		expect(note(wrapper)?.props('text')).toBe('The server answered 503')
+	})
+})
+
+/**
+ * Logbook Mode stays off by default; a German vehicle is asked about it once, because the
+ * Finanzamt is who the logbook is kept for (PRD M12, Johannes's call).
+ */
+describe('the logbook question', () => {
+	const QUESTION = 'Keep a logbook for the tax office with this vehicle?'
+
+	/** @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted hint @return {any} the card asking it */
+	function asking(wrapper) {
+		return wrapper.findAllComponents(NcNoteCard).find((one) => one.props('heading') === QUESTION)
+	}
+
+	it('asks about a German vehicle whose mode is off', async () => {
+		const wrapper = await hint([GERMAN])
+
+		expect(asking(wrapper)?.text()).toContain('NF-DE 200')
+		expect(button(wrapper, 'Switch Logbook mode on')).toBeDefined()
+	})
+
+	/** The profile decides, not the key: any country with a logbook ruleset is asked about. */
+	it('asks about a vehicle of any country with logbook rules', async () => {
+		expect(asking(await hint([{ ...GERMAN, jurisdiction: 'xx' }]))).toBeDefined()
+	})
+
+	it.each([
+		['another country', { ...GERMAN, jurisdiction: 'generic' }],
+		['the mode on', { ...GERMAN, logbook_mode: true }],
+		['no right to edit', { ...GERMAN, may: ['view', 'log'] }],
+	])('does not ask about a vehicle with %s', async (_, vehicle) => {
+		expect(asking(await hint([vehicle]))).toBeUndefined()
+	})
+
+	it('does not ask again once dismissed, and that leaves the missing details alone', async () => {
+		vi.mocked(savePreferences).mockResolvedValue(settings([], [GERMAN.uuid]))
+		const wrapper = await hint([GERMAN])
+
+		await button(wrapper, 'Dismiss').trigger('click')
+		await flushPromises()
+
+		expect(savePreferences).toHaveBeenCalledWith({ dismissed_logbook_hints: [GERMAN.uuid] })
+		expect(asking(wrapper)).toBeUndefined()
+
+		vi.mocked(getPreferences).mockResolvedValue(settings([], [GERMAN.uuid]))
+		setActivePinia(createPinia())
+		expect(asking(await hint([GERMAN]))).toBeUndefined()
+	})
+
+	it('switches the mode on and counts that as the answer', async () => {
+		const switched = { ...GERMAN, logbook_mode: true, updated_at: 1700000001 }
+		vi.mocked(updateVehicle).mockResolvedValue(switched)
+		vi.mocked(savePreferences).mockResolvedValue(settings([], [GERMAN.uuid]))
+		const wrapper = await hint([GERMAN])
+
+		await button(wrapper, 'Switch Logbook mode on').trigger('click')
+		await flushPromises()
+
+		// The token it was read with, and nothing else: an edit sheet open elsewhere keeps its fields.
+		expect(updateVehicle).toHaveBeenCalledWith({ uuid: GERMAN.uuid, updated_at: GERMAN.updated_at, logbook_mode: true })
+		expect(savePreferences).toHaveBeenCalledWith({ dismissed_logbook_hints: [GERMAN.uuid] })
+		expect(useVehiclesStore().list).toEqual([switched])
+		expect(asking(wrapper)).toBeUndefined()
+	})
+
+	/** A second tap while the first is on its way would lose the race to it and report a conflict. */
+	it('takes one answer at a time', async () => {
+		vi.mocked(updateVehicle).mockReturnValue(new Promise(() => {}))
+		const wrapper = await hint([GERMAN])
+
+		await button(wrapper, 'Switch Logbook mode on').trigger('click')
+
+		expect(button(wrapper, 'Switch Logbook mode on').props('disabled')).toBe(true)
+		expect(button(wrapper, 'Dismiss').props('disabled')).toBe(true)
+	})
+
+	it('keeps asking when the switch was refused, and says why', async () => {
+		vi.mocked(updateVehicle).mockRejectedValue(new Error('Changed since you read it'))
+		const wrapper = await hint([GERMAN])
+
+		await button(wrapper, 'Switch Logbook mode on').trigger('click')
+		await flushPromises()
+
+		expect(asking(wrapper)).toBeDefined()
+		expect(note(wrapper)?.props('text')).toBe('Changed since you read it')
+		expect(savePreferences).not.toHaveBeenCalled()
 	})
 })

@@ -31,16 +31,17 @@ class BookingNotices {
 	}
 
 	/**
-	 * Tells the booker who cancelled. Parameters only: the notifier words it when the list is read
+	 * Tells the booker which booking was cancelled, not by whom: the store is out of an erasure's
+	 * reach. Parameters only: the notifier words it when the list is read
 	 * (lib/Notification/Notifier.php).
 	 */
-	public function tellCancelled(Vehicle $vehicle, Booking $booking, string $by): void {
+	public function tellCancelled(Vehicle $vehicle, Booking $booking): void {
 		$notification = $this->notifications->createNotification();
 		$notification->setApp(Application::APP_ID)
 			->setUser($booking->getUserId())
 			->setDateTime(\DateTime::createFromImmutable($this->time->now()))
 			->setObject(self::OBJECT, $booking->getUuid())
-			->setSubject(self::OBJECT, ['vehicle' => $vehicle->getUuid(), 'by' => $by]);
+			->setSubject(self::OBJECT, ['vehicle' => $vehicle->getUuid()]);
 		$this->notifications->notify($notification);
 	}
 

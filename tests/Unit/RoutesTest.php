@@ -77,7 +77,7 @@ class RoutesTest extends TestCase {
 	 * looked every edited fill-up up by its fuel, "diesel", and answered 404.
 	 */
 	public function testNoPlaceholderIsNamedLikeAFieldAWriteSends(): void {
-		$fields = ['odo', 'second_odo', 'updated_at'];
+		$fields = ['odo', 'second_odo', 'updated_at', 'client_uuid'];
 		foreach ([EnergyService::class, ExpenseService::class, MaintenanceService::class, TripService::class, VehicleService::class] as $service) {
 			$fields = [...$fields, ...array_keys((new ReflectionClass($service))->getConstant('WRITABLE'))];
 		}

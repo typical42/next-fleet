@@ -61,6 +61,7 @@ class PreferencesController extends OCSController {
 	 *
 	 * @param string|null $jurisdiction the country new vehicles are kept under, such as de
 	 * @param list<string>|null $dismissed_hints the vehicles whose completeness hint is dismissed, by uuid
+	 * @param list<string>|null $dismissed_logbook_hints the vehicles whose Logbook Mode question is answered, by uuid
 	 * @param bool|null $reclaim_vat the caller reclaims VAT, so figures are net
 	 * @param string|null $kpi_period last-12, this-year, last-year or month
 	 * @param int|null $grid_factor grams of CO₂ per kWh from the caller's tariff, 0 to 2000; null for the country's
@@ -77,6 +78,7 @@ class PreferencesController extends OCSController {
 	public function update(
 		mixed $jurisdiction = null,
 		mixed $dismissed_hints = null,
+		mixed $dismissed_logbook_hints = null,
 		mixed $reclaim_vat = null,
 		mixed $kpi_period = null,
 		mixed $grid_factor = null,

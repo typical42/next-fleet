@@ -13,7 +13,12 @@ use OCA\NextFleet\Controller\VehicleController;
 use OCA\NextFleet\Db\Audit;
 use OCA\NextFleet\Db\AuditMapper;
 use OCA\NextFleet\Db\Vehicle;
+use OCA\NextFleet\Exception\CurrencyInUseException;
 use OCA\NextFleet\Exception\StaleUpdateException;
+use OCA\NextFleet\Service\EnergyService;
+use OCA\NextFleet\Service\ExpenseService;
+use OCA\NextFleet\Service\MaintenanceService;
+use OCA\NextFleet\Service\MoneyRows;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Http;
@@ -38,9 +43,8 @@ class VehicleTest extends TestCase {
 	private AuditMapper $audit;
 
 	protected function setUp(): void {
-		$container = (new Application())->getContainer();
-		$this->service = $container->get(VehicleService::class);
-		$this->audit = $container->get(AuditMapper::class);
+		$this->service = \OCP\Server::get(VehicleService::class);
+		$this->audit = \OCP\Server::get(AuditMapper::class);
 		$this->forgetTestVehicles();
 	}
 
@@ -52,7 +56,7 @@ class VehicleTest extends TestCase {
 	private function forgetTestVehicles(): void {
 		$db = \OCP\Server::get(IDBConnection::class);
 		$people = [self::OWNER, self::STRANGER];
-		foreach (['fleet_vehicles' => 'user_id', 'fleet_audit' => 'created_by'] as $table => $column) {
+		foreach (['fleet_vehicles' => 'user_id', 'fleet_audit' => 'created_by', 'fleet_expenses' => 'created_by', 'fleet_energy' => 'created_by', 'fleet_maintenance' => 'created_by', 'fleet_odo_readings' => 'created_by'] as $table => $column) {
 			$qb = $db->getQueryBuilder();
 			$qb->delete($table)
 				->where($qb->expr()->in($column, $qb->createNamedParameter($people, $qb::PARAM_STR_ARRAY)));
@@ -180,24 +184,77 @@ class VehicleTest extends TestCase {
 
 		$on = $this->service->update(self::OWNER, $uuid, $vehicle->getUpdatedAt(), ['logbook_mode' => true]);
 		$this->assertTrue($this->service->find(self::OWNER, $uuid)->getLogbookMode());
-		// A save that says nothing about the mode sits between the two flips, so what comes back
-		// is the flips and not the saves.
-		$saved = $this->service->update(self::OWNER, $uuid, $on->getUpdatedAt(), ['plate' => 'B-ZZ 9']);
+		// A save that says nothing about the mode or a fact sits between the two flips, so what
+		// comes back is the flips and the new plate, not the saves.
+		$saved = $this->service->update(self::OWNER, $uuid, $on->getUpdatedAt(), ['color' => 'blau']);
+		$saved = $this->service->update(self::OWNER, $uuid, $saved->getUpdatedAt(), ['plate' => 'B-ZZ 9']);
 		$this->service->update(self::OWNER, $uuid, $saved->getUpdatedAt(), ['logbook_mode' => false]);
 
 		$trail = $this->audit->findForEntity(Audit::VEHICLE, (int)$vehicle->getId());
 		$this->assertSame(
 			[
 				['change' => 'switched', 'fields' => ['logbook_mode' => [false, true]]],
+				['change' => 'edited', 'fields' => ['plate' => ['B-XY 123', 'B-ZZ 9']]],
 				['change' => 'switched', 'fields' => ['logbook_mode' => [true, false]]],
 			],
 			array_map(static fn (Audit $row): array => $row->getDiffJson(), $trail),
 		);
-		$this->assertSame([self::OWNER, self::OWNER], array_map(
+		$this->assertSame([self::OWNER, self::OWNER, self::OWNER], array_map(
 			static fn (Audit $row): string => $row->getCreatedBy(),
 			$trail,
 		));
 		$this->assertFalse($this->service->find(self::OWNER, $uuid)->getLogbookMode());
+	}
+
+	/**
+	 * The currency changes freely until an amount is recorded in it, and then stays - a voided
+	 * expense too, since an undo brings it back in the currency it was entered in. The refused save
+	 * leaves the row and its trail as they were.
+	 */
+	public function testTheCurrencyStaysOnceAnAmountIsRecordedInIt(): void {
+		$expenses = \OCP\Server::get(ExpenseService::class);
+		$vehicle = $this->service->create(self::OWNER, ['plate' => 'B-XY 123', 'currency' => 'EUR']);
+		$uuid = $vehicle->getUuid();
+		$vehicle = $this->service->update(self::OWNER, $uuid, $vehicle->getUpdatedAt(), ['currency' => 'CHF']);
+		$spent = $expenses->record(self::OWNER, $uuid, ['spent_at' => 1750000000, 'spent_at_off' => 120, 'amount' => 64000]);
+		$expenses->delete(self::OWNER, $uuid, $spent['uuid'], $spent['updated_at']);
+
+		try {
+			$this->service->update(self::OWNER, $uuid, $vehicle->getUpdatedAt(), ['currency' => 'EUR']);
+			$this->fail('the currency changed under a recorded amount');
+		} catch (CurrencyInUseException) {
+		}
+
+		$this->assertSame('CHF', $this->service->find(self::OWNER, $uuid)->getCurrency());
+		$this->assertSame(
+			[['change' => 'edited', 'fields' => ['currency' => ['EUR', 'CHF']]]],
+			array_map(static fn (Audit $row): array => $row->getDiffJson(), $this->audit->findForEntity(Audit::VEHICLE, (int)$vehicle->getId())),
+		);
+	}
+
+	/** A priced fill-up and a costed record are amounts too; a record without a cost is not. */
+	public function testAPricedFillUpOrACostedRecordKeepsTheCurrency(): void {
+		$money = \OCP\Server::get(MoneyRows::class);
+		$vehicle = $this->service->create(self::OWNER, ['plate' => 'B-XY 123', 'currency' => 'EUR', 'energy_types' => ['diesel']]);
+		$id = (int)$vehicle->getId();
+
+		\OCP\Server::get(MaintenanceService::class)->record(self::OWNER, $vehicle->getUuid(), ['done_at' => 1750000000, 'done_at_off' => 120, 'title' => 'Wash']);
+		$this->assertFalse($money->exist($id));
+		\OCP\Server::get(EnergyService::class)->record(self::OWNER, $vehicle->getUuid(), ['filled_at' => 1750000000, 'filled_at_off' => 120, 'energy' => 'diesel', 'amount' => 42000, 'total' => 7350, 'full_tank' => true]);
+		$this->assertTrue($money->exist($id));
+
+		$other = $this->service->create(self::OWNER, ['plate' => 'B-XY 124', 'currency' => 'EUR']);
+		\OCP\Server::get(MaintenanceService::class)->record(self::OWNER, $other->getUuid(), ['done_at' => 1750000000, 'done_at_off' => 120, 'title' => 'Oil change', 'cost' => 18990]);
+		$this->assertTrue($money->exist((int)$other->getId()));
+	}
+
+	/** The create sheet's four fields are enough for a first fill-up: the engine names the energy. */
+	public function testAVehicleCreatedWithAnEngineTakesAFillUpAtOnce(): void {
+		$vehicle = $this->service->create(self::OWNER, ['plate' => 'B-XY 125', 'engine' => 'lpg']);
+
+		$this->assertSame(['petrol', 'lpg'], $this->service->find(self::OWNER, $vehicle->getUuid())->getEnergyTypes());
+		$filled = \OCP\Server::get(EnergyService::class)->record(self::OWNER, $vehicle->getUuid(), ['filled_at' => 1750000000, 'filled_at_off' => 120, 'energy' => 'lpg', 'amount' => 30000, 'full_tank' => true]);
+		$this->assertSame('lpg', $filled['energy']);
 	}
 
 	/**
@@ -207,7 +264,7 @@ class VehicleTest extends TestCase {
 	public function testAFlipThatLostTheRaceIsNotInTheTrail(): void {
 		$vehicle = $this->service->create(self::OWNER, ['plate' => 'B-XY 123']);
 		$stale = $vehicle->getUpdatedAt();
-		$this->service->update(self::OWNER, $vehicle->getUuid(), $stale, ['plate' => 'B-ZZ 9']);
+		$this->service->update(self::OWNER, $vehicle->getUuid(), $stale, ['color' => 'blau']);
 
 		try {
 			$this->service->update(self::OWNER, $vehicle->getUuid(), $stale, ['logbook_mode' => true]);
@@ -407,7 +464,7 @@ class VehicleTest extends TestCase {
 	public function testTheControllerIsBuiltFromItsConstructorTypesAlone(): void {
 		$this->assertInstanceOf(
 			VehicleController::class,
-			(new Application())->getContainer()->get(VehicleController::class),
+			\OCP\Server::get(VehicleController::class),
 		);
 	}
 }

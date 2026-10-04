@@ -53,12 +53,12 @@ class SyncController extends OCSController {
 	 */
 	#[NoAdminRequired]
 	#[UserRateLimit(limit: 60, period: 60)]
-	public function index(string $cursor = '', int $limit = SyncService::LIMIT): DataResponse {
+	public function index(mixed $cursor = '', int $limit = SyncService::LIMIT): DataResponse {
 		// The range is in the docblock because Nextcloud 34 holds an undeclared `limit` to 1-500 and
 		// refuses the rest before this runs; Nextcloud 31 checks nothing, so the service does.
 		// Not read(): no vehicle is named, so there is nothing to forbid or not find.
 		try {
-			return new DataResponse($this->service->sync($this->userId(), $cursor, $limit));
+			return new DataResponse($this->service->sync($this->userId(), $this->word('cursor', $cursor) ?? '', $limit));
 		} catch (\InvalidArgumentException $e) {
 			return new DataResponse(['message' => $e->getMessage()], Http::STATUS_BAD_REQUEST);
 		}

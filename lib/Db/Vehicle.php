@@ -140,6 +140,11 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 	 * @var array{uuid: string, starts_at: int, starts_at_off: int, ends_at: int, ends_at_off: int}|null
 	 */
 	private ?array $myNextBooking = null;
+	/**
+	 * Whether anybody but the owner has or had access (AccessMapper::everGranted()): the rule
+	 * *Entered by* follows, and the screen shows Bookings by. Not a column, like `may`.
+	 */
+	private bool $everGranted = false;
 
 	public function __construct() {
 		parent::__construct();
@@ -200,6 +205,14 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 		$this->outWith = $outWith;
 	}
 
+	public function getEverGranted(): bool {
+		return $this->everGranted;
+	}
+
+	public function setEverGranted(bool $everGranted): void {
+		$this->everGranted = $everGranted;
+	}
+
 	/** @return array{uuid: string, starts_at: int, starts_at_off: int, ends_at: int, ends_at_off: int}|null */
 	public function getMyNextBooking(): ?array {
 		return $this->myNextBooking;
@@ -256,6 +269,7 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 			'owned_by' => $this->ownedBy,
 			'out_with' => $this->outWith,
 			'my_next_booking' => $this->myNextBooking,
+			'ever_granted' => $this->everGranted,
 		];
 	}
 

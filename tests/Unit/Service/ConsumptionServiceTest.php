@@ -116,6 +116,52 @@ class ConsumptionServiceTest extends TestCase {
 		$this->assertSame([], $this->of($this->vehicle(['petrol'])));
 	}
 
+	/**
+	 * A counter replaced between two full tanks leaves the old counter's last kilometres unknown,
+	 * so the segment over the swap yields no number, and the next one counts on the new counter.
+	 */
+	public function testASegmentOverAnAnsweredResetYieldsNone(): void {
+		$this->fill(100, 'petrol', 40000, 150000);
+		$this->read(150, 140000, OdoReading::RESET);
+		$this->fill(200, 'petrol', 30000, 150500);
+		$this->fill(300, 'petrol', 36000, 151000);
+
+		$segments = $this->of($this->vehicle(['petrol']));
+
+		$this->assertSame([[300, 500]], array_map(static fn (array $segment): array => [$segment['filled_at'], $segment['distance']], $segments));
+	}
+
+	/**
+	 * A segment that ran backwards hides an unanswered question; the kilometres after a reset do
+	 * not make it a number.
+	 */
+	public function testADistanceWithASegmentRunningBackwardsIsNone(): void {
+		$this->read(100, 10000);
+		$this->read(200, 9000, flagged: true);
+		$this->read(300, 9500);
+		$this->read(400, 0, OdoReading::RESET);
+		$this->read(500, 3000);
+
+		$this->assertNull($this->service()->distance($this->vehicle(['petrol']), 0, 1000));
+	}
+
+	/**
+	 * Many periods at once, as the Costs screen's months and year ask, each measured as it would
+	 * be alone: one before any Reading, one after the vehicle's first, one over the swap, and the
+	 * whole span.
+	 */
+	public function testManyPeriodsAreEachMeasuredAsTheyWouldBeAlone(): void {
+		$this->read(100, 10000);
+		$this->read(200, 10500);
+		$this->read(300, 0, OdoReading::RESET);
+		$this->read(400, 800);
+		$this->read(500, 1000);
+
+		$distances = $this->service()->distances($this->vehicle(['petrol']), [[0, 50], [0, 250], [250, 450], [450, 1000], [0, 1000]]);
+
+		$this->assertSame([null, 500, 800, 200, 1500], $distances);
+	}
+
 	public function testAPlugInHybridMeasuresEachEnergyOnItsOwnChain(): void {
 		$this->fill(100, 'petrol', 40000, 10000);
 		$this->fill(110, 'electric', 8000, 10050, full: false);
@@ -175,7 +221,7 @@ class ConsumptionServiceTest extends TestCase {
 
 		$this->assertSame(
 			['amount' => 36000, 'distance' => 400, 'per' => 'km', 'value' => 9.0],
-			$this->wallSide($this->vehicle(['petrol', 'electric']), 100, 400),
+			$this->wallSide($this->vehicle(['petrol', 'electric']), 100, 350),
 		);
 	}
 
@@ -262,19 +308,7 @@ class ConsumptionServiceTest extends TestCase {
 			)),
 		);
 		$readings = $this->createMock(OdoReadingMapper::class);
-		$readings->method('findForSources')->willReturnCallback(
-			fn (int $vehicleId, string $sourceType, array $ids): array => array_values(array_filter(
-				$this->readingRows,
-				static fn (OdoReading $reading): bool => $reading->getSourceType() === $sourceType
-					&& in_array($reading->getSourceId(), $ids, true),
-			)),
-		);
-		$readings->method('findChain')->willReturnCallback(
-			fn (int $vehicleId, string $counter): array => array_values(array_filter(
-				$this->readingRows,
-				static fn (OdoReading $reading): bool => $reading->getCounter() === $counter,
-			)),
-		);
+		FakeChain::onto($readings, fn (): array => $this->readingRows);
 
 		return new ConsumptionService($energy, $readings);
 	}
@@ -286,6 +320,22 @@ class ConsumptionServiceTest extends TestCase {
 			'energy_types' => json_encode($energyTypes),
 			'odo_unit' => $odoUnit,
 			'second_unit' => $secondUnit,
+		]);
+	}
+
+	/** An Odometer Entry on the main counter, of the kind given. */
+	private function read(int $at, int $value, string $kind = OdoReading::READING, bool $flagged = false): void {
+		$this->readingRows[] = OdoReading::fromRow([
+			'id' => count($this->readingRows) + 1,
+			'vehicle_id' => self::VEHICLE_ID,
+			'read_at' => $at,
+			'read_at_off' => 120,
+			'value' => $value,
+			'kind' => $kind,
+			'origin' => OdometerService::OBSERVED,
+			'flagged' => $flagged,
+			'source_type' => OdoReading::MANUAL,
+			'counter' => OdoReading::MAIN,
 		]);
 	}
 

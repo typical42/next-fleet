@@ -66,20 +66,31 @@ describe('reasonWord', () => {
 
 	/** What a Spritmonitor code names that no entry here holds (lib/Import/SpritmonitorImporter.php). */
 	it('words what a code names that no entry holds', () => {
-		expect(reasonWord('adblue', 'Kraftstoff')).toBe('Kraftstoff says AdBlue, which is no fuel.')
+		expect(reasonWord('adblue', 'Kraftstoff')).toBe('Kraftstoff says AdBlue, which is not a fuel.')
 		expect(reasonWord('hydrogen', 'Fuel')).toBe('Fuel says hydrogen, which this app does not record.')
 		expect(reasonWord('purchase', 'Kostenart')).toBe('A purchase price is not a running cost.')
 		expect(reasonWord('refund', 'Kostenart')).toBe('A refund would be a negative cost.')
 	})
 
-	/** `marked()` blames no column for a fill-up of an energy the vehicle does not take. */
+	/** A currency blames its column, or none when the vehicle's own currency is no code (lib/Import/Cells.php). */
+	it('words a currency the vehicle is not kept in apart from a vehicle currency that is no code', () => {
+		expect(reasonWord('currency', 'Cost')).toBe('Cost names a currency the vehicle is not kept in.')
+		expect(reasonWord('currency', null)).toBe('The currency of the vehicle is not a three-letter code such as EUR. Correct it in the edit sheet of the vehicle, then preview again.')
+	})
+
 	it('words a reason with no column', () => {
-		expect(reasonWord('energy', null)).toBe('The vehicle takes no such energy.')
 		expect(reasonWord('duplicate', null)).toBe('Already there.')
+		expect(reasonWord('cells', null)).toBe('The row has more cells than the file has columns.')
 	})
 
 	it('falls back to the word the server sent', () => {
 		expect(reasonWord('something_new', 'Odo')).toBe('Odo: something_new')
+	})
+
+	/** A header is the file's own text, shown as it was written there (src/utils/l10n.js). */
+	it('names a column as the file spells it', () => {
+		expect(reasonWord('number', 'Kosten R&D')).toBe('Kosten R&D is not a number.')
+		expect(reasonWord('missing', 'O\'Brien\'s km')).toBe('O\'Brien\'s km is empty.')
 	})
 })
 
@@ -87,6 +98,9 @@ describe('refusalWord', () => {
 	it('says why the file is not read at all', () => {
 		expect(refusalWord('too_large', null)).toBe('The file is larger than 5 MB.')
 		expect(refusalWord('line_too_long', 7)).toBe('Row 7 is longer than 64 KiB, so the file is not read.')
+		expect(refusalWord('too_many_cells', 1)).toBe('Row 1 has more than 256 cells, so the file is not read.')
+		// The file's cap names no row (CsvReader::MAX_FILE_CELLS).
+		expect(refusalWord('too_many_cells', null)).toBe('The file has more than 500,000 cells.')
 	})
 })
 

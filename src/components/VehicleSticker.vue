@@ -3,7 +3,6 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
-import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcDialog from '@nextcloud/vue/components/NcDialog'
 import { computed, ref } from 'vue'
@@ -11,6 +10,7 @@ import { computed, ref } from 'vue'
 import { stickerUrl } from '../services/api.js'
 import { nameOf } from '../utils/format.js'
 import { qrOf } from '../utils/qr.js'
+import { t } from '../utils/l10n.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -39,7 +39,7 @@ function print() {
 		<figure class="nextfleet-sticker">
 			<!-- Black on white in both themes: a scanner reads dark modules on a light ground. -->
 			<svg role="img"
-				:aria-label="t('nextfleet', 'QR code for {name}', { name: { value: nameOf(vehicle), escape: false } })"
+				:aria-label="t('nextfleet', 'QR code for {name}', { name: nameOf(vehicle) })"
 				:viewBox="`0 0 ${code.size} ${code.size}`"
 				shape-rendering="crispEdges">
 				<rect :width="code.size" :height="code.size" fill="#fff" />

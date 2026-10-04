@@ -28,9 +28,9 @@ class Personal implements ISettings {
 	}
 
 	/**
-	 * Nextcloud's own catch-all section. An app that owns a section registers one, and one
-	 * jurisdiction dropdown is not enough to make a page of its own worth the extra class and
-	 * icon (docs/architecture.md#extension-points).
+	 * Nextcloud's own catch-all section. An app that owns a section registers one, and four
+	 * defaults are not enough to make a page of their own worth the extra class and icon
+	 * (docs/ui.md#screens, Personal settings).
 	 */
 	public function getSection(): string {
 		return 'additional';

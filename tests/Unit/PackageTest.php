@@ -43,6 +43,24 @@ class PackageTest extends TestCase {
 		$this->assertContains('vendor-bin', $this->listIn('LEAVE'));
 	}
 
+	/**
+	 * The build writes a source map beside every chunk. A map is our source, comments and all, for
+	 * anyone to fetch from the server, and much of the tarball's size; the store has no use for it.
+	 * The script removes them from the stage and refuses a tarball that still carries one.
+	 */
+	public function testItShipsNoSourceMaps(): void {
+		$script = (string)file_get_contents(self::ROOT . '/tools/package.sh');
+
+		$remove = strpos($script, 'find "$stage" -name \'*.map\' -delete');
+		$pack = strpos($script, 'tar --sort=name');
+		$check = strpos($script, '\.map$');
+		$this->assertIsInt($remove, 'the stage keeps its source maps');
+		$this->assertIsInt($pack);
+		$this->assertLessThan($pack, $remove, 'the maps go after the tarball is packed');
+		$this->assertIsInt($check, 'nothing checks the tarball for a map');
+		$this->assertGreaterThan($pack, $check);
+	}
+
 	/** @return list<string> */
 	private function listIn(string $variable): array {
 		$script = (string)file_get_contents(self::ROOT . '/tools/package.sh');

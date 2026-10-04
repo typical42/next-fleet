@@ -123,7 +123,7 @@ describe('the CO₂ estimate', () => {
 		const co2 = co2Of({ grams: 109630, unstated: false, source: FUELS, year: null, grid: null }, 'en')
 
 		expect(co2.figure).toBe('≈ 110 kg')
-		expect(co2.notes).toEqual(['An estimate: what was tanked or charged, times its emission factor'])
+		expect(co2.notes).toEqual(['An estimate: what was filled up or charged, times its emission factor'])
 		expect(co2.sources).toEqual([{ label: 'Fuel factors', href: FUELS }])
 	})
 

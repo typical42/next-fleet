@@ -4,7 +4,6 @@
 -->
 <script setup>
 import { FilePickerClosed, getFilePickerBuilder } from '@nextcloud/dialogs'
-import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcDialog from '@nextcloud/vue/components/NcDialog'
 import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
@@ -13,11 +12,13 @@ import NcSelect from '@nextcloud/vue/components/NcSelect'
 import { computed, ref, watch } from 'vue'
 
 import { attachDocument, documentUrl, listDocuments, NotFoundError } from '../services/api.js'
+import { useInboxStore } from '../store/inbox.js'
 import { useVehiclesStore } from '../store/index.js'
 import { may } from '../utils/access.js'
 import { DOCUMENT_KINDS, documentKindWord } from '../utils/format.js'
-import { matching, readHistory, readOwners } from '../utils/owners.js'
+import { ownerSearch, readOwners } from '../utils/owners.js'
 import { savePaper } from '../utils/papers.js'
+import { t } from '../utils/l10n.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -29,6 +30,7 @@ const props = defineProps({
 const emit = defineEmits(['listed'])
 
 const store = useVehiclesStore()
+const inbox = useInboxStore()
 
 /**
  * The list as the server last answered, or null until it is read.
@@ -80,6 +82,9 @@ async function load() {
 
 // The shell keeps one vehicle screen and swaps the vehicle under it (src/App.vue).
 watch(() => props.vehicle.uuid, load, { immediate: true })
+
+// The screen reads the list again once a leave changed the role, which each paper's `may` follows.
+defineExpose({ reload: load })
 
 // The undo of a removal is the toast's, and the list it answered comes through the store.
 watch(() => store.refiled, (refiled) => {
@@ -150,18 +155,7 @@ const belongs = ref(null)
  * @type {import('vue').Ref<import('../utils/owners.js').Owner[]>}
  */
 const owners = ref([])
-/** What was typed into *Belongs to*; empty offers the newest rows. */
-const search = ref('')
-/**
- * Every row the paper may belong to, read on the first search of each dialog and only then: it
- * takes a page per fifty rows of each kind.
- *
- * @type {import('vue').Ref<import('../utils/owners.js').Owner[]|null>}
- */
-const history = ref(null)
-/** @type {Promise<void>|null} */
-let reading = null
-const offered = computed(() => search.value.trim() === '' ? owners.value : matching(history.value ?? [], search.value))
+const { offered, searching, lookFor, reset } = ownerSearch(() => props.vehicle.uuid, owners)
 const attachFailure = ref('')
 
 const kinds = computed(() => DOCUMENT_KINDS.map((one) => ({ id: one, label: documentKindWord(one) })))
@@ -169,39 +163,12 @@ const kinds = computed(() => DOCUMENT_KINDS.map((one) => ({ id: one, label: docu
 /** @return {Promise<void>} when the rows a paper may belong to are in; a refusal leaves none */
 async function listOwners() {
 	owners.value = []
-	search.value = ''
-	history.value = null
-	reading = null
+	reset()
 	try {
 		owners.value = await readOwners(props.vehicle.uuid)
 	} catch {
 		owners.value = []
 	}
-}
-
-/**
- * @param {string} typed - what is in the search field now
- * @return {Promise<void>} when the history is in; a refusal leaves the search finding nothing
- */
-async function lookFor(typed) {
-	search.value = typed
-	if (typed.trim() === '' || reading !== null) {
-		return
-	}
-	history.value = null
-	const asked = reading = readHistory(props.vehicle.uuid)
-		.then((all) => {
-			// A dialog opened since has its own history to read.
-			if (reading === asked) {
-				history.value = all
-			}
-		}, () => {
-			// Nothing found this time, and the next keystroke asks again.
-			if (reading === asked) {
-				history.value = []
-				reading = null
-			}
-		})
 }
 
 /**
@@ -262,6 +229,8 @@ async function attach() {
 			...(belongs.value === null ? {} : { linked_type: belongs.value.type, linked_uuid: belongs.value.id }),
 		}))
 		picked.value = null
+		// The file may have waited in the inbox folder. Not awaited: the list is the answer.
+		inbox.refresh()
 	} catch (error) {
 		// A file shared with the person is refused like a missing one (docs/architecture.md#documents),
 		// and the server's words for that name only the vehicle.
@@ -301,14 +270,14 @@ async function attach() {
 					<span class="documents__name">
 						<!-- The address stays for a middle click and a copied link; a click saves in place. -->
 						<a v-if="paper.name !== null" :href="documentUrl(vehicle.uuid, paper.uuid)" @click.prevent="save(paper)">{{ paper.name }}</a>
-						<span v-else class="documents__gone">{{ t('nextfleet', 'The file is gone from Files') }}</span>
+						<span v-else class="documents__gone">{{ t('nextfleet', 'The file is no longer in the Files of whoever attached it') }}</span>
 						<span v-if="paper.linked_type !== null" class="documents__belongs">{{ belongsWord(paper) }}</span>
 					</span>
 					<NcButton v-if="paper.may.includes('detach')"
 						variant="tertiary"
 						:aria-label="paper.name === null
 							? t('nextfleet', 'Remove this document')
-							: t('nextfleet', 'Remove {name}', { name: { value: paper.name, escape: false } })"
+							: t('nextfleet', 'Remove {name}', { name: paper.name })"
 						:disabled="writing"
 						@click="detach(paper)">
 						{{ t('nextfleet', 'Remove') }}
@@ -344,7 +313,7 @@ async function attach() {
 				v-model="belongs"
 				:options="offered"
 				:filterable="false"
-				:loading="search.trim() !== '' && history === null"
+				:loading="searching"
 				:input-label="t('nextfleet', 'Belongs to')"
 				:placeholder="keepsVehicles ? t('nextfleet', 'The vehicle itself') : t('nextfleet', 'Choose an entry or a booking')"
 				label="label"

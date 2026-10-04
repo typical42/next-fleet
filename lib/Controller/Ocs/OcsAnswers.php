@@ -10,7 +10,9 @@ namespace OCA\NextFleet\Controller\Ocs;
 
 use OCA\NextFleet\Controller\RequestValues;
 use OCA\NextFleet\Exception\AccessDeniedException;
+use OCA\NextFleet\Exception\AlreadyCreatedException;
 use OCA\NextFleet\Exception\BookingConflictException;
+use OCA\NextFleet\Exception\RefusedException;
 use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\ResponseDefinitions;
 use OCP\AppFramework\Db\DoesNotExistException;
@@ -56,6 +58,8 @@ trait OcsAnswers {
 			throw new OCSNotFoundException('No such vehicle');
 		} catch (AccessDeniedException) {
 			throw new OCSForbiddenException('Not yours');
+		} catch (RefusedException $e) {
+			return new DataResponse(['message' => $e->getMessage(), 'reason' => $e->reason], Http::STATUS_BAD_REQUEST);
 		} catch (\InvalidArgumentException $e) {
 			return new DataResponse(['message' => $e->getMessage()], Http::STATUS_BAD_REQUEST);
 		}
@@ -95,6 +99,29 @@ trait OcsAnswers {
 		} catch (BookingConflictException $e) {
 			// The booking in the way travels with the refusal, so a client can name it.
 			return new DataResponse(['message' => $e->getMessage(), 'booking' => $e->booking], Http::STATUS_CONFLICT);
+		}
+	}
+
+	/**
+	 * A create's answer: the row under `$status`, or - for a create sent again under the client
+	 * uuid of a row it wrote - that row under 200 (Service\Once). Inside write() or booked(), which
+	 * answer the refusals.
+	 *
+	 * @template S of Http::STATUS_CREATED|Http::STATUS_OK
+	 * @template B of array
+	 * @param \Closure(): B $create the row in its wire form
+	 * @param S $status what a create is answered with
+	 * @return DataResponse<S, B, array{}>|DataResponse<Http::STATUS_OK, B, array{}>
+	 */
+	private function created(\Closure $create, int $status): DataResponse {
+		try {
+			return new DataResponse($create(), $status);
+		} catch (AlreadyCreatedException $e) {
+			// The service's answer, which the closure would have put in wire form the same way.
+			/** @var B $body */
+			$body = $e->answer instanceof \JsonSerializable ? $e->answer->jsonSerialize() : $e->answer;
+
+			return new DataResponse($body);
 		}
 	}
 

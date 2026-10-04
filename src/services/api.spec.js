@@ -4,7 +4,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { addGrant, addRecipient, attachDocument, BookingConflictError, cancelBooking, ChangedError, changeBooking, changeGrant, checkIn, checkOut, closeGap, createBooking, ImportRefusedError, listBookings, ConflictError, previewImport, runImport, undoImport, createReminder, createVehicle, csvUrl, deleteEntry, deleteVehicle, detachDocument, dismissReminder, documentUrl, fetchDocument, getPreferences, LockedError, restoreDocument, listDocuments, listFleetReminders, listGrants, listRecipients, listReminders, listVehicles, logbookUrl, mileageClaimUrl, NotFoundError, readEntry, readGaps, readInbox, readKpis, readTimeline, readYear, recordReading, recordTrip, reminderTemplates, removeRecipient, restoreEntry, revokeGrant, searchGrantees, searchUsers, restoreVehicle, savePreferences, snoozeReminder, stickerUrl, thumbnailUrl, updateEntry, updateVehicle } from './api.js'
+import { addGrant, addRecipient, attachDocument, BookingConflictError, cancelBooking, ChangedError, changeBooking, changeGrant, checkIn, checkOut, closeGap, createBooking, ImportRefusedError, listBookings, ConflictError, previewImport, runImport, undoImport, createReminder, createVehicle, csvUrl, deleteEntry, deleteVehicle, detachDocument, dismissReminder, documentUrl, fetchDocument, getPreferences, LockedError, restoreDocument, listDocuments, listFleetReminders, listGrants, listRecipients, listReminders, listVehicles, logbookUrl, mileageClaimUrl, NotFoundError, OfflineError, readEntry, readGaps, readInbox, readKpis, readTimeline, readYear, recordReading, recordTrip, RefusedError, reminderTemplates, removeRecipient, resetReading, restoreEntry, revokeGrant, searchGrantees, searchUsers, restoreVehicle, savePreferences, snoozeReminder, stickerUrl, thumbnailUrl, updateEntry, updateVehicle } from './api.js'
 
 vi.mock('@nextcloud/router', () => ({
 	generateUrl: (/** @type {string} */ path) => `/index.php${path}`,
@@ -48,6 +48,29 @@ describe('listVehicles', () => {
 		expect(options.method).toBe('GET')
 		expect(options.body).toBeUndefined()
 		expect(fleet).toEqual([vehicle])
+	})
+})
+
+describe('a request that never reached the server', () => {
+	/**
+	 * fetch rejects with a TypeError when there is no network, in words that differ per browser
+	 * ("Failed to fetch", "Load failed"). A driver with no signal is told so, and that what they
+	 * typed is still there (docs/ui.md, a failed save is never lost).
+	 */
+	it('says there is no connection, whatever the browser called it', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Load failed')))
+
+		const asked = recordTrip(vehicle.uuid, { distance: 82 })
+
+		await expect(asked).rejects.toBeInstanceOf(OfflineError)
+		await expect(asked).rejects.toThrow('No connection to the server. Everything you typed is still here — try again when you have signal.')
+	})
+
+	/** Only the network's own failure: anything else is somebody's bug and keeps its words. */
+	it('lets any other failure through as it was', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new RangeError('a bug')))
+
+		await expect(listVehicles()).rejects.toThrow('a bug')
 	})
 })
 
@@ -257,6 +280,16 @@ describe('updateVehicle', () => {
 		expect(failure).toBeInstanceOf(Error)
 		expect(failure).not.toBeInstanceOf(ConflictError)
 	})
+
+	/** A 400 that names its reason carries it, so the sheet can say it in the reader's words. */
+	it('carries the reason a refused field names', async () => {
+		answers(400, { message: 'currency stays', reason: 'currency_in_use' })
+
+		const failure = await updateVehicle({ ...vehicle, currency: 'CHF' }).catch((error) => error)
+
+		expect(failure).toBeInstanceOf(RefusedError)
+		expect([failure.message, failure.reason]).toEqual(['currency stays', 'currency_in_use'])
+	})
 })
 
 describe('deleteVehicle', () => {
@@ -306,6 +339,22 @@ describe('restoreVehicle', () => {
 		answers(412, { message: 'Changed since you read it', conflict: true })
 
 		await expect(restoreVehicle(vehicle)).rejects.toBeInstanceOf(ConflictError)
+	})
+})
+
+describe('resetReading', () => {
+	/** Any Entry's Reading, reached as a Reading, and checked against the token it was read with. */
+	it('posts the token the reading was read with', async () => {
+		const reading = { uuid: 'r-1', updated_at: 1750000005 }
+		const fetch = answers(200, { ...reading, kind: 'reset', flagged: false })
+
+		const answered = await resetReading(vehicle.uuid, reading)
+
+		const [url, options] = fetch.mock.calls[0]
+		expect(url).toContain(`/apps/nextfleet/api/vehicles/${vehicle.uuid}/readings/r-1/reset`)
+		expect(options.method).toBe('POST')
+		expect(JSON.parse(options.body)).toEqual({ updated_at: 1750000005 })
+		expect(answered.kind).toBe('reset')
 	})
 })
 

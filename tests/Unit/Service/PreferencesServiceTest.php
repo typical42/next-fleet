@@ -12,12 +12,13 @@ use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Jurisdiction\Generic;
 use OCA\NextFleet\Jurisdiction\IClaimRenderer;
 use OCA\NextFleet\Jurisdiction\IJurisdiction;
+use OCA\NextFleet\Jurisdiction\ILogbookRules;
 use OCA\NextFleet\Jurisdiction\IRateProvider;
 use OCA\NextFleet\Jurisdiction\IReportRenderer;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
+use OCA\NextFleet\Service\OwnFiles;
 use OCA\NextFleet\Service\PreferencesService;
 use OCA\NextFleet\Tests\Stub\RegisteredProfiles;
-use OCP\Files\IRootFolder;
 use OCP\IConfig;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
@@ -66,7 +67,7 @@ class PreferencesServiceTest extends TestCase {
 	 * question only the list can answer, and a stubbed one would prove nothing.
 	 */
 	private function service(): PreferencesService {
-		return new PreferencesService($this->config, RegisteredProfiles::jurisdictions(), $this->createMock(IRootFolder::class));
+		return new PreferencesService($this->config, RegisteredProfiles::jurisdictions(), $this->createMock(OwnFiles::class));
 	}
 
 	/**
@@ -98,7 +99,7 @@ class PreferencesServiceTest extends TestCase {
 			return $profile;
 		});
 
-		$jurisdictions = (new PreferencesService($this->config, new Jurisdictions($container), $this->createMock(IRootFolder::class)))->forUser(self::USER)['jurisdictions'];
+		$jurisdictions = (new PreferencesService($this->config, new Jurisdictions($container), $this->createMock(OwnFiles::class)))->forUser(self::USER)['jurisdictions'];
 
 		$this->assertSame(['de' => false, 'generic' => true], array_column($jurisdictions, 'logbook_export', 'key'));
 	}
@@ -119,9 +120,29 @@ class PreferencesServiceTest extends TestCase {
 		$jurisdictions = $this->createMock(Jurisdictions::class);
 		$jurisdictions->method('all')->willReturn($profiles);
 
-		$answers = (new PreferencesService($this->config, $jurisdictions, $this->createMock(IRootFolder::class)))->forUser(self::USER)['jurisdictions'];
+		$answers = (new PreferencesService($this->config, $jurisdictions, $this->createMock(OwnFiles::class)))->forUser(self::USER)['jurisdictions'];
 
 		$this->assertSame(['both' => true, 'no rates' => false, 'no page' => false], array_column($answers, 'mileage_claim', 'key'));
+	}
+
+	/**
+	 * The overview asks whether to keep a logbook only where the country has a logbook ruleset - a
+	 * tax office to keep it for - and the profile is what knows that, not the key.
+	 */
+	public function testItSaysWhichJurisdictionsHaveLogbookRules(): void {
+		$profiles = [];
+		foreach (['ruled' => true, 'free' => false] as $key => $ruled) {
+			$profile = $this->createMock(IJurisdiction::class);
+			$profile->method('key')->willReturn($key);
+			$profile->method('logbookRules')->willReturn($ruled ? $this->createMock(ILogbookRules::class) : null);
+			$profiles[] = $profile;
+		}
+		$jurisdictions = $this->createMock(Jurisdictions::class);
+		$jurisdictions->method('all')->willReturn($profiles);
+
+		$answers = (new PreferencesService($this->config, $jurisdictions, $this->createMock(OwnFiles::class)))->forUser(self::USER)['jurisdictions'];
+
+		$this->assertSame(['ruled' => true, 'free' => false], array_column($answers, 'logbook_rules', 'key'));
 	}
 
 	/** A user who has never opened the screen already has the answer a vehicle would take. */
@@ -191,6 +212,42 @@ class PreferencesServiceTest extends TestCase {
 		} catch (\InvalidArgumentException) {
 			$this->assertSame([], $this->stored);
 		}
+	}
+
+	/** The list is one config value: a thousand vehicles' hints, and no more (docs/security.md). */
+	public function testItRefusesMoreDismissalsThanAThousand(): void {
+		$many = array_map(static fn (int $i): string => sprintf('00000000-0000-4000-8000-%012d', $i), range(1, 1_001));
+		$this->service()->write(self::USER, ['dismissed_hints' => array_slice($many, 0, 1_000)]);
+
+		$this->expectExceptionObject(new \InvalidArgumentException('dismissed_hints holds 1000 vehicles at most'));
+		$this->service()->write(self::USER, ['dismissed_hints' => $many]);
+	}
+
+	/**
+	 * The Logbook Mode question is its own answer: dismissing what is missing from a vehicle says
+	 * nothing about keeping a logbook with it, and the other way round.
+	 */
+	public function testTheLogbookQuestionIsDismissedApartFromTheMissingDetails(): void {
+		$this->assertSame([], $this->service()->forUser(self::USER)['preferences']['dismissed_logbook_hints']);
+
+		$saved = $this->service()->write(self::USER, ['dismissed_logbook_hints' => [self::VEHICLE]]);
+
+		$this->assertSame([self::VEHICLE], $saved['preferences']['dismissed_logbook_hints']);
+		$this->assertSame([], $saved['preferences']['dismissed_hints']);
+		$this->assertSame([self::VEHICLE], $this->service()->forUser(self::USER)['preferences']['dismissed_logbook_hints']);
+	}
+
+	public function testALogbookDismissalNamesVehiclesAndNoMoreThanAThousand(): void {
+		$many = array_map(static fn (int $i): string => sprintf('00000000-0000-4000-8000-%012d', $i), range(1, 1_001));
+
+		try {
+			$this->service()->write(self::USER, ['dismissed_logbook_hints' => ['nope']]);
+			$this->fail('a dismissal naming no vehicle was stored');
+		} catch (\InvalidArgumentException $e) {
+			$this->assertSame('dismissed_logbook_hints holds something that is no vehicle uuid', $e->getMessage());
+		}
+		$this->expectExceptionObject(new \InvalidArgumentException('dismissed_logbook_hints holds 1000 vehicles at most'));
+		$this->service()->write(self::USER, ['dismissed_logbook_hints' => $many]);
 	}
 
 	/**

@@ -26,9 +26,12 @@ use OCP\Security\ISecureRandom;
  * @template-extends QBMapper<T>
  */
 abstract class BaseMapper extends QBMapper {
+	/** Read once per process, on Oracle only (tablePrefix()): one installation, one prefix. */
+	private static ?string $tablePrefix = null;
+
 	public function __construct(
 		IDBConnection $db,
-		private ITimeFactory $time,
+		protected ITimeFactory $time,
 		private ISecureRandom $random,
 		string $tableName,
 		?string $entityClass = null,
@@ -61,8 +64,50 @@ abstract class BaseMapper extends QBMapper {
 		$entity->setCreatedAt($now);
 		$entity->setUpdatedAt($now);
 		$entity->markEveryColumnWritten();
+		if ($entity->getId() === null) {
+			$this->takeOracleId($entity);
+		}
 
 		return parent::insert($entity);
+	}
+
+	/**
+	 * Doctrine names an Oracle table's id sequence `<table>_SEQ`, the table cut so the whole fits
+	 * 30 characters. Core's lastInsertId() asks for the uncut name, which then does not exist
+	 * (`fleet_reminder_recipients`). Such a table takes the id from the sequence before the
+	 * insert, so nobody asks after it; the trigger keeps an id it is given. The naming rule is
+	 * written out because the platform that knows it is behind getDatabasePlatform(), deprecated
+	 * since NC 30; the Oracle stack's SchemaTest fails if the two part.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	private function takeOracleId(Entity $entity): void {
+		if ($this->db->getDatabaseProvider() !== IDBConnection::PLATFORM_ORACLE) {
+			return;
+		}
+		$table = $this->tablePrefix() . $this->tableName;
+		if (strlen($table . '_SEQ') <= 30) {
+			return;
+		}
+		$result = $this->db->executeQuery('SELECT "' . substr($table, 0, 26) . '_SEQ".NEXTVAL FROM DUAL');
+		$entity->setId((int)$result->fetchOne());
+		$result->closeCursor();
+	}
+
+	/**
+	 * The prefix itself, which prefixTableName() leaves as `*PREFIX*`. Core swaps that anywhere
+	 * in a statement, a literal too; asking keeps IConfig out of every mapper's constructor.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	private function tablePrefix(): string {
+		if (self::$tablePrefix === null) {
+			$result = $this->db->executeQuery("SELECT '*PREFIX*' FROM DUAL");
+			self::$tablePrefix = (string)$result->fetchOne();
+			$result->closeCursor();
+		}
+
+		return self::$tablePrefix;
 	}
 
 	/**
@@ -278,13 +323,13 @@ abstract class BaseMapper extends QBMapper {
 		$wanted = [];
 		if ($whole !== []) {
 			$wanted[] = $qb->expr()->andX(
-				$qb->expr()->in('vehicle_id', $qb->createNamedParameter($whole, IQueryBuilder::PARAM_INT_ARRAY)),
+				InList::in($qb, 'vehicle_id', $whole, IQueryBuilder::PARAM_INT_ARRAY),
 				$qb->expr()->isNull('deleted_at'),
 			);
 		}
 		if ($held !== []) {
 			$wanted[] = $qb->expr()->andX(
-				$qb->expr()->in('vehicle_id', $qb->createNamedParameter($held, IQueryBuilder::PARAM_INT_ARRAY)),
+				InList::in($qb, 'vehicle_id', $held, IQueryBuilder::PARAM_INT_ARRAY),
 				$qb->expr()->gt('updated_at', $qb->createNamedParameter($since, IQueryBuilder::PARAM_INT)),
 			);
 		}
@@ -312,6 +357,25 @@ abstract class BaseMapper extends QBMapper {
 	}
 
 	/**
+	 * Moves the token of every row of the vehicle stamped in `[$since, $now)` to `$now`: what a
+	 * long transaction wrote, re-stamped just before it commits, so a sync that ran meanwhile and
+	 * passed those stamps by more than SyncService::SETTLE still finds them changed. The caller
+	 * holds the vehicle since `$since`, so the rows are its own - but for one committed in that
+	 * same second before the hold, whose next save is then refused as stale.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	public function restamp(int $vehicleId, int $since, int $now): void {
+		$qb = $this->db->getQueryBuilder();
+		$qb->update($this->tableName)
+			->set('updated_at', $qb->createNamedParameter($now, IQueryBuilder::PARAM_INT))
+			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->gte('updated_at', $qb->createNamedParameter($since, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->lt('updated_at', $qb->createNamedParameter($now, IQueryBuilder::PARAM_INT)));
+		$qb->executeStatement();
+	}
+
+	/**
 	 * The columns that name an account, which an erasure rewrites. Every table has `created_by`;
 	 * a table with an account column of its own adds it.
 	 *
@@ -326,16 +390,103 @@ abstract class BaseMapper extends QBMapper {
 	 * included (docs/adr/0008-erasing-a-driver-pseudonymises.md). `updated_at` stays: nobody
 	 * edited the row, and a moved token would refuse every open client's next save.
 	 *
+	 * @return int how many rows it rewrote
 	 * @throws \OCP\DB\Exception
 	 */
-	public function pseudonymise(string $uid, string $pseudonym): void {
+	public function pseudonymise(string $uid, string $pseudonym): int {
+		$changed = 0;
 		foreach ($this->accountColumns() as $column) {
 			$qb = $this->db->getQueryBuilder();
 			$qb->update($this->tableName)
 				->set($column, $qb->createNamedParameter($pseudonym))
 				->where($qb->expr()->eq($column, $qb->createNamedParameter($uid)));
-			$qb->executeStatement();
+			$changed += $qb->executeStatement();
 		}
+
+		return $changed;
+	}
+
+	/**
+	 * Whether any row names the account, deleted ones included: one row fetched at most, so an
+	 * erasure skips a table that has nothing to rewrite. Every large table indexes `created_by`;
+	 * the other account columns sit on tables that stay small (vehicles, grants, recipients,
+	 * receipts, bookings).
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	public function names(string $uid): bool {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('id')
+			->from($this->tableName)
+			->where($qb->expr()->orX(...$this->naming($qb, $uid)))
+			->setMaxResults(1);
+		$result = $qb->executeQuery();
+		try {
+			return $result->fetchOne() !== false;
+		} finally {
+			$result->closeCursor();
+		}
+	}
+
+	/**
+	 * Every row that names the account, deleted ones included: the rows pseudonymise() would
+	 * rewrite, for the personal data export.
+	 *
+	 * @return list<T>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findNaming(string $uid): array {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->tableName)
+			->where($qb->expr()->orX(...$this->naming($qb, $uid)))
+			->orderBy('id');
+
+		return $this->findEntities($qb);
+	}
+
+	/**
+	 * findNaming()'s conditions, one per way a row names an account.
+	 *
+	 * @return list<string|\OCP\DB\QueryBuilder\ICompositeExpression>
+	 */
+	protected function naming(IQueryBuilder $qb, string $uid): array {
+		return array_map(
+			static fn (string $column): string => $qb->expr()->eq($column, $qb->createNamedParameter($uid)),
+			$this->accountColumns(),
+		);
+	}
+
+	/**
+	 * Every account this table names that starts with `$prefix`, deleted rows included: what an
+	 * old erasure left, for the upgrade to rename (ErasureService::renameOld()).
+	 *
+	 * @return list<string>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function accountsStartingWith(string $prefix): array {
+		$found = [];
+		foreach ($this->accountColumns() as $column) {
+			$qb = $this->db->getQueryBuilder();
+			$qb->selectDistinct($column)
+				->from($this->tableName)
+				->where($qb->expr()->like($column, $qb->createNamedParameter($this->db->escapeLikeParameter($prefix) . '%')));
+			$found = [...$found, ...$this->accounts($qb)];
+		}
+
+		return array_values(array_unique($found));
+	}
+
+	/**
+	 * @return list<string>
+	 * @throws \OCP\DB\Exception
+	 */
+	protected function accounts(IQueryBuilder $qb): array {
+		$result = $qb->executeQuery();
+		$accounts = array_map('strval', $result->fetchAll(\PDO::FETCH_COLUMN));
+		$result->closeCursor();
+
+		return $accounts;
 	}
 
 	/**
@@ -355,7 +506,7 @@ abstract class BaseMapper extends QBMapper {
 		$qb->select('*')
 			->from($this->tableName)
 			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
-			->andWhere($qb->expr()->in('id', $qb->createNamedParameter($ids, IQueryBuilder::PARAM_INT_ARRAY)));
+			->andWhere(InList::in($qb, 'id', $ids, IQueryBuilder::PARAM_INT_ARRAY));
 
 		$byId = [];
 		foreach ($this->findEntities($qb) as $row) {
@@ -363,6 +514,51 @@ abstract class BaseMapper extends QBMapper {
 		}
 
 		return $byId;
+	}
+
+	/**
+	 * How many of one vehicle's rows named by uuid are live.
+	 *
+	 * @param list<string> $uuids
+	 * @throws \OCP\DB\Exception
+	 */
+	public function countLive(int $vehicleId, array $uuids): int {
+		if ($uuids === []) {
+			return 0;
+		}
+		$qb = $this->db->getQueryBuilder();
+		$qb->select($qb->func()->count('id'))
+			->from($this->tableName)
+			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->isNull('deleted_at'))
+			->andWhere(InList::in($qb, 'uuid', $uuids, IQueryBuilder::PARAM_STR_ARRAY));
+		$result = $qb->executeQuery();
+		$count = (int)$result->fetchOne();
+		$result->closeCursor();
+
+		return $count;
+	}
+
+	/**
+	 * Whether any of one vehicle's rows, deleted ones too, has one of `$columns` set - one row
+	 * fetched at most. A deleted row counts: an undo brings it back as it was.
+	 *
+	 * @param non-empty-list<string> $columns
+	 * @throws \OCP\DB\Exception
+	 */
+	protected function anySet(int $vehicleId, array $columns): bool {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('id')
+			->from($this->tableName)
+			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->orX(...array_map(static fn (string $column) => $qb->expr()->isNotNull($column), $columns)))
+			->setMaxResults(1);
+		$result = $qb->executeQuery();
+		try {
+			return $result->fetchOne() !== false;
+		} finally {
+			$result->closeCursor();
+		}
 	}
 
 	private function byUuid(string $uuid): IQueryBuilder {

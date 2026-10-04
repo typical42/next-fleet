@@ -3,16 +3,16 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
-import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import NcSelect from '@nextcloud/vue/components/NcSelect'
 import NcSelectUsers from '@nextcloud/vue/components/NcSelectUsers'
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 
 import { addGrant, changeGrant, listGrants, revokeGrant, searchGrantees } from '../services/api.js'
 import { may } from '../utils/access.js'
 import { ROLES, roleWord } from '../utils/format.js'
+import { t } from '../utils/l10n.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -21,7 +21,8 @@ const props = defineProps({
 	disabled: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['revoked'])
+// `granted`: somebody else has access from now on, which the vehicle screen shows Bookings by.
+const emit = defineEmits(['granted', 'revoked'])
 
 /** Only the owner reads or writes access, so for anyone else the section is not there at all. */
 const owns = computed(() => may(props.vehicle, 'own'))
@@ -38,6 +39,15 @@ const found = ref([])
 const picked = ref(null)
 const writing = ref(false)
 const failure = ref('')
+/**
+ * The grant whose removal is asked about, or null. Asked once: a removed person needs the owner to
+ * find them and grant again.
+ *
+ * @type {import('vue').Ref<string|null>}
+ */
+const asking = ref(null)
+/** @type {import('vue').Ref<HTMLElement|null>} */
+const root = ref(null)
 
 const roles = computed(() => ROLES.map((id) => ({ id, label: roleWord(id) })))
 // A car is lent to be driven; viewing alone is the rarer wish.
@@ -110,6 +120,7 @@ async function give() {
 	if (await write(() => addGrant(props.vehicle.uuid, picked.value.grantee, role.value.id))) {
 		picked.value = null
 		found.value = []
+		emit('granted')
 	}
 }
 
@@ -123,20 +134,38 @@ function recast(grant, chosen) {
 	}
 }
 
+/**
+ * Opens or closes the question on one row, and moves focus into it or back to the row's Remove,
+ * as LeaveVehicle does: the buttons are swapped out from under the keyboard otherwise.
+ *
+ * @param {string|null} uuid - the grant asked about, or null to close
+ */
+async function ask(uuid) {
+	const was = asking.value
+	asking.value = uuid
+	await nextTick()
+	const row = root.value?.querySelector(`[data-grant="${uuid ?? was}"]`)
+	row?.querySelector(uuid ? '.grants__answers button' : '.grants__remove')?.focus()
+}
+
 /** @param {import('../services/api.js').Grant} grant - the row */
 async function revoke(grant) {
 	if (await write(() => revokeGrant(props.vehicle.uuid, grant.uuid))) {
+		asking.value = null
 		emit('revoked')
 	}
 }
 </script>
 
 <template>
-	<section v-if="owns && grants !== null" class="grants">
+	<section v-if="owns && grants !== null" ref="root" class="grants">
 		<h3>{{ t('nextfleet', 'Access') }}</h3>
 		<NcNoteCard v-if="failure" type="error" :text="failure" />
 		<ul v-if="grants.length > 0" class="grants__list">
-			<li v-for="grant in grants" :key="grant.uuid" class="grants__row">
+			<li v-for="grant in grants"
+				:key="grant.uuid"
+				class="grants__row"
+				:data-grant="grant.uuid">
 				<div class="grants__who">
 					<span class="grants__name">{{ grant.display_name }}</span>
 					<span class="grants__type">{{ grant.grantee_type === 'group' ? t('nextfleet', 'Group') : t('nextfleet', 'Account') }}</span>
@@ -149,10 +178,25 @@ async function revoke(grant) {
 					:clearable="false"
 					label="label"
 					@update:model-value="recast(grant, $event)" />
-				<NcButton variant="tertiary"
+				<div v-if="asking === grant.uuid" class="grants__ask">
+					<p class="grants__question">
+						{{ t('nextfleet', '{name} loses access to this vehicle.', { name: grant.display_name }) }}
+					</p>
+					<div class="grants__answers">
+						<NcButton :disabled="writing" @click="ask(null)">
+							{{ t('nextfleet', 'Cancel') }}
+						</NcButton>
+						<NcButton variant="warning" :disabled="disabled || writing" @click="revoke(grant)">
+							{{ t('nextfleet', 'Remove access') }}
+						</NcButton>
+					</div>
+				</div>
+				<NcButton v-else
+					class="grants__remove"
+					variant="tertiary"
 					:aria-label="t('nextfleet', 'Remove {name}', { name: grant.display_name })"
 					:disabled="disabled || writing"
-					@click="revoke(grant)">
+					@click="ask(grant.uuid)">
 					{{ t('nextfleet', 'Remove') }}
 				</NcButton>
 			</li>
@@ -223,6 +267,21 @@ async function revoke(grant) {
 
 .grants__role {
 	flex: 1 1 8em;
+}
+
+/* The question takes the row's full width under the name and role, where Remove stood. */
+.grants__ask {
+	flex: 1 1 100%;
+}
+
+.grants__question {
+	overflow-wrap: anywhere;
+}
+
+.grants__answers {
+	display: flex;
+	flex-wrap: wrap;
+	gap: calc(var(--default-grid-baseline) * 2);
 }
 
 /* NcSelect asks for 260px, which leaves no room for Remove beside it at 320px. Its rule has three

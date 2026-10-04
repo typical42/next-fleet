@@ -36,8 +36,7 @@ class PreferencesTest extends TestCase {
 	private IConfig $config;
 
 	protected function setUp(): void {
-		$container = (new Application())->getContainer();
-		$this->vehicles = $container->get(VehicleService::class);
+		$this->vehicles = \OCP\Server::get(VehicleService::class);
 		$this->config = \OCP\Server::get(IConfig::class);
 		$this->forget();
 	}
@@ -51,6 +50,7 @@ class PreferencesTest extends TestCase {
 		foreach ([self::OWNER, self::STRANGER] as $person) {
 			$this->config->deleteUserValue($person, Application::APP_ID, 'jurisdiction');
 			$this->config->deleteUserValue($person, Application::APP_ID, 'dismissed_hints');
+			$this->config->deleteUserValue($person, Application::APP_ID, 'dismissed_logbook_hints');
 			$this->config->deleteUserValue($person, Application::APP_ID, 'reclaim_vat');
 			$this->config->deleteUserValue($person, Application::APP_ID, 'kpi_period');
 		}
@@ -82,7 +82,7 @@ class PreferencesTest extends TestCase {
 		return new PreferencesController(
 			Application::APP_ID,
 			$request,
-			(new Application())->getContainer()->get(\OCA\NextFleet\Service\PreferencesService::class),
+			\OCP\Server::get(\OCA\NextFleet\Service\PreferencesService::class),
 			$session,
 		);
 	}
@@ -130,6 +130,17 @@ class PreferencesTest extends TestCase {
 		$this->assertSame([$vehicle], $this->controller()->index()->getData()['preferences']['dismissed_hints']);
 	}
 
+	/** The logbook question's answer is kept the same way, in a list of its own. */
+	public function testADismissedLogbookQuestionIsStillDismissedForTheNextSession(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, [])->getUuid();
+
+		$this->controller(['dismissed_logbook_hints' => [$vehicle]])->update();
+
+		$read = $this->controller()->index()->getData()['preferences'];
+		$this->assertSame([$vehicle], $read['dismissed_logbook_hints']);
+		$this->assertSame([], $read['dismissed_hints']);
+	}
+
 	/** The JSON body's boolean survives the request and the config's strings alike. */
 	public function testVatAndThePeriodAreStillChosenForTheNextSession(): void {
 		$saved = $this->controller(['reclaim_vat' => true, 'kpi_period' => 'this-year'])->update();
@@ -173,7 +184,7 @@ class PreferencesTest extends TestCase {
 	public function testTheControllerIsBuiltFromItsConstructorTypesAlone(): void {
 		$this->assertInstanceOf(
 			PreferencesController::class,
-			(new Application())->getContainer()->get(PreferencesController::class),
+			\OCP\Server::get(PreferencesController::class),
 		);
 	}
 }

@@ -8,16 +8,17 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Integration;
 
-use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Exception\AccessDeniedException;
 use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\ExpenseService;
 use OCA\NextFleet\Service\ExportService;
+use OCA\NextFleet\Service\GrantService;
 use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\IDBConnection;
+use OCP\IUserManager;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -30,22 +31,35 @@ class ExportTest extends TestCase {
 	/** Not a Nextcloud account: `user_id` is a string column with no key on it. */
 	private const OWNER = 'nextfleet-test-alice';
 	private const STRANGER = 'nextfleet-test-mallory';
+	/** An account, since a grantee has to exist on the instance. */
+	private const DRIVER = 'nextfleet-test-export-ben';
 
 	private ExportService $export;
+	private GrantService $grants;
 	private TripService $trips;
 	private EnergyService $energy;
 	private MaintenanceService $maintenance;
 	private ExpenseService $expenses;
 	private VehicleService $vehicles;
 
+	public static function setUpBeforeClass(): void {
+		$users = \OCP\Server::get(IUserManager::class);
+		$users->get(self::DRIVER)?->delete();
+		$users->createUser(self::DRIVER, bin2hex(random_bytes(16)))?->setDisplayName('Ben Fahrer');
+	}
+
+	public static function tearDownAfterClass(): void {
+		\OCP\Server::get(IUserManager::class)->get(self::DRIVER)?->delete();
+	}
+
 	protected function setUp(): void {
-		$container = (new Application())->getContainer();
-		$this->export = $container->get(ExportService::class);
-		$this->trips = $container->get(TripService::class);
-		$this->energy = $container->get(EnergyService::class);
-		$this->maintenance = $container->get(MaintenanceService::class);
-		$this->expenses = $container->get(ExpenseService::class);
-		$this->vehicles = $container->get(VehicleService::class);
+		$this->export = \OCP\Server::get(ExportService::class);
+		$this->grants = \OCP\Server::get(GrantService::class);
+		$this->trips = \OCP\Server::get(TripService::class);
+		$this->energy = \OCP\Server::get(EnergyService::class);
+		$this->maintenance = \OCP\Server::get(MaintenanceService::class);
+		$this->expenses = \OCP\Server::get(ExpenseService::class);
+		$this->vehicles = \OCP\Server::get(VehicleService::class);
 		$this->forgetTestRows();
 	}
 
@@ -64,10 +78,11 @@ class ExportTest extends TestCase {
 			'fleet_energy' => 'created_by',
 			'fleet_maintenance' => 'created_by',
 			'fleet_expenses' => 'created_by',
+			'fleet_access' => 'created_by',
 		];
 		foreach ($tables as $table => $column) {
 			$qb = $db->getQueryBuilder();
-			$qb->delete($table)->where($qb->expr()->eq($column, $qb->createNamedParameter(self::OWNER)));
+			$qb->delete($table)->where($qb->expr()->in($column, $qb->createNamedParameter([self::OWNER, self::DRIVER], $qb::PARAM_STR_ARRAY)));
 			$qb->executeStatement();
 		}
 	}
@@ -123,7 +138,7 @@ class ExportTest extends TestCase {
 		$uuid = $this->vehicle();
 		$this->trip($uuid, gmmktime(8, 0, 0, 12, 20, 2024), ['start_odo' => 1000, 'end_odo' => 1100]);
 		// 23:30 UTC on New Year's Eve is half past midnight in Berlin: 2025's.
-		$this->trip($uuid, gmmktime(23, 30, 0, 12, 31, 2024), [
+		$entered = $this->trip($uuid, gmmktime(23, 30, 0, 12, 31, 2024), [
 			'start_odo' => 1100,
 			'end_odo' => 1250,
 			'from_label' => 'Berlin',
@@ -156,10 +171,59 @@ class ExportTest extends TestCase {
 			'category' => 'business',
 			'reconciled' => '0',
 			'voided' => '0',
+			'created_at' => gmdate('Y-m-d H:i:s', $entered->getCreatedAt()),
+			// Nobody else ever reached this vehicle, so naming its owner says nothing.
+			'entered_by' => '',
 		], array_diff_key($rows[0], ['uuid' => null]));
 		$this->assertSame(['0', '1', '0'], array_column($rows, 'voided'));
 		$this->assertSame($voided->getUuid(), $rows[1]['uuid']);
 		$this->assertSame('40', $rows[2]['distance']);
+	}
+
+	/**
+	 * Once someone else was given access, each trip names who entered it, by display name, as the
+	 * timeline and the Fahrtenbuch do - and still after the grant is revoked.
+	 */
+	public function testOnceAccessWasGivenEachTripSaysWhoEnteredIt(): void {
+		$uuid = $this->vehicle();
+		$grants = $this->grants->grant(self::OWNER, $uuid, ['grantee' => self::DRIVER, 'grantee_type' => 'user', 'role' => 'driver']);
+		$this->trip($uuid, gmmktime(8, 0, 0, 3, 1, 2025), ['start_odo' => 1000, 'end_odo' => 1012]);
+		$this->trips->record(self::DRIVER, $uuid, [
+			'started_at' => gmmktime(8, 0, 0, 3, 2, 2025),
+			'started_at_off' => 60,
+			'ended_at' => gmmktime(9, 0, 0, 3, 2, 2025),
+			'ended_at_off' => 60,
+			'start_odo' => 1012,
+			'end_odo' => 1040,
+			'category' => Trip::PRIVATE,
+		]);
+		$this->grants->revoke(self::OWNER, $uuid, $grants[0]['uuid']);
+
+		$rows = $this->read($this->export->csv(self::OWNER, $uuid, 2025, 'trips')['body']);
+
+		// The owner here has no account, so their uid stands for the name.
+		$this->assertSame([self::OWNER, 'Ben Fahrer'], array_column($rows, 'entered_by'));
+	}
+
+	/** The other kinds name who entered each row by the trips' rule, and leave it empty on a vehicle never shared. */
+	public function testFillUpsMaintenanceAndExpensesSayWhoEnteredEachRow(): void {
+		$uuid = $this->vehicle();
+		$this->energy->record(self::OWNER, $uuid, ['filled_at' => gmmktime(9, 0, 0, 2, 1, 2025), 'filled_at_off' => 60, 'energy' => 'diesel', 'amount' => 40000, 'total' => 6000, 'full_tank' => true, 'odo' => 10000]);
+		$this->maintenance->record(self::OWNER, $uuid, ['done_at' => gmmktime(9, 0, 0, 3, 1, 2025), 'done_at_off' => 60, 'title' => 'Oil change', 'cost' => 19000, 'odo' => 10400]);
+		$this->expenses->record(self::OWNER, $uuid, ['spent_at' => gmmktime(9, 0, 0, 4, 1, 2025), 'spent_at_off' => 120, 'category' => 'insurance', 'amount' => 30000]);
+		foreach (['energy', 'maintenance', 'expenses'] as $table) {
+			$this->assertSame([''], array_column($this->read($this->export->csv(self::OWNER, $uuid, 2025, $table)['body']), 'entered_by'), $table . ', never shared');
+		}
+
+		$this->grants->grant(self::OWNER, $uuid, ['grantee' => self::DRIVER, 'grantee_type' => 'user', 'role' => 'driver']);
+		$this->energy->record(self::DRIVER, $uuid, ['filled_at' => gmmktime(9, 0, 0, 2, 2, 2025), 'filled_at_off' => 60, 'energy' => 'diesel', 'amount' => 30000, 'total' => 4500, 'full_tank' => true, 'odo' => 10300]);
+		$this->maintenance->record(self::DRIVER, $uuid, ['done_at' => gmmktime(9, 0, 0, 3, 2, 2025), 'done_at_off' => 60, 'title' => 'Wipers', 'cost' => 2000, 'odo' => 10500]);
+		$this->expenses->record(self::DRIVER, $uuid, ['spent_at' => gmmktime(9, 0, 0, 4, 2, 2025), 'spent_at_off' => 120, 'category' => 'parking', 'amount' => 300]);
+
+		foreach (['energy', 'maintenance', 'expenses'] as $table) {
+			$rows = $this->read($this->export->csv(self::OWNER, $uuid, 2025, $table)['body']);
+			$this->assertSame([self::OWNER, 'Ben Fahrer'], array_column($rows, 'entered_by'), $table);
+		}
 	}
 
 	/** A purpose is the user's, and a colleague's Excel must read it as text. */

@@ -43,8 +43,8 @@ class KpiService {
 	 */
 	public function of(string $userId, string $vehicleUuid, array $fields): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::VIEW, $vehicleUuid);
-		$from = Field::read('from', 'count', null, $fields['from'] ?? null);
-		$to = Field::read('to', 'count', null, $fields['to'] ?? null);
+		$from = Field::read('from', 'count', Field::MOMENT, $fields['from'] ?? null);
+		$to = Field::read('to', 'count', Field::MOMENT, $fields['to'] ?? null);
 		if (!is_int($from) || !is_int($to) || $from >= $to) {
 			throw new \InvalidArgumentException('from and to are a period, the one before the other');
 		}
@@ -80,32 +80,34 @@ class KpiService {
 		for ($i = 0; $i <= 12; $i++) {
 			$starts[] = $january->add(new \DateInterval('P' . $i . 'M'))->getTimestamp();
 		}
-		$months = [];
+		$periods = [];
 		for ($i = 0; $i < 12; $i++) {
-			$months[] = [
-				'month' => $i + 1,
-				'from' => $starts[$i],
-				'to' => $starts[$i + 1],
-				'cost' => $this->cost->of($vehicle, $starts[$i], $starts[$i + 1], $net),
-			];
+			$periods[] = [$starts[$i], $starts[$i + 1]];
+		}
+		// The year last, so its edges are the months' and cost no lookup of their own.
+		$costs = $this->cost->periods($vehicle, [...$periods, [$starts[0], $starts[12]]], $net);
+		$months = [];
+		foreach ($periods as $i => [$from, $to]) {
+			$months[] = ['month' => $i + 1, 'from' => $from, 'to' => $to, 'cost' => $costs[$i]];
 		}
 
 		return [
-			'year' => $this->figures($vehicle, $starts[0], $starts[12], $net),
+			'year' => $this->figures($vehicle, $starts[0], $starts[12], $net, $costs[12]),
 			'co2' => $this->emissions->of($vehicle, $starts[0], $starts[12], $this->preferences->gridFactor($userId)),
 			'months' => $months,
 		];
 	}
 
 	/**
+	 * @param Cost|null $cost the period's cost when the caller read it already
 	 * @return Figures
 	 * @throws \OCP\DB\Exception
 	 */
-	private function figures(Vehicle $vehicle, int $from, int $to, bool $net): array {
+	private function figures(Vehicle $vehicle, int $from, int $to, bool $net, ?array $cost = null): array {
 		return [
 			'consumption' => $this->consumption->period($vehicle, $from, $to),
 			'wall_side' => $this->consumption->wallSide($vehicle, $from, $to),
-			'cost' => $this->cost->of($vehicle, $from, $to, $net),
+			'cost' => $cost ?? $this->cost->of($vehicle, $from, $to, $net),
 			'hours' => $vehicle->getSecondUnit() === null
 				? null
 				: $this->consumption->distance($vehicle, $from, $to, OdoReading::SECOND),

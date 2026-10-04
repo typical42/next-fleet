@@ -53,13 +53,13 @@ class FahrtenbuchRendererTest extends TestCase {
 	}
 
 	/**
-	 * @param list<array{trip: Trip, missing: list<string>, late: list<LateChange>}> $trips
+	 * @param list<array{trip: Trip, missing: list<string>, late: list<LateChange>, unlogged?: ?int}> $trips
 	 * @param list<array{from: int, to: ?int}> $periods
 	 * @param ?array<string, string> $enteredBy
 	 */
 	private function render(array $trips, array $periods = [], ?string $source = self::SOURCE, ?array $enteredBy = null): \DOMXPath {
 		$vehicle = Vehicle::fromRow(['id' => 7, 'plate' => 'B-XY 123', 'manufacturer' => 'VW', 'model' => 'Caddy', 'jurisdiction' => 'de']);
-		$html = (new De\FahrtenbuchRenderer())->render(new LogbookReport($vehicle, 2026, $trips, $periods, $source, $enteredBy));
+		$html = (new De\FahrtenbuchRenderer())->render(new LogbookReport($vehicle, 2026, $trips, $periods, $source, $enteredBy, new \DateTimeZone('Europe/Berlin')));
 
 		$document = new \DOMDocument();
 		$this->assertTrue($document->loadHTML($html, LIBXML_NOERROR));
@@ -116,8 +116,8 @@ class FahrtenbuchRendererTest extends TestCase {
 			'Reiseziel' => 'Hamburg, Hafenstraße 1',
 			'Zweck' => 'Abnahme',
 			'Geschäftspartner' => 'Muster GmbH',
-			'Art' => 'Dienstlich',
-			'Erfasst (UTC)' => '02.03.2026',
+			'Art' => 'Geschäftlich',
+			'Erfasst' => '02.03.2026, 09:40 UTC+01:00',
 			'Vermerk' => '',
 		]], $rows);
 	}
@@ -130,10 +130,10 @@ class FahrtenbuchRendererTest extends TestCase {
 	public function testALineSaysWhoEnteredItWhenTheCoreNamesThem(): void {
 		$rows = $this->rows($this->render([
 			['trip' => $this->trip(), 'missing' => [], 'late' => []],
-			['trip' => $this->trip(['created_by' => 'erased-k3x9']), 'missing' => [], 'late' => []],
-		], enteredBy: ['alice' => 'Alice Muster', 'erased-k3x9' => 'erased-k3x9']));
+			['trip' => $this->trip(['created_by' => 'erased:k3x9']), 'missing' => [], 'late' => []],
+		], enteredBy: ['alice' => 'Alice Muster', 'erased:k3x9' => 'erased:k3x9']));
 
-		$this->assertSame(['Alice Muster', 'erased-k3x9'], array_column($rows, 'Eingetragen von'));
+		$this->assertSame(['Alice Muster', 'erased:k3x9'], array_column($rows, 'Eingetragen von'));
 		$this->assertSame(['Eingetragen von', 'Vermerk'], array_slice(array_keys($rows[0]), -2));
 	}
 
@@ -175,6 +175,13 @@ class FahrtenbuchRendererTest extends TestCase {
 		$this->assertSame('Privat', $rows[0]['Art']);
 	}
 
+	/** A commute in the words of § 9 (1) 3 Nr. 4 EStG, which the mileage claim uses too. */
+	public function testACommuteIsNamedAsTheLawNamesIt(): void {
+		$rows = $this->rows($this->render([['trip' => $this->trip(['category' => Trip::COMMUTE]), 'missing' => [], 'late' => []]]));
+
+		$this->assertSame('Wohnung – erste Tätigkeitsstätte', $rows[0]['Art']);
+	}
+
 	/**
 	 * A voided trip stays in the logbook, as voided (docs/features.md#logbook-mode) - with the day it
 	 * was voided, because a line that simply ended would say nothing about when.
@@ -186,7 +193,7 @@ class FahrtenbuchRendererTest extends TestCase {
 		]));
 
 		$this->assertCount(2, $rows);
-		$this->assertSame('Storniert am 05.03.2026, 20:00 UTC', $rows[0]['Vermerk']);
+		$this->assertSame('Annulliert am 05.03.2026, 21:00 UTC+01:00', $rows[0]['Vermerk']);
 		$this->assertSame('Abnahme', $rows[0]['Zweck'], 'a voided line is still readable');
 		$this->assertSame('', $rows[1]['Vermerk']);
 	}
@@ -244,9 +251,9 @@ class FahrtenbuchRendererTest extends TestCase {
 
 		$this->assertSame([
 			// A time before is read with the offset in force before, not the line's own.
-			'Nachträglich geändert am 06.04.2026, 10:00 UTC. Vorher: Datum 01.03.2026, 09:00; '
+			'Nachträglich geändert am 06.04.2026, 12:00 UTC+02:00. Vorher: Datum 01.03.2026, 09:00; '
 				. 'Km-Stand Ende 120.100; Zweck „Besuch“; Geschäftspartner leer; Art Privat',
-			'Nachträglich geändert am 07.04.2026, 10:00 UTC. Vorher: Ankunft 02.03.2026, 06:00; Zeitzone Abfahrt UTC+02:00',
+			'Nachträglich geändert am 07.04.2026, 12:00 UTC+02:00. Vorher: Ankunft 02.03.2026, 06:00; Zeitzone Abfahrt UTC+02:00',
 		], $this->notes($page));
 	}
 
@@ -270,9 +277,19 @@ class FahrtenbuchRendererTest extends TestCase {
 		]]);
 
 		$this->assertSame([
-			'Nachträglich storniert am 06.04.2026, 10:00 UTC',
-			'Nachträglich wiederhergestellt am 07.04.2026, 10:00 UTC. Vorher: storniert am 05.03.2026, 20:00 UTC',
+			'Nachträglich annulliert am 06.04.2026, 12:00 UTC+02:00',
+			'Nachträglich wiederhergestellt am 07.04.2026, 12:00 UTC+02:00. Vorher: annulliert am 05.03.2026, 21:00 UTC+01:00',
 		], $this->notes($page));
+	}
+
+	/** A trip the core found changed without a row says so, and when: the trail cannot vouch for it. */
+	public function testATripChangedWithoutARowSaysSo(): void {
+		$page = $this->render([
+			['trip' => $this->trip(), 'missing' => [], 'late' => [], 'unlogged' => 1775469600], // 2026-04-06 10:00 UTC
+			['trip' => $this->trip(), 'missing' => [], 'late' => [], 'unlogged' => null],
+		]);
+
+		$this->assertSame(['Geändert ohne Protokoll am 06.04.2026, 12:00 UTC+02:00', ''], array_column($this->rows($page), 'Vermerk'));
 	}
 
 	/** A line voided late says so once: the late void is the void the line already states. */
@@ -287,7 +304,7 @@ class FahrtenbuchRendererTest extends TestCase {
 			],
 		]]);
 
-		$this->assertSame(['Nachträglich storniert am 06.04.2026, 10:00 UTC'], $this->notes($page));
+		$this->assertSame(['Nachträglich annulliert am 06.04.2026, 12:00 UTC+02:00'], $this->notes($page));
 	}
 
 	/**
@@ -305,7 +322,7 @@ class FahrtenbuchRendererTest extends TestCase {
 	/**
 	 * The periods the mode was on, stated plainly (docs/adr/0003-logbook-mode-does-not-lock-the-past.md):
 	 * one that ended and one that has not. The instants are the server's and carry no offset, so
-	 * they are stated in UTC and say so.
+	 * they are stated in the reader's zone with the offset in force on each day.
 	 */
 	public function testThePeriodsTheModeWasOnAreStated(): void {
 		$page = $this->render([], [
@@ -315,8 +332,8 @@ class FahrtenbuchRendererTest extends TestCase {
 
 		$this->assertSame(
 			[
-				'vom 03.02.2026, 10:05 UTC bis zum 14.06.2026, 09:00 UTC',
-				'seit dem 01.08.2026, 10:00 UTC',
+				'vom 03.02.2026, 11:05 UTC+01:00 bis zum 14.06.2026, 11:00 UTC+02:00',
+				'seit dem 01.08.2026, 12:00 UTC+02:00',
 			],
 			array_map(
 				static fn (\DOMNode $li): string => trim($li->textContent),

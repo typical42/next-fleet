@@ -104,6 +104,18 @@ class RateProviderTest extends TestCase {
 	}
 
 	/**
+	 * §9 (1) 3 Nr. 4a EStG: 0,20 € per kilometre by any other motor vehicle ("andere
+	 * motorbetriebene Fahrzeuge"), which a motorcycle is, from the same day.
+	 */
+	public function testABusinessKilometreByMotorcycleIsTwentyCent(): void {
+		$rates = new De\RateProvider();
+
+		$this->assertSame(200, $rates->mileageRateAt('motorcycle', new \DateTimeImmutable('2024-05-02T12:00:00+02:00')));
+		$this->assertSame(200, $rates->mileageRateAt('motorcycle', new \DateTimeImmutable('2014-01-01T00:30:00+01:00')));
+		$this->assertNull($rates->mileageRateAt('motorcycle', new \DateTimeImmutable('2013-12-31T23:30:00+01:00')));
+	}
+
+	/**
 	 * A trailer drives nowhere by itself, and whether a tractor is a motor car is not this table's
 	 * call: no rate rather than a guessed one.
 	 */

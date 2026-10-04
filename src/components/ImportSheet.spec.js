@@ -11,7 +11,7 @@ import { flushPromises, shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ChangedError, getVehicle, ImportRefusedError, NotFoundError, previewImport, runImport } from '../services/api.js'
+import { ChangedError, getVehicle, ImportRefusedError, NotFoundError, previewImport, RefusedError, runImport } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
 import ImportSheet from './ImportSheet.vue'
 
@@ -39,7 +39,7 @@ const ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone
  */
 function preview(more = {}) {
 	return {
-		columns: { placed: [{ header: 'Date', field: 'filled_at' }, { header: 'FuelConsumed', field: 'amount' }], ignored: ['FuelEconomy', 'Tags'] },
+		columns: { placed: [{ header: 'Anna\'s date', field: 'filled_at' }, { header: 'FuelConsumed', field: 'amount' }], ignored: ['FuelEconomy', 'R&D tags'] },
 		questions: [],
 		categories: [],
 		category_defaults: [],
@@ -169,9 +169,9 @@ describe('the import sheet', () => {
 		await previewed(wrapper)
 
 		const text = wrapper.text()
-		expect(text).toContain('Date → Date')
+		expect(text).toContain('Anna\'s date → Date')
 		expect(text).toContain('FuelConsumed → Quantity')
-		expect(text).toContain('Not read: FuelEconomy, Tags')
+		expect(text).toContain('Not read: FuelEconomy, R&D tags')
 		expect(text).toContain('New: 2. Already there: 1. Not readable: 1.')
 		expect(text).toContain('Row 3: Already there.')
 		expect(text).toContain('Row 4: Cost is not a number.')
@@ -187,7 +187,7 @@ describe('the import sheet', () => {
 
 		const region = wrapper.find('[role="region"][tabindex="0"]')
 		expect(region.attributes('aria-label')).toBe('Preview')
-		expect(region.text()).toContain('Not read: FuelEconomy, Tags')
+		expect(region.text()).toContain('Not read: FuelEconomy, R&D tags')
 	})
 
 	/** Only what the file does not say is asked, and the import waits for the answer. */
@@ -322,6 +322,17 @@ describe('the import sheet', () => {
 		await previewed(wrapper)
 
 		expect(wrapper.findAllComponents(NcNoteCard).map((one) => one.props('text'))).toContain('The file is not text.')
+	})
+
+	/** A fuel file for a vehicle with no energy is refused in the entry sheet's words. */
+	it('says where to choose the energy a fuel file needs', async () => {
+		vi.mocked(previewImport).mockRejectedValueOnce(new RefusedError('the server, in English', 'no_energy'))
+		const wrapper = await sheet()
+
+		await previewed(wrapper)
+
+		expect(wrapper.findAllComponents(NcNoteCard).map((one) => one.props('text')))
+			.toContain('Choose the energy this vehicle takes under Edit vehicle first.')
 	})
 
 	/** A file shared with the person is refused like a missing one, as a paper's is. */

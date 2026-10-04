@@ -15,7 +15,7 @@ time is a reminder engine you cannot test.
 | Integration | PHPUnit inside a running Nextcloud container, real DB | Migrations, QBMapper queries, optimistic concurrency (a stale `updated_at` must 412), the access layer (owner vs. role vs. stranger) |
 | API | PHPUnit over HTTP with an app password (`tests/Api/`) | What a client gets from the [OCS API](api.md): signing in, a write, a 412, a download, sync across a delete and its restore, an import; the M8 slice, an owner and a driver kept in step by sync. A breaking change to the contract must fail CI |
 | Frontend | Vitest for stores and pure components | Consumption/cost formatting, form validation |
-| E2E | Playwright against the dev container | Quick-add flow, vehicle creation, reminder appears on the dashboard |
+| E2E | Playwright against the dev container | A slice per milestone with a screen, from creating a vehicle to the import (M8's slice is the API suite's), each role's screens, and every screen through axe ([the specs](#local-dev-environment)) |
 | Mail | Mailpit as the SMTP sink | The digest actually renders and sends |
 | Upgrade | Install version N-1, run `occ upgrade`, assert data survives | Migration mistakes, the class of bug users never forgive |
 | Country kit | One shared `tests/Country/` suite every jurisdiction must pass, including the UK fixture and the generic profile | That a merged jurisdiction is provably wired up, and that every seam tolerates one answering "I don't know" ([ADR 0002](adr/0002-uk-is-a-test-jurisdiction.md)) |
@@ -37,6 +37,11 @@ docker compose -f .docker/compose.yml exec -u www-data -w /var/www/html/custom_a
 
 `NEXTCLOUD_ROOT` says where the server is, `/var/www/html` by default. The schema test drops and
 rebuilds the app's tables, so run it against a dev instance and nothing else.
+
+`UserMigrationTest` runs the [personal data export](architecture.md#personal-data-export) the way
+`occ user:export` does, through Nextcloud's *user_migration* app, and imports the archive into a
+fresh account. It skips without that app; `occ app:install user_migration` on a dev server runs it,
+and no other suite is affected.
 
 **The API suite is a client.** It loads no server class: it calls `http://localhost` with curl and
 uses `occ` only for what a client cannot do: make a fresh account and its app password, as
@@ -87,25 +92,36 @@ is there so a version that changes it says so.
 it, so a test double implementing that interface has to declare it anyway — without it the class is
 abstract, and fatal, on a newer server.
 
+Migration 4 calls `setPrimaryKey(['id'], $primaryKey ?? false)`. `false` is DBAL 3's "no name";
+DBAL 4 takes `?string` there and would throw. No supported Nextcloud ships DBAL 4, and migrations
+are frozen, so it stays; a server on DBAL 4 needs it changed to `null` first.
+
 **CI matrix** (GitHub Actions). Four supported Nextcloud majors times every PHP version times three
 databases is dozens of jobs, so the trim happens on the PHP and database axes — never on Nextcloud,
 because that is the axis users actually vary.
 
 | When | Combinations |
 |---|---|
-| Pull request | Two: NC 31 with the oldest PHP it supports, and NC 34 with the newest. MariaDB both. The oldest combination is where breakage hides, so it belongs on every PR rather than in a nightly nobody reads |
-| Merge to `main` | Add PostgreSQL and SQLite, on NC 34 |
-| Weekly | The fuller matrix, allowed to fail loudly without blocking anyone |
+| Pull request | Three: NC 31 with the oldest PHP it supports, and NC 34 with the newest, MariaDB both — the oldest combination is where breakage hides, so it belongs on every PR rather than in a nightly nobody reads — and NC 34 on SQLite, which a first try runs on and which accepts the least |
+| Merge to `main` | Add PostgreSQL, on NC 34 |
+| Weekly | The fuller matrix with *user_migration*, plus Oracle, the upgrade check and an E2E smoke run on NC 32 and NC 33, allowed to fail loudly without blocking anyone |
 
 `.github/workflows/ci.yml` implements it. Alongside the matrix run — a Nextcloud checkout, a real
 database, `occ maintenance:install`, `occ app:enable`, then the unit and integration suites, which is
 where the schema meets PostgreSQL and SQLite, then `php -S localhost:8080` in front of the checkout
-and the API suite against it — three jobs run once each:
+(four workers, so the suite's two requests at once can meet) and the API suite against it — three
+jobs run once each:
 static analysis with `composer lint`, `composer audit` and a fresh `openapi.json` diffed against the
-committed one, the frontend checks, and `reuse lint`. A
-`plan` job picks the combinations for the event that triggered the run; the three lists sit in its
-environment as JSON so `tests/Unit/CiWorkflowTest.php` can read them, because `actionlint` only
-proves GitHub will run the file, not that it runs the right thing.
+committed one, the frontend checks — Vitest twice, the second time in `America/Los_Angeles`, since
+a runner's UTC is the one zone where a local date and a UTC date never differ — and `reuse lint`.
+The weekly run installs *user_migration* in every matrix job before the integration suite, and adds
+[Oracle](#oracle), the [upgrade check](#release) from 0.2.0 and from 0.3.0 on MariaDB and on
+PostgreSQL, and an E2E smoke run on NC 32 and NC 33: the stack in
+`.docker/weekly/compose.yml`, the M0 gate and the M1 slice, with `NEXTFLEET_URL_NC32` and
+`NEXTFLEET_URL_NC33` adding those two projects to `playwright.config.js`. A `plan` job picks the
+combinations for the event that triggered the run; the three lists sit in its environment as JSON
+so `tests/Unit/CiWorkflowTest.php` can read them, because `actionlint` only proves GitHub will run
+the file, not that it runs the right thing.
 
 Nothing in the file marks the weekly run as allowed to fail. It blocks nobody already — no merge
 waits on a scheduled run — and `continue-on-error` would conclude it green, which is the one outcome
@@ -171,10 +187,57 @@ account owns included.
 enters one business trip, so the timeline and the Fahrtenbuch name who entered each trip, and the
 account's overview shows the Passat with "Owned by" beneath. It sends the grant's notification.
 The account also books the Passat for tomorrow 09:00–12:00, Berlin time, so the Bookings section has
-a coming booking to show.
+a coming booking to show. The grant follows the admin's sharing settings, as one from the screen
+does: with sharing off for the seeding account, or "share only with group members" on and no group
+in common, the fleet is still seeded, but the run exits 1 with a sentence saying why and writes no
+trip or booking for the account.
 
 Testing the reminder job by waiting is not testing. Move the clock, then run
 `occ background-job:list` / `background-job:execute <id>` to fire the job on demand.
+
+### Oracle
+
+Oracle runs on a stack of its own, `.docker/oracle/`, and in CI's weekly `oracle` job. No official
+Nextcloud image carries `oci8`, so the Dockerfile adds Oracle's Instant Client at build time (free to
+use, not to redistribute, so the image is never pushed) and `oci8` from PECL, which it left php-src
+for in PHP 8.4. The database is `gvenzl/oracle-free:23-slim-faststart`. The compose file's header
+starts and installs it; then the suite, about five minutes:
+
+```bash
+docker compose -f .docker/oracle/compose.yml exec -u www-data -w /var/www/html/custom_apps/nextfleet \
+  app php vendor/bin/phpunit -c phpunit.integration.xml
+```
+
+`down -v` throws the stack away; it never touches the dev stack's volumes.
+
+First tried 2026-10-04 on NC 34 (PHP 8.5, oci8 3.4.1, Oracle Free 23): install, `app:enable` with
+migrations 1–7, the seed and the integration suite. What Oracle asked for:
+
+- **No `IN` over 1 000 items** (ORA-01795). Every list in a query goes through `Db\InList`, and
+  `InListTest` calls each list-taking mapper method with 2 500.
+- **Sequence names are cut at 30 characters.** Doctrine names the key's sequence
+  `oc_fleet_reminder_recipien_SEQ`; core's `lastInsertId()` asks for the uncut name. Such a table
+  takes its id from the sequence first (`BaseMapper::takeOracleId()`).
+- **A bare column name folds to upper case** in raw SQL. Quote it with `getColumnName()`.
+- **Introspection** reports no autoincrement and quotes index columns; `SchemaExpectations`
+  allows for both.
+
+What Oracle covers, measured 2026-10-04:
+
+| Check | Result |
+| --- | --- |
+| Integration suite, five fresh stacks in a row | 1595 tests green each time, 5:13–5:31 |
+| API suite, the same stack after it | 19 tests green, 33 s |
+| Upgrade check from 0.2.0, NC 34 only (`--db oracle`, [release](#release)) | 12 tables' rows intact, schema the fresh one's |
+| E2E | not run |
+
+The API suite runs as on the dev stack, with `-c phpunit.api.xml`. M12 once saw a first run end
+with 10 errors and a failure. Its output was not kept, and the five runs above did not repeat it.
+If the weekly job goes red that way, read its log first.
+
+0.2.0 and 0.3.0 could not create a vehicle on Oracle, because of the sequence name above. So the
+upgrade check gives the base a synonym under the uncut name, which lets it write its rows. The
+check drops the synonym before the upgrade.
 
 ## Local dev environment
 
@@ -182,7 +245,8 @@ Yes, this works, and the browser part is free: WSL2 forwards `localhost`, so any
 Ubuntu is reachable at `http://localhost:8080` from a Windows browser. No port mapping, no IP
 lookup.
 
-**Toolchain:** PHP 8.1+, Composer, Node 20.19+ (Vite 7's floor) and Docker. `composer.json` pins its resolution
+**Toolchain:** PHP 8.1+, Composer, Node 22.22+ or 24+ (CI runs 24; `@types/node` follows the
+22 floor) and Docker. `composer.json` pins its resolution
 platform to PHP 8.1.31 — the oldest major NC 31 supports, at its last patch — so a lock file
 written on a newer PHP still installs on the oldest CI job.
 
@@ -199,6 +263,14 @@ prints a warning about that gap on every run; it goes to stderr and the exit sta
 Psalm analyses `lib/`, `templates/`, `tests/` and `appinfo/routes.php`. Templates call `script()`,
 which belongs to Nextcloud's legacy template layer rather than to OCP and so is in no package here;
 `tests/Stub/template_functions.php` declares it for both Psalm and PHPUnit.
+
+**A deprecation is an error.** Nextcloud removes what it deprecated a few majors later, so Psalm
+fails on every `Deprecated*` issue, tests included, and the integration suite runs with
+`failOnDeprecation`, which catches what PHP deprecates at run time in `lib/`; the server's own
+deprecations are left out (`restrictDeprecations`), since nothing here can fix them. Tests reach a
+service with `\OCP\Server::get()`, which hands an `OCA\NextFleet\` class to the app's container,
+never through the deprecated `IAppContainer`. The one exception is `tests/e2e/job.php`, which
+swaps the app container's clock: OCP has no other way to replace a service after boot.
 
 `npm run build` bundles one entry per page the app puts a bundle on: `src/main.js` into
 `js/nextfleet-main.mjs` for the app itself, and `src/settings.js` into `js/nextfleet-settings.mjs`
@@ -250,10 +322,9 @@ picker over the input and closes it on the key, but the keydown lands on the inp
 the sheet would take it and close over every filled-in field. Nothing says whether a native picker
 is open, so a date field keeps `Escape` whether one is or not.
 
-`@nextcloud/eslint-config` is held at 8.x, the same trap as Psalm above: version 9 needs ESLint 10
-and Node's `findPackageJSON`, which arrives in Node 22, so it installs on the Node 20 here and then
-dies on the first run. Moving to 9 means moving the Node floor and rewriting `.eslintrc.cjs` as a
-flat `eslint.config.js`. Its plugin drags in a `fast-xml-parser` with a moderate advisory, so
+`@nextcloud/eslint-config` is held at 8.x: version 9 needs ESLint 10 and Node 22's
+`findPackageJSON`. The Node floor allows it now; moving to 9 still means rewriting `.eslintrc.cjs`
+as a flat `eslint.config.js`. Its plugin drags in a `fast-xml-parser` with a moderate advisory, so
 `package.json` overrides that to 5.x; the plugin only reads `appinfo/info.xml` with it and works
 unchanged.
 
@@ -276,6 +347,7 @@ db        mariadb:11          — the real DB, not SQLite; catches the errors SQ
 app       nextcloud:34-apache — port 8080, our app bind-mounted into /var/www/html/custom_apps/nextfleet
 app31     nextcloud:31-apache — port 8081, same mount
 cron      nextcloud:34-apache — same image, runs cron.php every 5 min, so reminders actually fire
+cron31    nextcloud:31-apache — the same for app31
 mail      axllent/mailpit     — SMTP sink on :1025, web UI on :8025
 ```
 
@@ -300,7 +372,13 @@ gate would test one version twice. The image creates only the schema `MARIADB_DA
 
 `cron` sets `entrypoint: /cron.sh`, which bypasses the image's entrypoint — so it reads none of the
 `NEXTCLOUD_*` environment and takes its configuration from the `config.php` in the volume it shares
-with `app`.
+with `app`. `cron31` does the same for `app31`.
+
+Each major needs its own cron runner. Without one a major runs only an AJAX tick on a page load, and
+`CleanupFileLocks` falls behind. NC 31 had no runner until M13. By then its `oc_file_locks` held 102
+locks past their TTL, the oldest eleven days old. A stale lock on a reused E2E path answers 423
+to a `DELETE`. `cron31`'s first `cron.php` run switched NC 31 to cron mode and took ten minutes to
+work off the backlog.
 
 Setup, once:
 
@@ -332,6 +410,12 @@ It sets the period back to the default first, since the picker keeps its choice 
 cadence set in the vehicle sheet, then the job run twice at a moved clock. It checks the one
 notification the recipient reads over OCS and the one digest in Mailpit, both in German. Then an
 oil change is closed from the banner, the next one shows, and the overview reorders.
+`m5-slice.spec.js` covers papers and reports: a paper downloads for a driver of the vehicle, for
+nobody else, and not once it is deleted; a paper picked from Files is listed and opens from its
+entry; the Costs screen reads a month and exports its trips; the mileage claim prints; the sticker
+opens the entry sheet. It ends with the sweep below. `m6-slice.spec.js` has the owner give access,
+checks what each role is offered and ends the access; `roles.spec.js` signs in as owner, manager,
+driver and viewer of one vehicle and checks what each may do.
 `m7-slice.spec.js` covers the pool and the inbox with fresh accounts: a driver books the owner's car,
 the owner's booking over it is refused with the driver named, the driver takes the car while the
 owner's overview says who has it, returns it and logs the prefilled trip, and files a receipt from
@@ -428,44 +512,62 @@ certificate and the app id signed by the key:
 echo -n nextfleet | openssl dgst -sha512 -sign nextfleet.key | openssl base64
 ```
 
+Before the first upload, enable private vulnerability reporting in the repository's settings
+(*Security → Private vulnerability reporting*). [`SECURITY.md`](../SECURITY.md) sends reporters
+there; until it is on, the link is a dead end.
+
 **Each release:**
 
-1. **Review and commit the working tree.** For the first release that is M6–M10, uncommitted on
-   `42ec311` of the `initial` branch. Untracked files belong to it too: `openapi.json`,
-   `tests/Api/v1-baseline.json`, `vendor-bin/` (its `vendor/` stays ignored) and the new source,
-   tests and docs. `composer test`, `composer lint`, `npm test` and `npm run lint` pass first.
-2. **0.3.0 is the first release** (decided 2026-10-03, once). 0.2.0 was never released, so no store
-   user runs it, and the upgrade from its source keeps every row (step 6); shipping it alone first
-   would cost a branch, a second signing and a second upload for nobody. The store shows only the
-   CHANGELOG section named after the version, so move 0.2.0's subsections under 0.3.0 and drop its
-   heading, or the listing's changelog starts after v1.
-3. **Date the section.** `## <x> — not released` becomes `## <x> — <YYYY-MM-DD>`. The version is
-   already set in `appinfo/info.xml`, `package.json` and `package-lock.json`; `InfoXmlTest` fails
-   until all four agree. For a release that ships the API, copy `openapi.json` over
-   `tests/Api/v1-baseline.json`: everything released is promised
-   ([what v1 promises](api.md#what-v1-promises)). Commit.
+1. **Review and commit.** `composer test`, `composer lint`, `npm test` and `npm run lint` pass.
+   Review everything since the last commit, untracked files included (`git status` lists them),
+   and commit it. Then run `/security-review` on the release's diff, against the last release's
+   tag ([process](security.md#process)). The first release has none, and `main` already holds
+   part of the app, so tell it to diff against the empty tree (`git hash-object -t tree
+   /dev/null`): the whole app. Fix what it finds before going on.
+2. **Date the CHANGELOG section.** `## <x> — not released` becomes `## <x> — <YYYY-MM-DD>`. The
+   store shows only the section named after the version, so it must read whole on its own. 0.3.1's
+   already does: neither 0.2.0 nor 0.3.0 was released (decided 2026-10-03), so 0.3.1 is the first
+   release and its section says what the app does. The version is already set in `appinfo/info.xml`,
+   `package.json` and `package-lock.json`; `InfoXmlTest` fails until all four agree and while any
+   other section is `not released`.
+3. **Promise the API.** For a release that ships the API, copy `openapi.json` over
+   `tests/Api/v1-baseline.json`: everything released is promised. The CHANGELOG section names what
+   v1 now promises besides ([what v1 promises](api.md#what-v1-promises)); for 0.3.1 that is the
+   OCS API line under *For apps, scripts and admins*. Commit.
 4. **Build.** `npm run package` writes `build/artifacts/nextfleet-<x>.tar.gz` from a fresh build.
    What it ships, and why, is in `tools/package.sh`. If a screen changed since the screenshots were
    last taken, first reseed NC 34 (`occ nextfleet:seed admin`), run `npm run screenshots:docker`
    and commit them.
-5. **Sign the code.** Unpack the tarball, sign the folder, pack it again the way `package.sh` does.
-   `integrity:sign-app` writes `appinfo/signature.json`, so whoever runs `occ` must be able to
-   write there. Any Nextcloud's `occ` does.
+5. **Sign the code.** Unpack the tarball, sign the folder with the dev stack's `occ`, pack it again
+   the way `package.sh` does. The container sees the repository at
+   `/var/www/html/custom_apps/nextfleet` and nothing else of the host. The key is mounted nowhere:
+   `occ` reads it from stdin, so it never lands in the container or the repository. The
+   certificate is public; copy it to `build/nextfleet.crt`, which git ignores and `package.sh`
+   never packs. `occ` runs as `www-data` and writes `appinfo/signature.json`, so that folder is
+   opened to it for the signing and closed again before packing. Run from the repository's root:
 
    ```bash
    rm -rf build/sign && mkdir -p build/sign && tar -xzf build/artifacts/nextfleet-<x>.tar.gz -C build/sign
-   occ integrity:sign-app --privateKey=<path>/nextfleet.key \
-     --certificate=<path>/nextfleet.crt --path=<repo>/build/sign/nextfleet
+   chmod a+w build/sign/nextfleet/appinfo
+   docker compose -f .docker/compose.yml exec -T -u www-data app php occ integrity:sign-app \
+     --privateKey=php://stdin \
+     --certificate=/var/www/html/custom_apps/nextfleet/build/nextfleet.crt \
+     --path=/var/www/html/custom_apps/nextfleet/build/sign/nextfleet < <path>/nextfleet.key
+   chmod go-w build/sign/nextfleet/appinfo
    tar --sort=name --owner=0 --group=0 --numeric-owner \
      -czf build/artifacts/nextfleet-<x>.tar.gz -C build/sign nextfleet
    ```
 
 6. **Check the upgrade** on that signed tarball, not a rebuild:
    `npm run upgrade-check -- build/artifacts/nextfleet-<x>.tar.gz [<base>]`. It installs the
-   tarball on throwaway NC 31 and NC 34 servers, fresh and over the base with its seed, and fails if
-   a row is lost or changed. The base defaults to `27142b4`, 0.2.0's source, since a user may run
-   it from the repository. Once a version is out, pass that release's tarball. It takes about four
-   minutes and never touches the dev servers. How it works is in `tools/upgrade-check.sh`.
+   tarball on throwaway NC 31 and NC 34 servers, fresh and over the base with its seed and enough
+   use to fill every table, and fails if a row is lost or changed or the upgraded schema differs
+   from the fresh one in any column or index. The base defaults to `27142b4`, 0.2.0's source,
+   since a user may run it from the repository. Once a version is out, pass that release's
+   tarball. It takes about ten minutes and never touches the dev servers. Run it a second time on
+   PostgreSQL: `npm run upgrade-check -- --db pgsql <tarball> [<base>]`. Then run it a third time
+   on Oracle with `--db oracle`, NC 34 only, since only [`.docker/oracle/`](#oracle) builds an image
+   with `oci8`. `--db` goes before the tarball. How it works is in `tools/upgrade-check.sh`.
 7. **Publish the source.** Fast-forward `main` to `initial` (`git push origin initial:main`, or a
    pull request if `main` is protected): `info.xml` points the store at the screenshots on `main`.
    Then tag the release commit `v<x>` and push the tag.

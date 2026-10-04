@@ -59,20 +59,25 @@ directory that someone else can add by merge request ([contributing](docs/contri
 | M3 | Energy entries, maintenance records, expenses, VAT, and the [consumption and cost maths](docs/architecture.md#numbers-consumption-cost-emissions) | Per-vehicle cost per 100 km is correct, and a plug-in hybrid shows two consumption figures |
 | M4 | Reminder engine, TimedJob, notifications, mail digest, recipients, HU/AU from the sticker, closing a reminder by maintenance record. No calendar (decision 16) | HU/AU due in 4 weeks reaches the phone |
 | M5 | Documents, the Costs screen with a CO₂ estimate, CSV export, the mileage claim, a plain logbook for the generic jurisdiction, dashboard widget, search, QR sticker | Feature-complete v1 as 0.2.0, not released |
-| M6 | Sharing: the owner grants a user or a group viewer, driver or manager; a driver logs their own entries; screens follow the caller's role | A partner or an employee logs trips in the owner's car and sees only what their role allows |
+| M6 | Access: the owner grants a user or a group viewer, driver or manager; a driver logs their own entries; screens follow the caller's role | A partner or an employee logs trips in the owner's car and sees only what their role allows |
 | M7 | The pool and the inbox: a grantee who may log books the vehicle, and the server refuses a second booking over it; check-out and check-in with the counter and the tank, the check-in prefilling the trip; who has the car on the overview; a receipt folder the mobile app's auto-upload fills, attached in two taps. No calendar (decision 16) | Two or three people share a car without phoning first, and a photographed receipt reaches its entry without the file picker |
 | M8 | The OCS API under `/api/v1`, signed in with an app password; a `sync` delta endpoint with tombstones; a generated `openapi.json` checked in CI; API docs | An Android client can be built against it |
 | M9 | Import: a LubeLogger or Spritmonitor CSV export picked from the caller's own Files, previewed with its columns, open questions, duplicates and unreadable rows, imported in one transaction through the entry services, undone as a whole; `occ nextfleet:import` for scripts. Never trips ([architecture](docs/architecture.md#import)) | Someone switching from LubeLogger or Spritmonitor brings their history along, and can take it back straight away |
 | M10 | Release-ready, nothing released: the importers checked against their formats' sources, `source_uuid` on Readings and `estimate` on synced reminders, export, sync and import logged alike, M5's small gaps closed, a security review of M6–M9, the package installed fresh and over 0.2.0 by [`tools/upgrade-check.sh`](tools/upgrade-check.sh), every suite green on NC 31 and NC 34 in one pass, and the [release checklist](docs/development.md#release) | The maintainer only commits, signs, tags and uploads |
+| M11 | Review fixes, nothing released: a security contact through GitHub's private vulnerability reporting; a linear, capped CSV reader; erasure pseudonyms no account can take; recipients that follow the sharing rules; bookings that keep an overdue car accounted for; papers served only from their attacher's own Files; names shown as typed; a contract test that catches narrowing; an upgrade check that proves every table and index; a first-release CHANGELOG and an executable [release checklist](docs/development.md#release) | 0.3.0 is round and safe to use |
+| M12 | Round-two review fixes, nothing released: the trip audit follows the trip's period; late is decided at export; trip arithmetic and counter resets hold; a mileage claim the Finanzamt accepts; an erased owner's vehicles close and `occ nextfleet:transfer` hands a pool over; a personal data export; a bound on every input; reminders that ring again after an edit and survive a failed send; erasures and group revokes that finish; retried creates that do not duplicate; migration 7's indexes and bounded queries; no `IN` list over 1 000, tried on Oracle; Node 24 and a stricter CI; the UX review's wording | 0.3.1, the first release, is round and safe to use |
+| M13 | Loose ends, nothing released: a file deleted straight after its download, guarded by the API suite; Oracle green on five fresh stacks, its API suite and an upgrade check from 0.2.0; the personal data export tried on a real *user_migration* and tested weekly; a cron runner for NC 31's dev server | 0.3.1 goes out with no known open question |
 | Next | Not planned yet: the [feature backlog](docs/features.md#feature-backlog), which no milestone has claimed | — |
 
-**M0–M10 are built, and none is released.** M0–M5 are 0.2.0, M6–M10 are 0.3.0. 0.3.0 is the first
-release; 0.2.0 does not go out alone ([release](docs/development.md#release), step 2).
+**M0–M13 are built, and none is released.** M0–M5 are 0.2.0, M6–M11 are 0.3.0, M12 and M13 are
+0.3.1.
+0.3.1 is the first release; neither 0.2.0 nor 0.3.0 goes out alone
+([release](docs/development.md#release), step 2).
 
 **v1 is 0.2.0, and it is not released for now** (decided 2026-09-30). M5 is v1 by scope; the
 version tracks maturity, and a first release has none yet, so it stays on the 0.x line. Until a
-release, later milestones collect under the CHANGELOG's open section — `## 0.3.0 — not released`
-since M7's migration raised the version, because Nextcloud runs a migration only after a rise.
+release, later milestones collect under the CHANGELOG's open section — `## 0.3.1 — not released`
+since M12's migration raised the version, because Nextcloud runs a migration only after a rise.
 
 **M5 is v1 by scope, and M6 builds on it.** Maintenance records sit in M3 rather than M5 because
 they write odometer readings and close reminders — building the reminder engine against a record
@@ -151,7 +156,7 @@ the index.
 - **Reminder undo is lossy.** The schema does not keep a planned due, so withdrawing the maintenance
   record that closed a reminder reopens it due at the record's own day and km
   ([reminder engine](docs/architecture.md#reminder-engine)). Keeping it would take a column, and the
-  M4 migration has shipped.
+  first release adds no more: its last migration adds indexes only.
 - **App store compatibility churn.** Nextcloud majors break APIs twice a year; four supported
   majors is a deliberate cost, paid at M0 and again at every release.
 - **Entry friction kills logbooks.** If adding a trip takes more than a few seconds, the data rots.
@@ -167,10 +172,10 @@ the index.
 - **We maintain every jurisdiction we merge.** One whose maintainer disappears becomes a wrong tax
   report with our name on it. `CODEOWNERS`, the country test kit, and the willingness to mark one
   experimental are the whole defence ([contributing](docs/contributing.md)).
-- **Eleven tables before one line of code.** The schema in
-  [data model](docs/architecture.md#data-model) is a design, not a migration plan: M1 ships
-  vehicles, odometer readings and access, and every later table arrives with the feature that needs
-  it. Columns written speculatively are columns nobody dares remove.
+- **A schema designed before one line of code.** The [data model](docs/architecture.md#data-model)
+  was a design, not a migration plan: M1 shipped vehicles, odometer readings and access, and each
+  later table arrived with the feature that needed it, thirteen by M7. A new one still waits for its
+  feature. Columns written speculatively are columns nobody dares remove.
 - **Scope.** The backlog is longer than a side project can finish. Whatever is cut, never the
   reminder engine. That is the one thing nothing else in
   [the prior art](docs/features.md#what-existing-tools-teach-us) offers.

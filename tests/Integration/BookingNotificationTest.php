@@ -40,8 +40,6 @@ class BookingNotificationTest extends TestCase {
 	/** A driver on the owner's car, reading German. */
 	private const BEN = 'nextfleet-test-pool-ben';
 	private const LANGUAGES = [self::OWNER => 'en', self::BEN => 'de'];
-	/** 1 May 2036, 09:00 at +02:00. */
-	private const NINE = 2093238000;
 	private const HOUR = 3600;
 
 	private static string $password;
@@ -67,9 +65,8 @@ class BookingNotificationTest extends TestCase {
 	protected function setUp(): void {
 		// Without the notifications app booted a notification has nowhere to go (ReminderJobTest).
 		\OCP\Server::get(IAppManager::class)->loadApps();
-		$container = (new Application())->getContainer();
-		$this->bookings = $container->get(BookingService::class);
-		$this->vehicles = $container->get(VehicleService::class);
+		$this->bookings = \OCP\Server::get(BookingService::class);
+		$this->vehicles = \OCP\Server::get(VehicleService::class);
 		$this->forget();
 	}
 
@@ -93,15 +90,36 @@ class BookingNotificationTest extends TestCase {
 		}
 	}
 
-	public function testTheBookerIsToldWhoCancelledWhichBooking(): void {
+	/**
+	 * Which booking, never who cancelled: a name in a notice is one an erasure cannot take back.
+	 * Who cancelled is on the booking, for whoever may see the vehicle.
+	 */
+	public function testTheBookerIsToldWhichBookingWasCancelled(): void {
 		$vehicle = $this->vehicle();
 		$booking = $this->bookings->book(self::BEN, $vehicle->getUuid(), $this->span());
 
 		$this->bookings->cancel(self::OWNER, $vehicle->getUuid(), $booking['uuid'], $booking['updated_at']);
 
 		$list = $this->notifications(self::BEN);
-		$this->assertSame(['Anna hat deine Buchung von NF-DE 100 am 01.05.2036 um 09:00 storniert'], array_column($list, 'subject'));
+		$this->assertSame(['Deine Buchung von NF-DE 100 am ' . self::nine()->format('d.m.Y') . ' um 09:00 wurde storniert'], array_column($list, 'subject'));
 		$this->assertStringContainsString('vehicle=' . $vehicle->getUuid(), $list[0]['link']);
+		$this->assertSame([['vehicle' => $vehicle->getUuid()]], $this->parameters($booking['uuid']));
+	}
+
+	/** A notice stored before 0.3.0 still carries who cancelled, and is worded as a new one. */
+	public function testAStoredNoticeNamingTheCancellerNamesNobody(): void {
+		$vehicle = $this->vehicle();
+		$booking = $this->bookings->book(self::BEN, $vehicle->getUuid(), $this->span());
+		$this->bookings->cancel(self::BEN, $vehicle->getUuid(), $booking['uuid'], $booking['updated_at']);
+		$manager = \OCP\Server::get(IManager::class);
+		$manager->notify($manager->createNotification()
+			->setApp(Application::APP_ID)
+			->setUser(self::BEN)
+			->setDateTime(new \DateTime())
+			->setObject(BookingNotices::OBJECT, $booking['uuid'])
+			->setSubject(BookingNotices::OBJECT, ['vehicle' => $vehicle->getUuid(), 'by' => self::OWNER]));
+
+		$this->assertSame(['Deine Buchung von NF-DE 100 am ' . self::nine()->format('d.m.Y') . ' um 09:00 wurde storniert'], array_column($this->notifications(self::BEN), 'subject'));
 	}
 
 	/** Cancelling your own booking is no news to you. */
@@ -147,7 +165,14 @@ class BookingNotificationTest extends TestCase {
 
 	/** @return array<string, int> */
 	private function span(): array {
-		return ['starts_at' => self::NINE, 'starts_at_off' => 120, 'ends_at' => self::NINE + 3 * self::HOUR, 'ends_at_off' => 120];
+		$nine = self::nine()->getTimestamp();
+
+		return ['starts_at' => $nine, 'starts_at_off' => 120, 'ends_at' => $nine + 3 * self::HOUR, 'ends_at_off' => 120];
+	}
+
+	/** Tomorrow, 09:00 at +02:00: a booking ahead, as the sheet allows, at a time the notice prints. */
+	private static function nine(): \DateTimeImmutable {
+		return new \DateTimeImmutable('tomorrow 09:00', new \DateTimeZone('+02:00'));
 	}
 
 	/** How many notifications the store holds for one booking, to anyone. */
@@ -155,6 +180,25 @@ class BookingNotificationTest extends TestCase {
 		$manager = \OCP\Server::get(IManager::class);
 
 		return $manager->getCount($manager->createNotification()->setApp(Application::APP_ID)->setObject(BookingNotices::OBJECT, $bookingUuid));
+	}
+
+	/**
+	 * What the store keeps of one booking's notices: read from the notifications app's table, since
+	 * no public interface hands the stored parameters back.
+	 *
+	 * @return list<array<string, mixed>>
+	 */
+	private function parameters(string $bookingUuid): array {
+		$qb = \OCP\Server::get(IDBConnection::class)->getQueryBuilder();
+		$qb->select('subject_parameters')->from('notifications')
+			->where($qb->expr()->eq('app', $qb->createNamedParameter(Application::APP_ID)))
+			->andWhere($qb->expr()->eq('object_type', $qb->createNamedParameter(BookingNotices::OBJECT)))
+			->andWhere($qb->expr()->eq('object_id', $qb->createNamedParameter($bookingUuid)));
+		$result = $qb->executeQuery();
+		$rows = $result->fetchAll(\PDO::FETCH_COLUMN);
+		$result->closeCursor();
+
+		return array_map(static fn (string $json): array => json_decode($json, true), $rows);
 	}
 
 	/** The owner's car, with Ben on it as a driver. No grant notice: the grant row is written directly. */

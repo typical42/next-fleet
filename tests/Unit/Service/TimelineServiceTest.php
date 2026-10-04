@@ -117,6 +117,16 @@ class TimelineServiceTest extends TestCase {
 			),
 		);
 
+		$this->trips->method('findOverlapping')->willReturnCallback(
+			fn (int $vehicleId, int $from, int $to): array => array_values(array_filter(
+				$this->tripRows,
+				static fn (Trip $trip): bool => $trip->getVehicleId() === $vehicleId
+					&& $trip->getDeletedAt() === null
+					&& $trip->getStartedAt() < $to
+					&& $trip->getEndedAt() > $from,
+			)),
+		);
+
 		$this->readings = $this->createMock(OdoReadingMapper::class);
 		$this->readings->method('findEntriesBefore')->willReturnCallback(
 			fn (int $vehicleId, int $at, int $id, int $limit): array => $this->before(
@@ -145,6 +155,15 @@ class TimelineServiceTest extends TestCase {
 				static fn (OdoReading $row): bool => $row->getVehicleId() === $vehicleId
 					&& $row->getSourceType() === $sourceType
 					&& in_array((int)$row->getSourceId(), $sourceIds, true),
+			)),
+		);
+		$this->readings->method('findOfSourceType')->willReturnCallback(
+			fn (int $vehicleId, string $sourceType, string $counter): array => array_values(array_filter(
+				$this->readingRows,
+				static fn (OdoReading $row): bool => $row->getVehicleId() === $vehicleId
+					&& $row->getSourceType() === $sourceType
+					&& $row->getCounter() === $counter
+					&& $row->getDeletedAt() === null,
 			)),
 		);
 
@@ -179,6 +198,7 @@ class TimelineServiceTest extends TestCase {
 		$mine = array_values(array_filter(
 			$rows,
 			static fn (object $row): bool => $row->getVehicleId() === $vehicleId
+				&& $row->getDeletedAt() === null
 				&& self::key($row) < $before,
 		));
 		usort($mine, static fn (object $a, object $b): int => self::key($b) <=> self::key($a));
@@ -632,6 +652,100 @@ class TimelineServiceTest extends TestCase {
 		$this->assertSame([], $rows[1]['missing']);
 		$this->assertSame($bare, $rows[2]['trip']);
 		$this->assertSame(['partner'], $rows[2]['missing']);
+	}
+
+	/**
+	 * One vehicle drives one journey at a time, so two trips whose spans overlap are a mistake in
+	 * one of them. Both say so; a trip that ends where the next begins does not.
+	 */
+	public function testTripsWhoseSpansOverlapAreBothFlagged(): void {
+		$first = $this->trip(1750000000);
+		$second = $this->trip(1750005000);
+		$this->trip(1750005400 + 5000);
+
+		$flags = $this->tripFlags();
+
+		$this->assertSame(['overlap'], $flags[$first->getUuid()]);
+		$this->assertSame(['overlap'], $flags[$second->getUuid()]);
+		$this->assertSame([], array_values(array_diff_key($flags, [$first->getUuid() => 0, $second->getUuid() => 0]))[0]);
+	}
+
+	public function testATripEndingWhereTheNextBeginsOverlapsNothing(): void {
+		$this->trip(1750000000);
+		$this->trip(1750005400);
+
+		$this->assertSame([[], []], array_values($this->tripFlags()));
+	}
+
+	/** The trip it overlaps can be pages away: a long trip that set off long before. */
+	public function testAnOverlapWithATripOffThePageIsStillFlagged(): void {
+		$long = $this->trip(1740000000);
+		$long->setEndedAt(1760000000);
+		$inside = $this->trip(1750000000);
+		for ($day = 1; $day <= 60; $day++) {
+			$this->entry(1750000000 - $day * 1000);
+		}
+
+		$page = $this->service()->page(self::OWNER, self::VEHICLE, null, null);
+		$rows = array_values(array_filter($page['rows'], static fn (array $row): bool => $row['type'] === TimelineService::TRIP));
+
+		$this->assertSame([$inside], array_column($rows, 'trip'));
+		$this->assertSame(['overlap'], $rows[0]['flags']);
+	}
+
+	/**
+	 * A Reconciliation Trip stood for kilometres nobody had recorded. A trip entered after it that
+	 * falls inside its span records some of them, so the two count those kilometres twice.
+	 */
+	public function testAReconciliationOverlappedByALaterEntryIsOvertaken(): void {
+		$closing = $this->trip(1750000000);
+		$closing->setReconciled(true);
+		$closing->setEndedAt(1750100000);
+		$closing->setCreatedAt(1750200000);
+		$later = $this->trip(1750050000);
+		$later->setCreatedAt(1750300000);
+
+		$flags = $this->tripFlags();
+
+		$this->assertSame(['overlap', 'overtaken'], $flags[$closing->getUuid()]);
+		$this->assertSame(['overlap'], $flags[$later->getUuid()]);
+	}
+
+	/** Entered before the reconciliation, the trip was already there to see: no Gap was closed over it. */
+	public function testAReconciliationOverlappingAnEarlierEntryIsNotOvertaken(): void {
+		$earlier = $this->trip(1750050000);
+		$earlier->setCreatedAt(1750100000);
+		$closing = $this->trip(1750000000);
+		$closing->setReconciled(true);
+		$closing->setEndedAt(1750100000);
+		$closing->setCreatedAt(1750200000);
+
+		$this->assertSame(['overlap'], $this->tripFlags()[$closing->getUuid()]);
+	}
+
+	/** A voided trip was not driven, so it overlaps nothing. */
+	public function testAVoidedTripOverlapsNothing(): void {
+		$this->trip(1750000000);
+		$voided = $this->trip(1750005000);
+		$voided->setDeletedAt(1750200000);
+
+		$this->assertSame([[]], array_values($this->tripFlags()));
+	}
+
+	/**
+	 * What each trip row on the first page is flagged for, by uuid.
+	 *
+	 * @return array<string, list<string>>
+	 */
+	private function tripFlags(): array {
+		$flags = [];
+		foreach ($this->service()->page(self::OWNER, self::VEHICLE, null, null)['rows'] as $row) {
+			if ($row['type'] === TimelineService::TRIP) {
+				$flags[$row['trip']->getUuid()] = $row['flags'];
+			}
+		}
+
+		return $flags;
 	}
 
 	/**

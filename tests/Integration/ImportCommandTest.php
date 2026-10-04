@@ -8,7 +8,6 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Integration;
 
-use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Command\ImportCommand;
 use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
@@ -38,9 +37,8 @@ class ImportCommandTest extends TestCase {
 	private ?int $vehicleId = null;
 
 	protected function setUp(): void {
-		$container = (new Application())->getContainer();
-		$this->timeline = $container->get(TimelineService::class);
-		$this->command = new CommandTester($container->get(ImportCommand::class));
+		$this->timeline = \OCP\Server::get(TimelineService::class);
+		$this->command = new CommandTester(\OCP\Server::get(ImportCommand::class));
 	}
 
 	/** The accounts live for the whole class, for the reason DocumentTest gives. */

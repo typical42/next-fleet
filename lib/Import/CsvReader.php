@@ -19,6 +19,13 @@ final class CsvReader {
 	public const MAX_ROWS = 20_000;
 	/** A record, its line break not counted; a quoted cell's line breaks are. */
 	public const MAX_LINE = 64 * 1024;
+	/** No export has more; a record of separators alone would hold one cell per byte. */
+	public const MAX_CELLS = 256;
+	/**
+	 * The file, header included: the caps above still let it hold five million strings. Refused as
+	 * `too_many_cells` with no row, since no single row is to blame.
+	 */
+	public const MAX_FILE_CELLS = 500_000;
 
 	/** Tab first: it never stands in text. `;` before `,`, which a header's prose uses more. */
 	private const SEPARATORS = ["\t", ';', ','];
@@ -31,6 +38,7 @@ final class CsvReader {
 	/** The spreadsheet row the last record started on. */
 	private int $number = 0;
 	private int $bytes = 0;
+	private int $cells = 0;
 	/** What the file has shown so far; null while every byte was ASCII, which both read alike. */
 	private ?string $encoding = null;
 
@@ -53,6 +61,7 @@ final class CsvReader {
 			throw new ImportRefusedException('empty');
 		}
 		$this->header = $header;
+		$this->cells = count($header);
 	}
 
 	/**
@@ -83,6 +92,10 @@ final class CsvReader {
 			}
 			if (++$count > self::MAX_ROWS) {
 				throw new ImportRefusedException('too_many_rows', $this->number);
+			}
+			$this->cells += count($cells);
+			if ($this->cells > self::MAX_FILE_CELLS) {
+				throw new ImportRefusedException('too_many_cells');
 			}
 			yield $this->number => $cells;
 		}
@@ -137,39 +150,26 @@ final class CsvReader {
 	}
 
 	/**
-	 * One record, starting with $line and taking further lines while a quote is open.
+	 * One record, starting with $line and taking further lines while a quote or an escape is open.
 	 *
 	 * @return list<string>
 	 */
 	private function record(string $line): array {
 		$this->number++;
-		$record = $line;
+		$record = new CsvRecord($this->separator, $this->escape, $this->number);
 		while (true) {
 			if ($this->bytes > self::MAX_BYTES) {
 				throw new ImportRefusedException('too_large', $this->number);
 			}
-			$bare = self::withoutTerminator($record);
-			if (strlen($bare) > self::MAX_LINE) {
-				throw new ImportRefusedException('line_too_long', $this->number);
-			}
-			if (str_contains($record, "\0")) {
-				throw new ImportRefusedException('binary', $this->number);
-			}
-			$cells = self::split($bare, $this->separator, $this->escape);
+			$record->append($line);
+			$cells = $record->cells();
 			if ($cells !== null) {
-				return $this->decoded($bare, $cells);
+				return $this->decoded($record->text(), $cells);
 			}
-			$next = $this->line();
-			if ($next === null) {
-				// Nothing follows for a trailing escape to escape, so it is text.
-				$cells = $this->escape !== null && str_ends_with($bare, $this->escape) ? self::split($bare, $this->separator, $this->escape, true) : null;
-				if ($cells === null) {
-					throw new ImportRefusedException('unclosed_quote', $this->number);
-				}
-
-				return $this->decoded($bare, $cells);
+			$line = $this->line();
+			if ($line === null) {
+				return $this->decoded($record->text(), $record->last() ?? throw new ImportRefusedException('unclosed_quote', $this->number));
 			}
-			$record .= $next;
 		}
 	}
 
@@ -179,70 +179,6 @@ final class CsvReader {
 		}
 
 		return str_ends_with($record, "\r") ? substr($record, 0, -1) : $record;
-	}
-
-	/**
-	 * A quote opens a cell only at its start; anywhere else it is a character, as is anything
-	 * between a closing quote and the next separator.
-	 *
-	 * @return list<string>|null null while a quote is still open, or an escape at the end waits
-	 *                           for the line break it escapes
-	 * @param bool $last whether the file ends with this record, so a trailing escape is text
-	 */
-	private static function split(string $record, string $separator, ?string $escape, bool $last = false): ?array {
-		$cells = [];
-		$cell = '';
-		$at = 0;
-		$length = strlen($record);
-		$start = true;
-		$special = '"' . $escape;
-		while ($at < $length) {
-			if ($start && $record[$at] === '"') {
-				$at++;
-				while (true) {
-					$stop = strcspn($record, $special, $at) + $at;
-					if ($stop >= $length) {
-						return null;
-					}
-					$cell .= substr($record, $at, $stop - $at);
-					if ($record[$stop] === $escape) {
-						if ($stop + 1 >= $length) {
-							return null;
-						}
-						$cell .= $record[$stop + 1];
-						$at = $stop + 2;
-						continue;
-					}
-					if (($record[$stop + 1] ?? '') !== '"') {
-						$at = $stop + 1;
-						break;
-					}
-					$cell .= '"';
-					$at = $stop + 2;
-				}
-			}
-			$plain = strcspn($record, $separator . $escape, $at);
-			$cell .= substr($record, $at, $plain);
-			$at += $plain;
-			$start = false;
-			if ($at < $length && $record[$at] === $escape) {
-				if ($at + 1 >= $length && !$last) {
-					return null;
-				}
-				$cell .= $record[$at + 1] ?? $escape;
-				$at += 2;
-				continue;
-			}
-			if ($at < $length) {
-				$cells[] = $cell;
-				$cell = '';
-				$start = true;
-				$at++;
-			}
-		}
-		$cells[] = $cell;
-
-		return $cells;
 	}
 
 	/**

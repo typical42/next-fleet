@@ -220,7 +220,7 @@ test('the Costs screen reads a month and exports its trips as CSV', async ({ pag
 	const csv = await readFile(await download.path(), 'utf8')
 	// A spreadsheet's CSV: a BOM, commas, CRLF, and a value with a comma in it quoted (PRD M5).
 	const [head, row, end] = csv.split('\r\n')
-	expect(head).toBe('﻿uuid,started,started_offset_min,ended,ended_offset_min,start_odo,end_odo,distance,odo_unit,from,to,purpose,partner,category,reconciled,voided')
+	expect(head).toBe('﻿uuid,started,started_offset_min,ended,ended_offset_min,start_odo,end_odo,distance,odo_unit,from,to,purpose,partner,category,reconciled,voided,created_at,entered_by')
 	expect(row).toContain(`,${year}-03-05 11:00,60,${year}-03-05 14:00,60,10000,10250,`)
 	expect(row).toContain(',km,"Stuttgart, Büro",Freiburg,Kundentermin,Müller GmbH,business,')
 	expect(end).toBe('')
@@ -244,7 +244,7 @@ test('the mileage claim values the business trip and prints', async ({ page }) =
 	await expect(link).toHaveAttribute('href', new RegExp(`/apps/nextfleet/vehicles/${vehicle.uuid}/mileage/${year}$`))
 
 	const [tab] = await Promise.all([page.waitForEvent('popup'), link.click()])
-	await expect(tab.getByRole('heading', { name: `Fahrtkosten für Dienstfahrten ${year}` })).toBeVisible()
+	await expect(tab.getByRole('heading', { name: `Fahrtkosten für geschäftliche Fahrten ${year}` })).toBeVisible()
 	const body = tab.locator('body')
 	await expect(body).toContainText('Kundentermin')
 	await expect(body).toContainText('75,00 €')
@@ -417,7 +417,8 @@ for (const viewport of [{ width: 320, height: 640 }, { width: 1280, height: 800 
 				await soonDue(page, vehicle.uuid)
 				const crewPlate = `${plates}crew-${at}`
 				const crewCar = await api(page, { method: 'POST', path: '/api/vehicles', body: { plate: crewPlate, jurisdiction: 'de' } })
-				const uid = `${people}${at}`
+				// Fresh each run: an account a failed run left behind would refuse the create.
+				const uid = `${people}${at}-${Date.now()}`
 				const crew = `${uid}-crew`
 				const password = `${uid}-Secret-2026!`
 				await ocs(page, 'POST', '/cloud/users', { userid: uid, password, displayName: 'Maximiliane Alexandra von Hohenzollern-Sigmaringen' })
@@ -482,7 +483,7 @@ for (const viewport of [{ width: 320, height: 640 }, { width: 1280, height: 800 
 				test.slow()
 				const plate = `${plates}pool-${at}`
 				const { vehicle } = await march(page, plate)
-				const uid = `${people}pool-${at}`
+				const uid = `${people}pool-${at}-${Date.now()}`
 				const password = `${uid}-Secret-2026!`
 				await ocs(page, 'POST', '/cloud/users', { userid: uid, password, displayName: 'Maximiliane Alexandra von Hohenzollern-Sigmaringen' })
 				await api(page, { method: 'POST', path: `/api/vehicles/${vehicle.uuid}/grants`, body: { grantee: uid, grantee_type: 'user', role: 'driver' } })
@@ -546,7 +547,7 @@ for (const viewport of [{ width: 320, height: 640 }, { width: 1280, height: 800 
 					await giving.getByRole('button', { name: 'Return the car' }).click()
 					const trip = page.getByRole('dialog', { name: 'New entry' })
 					await opened(trip)
-					await expect(trip.getByRole('textbox', { name: 'End counter' })).toHaveValue(/^10[,.]?842$/)
+					await expect(trip.getByRole('textbox', { name: 'Odometer at arrival' })).toHaveValue(/^10[,.]?842$/)
 					await check(page, 'the entry sheet, a trip from a booking', withSheet)
 					await trip.getByRole('button', { name: 'Cancel' }).click()
 

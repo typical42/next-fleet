@@ -77,7 +77,7 @@ class OcsTest extends TestCase {
 	 * @return T
 	 */
 	private function service(string $class): object {
-		return (new Application())->getContainer()->get($class);
+		return \OCP\Server::get($class);
 	}
 
 	/**
@@ -257,7 +257,7 @@ class OcsTest extends TestCase {
 	/** The owner holds no grant, so has none to leave. */
 	public function testGrants(): void {
 		$this->assertSame([], self::data($this->ocs(Ocs\GrantController::class, GrantService::class)->index($this->uuid)));
-		$this->assertSame(['role' => null, 'groups' => []], self::data($this->ocs(Ocs\GrantController::class, GrantService::class)->held($this->uuid)));
+		$this->assertSame(['role' => null, 'groups' => [], 'holders' => []], self::data($this->ocs(Ocs\GrantController::class, GrantService::class)->held($this->uuid)));
 
 		$this->expectException(OCSNotFoundException::class);
 		$this->ocs(Ocs\GrantController::class, GrantService::class)->leave($this->uuid);

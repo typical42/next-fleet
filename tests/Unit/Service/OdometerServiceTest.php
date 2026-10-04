@@ -295,6 +295,24 @@ class OdometerServiceTest extends TestCase {
 	}
 
 	/**
+	 * A fill-up or a record just inserted has written no Reading yet, so there is none to look
+	 * for: an import of thousands would pay one query per row for an empty answer.
+	 */
+	public function testAJustInsertedEntryWritesItsReadingsWithoutLookingForOld(): void {
+		$this->secondUnit = 'h';
+		$this->readings->method('findAnyForSource')->willReturnCallback(function (): array {
+			$this->calls[] = 'source read';
+
+			return [];
+		});
+
+		$this->service()->followEntry($this->vehicle(), self::OWNER, OdoReading::ENERGY, 3, 1750000000, 120, 120450, 5000, false, fresh: true);
+
+		$this->assertNotContains('source read', $this->calls);
+		$this->assertSame([120450, 5000], array_map(static fn (OdoReading $reading): int => $reading->getValue(), $this->rows));
+	}
+
+	/**
 	 * The sheet toggles between the counter and the distance (docs/ui.md), so both at once is a
 	 * client that does not know which it means. Picking one would silently throw away a number
 	 * somebody read, which is the opposite of rule 6.

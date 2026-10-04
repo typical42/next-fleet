@@ -24,6 +24,7 @@ use OCP\IUserSession;
 /**
  * Another tool's export through the OCS door: the twin of the internal ImportController.
  *
+ * @psalm-import-type NextFleetConflict from ResponseDefinitions
  * @psalm-import-type NextFleetImportPreview from ResponseDefinitions
  * @psalm-import-type NextFleetImportRefusal from ResponseDefinitions
  * @psalm-import-type NextFleetImportResult from ResponseDefinitions
@@ -106,13 +107,14 @@ class ImportController extends OCSController {
 	 * @param string|null $energy one of the vehicle's energy types, for fill-ups whose row names none, when it takes several
 	 * @param array<string, string>|null $category_map each cost category text to `skip`, `expense.<category>` or `maintenance.<type>`
 	 * @param bool|null $include_duplicates whether rows already on the vehicle are created again; false when left out
-	 * @return DataResponse<Http::STATUS_OK, NextFleetImportResult, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_CONFLICT, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_UNPROCESSABLE_ENTITY, NextFleetImportRefusal, array{}>|DataResponse<Http::STATUS_LOCKED, NextFleetRefusal, array{}>
+	 * @return DataResponse<Http::STATUS_OK, NextFleetImportResult, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_CONFLICT, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>|DataResponse<Http::STATUS_UNPROCESSABLE_ENTITY, NextFleetImportRefusal, array{}>|DataResponse<Http::STATUS_LOCKED, NextFleetRefusal, array{}>
 	 * @throws OCSForbiddenException the caller may not edit this vehicle
 	 * @throws OCSNotFoundException no such vehicle, or file of the caller's own
 	 *
 	 * 200: what was created
 	 * 400: a field or an answer is not one the request takes, a question is still open, or a row is one its entry route refuses; the message names it, and nothing was written
-	 * 409: the file changed since the preview; preview it again
+	 * 409: the file changed since the preview, or while it was read; preview it again
+	 * 412: another write to the vehicle raced this one; nothing was written, send it again
 	 * 422: the file is not one an import reads; `reason` says why and `row` where reading stopped
 	 * 423: somebody is writing the file; send it again
 	 */
@@ -131,7 +133,7 @@ class ImportController extends OCSController {
 		mixed $category_map = null,
 		mixed $include_duplicates = null,
 	): DataResponse {
-		return $this->read(fn (): DataResponse => $this->importing(fn (): DataResponse => new DataResponse(
+		return $this->write(fn (): DataResponse => $this->importing(fn (): DataResponse => new DataResponse(
 			$this->service->import($this->userId(), $uuid, $this->request->getParams()),
 		)));
 	}
@@ -145,18 +147,19 @@ class ImportController extends OCSController {
 	 *
 	 * @param string $uuid the vehicle's uuid
 	 * @param list<array{type: string, uuid: string}>|null $created required: the import's answer's list, as it came
-	 * @return DataResponse<Http::STATUS_OK, NextFleetImportUndone, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_CONFLICT, NextFleetRefusal, array{}>
+	 * @return DataResponse<Http::STATUS_OK, NextFleetImportUndone, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_CONFLICT, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
 	 * @throws OCSForbiddenException the caller may not edit this vehicle
 	 * @throws OCSNotFoundException no such vehicle
 	 *
 	 * 200: every entry was deleted
 	 * 400: `created` is not a list of `{type, uuid}` an import answers, or names an entry twice
 	 * 409: an entry is no longer live on this vehicle or was not entered by the caller; nothing was deleted
+	 * 412: another write to an entry raced this one; nothing was deleted, send it again
 	 */
 	#[NoAdminRequired]
 	#[UserRateLimit(limit: 30, period: 60)]
 	public function undo(string $uuid, mixed $created = null): DataResponse {
-		return $this->read(fn (): DataResponse => $this->undoing(fn (): DataResponse => new DataResponse(
+		return $this->write(fn (): DataResponse => $this->undoing(fn (): DataResponse => new DataResponse(
 			$this->service->undo($this->userId(), $uuid, $this->request->getParams()),
 		)));
 	}

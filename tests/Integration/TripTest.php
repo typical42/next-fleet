@@ -8,7 +8,8 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Integration;
 
-use OCA\NextFleet\AppInfo\Application;
+use OCA\NextFleet\Db\Access;
+use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\Audit;
 use OCA\NextFleet\Db\AuditMapper;
 use OCA\NextFleet\Db\Trip;
@@ -21,6 +22,7 @@ use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Utility\ITimeFactory;
+use OCP\DB\QueryBuilder\IQueryBuilder;
 use OCP\IDBConnection;
 use PHPUnit\Framework\TestCase;
 
@@ -33,6 +35,10 @@ use PHPUnit\Framework\TestCase;
 class TripTest extends TestCase {
 	/** Not a Nextcloud account: `created_by` is a string column with no key on it. */
 	private const AUTHOR = 'nextfleet-test-alice';
+	/** Somebody else on the same vehicle, written past the service: no grant is needed for a row. */
+	private const OTHER = 'nextfleet-test-bob';
+	/** Granted `manager` where a case needs one: edits and voids anybody's trip. */
+	private const MANAGER = 'nextfleet-test-carol';
 	/** No vehicle row is needed - neither table carries a foreign key into one. */
 	private const VEHICLE = 424242;
 
@@ -43,12 +49,11 @@ class TripTest extends TestCase {
 	private VehicleService $vehicles;
 
 	protected function setUp(): void {
-		$container = (new Application())->getContainer();
-		$this->trips = $container->get(TripMapper::class);
-		$this->audit = $container->get(AuditMapper::class);
-		$this->service = $container->get(TripService::class);
-		$this->odometer = $container->get(OdometerService::class);
-		$this->vehicles = $container->get(VehicleService::class);
+		$this->trips = \OCP\Server::get(TripMapper::class);
+		$this->audit = \OCP\Server::get(AuditMapper::class);
+		$this->service = \OCP\Server::get(TripService::class);
+		$this->odometer = \OCP\Server::get(OdometerService::class);
+		$this->vehicles = \OCP\Server::get(VehicleService::class);
 		$this->forgetTestRows();
 	}
 
@@ -64,10 +69,11 @@ class TripTest extends TestCase {
 			'fleet_audit' => 'created_by',
 			'fleet_odo_readings' => 'created_by',
 			'fleet_vehicles' => 'user_id',
+			'fleet_access' => 'created_by',
 		];
 		foreach ($tables as $table => $column) {
 			$qb = $db->getQueryBuilder();
-			$qb->delete($table)->where($qb->expr()->eq($column, $qb->createNamedParameter(self::AUTHOR)));
+			$qb->delete($table)->where($qb->expr()->in($column, $qb->createNamedParameter([self::AUTHOR, self::OTHER, self::MANAGER], IQueryBuilder::PARAM_STR_ARRAY)));
 			$qb->executeStatement();
 		}
 	}
@@ -272,6 +278,7 @@ class TripTest extends TestCase {
 				'purpose' => [null, 'Kundentermin'],
 				'category' => [null, Trip::BUSINESS],
 			],
+			'updated_at' => $trip->getUpdatedAt(),
 		], $trail[0]->getDiffJson());
 	}
 
@@ -286,6 +293,31 @@ class TripTest extends TestCase {
 
 		$this->assertSame([], $this->audit->findForEntity(Audit::TRIP, (int)$trip->getId()));
 		$this->assertSame(120450, $this->vehicles->find(self::AUTHOR, $vehicle->getUuid())->getOdoValue());
+	}
+
+	/**
+	 * A vehicle never under the mode keeps no trail of any change either: the trail follows trips
+	 * set off inside a period, and this one has none.
+	 */
+	public function testAVehicleNeverUnderTheModeWritesNoAuditRow(): void {
+		$uuid = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 128', 'jurisdiction' => 'de'])->getUuid();
+		$trip = $this->record($uuid, 1750000000, ['end_odo' => 120450]);
+		$edited = $this->service->update(self::AUTHOR, $uuid, $trip->getUuid(), $trip->getUpdatedAt(), [
+			'started_at' => 1750000000,
+			'started_at_off' => 0,
+			'ended_at' => 1750005400,
+			'ended_at_off' => 0,
+			'end_odo' => 120460,
+			'purpose' => 'Kundentermin',
+			'category' => Trip::BUSINESS,
+		]);
+		$voided = $this->service->delete(self::AUTHOR, $uuid, $trip->getUuid(), $edited->getUpdatedAt());
+		$this->service->restore(self::AUTHOR, $uuid, $trip->getUuid(), $voided->getUpdatedAt());
+
+		$qb = \OCP\Server::get(IDBConnection::class)->getQueryBuilder();
+		$qb->select($qb->func()->count('*'))->from('fleet_audit')
+			->where($qb->expr()->eq('created_by', $qb->createNamedParameter(self::AUTHOR)));
+		$this->assertSame(0, (int)$qb->executeQuery()->fetchOne());
 	}
 
 	/**
@@ -330,7 +362,48 @@ class TripTest extends TestCase {
 			'places' => ['Depot', 'Office', 'Müller GmbH'],
 			'purposes' => ['Delivery', 'Client visit'],
 			'partners' => ['Müller GmbH'],
+			'category' => Trip::BUSINESS,
+			'last' => ['end_odo' => 120200, 'ended_at' => 1750205400, 'ended_at_off' => 0],
 		], $this->service->prefill(self::AUTHOR, $uuid));
+	}
+
+	/**
+	 * The category is the one this person last entered on this vehicle, not the newest-dated trip's
+	 * and not somebody else's; a Reconciliation Trip is the app's, not their choice. The last trip
+	 * is the one that set off last, whoever entered it, and a trip logged by distance names no counter.
+	 */
+	public function testThePrefillOffersThisPersonsLastCategoryAndTheLastTripsEnd(): void {
+		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 132']);
+		$uuid = $vehicle->getUuid();
+		$this->record($uuid, 1750100000, ['end_odo' => 120100]);
+		$this->service->record(self::AUTHOR, $uuid, [
+			'started_at' => 1750000000, 'started_at_off' => 0, 'ended_at' => 1750003600, 'ended_at_off' => 0,
+			'category' => Trip::COMMUTE, 'end_odo' => 120000,
+		]);
+		$reconciled = $this->trip(1749000000);
+		$reconciled->setVehicleId((int)$vehicle->getId());
+		$reconciled->setReconciled(true);
+		$this->trips->insert($reconciled);
+		$theirs = $this->trip(1750200000, 120);
+		$theirs->setVehicleId((int)$vehicle->getId());
+		$theirs->setCreatedBy(self::OTHER);
+		$theirs->setDistance(80);
+		$this->trips->insert($theirs);
+
+		$prefill = $this->service->prefill(self::AUTHOR, $uuid);
+
+		$this->assertSame(Trip::COMMUTE, $prefill['category']);
+		$this->assertSame(['end_odo' => null, 'ended_at' => 1750203600, 'ended_at_off' => 120], $prefill['last']);
+	}
+
+	/** A vehicle with no trips offers neither. */
+	public function testThePrefillOfAVehicleWithoutTripsOffersNoCategoryAndNoLastTrip(): void {
+		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 133']);
+
+		$prefill = $this->service->prefill(self::AUTHOR, $vehicle->getUuid());
+
+		$this->assertNull($prefill['category']);
+		$this->assertNull($prefill['last']);
 	}
 
 	/**
@@ -407,6 +480,44 @@ class TripTest extends TestCase {
 	}
 
 	/**
+	 * The trail names who made each change, not who entered the trip: a manager who corrects or
+	 * voids a driver's trip is the one an auditor has to ask.
+	 */
+	public function testAManagersChangesToADriversTripAreTheManagersInTheTrail(): void {
+		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 133']);
+		$uuid = $vehicle->getUuid();
+		$this->underLogbookMode($vehicle);
+		foreach ([self::OTHER => 'driver', self::MANAGER => 'manager'] as $grantee => $role) {
+			$grant = new Access();
+			$grant->setVehicleId((int)$vehicle->getId());
+			$grant->setGrantee($grantee);
+			$grant->setGranteeType(Access::USER);
+			$grant->setRole($role);
+			$grant->setCreatedBy(self::AUTHOR);
+			\OCP\Server::get(AccessMapper::class)->insert($grant);
+		}
+		$body = [
+			'started_at' => 1750000000,
+			'started_at_off' => 0,
+			'ended_at' => 1750005400,
+			'ended_at_off' => 0,
+			'end_odo' => 120450,
+			'category' => Trip::BUSINESS,
+		];
+		$trip = $this->service->record(self::OTHER, $uuid, $body);
+
+		$edited = $this->service->update(self::MANAGER, $uuid, $trip->getUuid(), $trip->getUpdatedAt(), ['purpose' => 'Kundentermin'] + $body);
+		$this->service->delete(self::MANAGER, $uuid, $trip->getUuid(), $edited->getUpdatedAt());
+
+		$trail = $this->audit->findForEntity(Audit::TRIP, (int)$trip->getId());
+		$this->assertSame(
+			[['created', self::OTHER], ['edited', self::MANAGER], ['voided', self::MANAGER]],
+			array_map(static fn (Audit $row): array => [$row->getDiffJson()['change'], $row->getCreatedBy()], $trail),
+		);
+		$this->assertSame(self::OTHER, $this->trips->findAnyByUuid($trip->getUuid())->getCreatedBy(), 'the trip is still the driver\'s');
+	}
+
+	/**
 	 * The concurrency token is the statement's own predicate (docs/architecture.md#concurrency), so
 	 * a void that lost the race writes nothing at all - not the stamp, not the trail, and not the
 	 * Reading that would have gone with it.
@@ -459,6 +570,7 @@ class TripTest extends TestCase {
 			'change' => 'edited',
 			'fields' => ['end_odo' => [120450, 120460], 'purpose' => [null, 'Kundentermin']],
 			'late' => true,
+			'updated_at' => $this->trips->findByUuid($trip->getUuid())->getUpdatedAt(),
 		], end($trail)->getDiffJson());
 	}
 
@@ -644,7 +756,7 @@ class TripTest extends TestCase {
 	public function testTheServiceIsBuiltFromItsConstructorTypesAlone(): void {
 		$this->assertInstanceOf(
 			TripService::class,
-			(new Application())->getContainer()->get(TripService::class),
+			\OCP\Server::get(TripService::class),
 		);
 	}
 }

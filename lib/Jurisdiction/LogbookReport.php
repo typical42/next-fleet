@@ -24,17 +24,22 @@ final class LogbookReport {
 	 * `missing` is empty for a trip set off outside every period, and `late` is every change made
 	 * after the lock delay, oldest first: the trail's word for it (`edited`, `voided`, `restored`),
 	 * the server instant it was made at, each column it changed as `[before, after]`, and the trip's
-	 * offsets as they stood before it.
+	 * offsets as they stood before it. `unlogged` is the server instant a trip set off under the mode
+	 * was last changed by something that left no audit row, or null (LogbookExport).
 	 *
 	 * @param int $year the local calendar year the trips set off in (docs/architecture.md#time)
-	 * @param list<array{trip: Trip, missing: list<string>, late: list<LateChange>}> $trips
-	 * @param list<array{from: int, to: ?int}> $periods the instants Logbook Mode was switched on and
-	 *                                                  off, for every period that reaches into the year; `to` is null while it is still on
+	 * @param list<array{trip: Trip, missing: list<string>, late: list<LateChange>, unlogged?: ?int}> $trips
+	 * @param list<array{from: int, to: ?int, plates?: list<array{plate: ?string, from: int}>}> $periods the instants Logbook Mode was switched on and
+	 *                                                                                                   off, for every period that reaches into the year; `to` is null while it is still on. `plates` is
+	 *                                                                                                   each plate the vehicle carried in the period, oldest first, with the instant it took over - the
+	 *                                                                                                   first no earlier than `from`
 	 * @param ?string $sourceUrl where the requirement the logbook claims to meet is written, or null
 	 *                           where the jurisdiction states none
 	 * @param ?array<string, string> $enteredBy the name of whoever entered each trip, by the trip's
 	 *                                          `created_by`, or null on a vehicle nobody else was ever given access to - whose
 	 *                                          logbook names nobody (EnteredBy)
+	 * @param \DateTimeZone $zone the reader's, to state the server instants in - when a trip was
+	 *                            entered, changed or voided and when the mode was switched - which carry no offset of their own
 	 */
 	public function __construct(
 		public readonly Vehicle $vehicle,
@@ -43,6 +48,7 @@ final class LogbookReport {
 		public readonly array $periods,
 		public readonly ?string $sourceUrl,
 		public readonly ?array $enteredBy = null,
+		public readonly \DateTimeZone $zone = new \DateTimeZone('UTC'),
 	) {
 	}
 }

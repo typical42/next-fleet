@@ -7,6 +7,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
 import { createReminder, createVehicle, deleteEntry, deleteVehicle, detachDocument, getVehicle, leaveVehicle, listVehicles, recordEnergy, recordExpense, recordMaintenance, recordReading, recordTrip, restoreDocument, restoreEntry, restoreVehicle, runImport, undoImport, updateEntry, updateVehicle } from '../services/api.js'
+import { useInboxStore } from './inbox.js'
 
 /** @typedef {import('../services/api.js').Vehicle} Vehicle */
 /** @typedef {import('../services/api.js').Reading} Reading */
@@ -62,6 +63,15 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	const detached = ref(null)
 
 	/**
+	 * The last save from the entry sheet, for the toast's "Saved.". An edit carries the way back:
+	 * the token it answered with and the fields it replaced, held for the reason `deleted` is. A new
+	 * Entry carries neither - its row on the timeline is where it is taken back.
+	 *
+	 * @type {import('vue').Ref<{vehicle: string, type: import('../services/api.js').Written, entry: {uuid: string, updated_at: number}|null, before: object|null}|null>}
+	 */
+	const saved = ref(null)
+
+	/**
 	 * The list the last paper's undo answered, for the papers section to show: the toast that makes
 	 * the undo knows no section, as with `restored`.
 	 *
@@ -70,7 +80,7 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	const refiled = ref(null)
 
 	/**
-	 * How many undos have brought Entries back or taken an import's away. The toast that makes the undo lives in the app
+	 * How many undos have brought Entries back, written an edit back or taken an import's away. The toast that makes the undo lives in the app
 	 * shell and knows no timeline; a timeline watches this and reads itself again.
 	 */
 	const restored = ref(0)
@@ -110,7 +120,7 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	/**
 	 * Add a vehicle and hold what the server made of it, identity and defaults included.
 	 *
-	 * @param {Partial<Vehicle>} fields - the ones the create sheet asks for (docs/ui.md)
+	 * @param {Partial<Vehicle> & import('../services/api.js').Retried} fields - the ones the create sheet asks for (docs/ui.md)
 	 * @return {Promise<Vehicle>} the vehicle as the server made it
 	 */
 	async function create(fields) {
@@ -153,6 +163,7 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 		struck.value = null
 		imported.value = null
 		detached.value = null
+		saved.value = null
 		byUuid.value.delete(vehicle.uuid)
 	}
 
@@ -196,6 +207,7 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 		deleted.value = null
 		imported.value = null
 		detached.value = null
+		saved.value = null
 		struck.value = { vehicle: uuid, type, entry: left }
 	}
 
@@ -212,7 +224,10 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 		deleted.value = null
 		struck.value = null
 		imported.value = null
+		saved.value = null
 		detached.value = { vehicle: uuid, document: paper.uuid }
+		// The file may wait in the inbox folder again. Not awaited: the list is the answer.
+		useInboxStore().refresh()
 
 		return list
 	}
@@ -231,6 +246,7 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 		deleted.value = null
 		struck.value = null
 		detached.value = null
+		saved.value = null
 		imported.value = { vehicle: uuid, counts: result.counts, created: result.created }
 
 		return result
@@ -244,9 +260,10 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	 * Nothing deleted is nothing to undo, and no request: the toast is the only caller and it is
 	 * only up while there is an offer, so this is the state after a page load, not a failure.
 	 *
-	 * An import is undone as the list it answered, all of it or nothing.
+	 * An import is undone as the list it answered, all of it or nothing; an edit by writing back what
+	 * it replaced.
 	 *
-	 * @return {Promise<void>} when the vehicle, the Entry or the paper is back, or the import's entries gone
+	 * @return {Promise<void>} when the vehicle, the Entry, the paper or the edited Entry is back, or the import's entries gone
 	 */
 	async function restore() {
 		if (deleted.value !== null) {
@@ -267,6 +284,16 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 		if (paper !== null) {
 			refiled.value = { vehicle: paper.vehicle, list: await restoreDocument(paper.vehicle, paper.document) }
 			detached.value = null
+			useInboxStore().refresh()
+			return
+		}
+
+		const edit = saved.value
+		const { entry, before } = edit ?? {}
+		if (edit !== null && entry && before) {
+			await moving(edit.vehicle, edit.type, () => updateEntry(edit.vehicle, edit.type, entry, before))
+			saved.value = null
+			restored.value++
 			return
 		}
 
@@ -300,6 +327,30 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 		struck.value = null
 		imported.value = null
 		detached.value = null
+		saved.value = null
+	}
+
+	/**
+	 * Say the entry sheet's save went through, and for an edit hold the way back, one offer at a time
+	 * with the others. A new Entry offers nothing, so it gives way to an offer still standing: its
+	 * word leaves on a clock, and would take that way back with it.
+	 *
+	 * @param {string} uuid - the vehicle
+	 * @param {import('../services/api.js').Written} type - which kind was saved
+	 * @param {{uuid: string, updated_at: number}|null} [entry] - what an edit answered with
+	 * @param {object|null} [before] - the whole Entry as the edit found it, as its update takes it
+	 */
+	function wrote(uuid, type, entry = null, before = null) {
+		const standing = deleted.value !== null || struck.value !== null || imported.value !== null || detached.value !== null
+			|| (saved.value !== null && saved.value.before !== null)
+		if (before === null && standing) {
+			return
+		}
+		deleted.value = null
+		struck.value = null
+		imported.value = null
+		detached.value = null
+		saved.value = { vehicle: uuid, type, entry, before }
 	}
 
 	/**
@@ -447,5 +498,5 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 		}
 	}
 
-	return { bring, byUuid, create, deleted, detach, detached, fill, imported, forget, leave, list, load, log, maintain, record, refiled, refresh, remind, reminded, remove, restore, restored, revise, save, spend, strike, struck, upsert, visible }
+	return { bring, byUuid, create, deleted, detach, detached, fill, imported, forget, leave, list, load, log, maintain, record, refiled, refresh, remind, reminded, remove, restore, restored, revise, save, saved, spend, strike, struck, upsert, visible, wrote }
 })

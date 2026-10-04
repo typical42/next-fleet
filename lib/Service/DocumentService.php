@@ -25,9 +25,8 @@ use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Exception\AccessDeniedException;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Db\TTransactional;
-use OCP\Files\Config\IUserMountCache;
 use OCP\Files\File;
-use OCP\Files\IRootFolder;
+use OCP\Files\Node;
 use OCP\IDBConnection;
 
 /**
@@ -48,9 +47,7 @@ class DocumentService {
 		private ExpenseMapper $expenses,
 		private BookingMapper $bookings,
 		private VehicleAccess $access,
-		private IRootFolder $root,
 		private OwnFiles $files,
-		private IUserMountCache $mounts,
 		private IDBConnection $db,
 	) {
 	}
@@ -81,7 +78,28 @@ class DocumentService {
 	 */
 	public function attach(string $userId, string $vehicleUuid, array $fields): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
+		$once = Once::of(
+			$fields,
+			$this->documents,
+			static fn (Document $row): bool => $row->getVehicleId() === (int)$vehicle->getId(),
+			fn (): array => $this->of($userId, $vehicle),
+		);
 
+		return $once->run(fn (): array => $this->insert($userId, $vehicle, $fields, $once));
+	}
+
+	/**
+	 * What attach() writes once it knows the request is no retry.
+	 *
+	 * @param array<string, mixed> $fields
+	 * @param Once<Document> $once
+	 * @return list<Listed>
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException
+	 * @throws \InvalidArgumentException
+	 * @throws \OCP\DB\Exception
+	 */
+	private function insert(string $userId, Vehicle $vehicle, array $fields, Once $once): array {
 		$fileId = OwnFiles::id($fields['file_id'] ?? null);
 		$kind = $fields['kind'] ?? null;
 		if (!is_string($kind) || !in_array($kind, Document::KINDS, true)) {
@@ -103,8 +121,9 @@ class DocumentService {
 
 		$this->files->find($userId, $fileId);
 
-		$this->atomicRetry(function () use ($userId, $vehicleId, $fileId, $kind, $linkedType, $linkedUuid): void {
+		$this->atomicRetry(function () use ($userId, $vehicleId, $fileId, $kind, $linkedType, $linkedUuid, $once): void {
 			$this->vehicles->hold($vehicleId);
+			$once->check();
 			// Looked up under the hold, so the row cannot be deleted between the check and the insert.
 			$linkedId = $linkedType === null ? null
 				: (int)$this->linked($linkedType)->findOnVehicle($vehicleId, (string)$linkedUuid)->getId();
@@ -114,6 +133,7 @@ class DocumentService {
 			}
 
 			$row = new Document();
+			$once->stamp($row);
 			$row->setVehicleId($vehicleId);
 			$row->setFileId($fileId);
 			$row->setKind($kind);
@@ -192,32 +212,37 @@ class DocumentService {
 	public function download(string $userId, string $vehicleUuid, string $documentUuid): File {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::VIEW, $vehicleUuid);
 		$document = $this->documents->findOnVehicle((int)$vehicle->getId(), $documentUuid);
+		$file = $this->asked(fn (): ?Node => $this->files->mine($document->getCreatedBy(), $document->getFileId()));
 
-		return $this->file($document->getFileId())
-			?? throw new DoesNotExistException('The file behind document ' . $documentUuid . ' is gone');
+		return $file instanceof File ? $file
+			: throw new DoesNotExistException('The file behind document ' . $documentUuid . ' is no longer a file of its own');
 	}
 
 	/**
-	 * The attached file wherever it lives now, in whoever's Files hold it: access follows the
-	 * vehicle. A file in the trash bin keeps its id, but a paper somebody threw away is gone.
+	 * What the attached file is while it is still the attacher's own, wherever in their Files it
+	 * moved, or null. Access follows the vehicle, so the file's side is what the attacher vouched
+	 * for: moved into a share, a group folder or an external storage, somebody else can change or
+	 * remove it (docs/security.md#authorization). A file in the trash bin is outside their Files.
 	 *
-	 * Not `IRootFolder::getById`: in a web request that searches only the session user's mounts,
-	 * so a driver would never find the owner's file. `getUserFolder` mounts that user's Files, and
-	 * its trash bin is outside them.
+	 * OwnFiles mounts the attacher's Files, not `IRootFolder::getById`: in a web request that
+	 * searches only the session user's mounts, so a driver would never find the owner's file.
+	 *
+	 * @template T
+	 * @param \Closure(): T $ask
+	 * @return T|null
+	 * @throws \OCP\DB\Exception
 	 */
-	private function file(int $fileId): ?File {
-		$holders = [];
-		foreach ($this->mounts->getMountsForFileId($fileId) as $mount) {
-			$holders[$mount->getUser()->getUID()] = true;
+	private function asked(\Closure $ask): mixed {
+		try {
+			return $ask();
+		} catch (\OCP\DB\Exception $e) {
+			// Ours to retry, not a file gone: the screen would tell everyone it was removed.
+			throw $e;
+		} catch (\Exception) {
+			// An erased attacher's pseudonym has no Files (NoUserException, which OCP does not
+			// name), nor does a storage that is down: their papers list without a name.
+			return null;
 		}
-		foreach (array_keys($holders) as $uid) {
-			$node = $this->root->getUserFolder((string)$uid)->getFirstNodeById($fileId);
-			if ($node instanceof File) {
-				return $node;
-			}
-		}
-
-		return null;
 	}
 
 	/**
@@ -313,18 +338,26 @@ class DocumentService {
 	 */
 	public function wired(string $userId, Vehicle $vehicle, array $documents): array {
 		$owners = $this->owners($vehicle, $documents);
+		// One lookup per file, however many rows it is on.
+		/** @var array<string, ?array{name: string, mime: string}> $shown */
+		$shown = [];
 
-		return array_map(function (Document $document) use ($userId, $vehicle, $owners): array {
-			$file = $this->file($document->getFileId());
+		return array_map(function (Document $document) use ($userId, $vehicle, $owners, &$shown): array {
+			$key = $document->getCreatedBy() . "\0" . $document->getFileId();
+			if (!array_key_exists($key, $shown)) {
+				$shown[$key] = $this->asked(fn (): ?array => $this->files->shown($document->getCreatedBy(), $document->getFileId()));
+			}
+			$file = $shown[$key];
 			$owner = $owners[(int)$document->getId()];
 
 			return [
 				'uuid' => $document->getUuid(),
 				'kind' => $document->getKind(),
 				'file_id' => $document->getFileId(),
-				// Null once the file is deleted: the row stays, and the screen says it is gone.
-				'name' => $file?->getName(),
-				'mime' => $file?->getMimeType(),
+				// Null once the file is deleted or no longer the attacher's own: the row stays, and
+				// the screen says the file is gone.
+				'name' => $file['name'] ?? null,
+				'mime' => $file['mime'] ?? null,
 				'linked_type' => $document->getLinkedType(),
 				'linked_uuid' => $owner?->getUuid(),
 				'may' => $this->keeps($userId, $vehicle, $owner) ? ['detach'] : [],

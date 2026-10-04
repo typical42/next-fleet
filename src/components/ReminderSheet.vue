@@ -3,7 +3,6 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
-import { t } from '@nextcloud/l10n'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcDateTimePickerNative from '@nextcloud/vue/components/NcDateTimePickerNative'
 import NcDialog from '@nextcloud/vue/components/NcDialog'
@@ -17,6 +16,7 @@ import { ConflictError, createReminder, dismissReminder, listReminders, reminder
 import { useVehiclesStore } from '../store/index.js'
 import { formatDay, parseDay, parseWhole } from '../utils/format.js'
 import { addDays, addMonths, templateWord } from '../utils/reminders.js'
+import { t } from '../utils/l10n.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */

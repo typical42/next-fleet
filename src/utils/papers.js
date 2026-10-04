@@ -3,9 +3,8 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-import { t } from '@nextcloud/l10n'
-
 import { fetchDocument, LockedError, NotFoundError } from '../services/api.js'
+import { t } from './l10n.js'
 
 /**
  * Saves one paper's file, or says why not. Fetched, not followed: a followed link that is refused
@@ -21,7 +20,7 @@ export async function savePaper(uuid, paper) {
 		file = await fetchDocument(uuid, paper.uuid)
 	} catch (error) {
 		if (error instanceof NotFoundError) {
-			return t('nextfleet', 'This document is gone: it was removed, or its file was deleted from Files.')
+			return t('nextfleet', 'This document is gone: it was removed, or its file is no longer in the Files of whoever attached it.')
 		}
 		if (error instanceof LockedError) {
 			return t('nextfleet', 'Somebody is saving this file right now. Try again in a moment.')
@@ -30,7 +29,9 @@ export async function savePaper(uuid, paper) {
 	}
 
 	const link = document.createElement('a')
-	link.href = URL.createObjectURL(file)
+	// A blob URL is of the app's origin and keeps the blob's type: an HTML paper opened from it
+	// would run there. Typeless bytes the browser only saves.
+	link.href = URL.createObjectURL(new Blob([file], { type: 'application/octet-stream' }))
 	link.download = paper.name ?? ''
 	link.click()
 	// Revoked at once, some browsers save nothing, and no event says when the save has the bytes; a

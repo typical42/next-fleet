@@ -8,7 +8,6 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Integration;
 
-use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\Reminder;
@@ -29,6 +28,8 @@ use PHPUnit\Framework\TestCase;
  * It writes to the instance it runs against (docs/development.md#testing).
  */
 class ReminderTest extends TestCase {
+	use CountsQueries;
+
 	/** Not Nextcloud accounts: `user_id` and `grantee` are string columns with no key on them. */
 	private const OWNER = 'nextfleet-test-alice';
 	private const MANAGER = 'nextfleet-test-dave';
@@ -39,10 +40,9 @@ class ReminderTest extends TestCase {
 	private OdometerService $odometer;
 
 	protected function setUp(): void {
-		$container = (new Application())->getContainer();
-		$this->reminders = $container->get(ReminderService::class);
-		$this->vehicles = $container->get(VehicleService::class);
-		$this->odometer = $container->get(OdometerService::class);
+		$this->reminders = \OCP\Server::get(ReminderService::class);
+		$this->vehicles = \OCP\Server::get(VehicleService::class);
+		$this->odometer = \OCP\Server::get(OdometerService::class);
 		$this->forgetTestRows();
 	}
 
@@ -82,6 +82,25 @@ class ReminderTest extends TestCase {
 		$this->assertSame(Reminder::PLANNED, $written['state']);
 		$this->assertSame(1, $written['occurrence']);
 		$this->assertSame([$written['uuid']], array_column($this->reminders->list(self::OWNER, $vehicle->getUuid()), 'uuid'));
+	}
+
+	/** A counter stops at a billion and a recurrence at a hundred years (docs/security.md). */
+	public function testACounterOrARecurrencePastItsBoundIsRefused(): void {
+		$uuid = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123'])->getUuid();
+		$this->reminders->create(self::OWNER, $uuid, ['title' => 'At the bounds', 'mode' => Reminder::EITHER, 'due_date' => '2027-03-31', 'due_odo' => 1_000_000_000, 'recur_months' => 1_200, 'recur_odo' => 1_000_000_000]);
+
+		foreach ([
+			['due_odo is 1000000000 at most', ['mode' => Reminder::ODO, 'due_odo' => 1_000_000_001]],
+			['lead_odo is 1000000000 at most', ['mode' => Reminder::ODO, 'due_odo' => 1000, 'lead_odo' => 1_000_000_001]],
+			['recur_months is 1200 at most', ['mode' => Reminder::DATE, 'due_date' => '2027-03-31', 'recur_months' => 1_201]],
+		] as [$message, $fields]) {
+			try {
+				$this->reminders->create(self::OWNER, $uuid, ['title' => 'Past them'] + $fields);
+				$this->fail('created: ' . $message);
+			} catch (\InvalidArgumentException $e) {
+				$this->assertSame($message, $e->getMessage());
+			}
+		}
 	}
 
 	/** A mode the request names wins, and the template fills only the parts that mode reads. */
@@ -351,6 +370,39 @@ class ReminderTest extends TestCase {
 		$this->assertSame(Reminder::PLANNED, $fleet[0]['state']);
 		$this->assertArrayHasKey('estimate', $fleet[0]);
 		$this->assertSame([$second['uuid']], array_column($this->reminders->fleet(self::MANAGER), 'uuid'));
+	}
+
+	/**
+	 * The overview reads every vehicle's reminders and pace at once: four vehicles by km cost the
+	 * queries one does, and each keeps its own estimate.
+	 */
+	public function testTheFleetReadsAsManyQueriesForFourVehiclesAsForOne(): void {
+		$this->assertSame([], $this->reminders->fleet(self::OWNER));
+		$this->vehicleByKm();
+		$once = self::queriesOf(fn () => $this->reminders->fleet(self::OWNER));
+		for ($i = 0; $i < 3; $i++) {
+			$this->vehicleByKm();
+		}
+
+		$fleet = [];
+		$four = self::queriesOf(function () use (&$fleet): void {
+			$fleet = $this->reminders->fleet(self::OWNER);
+		});
+
+		$this->assertSame($once, $four);
+		$inNineteenDays = \OCP\Server::get(ITimeFactory::class)->now()->modify('+19 days')->format('Y-m-d');
+		$this->assertSame(array_fill(0, 4, $inNineteenDays), array_column($fleet, 'estimate'));
+	}
+
+	/** A vehicle 20 km a day short of its chain's 400 km, read on two days 40 days apart. */
+	private function vehicleByKm(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$now = \OCP\Server::get(ITimeFactory::class)->now()->getTimestamp();
+		// An old Reading outside the window leaves the pace alone.
+		$this->odometer->record(self::OWNER, $vehicle->getUuid(), ['read_at' => $now - 400 * 86400, 'read_at_off' => 0, 'value' => 2000]);
+		$this->odometer->record(self::OWNER, $vehicle->getUuid(), ['read_at' => $now - 41 * 86400, 'read_at_off' => 0, 'value' => 10000]);
+		$this->odometer->record(self::OWNER, $vehicle->getUuid(), ['read_at' => $now - 86400, 'read_at_off' => 0, 'value' => 10800]);
+		$this->reminders->create(self::OWNER, $vehicle->getUuid(), ['title' => 'Chain', 'mode' => Reminder::ODO, 'due_odo' => 11200]);
 	}
 
 	/**

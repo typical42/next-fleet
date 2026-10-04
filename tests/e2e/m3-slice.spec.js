@@ -135,16 +135,18 @@ test('a fill-up is edited from its row, and deleted and brought back from the to
 test('the period picker changes the figures, and each is compared with the period before', async ({ page }) => {
 	const plate = `${plates}period-${Date.now()}`
 	const vehicle = await vehicleWith(page, plate, ['diesel'])
-	// Early January of last year is in "Last year" and outside the last 12 months for all but the
-	// first days of a year; the last two hours are in the last 12 months and outside last year
-	// for all but the first hours of one.
-	const lastYear = new Date().getUTCFullYear() - 1
-	const hour = 3600
-	await fillUp(page, vehicle, { filled_at: Date.UTC(lastYear, 0, 2, 12) / 1000, odo: 10000, amount: 30000 })
-	await fillUp(page, vehicle, { filled_at: Date.UTC(lastYear, 0, 3, 12) / 1000, odo: 10500, amount: 30000 })
+	// Placed from now, by the local midnights the header counts in (src/utils/period.js), so every
+	// day of the year holds. The 1st of January of last year is in "Last year", and the last 12
+	// months start the day after today's date a year ago, so never before the 2nd. The last two
+	// are this year and before now: in the last 12 months and out of last year.
+	const now = new Date()
+	const lastYear = now.getFullYear() - 1
+	const recent = Math.min(3 * 3600, Math.floor((now.getTime() - new Date(lastYear + 1, 0, 1).getTime()) / 1000))
+	await fillUp(page, vehicle, { filled_at: new Date(lastYear, 0, 1, 6).getTime() / 1000, odo: 10000, amount: 30000 })
+	await fillUp(page, vehicle, { filled_at: new Date(lastYear, 0, 1, 18).getTime() / 1000, odo: 10500, amount: 30000 })
 	// The segment across the months between is not measured: a fill-up in it went unrecorded.
-	await fillUp(page, vehicle, { filled_at: ago(0) - 2 * hour, odo: 11000, amount: 40000, missed_previous: true })
-	await fillUp(page, vehicle, { filled_at: ago(0) - hour, odo: 11400, amount: 28000 })
+	await fillUp(page, vehicle, { filled_at: ago(0) - Math.ceil(recent * 2 / 3), odo: 11000, amount: 40000, missed_previous: true })
+	await fillUp(page, vehicle, { filled_at: ago(0) - Math.ceil(recent / 3), odo: 11400, amount: 28000 })
 	await page.goto(appPage)
 	await open(page, plate)
 

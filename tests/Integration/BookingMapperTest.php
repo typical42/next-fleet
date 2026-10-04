@@ -8,7 +8,6 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Integration;
 
-use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\Booking;
 use OCA\NextFleet\Db\BookingMapper;
 use OCP\AppFramework\Db\DoesNotExistException;
@@ -35,7 +34,7 @@ class BookingMapperTest extends TestCase {
 
 	protected function setUp(): void {
 		$this->forgetTestRows();
-		$this->bookings = (new Application())->getContainer()->get(BookingMapper::class);
+		$this->bookings = \OCP\Server::get(BookingMapper::class);
 	}
 
 	protected function tearDown(): void {
@@ -65,11 +64,14 @@ class BookingMapperTest extends TestCase {
 		return $this->bookings->insert($booking);
 	}
 
-	/** @return list<string> */
-	private function overlapping(int $from, int $to, ?int $except = null): array {
+	/**
+	 * @param int $now the clock an overdue car is held until: noon unless a case moves it
+	 * @return list<string>
+	 */
+	private function overlapping(int $from, int $to, ?int $except = null, int $now = self::NOON): array {
 		return array_map(
 			static fn (Booking $b): string => $b->getUuid(),
-			$this->bookings->findLiveOverlapping(self::VEHICLE, $from, $to, $except),
+			$this->bookings->findLiveOverlapping(self::VEHICLE, $from, $to, $now, $except),
 		);
 	}
 
@@ -142,6 +144,20 @@ class BookingMapperTest extends TestCase {
 		$this->bookings->softDelete($deleted, $deleted->getUpdatedAt());
 
 		$this->assertSame([], $this->overlapping(self::NOON, self::NOON + self::HOUR));
+	}
+
+	/** Out, the car is gone from the moment it was taken early until it is back - half-open still. */
+	public function testAnOutBookingHoldsFromItsTakingUntilItIsBack(): void {
+		$out = $this->book(self::VEHICLE, self::NOON + 4 * self::HOUR, self::NOON + 6 * self::HOUR, Booking::OUT);
+		$out->setOutAt(self::NOON + self::HOUR);
+		$this->bookings->updateChecked($out, $out->getUpdatedAt());
+
+		$this->assertSame([$out->getUuid()], $this->overlapping(self::NOON + 2 * self::HOUR, self::NOON + 3 * self::HOUR));
+		$this->assertSame([], $this->overlapping(self::NOON, self::NOON + self::HOUR));
+		$this->assertSame([], $this->overlapping(self::NOON + 8 * self::HOUR, self::NOON + 9 * self::HOUR));
+		$overdue = self::NOON + 10 * self::HOUR;
+		$this->assertSame([$out->getUuid()], $this->overlapping(self::NOON + 8 * self::HOUR, self::NOON + 9 * self::HOUR, null, $overdue));
+		$this->assertSame([], $this->overlapping($overdue, $overdue + self::HOUR, null, $overdue));
 	}
 
 	public function testABookingBeingChangedDoesNotCollideWithItself(): void {

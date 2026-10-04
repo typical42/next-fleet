@@ -5,7 +5,7 @@
 
 import { expect, test } from '@playwright/test'
 
-import { add, api, appPage, audit, choice, login, open, opened, removeVehicles, row, settingsPage } from './app.js'
+import { add, api, appPage, audit, choice, login, open, opened, removeVehicles, row, settingsPage, tile } from './app.js'
 
 // Every vehicle this file makes wears this prefix, and every run deletes what it finds under it
 // before starting.
@@ -37,7 +37,7 @@ test.beforeEach(async ({ page }) => {
 	await api(page, {
 		method: 'PUT',
 		path: '/api/preferences',
-		body: { jurisdiction: 'de', dismissed_hints: [] },
+		body: { jurisdiction: 'de', dismissed_hints: [], dismissed_logbook_hints: [] },
 	})
 	await page.goto(appPage)
 })
@@ -91,6 +91,56 @@ test('a vehicle and a reading of its counter both reach the list', async ({ page
 		.toBe('diesel')
 })
 
+test('a vehicle made in the sheet takes a first fill-up from its empty timeline', async ({ page }) => {
+	const plate = `${plates}first-${Date.now()}`
+
+	await page.locator('.app-navigation').getByRole('button', { name: 'New vehicle' }).click()
+	const sheet = page.getByRole('dialog', { name: 'New vehicle' })
+	await sheet.getByRole('textbox', { name: 'Registration plate' }).fill(plate)
+	await sheet.getByRole('combobox', { name: 'Engine' }).click()
+	await option(page, 'Petrol').click()
+	await sheet.getByRole('button', { name: 'Add vehicle' }).click()
+	await expect(page.getByRole('heading', { name: plate })).toBeVisible()
+
+	// No counter was given, so the timeline is empty and teaches the way to a first row; the sheet
+	// asked for the engine only, and the server took the energy from it.
+	await page.locator('.timeline').getByRole('button', { name: 'New entry' }).click()
+	const entry = page.getByRole('dialog', { name: 'New entry' })
+	await choice(entry, 'Energy').click()
+	await entry.getByRole('textbox', { name: 'Amount (l)' }).fill('40')
+	await entry.getByRole('textbox', { name: 'Total price' }).fill('70,00')
+	await entry.getByRole('textbox', { name: 'Counter reading' }).fill(starting)
+	await entry.getByRole('button', { name: 'Save' }).click()
+	await expect(entry).toBeHidden()
+
+	await expect(tile(page, 'Cost in the period')).toContainText('€70.00')
+})
+
+test('a German vehicle is asked once whether it keeps a logbook', async ({ page }) => {
+	const switched = `${plates}logbook-on`
+	const declined = `${plates}logbook-off`
+	await add(page, switched, Number(starting))
+	await add(page, declined, Number(starting))
+	await page.goto(appPage)
+
+	await question(page, switched).getByRole('button', { name: 'Switch Logbook mode on' }).click()
+	await expect(question(page, switched)).toHaveCount(0)
+	await page.getByRole('button', { name: `Dismiss the logbook question for ${declined}` }).click()
+	await expect(question(page, declined)).toHaveCount(0)
+
+	// Off stays the default: only the vehicle somebody said yes for keeps a logbook.
+	const fleet = await api(page, { method: 'GET', path: '/api/vehicles' })
+	const mode = (/** @type {string} */ plate) => fleet.find((/** @type {{plate: string}} */ one) => one.plate === plate)?.logbook_mode
+	expect(mode(switched)).toBe(true)
+	// Never set, so null rather than false.
+	expect(mode(declined)).not.toBe(true)
+
+	// Answered for the person, not for this page.
+	await page.goto(appPage)
+	await expect(row(page, declined)).toBeVisible()
+	await expect(question(page, declined)).toHaveCount(0)
+})
+
 test('a vehicle is edited from its own screen, and disposing of it takes it off the fleet', async ({ page }) => {
 	const plate = `${plates}edit`
 	const vehicle = await add(page, plate, Number(starting))
@@ -104,7 +154,7 @@ test('a vehicle is edited from its own screen, and disposing of it takes it off 
 
 	// The country belongs to the vehicle rather than to whoever is editing it, and this is where it
 	// is changed until the sidebar exists (docs/ui.md).
-	await sheet.getByRole('combobox', { name: 'Jurisdiction' }).click()
+	await sheet.getByRole('combobox', { name: 'Country' }).click()
 	await option(page, 'Generic').click()
 
 	// A disposal day is a fact about a disposed vehicle and about no other, so the field is not
@@ -229,7 +279,7 @@ test('the country a new vehicle is kept under is a personal setting', async ({ p
 
 	await page.goto(settingsPage)
 	const section = page.locator('#nextfleet-settings')
-	await section.getByRole('combobox', { name: 'Jurisdiction' }).click()
+	await section.getByRole('combobox', { name: 'Country' }).click()
 	await option(page, 'Generic').click()
 
 	// A personal setting saves as it is changed, so the reload is what says it was stored rather
@@ -351,6 +401,15 @@ test.describe('at 320 x 640, in the dark', { tag: '@nc34' }, () => {
  */
 function hint(page, plate) {
 	return page.locator('.hint__item').filter({ hasText: plate })
+}
+
+/**
+ * @param {import('@playwright/test').Page} page - the overview
+ * @param {string} plate - the vehicle the logbook question is about
+ * @return {import('@playwright/test').Locator} its row in the question, if it is asked
+ */
+function question(page, plate) {
+	return page.locator('.hint__ask').filter({ hasText: plate })
 }
 
 /**

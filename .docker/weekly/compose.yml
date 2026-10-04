@@ -1,0 +1,78 @@
+# SPDX-FileCopyrightText: 2026 Johannes Kolb
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# NC 32 and NC 33 for the weekly E2E smoke run (docs/development.md#testing). The dev stack in
+# ../compose.yml holds 31 and 34; these are the two majors between, each with its own database,
+# thrown away with `down -v`.
+#
+#   docker compose -f .docker/weekly/compose.yml up -d --wait
+#
+# The app is bind-mounted as in the dev stack, so `npm run build` first.
+
+name: nextfleet-weekly
+
+x-db: &db
+  image: mariadb:11
+  # Nextcloud's own requirement; the default REPEATABLE-READ deadlocks its file cache.
+  command: --transaction-isolation=READ-COMMITTED
+  environment:
+    MARIADB_ROOT_PASSWORD: root
+    MARIADB_DATABASE: nextcloud
+    MARIADB_USER: nextcloud
+    MARIADB_PASSWORD: nextcloud
+  healthcheck:
+    test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+    interval: 10s
+    timeout: 5s
+    retries: 12
+
+# As in ../compose.yml, which says why each part is there.
+x-nextcloud: &nextcloud
+  entrypoint:
+    - /bin/sh
+    - -c
+    - chown www-data:www-data /var/www/html/custom_apps && exec /entrypoint.sh apache2-foreground
+  healthcheck:
+    test: ["CMD-SHELL", "curl -fsS http://localhost/status.php | grep -q '\"installed\":true'"]
+    interval: 10s
+    timeout: 5s
+    retries: 60
+    start_period: 30s
+  volumes:
+    - ../..:/var/www/html/custom_apps/nextfleet
+
+x-nextcloud-env: &nextcloud-env
+  MYSQL_DATABASE: nextcloud
+  MYSQL_USER: nextcloud
+  MYSQL_PASSWORD: nextcloud
+  NEXTCLOUD_TRUSTED_DOMAINS: localhost
+  NEXTCLOUD_ADMIN_USER: admin
+  NEXTCLOUD_ADMIN_PASSWORD: admin
+
+services:
+  db32: *db
+  db33: *db
+
+  app32:
+    <<: *nextcloud
+    image: nextcloud:32-apache
+    ports:
+      - "8032:80"
+    environment:
+      <<: *nextcloud-env
+      MYSQL_HOST: db32
+    depends_on:
+      db32:
+        condition: service_healthy
+
+  app33:
+    <<: *nextcloud
+    image: nextcloud:33-apache
+    ports:
+      - "8033:80"
+    environment:
+      <<: *nextcloud-env
+      MYSQL_HOST: db33
+    depends_on:
+      db33:
+        condition: service_healthy

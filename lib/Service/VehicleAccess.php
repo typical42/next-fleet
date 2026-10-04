@@ -78,6 +78,9 @@ class VehicleAccess {
 	 * vehicle that never passed the gate carries nothing and is refused.
 	 */
 	public function mayChange(string $userId, string $operation, Vehicle $vehicle, ?string $createdBy): bool {
+		if (self::erased($userId)) {
+			return false;
+		}
 		$held = $vehicle->getMay();
 
 		return in_array($operation, $held, true)
@@ -102,6 +105,9 @@ class VehicleAccess {
 	 * @throws \OCP\DB\Exception
 	 */
 	public function operations(string $userId, Vehicle $vehicle): array {
+		if (self::erased($userId)) {
+			return [];
+		}
 		if ($vehicle->getUserId() === $userId) {
 			return self::OPERATIONS;
 		}
@@ -127,6 +133,10 @@ class VehicleAccess {
 	 * @throws \OCP\DB\Exception
 	 */
 	public function reachable(string $userId): array {
+		if (self::erased($userId)) {
+			return [];
+		}
+
 		return array_map(
 			self::covered(...),
 			$this->grants->findReachable($userId, $this->groupIdsOf($userId), self::rolesCovering(self::VIEW)),
@@ -141,6 +151,9 @@ class VehicleAccess {
 	 * @return list<string>
 	 */
 	public function listed(string $userId, Vehicle $vehicle, array $reachable): array {
+		if (self::erased($userId)) {
+			return [];
+		}
 		if ($vehicle->getUserId() === $userId) {
 			return self::OPERATIONS;
 		}
@@ -159,6 +172,15 @@ class VehicleAccess {
 		$held = array_merge([], ...array_map(static fn (string $role): array => self::ROLES[$role] ?? [], $roles));
 
 		return array_values(array_intersect(self::OPERATIONS, $held));
+	}
+
+	/**
+	 * A pseudonym is no account, whatever rows still name it: no session carries one, so a caller
+	 * handing one in took it off a row, and it must open nothing
+	 * (docs/adr/0008-erasing-a-driver-pseudonymises.md).
+	 */
+	private static function erased(string $userId): bool {
+		return str_starts_with($userId, ErasureService::PREFIX);
 	}
 
 	/**

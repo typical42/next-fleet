@@ -50,6 +50,73 @@ class AuditMapper extends BaseMapper {
 	}
 
 	/**
+	 * A transfer's diff names the owners it moved the vehicle between, so the uid goes there
+	 * too. Rewriting a row of an append-only trail is what an erasure is; nothing else does it.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	public function pseudonymise(string $uid, string $pseudonym): int {
+		$changed = parent::pseudonymise($uid, $pseudonym);
+
+		$transfers = $this->transfersNaming($uid);
+		foreach ($transfers as $row) {
+			$diff = $row->getDiffJson();
+			/** @var list<mixed> $owners transfersNaming() saw the list */
+			$owners = $diff['fields']['user_id'];
+			$diff['fields']['user_id'] = array_map(static fn (mixed $owner): mixed => $owner === $uid ? $pseudonym : $owner, $owners);
+			$update = $this->db->getQueryBuilder();
+			$update->update($this->tableName)
+				->set('diff_json', $update->createNamedParameter($diff, IQueryBuilder::PARAM_JSON))
+				->where($update->expr()->eq('id', $update->createNamedParameter((int)$row->getId(), IQueryBuilder::PARAM_INT)));
+			$update->executeStatement();
+		}
+
+		return $changed + count($transfers);
+	}
+
+	/**
+	 * A transfer that moved a vehicle to or from the account as well, for the reason
+	 * pseudonymise() gives. That reads every transfer row, which an admin writes rarely.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	public function names(string $uid): bool {
+		return parent::names($uid) || $this->transfersNaming($uid) !== [];
+	}
+
+	/**
+	 * A transfer that moved a vehicle to or from the account as well, for the reason
+	 * pseudonymise() gives.
+	 *
+	 * @return list<Audit>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findNaming(string $uid): array {
+		$rows = [...parent::findNaming($uid), ...$this->transfersNaming($uid)];
+		usort($rows, static fn (Audit $a, Audit $b): int => $a->getId() <=> $b->getId());
+
+		return $rows;
+	}
+
+	/**
+	 * @return list<Audit>
+	 * @throws \OCP\DB\Exception
+	 */
+	private function transfersNaming(string $uid): array {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->tableName)
+			->where($qb->expr()->eq('entity', $qb->createNamedParameter(Audit::VEHICLE)))
+			->andWhere($qb->expr()->eq('created_by', $qb->createNamedParameter(Audit::TRANSFERRED_BY)));
+
+		return array_values(array_filter($this->findEntities($qb), static function (Audit $row) use ($uid): bool {
+			$owners = $row->getDiffJson()['fields']['user_id'] ?? null;
+
+			return is_array($owners) && in_array($uid, $owners, true);
+		}));
+	}
+
+	/**
 	 * The trail of one row, oldest first. `id` alone orders it: the rows are only ever inserted,
 	 * so the key is the order they were written in, and two changes in the same second still
 	 * come back the way they happened.
@@ -73,7 +140,7 @@ class AuditMapper extends BaseMapper {
 
 	/**
 	 * The trails of many rows of one table, each oldest first, so a year's export asks once per
-	 * thousand trips rather than once per trip. A thousand because Oracle refuses a longer `IN`.
+	 * InList chunk of trips rather than once per trip.
 	 *
 	 * @param list<int> $entityIds
 	 * @return list<Audit>
@@ -81,12 +148,12 @@ class AuditMapper extends BaseMapper {
 	 */
 	public function findForEntities(string $entity, array $entityIds): array {
 		$rows = [];
-		foreach (array_chunk($entityIds, 1000) as $chunk) {
+		foreach (InList::chunks($entityIds) as $chunk) {
 			$qb = $this->db->getQueryBuilder();
 			$qb->select('*')
 				->from($this->tableName)
 				->where($qb->expr()->eq('entity', $qb->createNamedParameter($entity)))
-				->andWhere($qb->expr()->in('entity_id', $qb->createNamedParameter($chunk, IQueryBuilder::PARAM_INT_ARRAY)))
+				->andWhere(InList::in($qb, 'entity_id', $chunk, IQueryBuilder::PARAM_INT_ARRAY))
 				->orderBy('id', 'ASC');
 			array_push($rows, ...$this->findEntities($qb));
 		}

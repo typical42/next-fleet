@@ -109,6 +109,18 @@ final class Contract {
 		if (self::on($was, 'nullable') && !self::on($is, 'nullable')) {
 			$this->breaks[] = self::point($where, $at) . ' no longer takes null';
 		}
+		$this->unchanged($where, $at, $was, $is);
+		$this->bound($where, $at, 'minimum', $was, $is, fn (int|float $was, int|float $is): bool => $is > $was);
+		$this->bound($where, $at, 'maximum', $was, $is, fn (int|float $was, int|float $is): bool => $is < $was);
+		if (is_array($is['enum'] ?? null)) {
+			if (!is_array($was['enum'] ?? null)) {
+				$this->breaks[] = self::point($where, $at) . ' now takes only ' . self::json($is['enum']);
+			} else {
+				foreach (self::missing($was['enum'], $is['enum']) as $value) {
+					$this->breaks[] = self::point($where, $at) . ' no longer takes ' . self::json($value);
+				}
+			}
+		}
 
 		$required = (array)($was['required'] ?? []);
 		foreach ((array)($is['required'] ?? []) as $name) {
@@ -123,6 +135,26 @@ final class Contract {
 		}
 		if (isset($was['items'], $is['items'])) {
 			$this->ask($where, "{$at}[]", $was['items'], $is['items'], $seen);
+		}
+	}
+
+	/**
+	 * A bound a request field now has, or has tighter than before.
+	 *
+	 * @param array<array-key, mixed> $was
+	 * @param array<array-key, mixed> $is
+	 * @param \Closure(int|float, int|float): bool $tighter
+	 */
+	private function bound(string $where, string $at, string $bound, array $was, array $is, \Closure $tighter): void {
+		$before = $was[$bound] ?? null;
+		$now = $is[$bound] ?? null;
+		if (!is_int($now) && !is_float($now)) {
+			return;
+		}
+		if (!is_int($before) && !is_float($before)) {
+			$this->breaks[] = self::point($where, $at) . " $bound was none, is $now";
+		} elseif ($tighter($before, $now)) {
+			$this->breaks[] = self::point($where, $at) . " $bound was $before, is $now";
 		}
 	}
 
@@ -166,6 +198,16 @@ final class Contract {
 		if (!self::on($was, 'nullable') && self::on($is, 'nullable')) {
 			$this->breaks[] = self::point($where, $at) . ' may now be null';
 		}
+		$this->unchanged($where, $at, $was, $is);
+		if (is_array($was['enum'] ?? null)) {
+			if (!is_array($is['enum'] ?? null)) {
+				$this->breaks[] = self::point($where, $at) . ' is no longer one of ' . self::json($was['enum']);
+			} else {
+				foreach (self::missing($is['enum'], $was['enum']) as $value) {
+					$this->breaks[] = self::point($where, $at) . ' may now be ' . self::json($value);
+				}
+			}
+		}
 
 		$required = (array)($is['required'] ?? []);
 		foreach ((array)($was['properties'] ?? []) as $name => $field) {
@@ -198,6 +240,48 @@ final class Contract {
 	}
 
 	/**
+	 * A map's values and a `oneOf`'s members are not walked: a client decodes them as one shape,
+	 * so any change to it may break one, whichever way it goes.
+	 *
+	 * @param array<array-key, mixed> $was
+	 * @param array<array-key, mixed> $is
+	 */
+	private function unchanged(string $where, string $at, array $was, array $is): void {
+		foreach (['additionalProperties', 'oneOf'] as $keyword) {
+			if (self::plain($this->promised, $was[$keyword] ?? null, []) !== self::plain($this->offered, $is[$keyword] ?? null, [])) {
+				$this->breaks[] = self::point($where, $at) . " $keyword changed";
+			}
+		}
+	}
+
+	/**
+	 * A schema as a client sees it, to compare whole: each `$ref` put in its place but one that
+	 * holds itself, keys in order, and no descriptions.
+	 *
+	 * @param array<string, mixed> $document the document the schema is part of
+	 * @param list<string> $refs the `$ref`s above this one, so a cycle ends
+	 */
+	private static function plain(array $document, mixed $schema, array $refs): mixed {
+		if (!is_array($schema)) {
+			return $schema;
+		}
+		$ref = $schema['$ref'] ?? null;
+		if (is_string($ref) && !in_array($ref, $refs, true)) {
+			$refs[] = $ref;
+			$schema = (array)($document['components']['schemas'][substr($ref, strlen('#/components/schemas/'))] ?? []);
+		}
+		// A string: a field named `description` is a schema, and stays.
+		if (is_string($schema['description'] ?? null)) {
+			unset($schema['description']);
+		}
+		if (!array_is_list($schema)) {
+			ksort($schema);
+		}
+
+		return array_map(fn (mixed $part): mixed => self::plain($document, $part, $refs), $schema);
+	}
+
+	/**
 	 * The type as a client decodes it: an int32 and an int64 are different integers to Kotlin.
 	 *
 	 * @param array<array-key, mixed> $schema
@@ -223,19 +307,19 @@ final class Contract {
 			$schema = (array)($document['components']['schemas'][$name] ?? []);
 		}
 		if (is_array($schema['allOf'] ?? null)) {
-			$typed = [];
+			$rest = [];
 			$properties = [];
 			$required = [];
 			$nullable = self::on($schema, 'nullable');
 			$names = [];
 			foreach ($schema['allOf'] as $part) {
 				[$part, $names[]] = $this->resolve($document, $part);
-				$typed += array_intersect_key($part, ['type' => true, 'format' => true]);
+				$rest += array_diff_key($part, ['properties' => true, 'required' => true, 'nullable' => true]);
 				$properties += (array)($part['properties'] ?? []);
 				$required = [...$required, ...(array)($part['required'] ?? [])];
 				$nullable = $nullable || self::on($part, 'nullable');
 			}
-			$schema = $typed + ['properties' => $properties, 'required' => $required, 'nullable' => $nullable];
+			$schema = ['properties' => $properties, 'required' => $required, 'nullable' => $nullable] + $rest;
 			$name = in_array(null, $names, true) ? null : implode('&', $names);
 		}
 
@@ -257,6 +341,21 @@ final class Contract {
 		$seen[] = "$was $is";
 
 		return true;
+	}
+
+	/**
+	 * The values of one list the other lacks, compared strictly: `true` is not `"true"`.
+	 *
+	 * @param array<array-key, mixed> $from
+	 * @param array<array-key, mixed> $in
+	 * @return list<mixed>
+	 */
+	private static function missing(array $from, array $in): array {
+		return array_values(array_filter($from, fn (mixed $value): bool => !in_array($value, $in, true)));
+	}
+
+	private static function json(mixed $value): string {
+		return json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
 	}
 
 	private static function on(mixed $node, string $flag): bool {

@@ -16,6 +16,7 @@ use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCA\NextFleet\Jurisdiction\LogbookReport;
+use OCP\IDateTimeZone;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -26,6 +27,9 @@ use Psr\Log\LoggerInterface;
  * @psalm-import-type LateChange from LogbookReport
  */
 class LogbookExport {
+	/** The trail's word for the entry itself (TripService), which is never a late change. */
+	private const CREATED = 'created';
+
 	public function __construct(
 		private VehicleService $fleet,
 		private TripMapper $trips,
@@ -34,6 +38,8 @@ class LogbookExport {
 		private Jurisdictions $jurisdictions,
 		private EnteredBy $enteredBy,
 		private LoggerInterface $logger,
+		private LogbookPeriods $modePeriods,
+		private IDateTimeZone $zone,
 	) {
 	}
 
@@ -72,6 +78,7 @@ class LogbookExport {
 			$periods,
 			$jurisdiction->logbookRules()?->sourceUrl(),
 			$this->enteredBy->names($vehicle, array_map(static fn (array $line): string => $line['trip']->getCreatedBy(), $lines)),
+			$this->zone->getTimeZone(),
 		));
 	}
 
@@ -85,8 +92,11 @@ class LogbookExport {
 	 * still the entry being made; one after it changed a record, and a change the auditor cannot see
 	 * is not documented.
 	 *
-	 * @param list<array{from: int, to: ?int}> $periods
-	 * @return list<array{trip: Trip, missing: list<string>, late: list<LateChange>}>
+	 * And, under the mode, when it was changed by something that left no row - defence in depth
+	 * (docs/architecture.md#the-fahrtenbuch-export).
+	 *
+	 * @param list<array{from: int, to: ?int, plates: list<array{plate: ?string, from: int}>}> $periods
+	 * @return list<array{trip: Trip, missing: list<string>, late: list<LateChange>, unlogged: ?int}>
 	 * @throws \OCP\DB\Exception
 	 */
 	private function lines(Vehicle $vehicle, int $year, int $start, int $end, array $periods): array {
@@ -94,40 +104,76 @@ class LogbookExport {
 			$this->trips->findAnyStartedBetween((int)$vehicle->getId(), $start, $end),
 			static fn (Trip $trip): bool => LocalYear::holds($year, $trip->getStartedAt(), $trip->getStartedAtOff()),
 		));
-		$late = $this->lateChanges($trips);
+		[$late, $logged] = $this->trails($trips, $this->jurisdictions->get($vehicle->getJurisdiction())->logbookRules()?->lockDelayDays());
 
-		return array_map(fn (Trip $trip): array => [
-			'trip' => $trip,
-			'missing' => self::underTheMode($trip, $periods) ? $this->completeness->missing($vehicle, $trip) : [],
-			'late' => $late[(int)$trip->getId()] ?? [],
-		], $trips);
+		return array_map(function (Trip $trip) use ($vehicle, $periods, $late, $logged): array {
+			$period = LogbookPeriods::covering($periods, $trip->getStartedAt());
+
+			return [
+				'trip' => $trip,
+				'missing' => $period !== null ? $this->completeness->missing($vehicle, $trip) : [],
+				'late' => $late[(int)$trip->getId()] ?? [],
+				'unlogged' => $period !== null && self::unlogged($trip, $period['from'], $logged) ? $trip->getUpdatedAt() : null,
+			];
+		}, $trips);
 	}
 
 	/**
-	 * The `late` rows on the trips' trails, by trip id, oldest first.
+	 * The rule docs/architecture.md#the-fahrtenbuch-export states, for a trip set off in a period
+	 * that began at `$periodFrom`.
 	 *
-	 * Each carries the offsets in force before it, because a time it replaced reads right only with
-	 * those, and a later edit may have moved them. They are read back from the trip as it is now,
-	 * newest row first, through every row on the trail and not only the late ones.
+	 * @param array<int, ?int> $logged
+	 */
+	private static function unlogged(Trip $trip, int $periodFrom, array $logged): bool {
+		$id = (int)$trip->getId();
+		$since = array_key_exists($id, $logged) ? $logged[$id] : $trip->getCreatedAt();
+
+		return $since !== null && $trip->getUpdatedAt() > $since && $trip->getUpdatedAt() >= $periodFrom;
+	}
+
+	/**
+	 * What the trips' trails say: the late rows by trip id, oldest first, and the token the newest
+	 * row left each trip with - null for a row older than that key.
+	 *
+	 * Each late row carries the offsets in force before it, because a time it replaced reads right
+	 * only with those, and a later edit may have moved them. They are read back from the trip as it
+	 * is now, newest row first, through every row on the trail and not only the late ones - and so
+	 * is `ended_at`.
+	 *
+	 * Late is decided here, against the export's own rules, not read off the row: a stored flag
+	 * answered the rules of its day, and an `ended_at` set far ahead stopped the clock it was
+	 * measured by. The lock delay runs from the earliest the trail had said the journey ended by the
+	 * time of the change, or from when the trip was entered if that is earlier
+	 * (docs/architecture.md#the-fahrtenbuch-export). A day is 86 400 seconds, as TripService counts.
 	 *
 	 * @param list<Trip> $trips
-	 * @return array<int, list<LateChange>>
+	 * @param ?int $delayDays the ruleset's lock delay, or null where it has none and nothing is late
+	 * @return array{array<int, list<LateChange>>, array<int, ?int>}
 	 * @throws \OCP\DB\Exception
 	 */
-	private function lateChanges(array $trips): array {
+	private function trails(array $trips, ?int $delayDays): array {
 		if ($trips === []) {
-			return [];
+			return [[], []];
 		}
 
 		$offsets = [];
+		$ended = [];
+		$entered = [];
 		foreach ($trips as $trip) {
-			$offsets[(int)$trip->getId()] = ['started_at_off' => $trip->getStartedAtOff(), 'ended_at_off' => $trip->getEndedAtOff()];
+			$id = (int)$trip->getId();
+			$offsets[$id] = ['started_at_off' => $trip->getStartedAtOff(), 'ended_at_off' => $trip->getEndedAtOff()];
+			$ended[$id] = $trip->getEndedAt();
+			$entered[$id] = $trip->getCreatedAt();
 		}
 
-		$late = [];
+		$changes = [];
+		$logged = [];
 		foreach (array_reverse($this->audit->findForEntities(Audit::TRIP, array_keys($offsets))) as $row) {
 			$id = $row->getEntityId();
 			$diff = $row->getDiffJson();
+			if (!array_key_exists($id, $logged)) {
+				$logged[$id] = is_int($diff['updated_at'] ?? null) ? $diff['updated_at'] : null;
+			}
 			/** @var array<string, array{mixed, mixed}> $fields */
 			$fields = $diff['fields'] ?? [];
 			foreach (['started_at_off', 'ended_at_off'] as $column) {
@@ -135,65 +181,49 @@ class LogbookExport {
 					$offsets[$id][$column] = (int)$fields[$column][0];
 				}
 			}
-			if (($diff['late'] ?? null) === true) {
-				$late[$id][] = ['change' => (string)($diff['change'] ?? ''), 'at' => $row->getCreatedAt(), 'fields' => $fields, 'offsets' => $offsets[$id]];
+			$after = $ended[$id];
+			if (isset($fields['ended_at'][0])) {
+				$ended[$id] = (int)$fields['ended_at'][0];
+			}
+			$changes[] = [$id, (string)($diff['change'] ?? ''), $row->getCreatedAt(), $fields, $offsets[$id], min($ended[$id], $after)];
+		}
+
+		// Oldest first, so each change is measured against what the trail had said by then.
+		$late = [];
+		$earliest = $entered;
+		foreach (array_reverse($changes) as [$id, $change, $at, $fields, $before, $endedBy]) {
+			$earliest[$id] = min($earliest[$id], $endedBy);
+			if ($delayDays !== null && $change !== self::CREATED && $at > $earliest[$id] + $delayDays * 86400) {
+				$late[$id][] = ['change' => $change, 'at' => $at, 'fields' => $fields, 'offsets' => $before];
 			}
 		}
 
-		return array_map('array_reverse', $late);
-	}
-
-	/** @param list<array{from: int, to: ?int}> $periods */
-	private static function underTheMode(Trip $trip, array $periods): bool {
-		foreach ($periods as $period) {
-			if ($trip->getStartedAt() >= $period['from'] && ($period['to'] === null || $trip->getStartedAt() < $period['to'])) {
-				return true;
-			}
-		}
-
-		return false;
+		return [$late, $logged];
 	}
 
 	/**
-	 * When the mode was on, read off the flips on the vehicle's trail - every period some trip of the
-	 * local year `[start, end)` could have set off in.
+	 * When the mode was on (LogbookPeriods) - every period some trip of the local year `[start, end)`
+	 * could have set off in - with the plates the vehicle carried in each. The instants are the
+	 * server's and carry no offset, so the bounds here are UTC ones.
 	 *
-	 * Where the first period begins is not a row (docs/features.md#logbook-mode): the first flip's
-	 * `before` says whether the vehicle was created under the mode, and a vehicle never switched is
-	 * under it since its creation exactly when its column says so. The instants are the server's
-	 * and carry no offset, so the bounds here are UTC ones.
-	 *
-	 * @return list<array{from: int, to: ?int}>
+	 * @return list<array{from: int, to: ?int, plates: list<array{plate: ?string, from: int}>}>
 	 * @throws \OCP\DB\Exception
 	 */
 	private function periods(Vehicle $vehicle, int $start, int $end): array {
-		$flips = [];
-		foreach ($this->audit->findForEntity(Audit::VEHICLE, (int)$vehicle->getId()) as $row) {
-			$pair = $row->getDiffJson()['fields']['logbook_mode'] ?? null;
-			if (is_array($pair) && count($pair) === 2) {
-				$flips[] = [$pair[0] === true, $pair[1] === true, $row->getCreatedAt()];
-			}
-		}
-
-		$on = $flips === [] ? $vehicle->getLogbookMode() === true : $flips[0][0];
-		$from = $on ? $vehicle->getCreatedAt() : null;
-		$periods = [];
-		foreach ($flips as [, $after, $at]) {
-			if ($after && $from === null) {
-				$from = $at;
-			} elseif (!$after && $from !== null) {
-				$periods[] = ['from' => $from, 'to' => $at];
-				$from = null;
-			}
-		}
-		if ($from !== null) {
-			$periods[] = ['from' => $from, 'to' => null];
-		}
-
-		return array_values(array_filter(
-			$periods,
+		$periods = array_values(array_filter(
+			$this->modePeriods->of($vehicle),
 			static fn (array $period): bool => $period['from'] < $end
 				&& ($period['to'] === null || $period['to'] > $start),
 		));
+		if ($periods === []) {
+			return [];
+		}
+
+		$plates = $this->modePeriods->plates($vehicle);
+
+		return array_map(
+			static fn (array $period): array => $period + ['plates' => LogbookPeriods::within($plates, $period)],
+			$periods,
+		);
 	}
 }

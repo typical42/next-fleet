@@ -10,6 +10,8 @@ namespace OCA\NextFleet\Controller;
 
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Exception\AccessDeniedException;
+use OCA\NextFleet\Exception\AlreadyCreatedException;
+use OCA\NextFleet\Exception\RefusedException;
 use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Controller;
@@ -86,6 +88,8 @@ class VehicleController extends Controller {
 	private function answer(callable $work, int $status = Http::STATUS_OK): DataResponse {
 		try {
 			return new DataResponse($work(), $status);
+		} catch (AlreadyCreatedException $e) {
+			return new DataResponse($e->answer);
 		} catch (DoesNotExistException) {
 			return new DataResponse(['message' => 'No such vehicle'], Http::STATUS_NOT_FOUND);
 		} catch (AccessDeniedException) {
@@ -97,6 +101,8 @@ class VehicleController extends Controller {
 				['message' => 'Changed since you read it', 'conflict' => true],
 				Http::STATUS_PRECONDITION_FAILED,
 			);
+		} catch (RefusedException $e) {
+			return new DataResponse(['message' => $e->getMessage(), 'reason' => $e->reason], Http::STATUS_BAD_REQUEST);
 		} catch (\InvalidArgumentException $e) {
 			return new DataResponse(['message' => $e->getMessage()], Http::STATUS_BAD_REQUEST);
 		}

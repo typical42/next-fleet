@@ -62,11 +62,13 @@ class EnergyController extends OCSController {
 	 * @param bool|null $is_dc a DC fast charge
 	 * @param int|null $odo the counter
 	 * @param int|null $second_odo the engine hours, on a vehicle that counts them
-	 * @return DataResponse<Http::STATUS_CREATED, NextFleetEnergy, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
+	 * @param string|null $client_uuid a uuid of the client's for the new row: a retry under it answers that row
+	 * @return DataResponse<Http::STATUS_CREATED, NextFleetEnergy, array{}>|DataResponse<Http::STATUS_OK, NextFleetEnergy, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
 	 * @throws OCSForbiddenException the caller may not log on this vehicle
 	 * @throws OCSNotFoundException no such vehicle
 	 *
 	 * 201: the fill-up
+	 * 200: the fill-up an earlier create under the same `client_uuid` wrote
 	 * 400: a field is not what it holds; the message names it
 	 * 412: a row the fill-up follows changed meanwhile; send it again
 	 */
@@ -88,9 +90,10 @@ class EnergyController extends OCSController {
 		mixed $is_dc = null,
 		mixed $odo = null,
 		mixed $second_odo = null,
+		mixed $client_uuid = null,
 	): DataResponse {
-		return $this->write(fn (): DataResponse => new DataResponse(
-			$this->service->record($this->userId(), $uuid, $this->request->getParams()),
+		return $this->write(fn (): DataResponse => $this->created(
+			fn (): array => $this->service->record($this->userId(), $uuid, $this->request->getParams()),
 			Http::STATUS_CREATED,
 		));
 	}

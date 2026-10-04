@@ -44,10 +44,10 @@ const NO_INBOX = { folder: null, files: [], count: 0 }
 const settings = {
 	// The whole envelope, dismissed hints included: this screen reads only the jurisdiction, but
 	// what the route answers with is one shape (lib/Service/PreferencesService.php).
-	preferences: { jurisdiction: 'de', dismissed_hints: [], reclaim_vat: false, kpi_period: 'last-12', grid_factor: null, inbox_folder: null },
+	preferences: { jurisdiction: 'de', dismissed_hints: [], dismissed_logbook_hints: [], reclaim_vat: false, kpi_period: 'last-12', grid_factor: null, inbox_folder: null },
 	jurisdictions: [
-		{ key: 'de', name: 'Germany', logbook_export: true, mileage_claim: true, grid_factor: { grams: 363, year: 2024, source: 'https://example.org/grid' } },
-		{ key: 'generic', name: 'Generic', logbook_export: false, mileage_claim: false, grid_factor: null },
+		{ key: 'de', name: 'Germany', logbook_export: true, mileage_claim: true, logbook_rules: true, grid_factor: { grams: 363, year: 2024, source: 'https://example.org/grid' } },
+		{ key: 'generic', name: 'Generic', logbook_export: false, mileage_claim: false, logbook_rules: false, grid_factor: null },
 	],
 }
 
@@ -312,6 +312,22 @@ describe('settings screen', () => {
 		expect(folders).toBe(true)
 		expect(savePreferences).toHaveBeenCalledWith({ inbox_folder: 7 })
 		expect(wrapper.find('.inbox__folder').text()).toBe('/Belege')
+	})
+
+	/** The pick is saved; the old folder's path must not stand for the new one, nor the read look like a refused save. */
+	it('says the folder is saved but unnamed when the name cannot be read', async () => {
+		vi.mocked(getPreferences).mockResolvedValue({ ...settings, preferences: { ...settings.preferences, inbox_folder: 7 } })
+		vi.mocked(readInbox).mockResolvedValue(INBOX)
+		picked = Promise.resolve([{ fileid: 8, basename: 'Quittungen' }])
+		const wrapper = await screen()
+		vi.mocked(readInbox).mockRejectedValue(new Error('The server answered 503'))
+
+		await button(wrapper, 'Choose folder').vm.$emit('click')
+		await flushPromises()
+
+		expect(savePreferences).toHaveBeenCalledWith({ inbox_folder: 8 })
+		expect(wrapper.find('.inbox__folder').text()).toBe('Chosen, but its name could not be read: The server answered 503')
+		expect(note(wrapper)).toBe('')
 	})
 
 	/** A shared folder is refused (docs/architecture.md#the-inbox); the server's words say why. */

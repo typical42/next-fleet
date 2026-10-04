@@ -10,6 +10,8 @@ namespace OCA\NextFleet\Controller;
 
 use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Exception\AccessDeniedException;
+use OCA\NextFleet\Exception\AlreadyCreatedException;
+use OCA\NextFleet\Exception\RefusedException;
 use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\OdometerService;
 use OCP\AppFramework\Controller;
@@ -89,6 +91,17 @@ class OdometerController extends Controller {
 	}
 
 	/**
+	 * The answer "the counter was replaced" to a Reading in question, any Entry's.
+	 *
+	 * @param string $reading the Reading's uuid
+	 */
+	#[NoAdminRequired]
+	#[UserRateLimit(limit: 60, period: 60)]
+	public function reset(string $uuid, string $reading): DataResponse {
+		return $this->checked(fn (int $token): OdoReading => $this->service->reset($this->userId(), $uuid, $reading, $token));
+	}
+
+	/**
 	 * A write checked against the `updated_at` the client read (RequestValues::token()).
 	 *
 	 * @param callable(int):OdoReading $write given the token
@@ -105,6 +118,8 @@ class OdometerController extends Controller {
 	private function answer(callable $work, int $status = Http::STATUS_OK): DataResponse {
 		try {
 			return new DataResponse($work(), $status);
+		} catch (AlreadyCreatedException $e) {
+			return new DataResponse($e->answer);
 		} catch (DoesNotExistException) {
 			return new DataResponse(['message' => 'No such vehicle'], Http::STATUS_NOT_FOUND);
 		} catch (AccessDeniedException) {
@@ -116,6 +131,8 @@ class OdometerController extends Controller {
 				['message' => 'Changed since you read it', 'conflict' => true],
 				Http::STATUS_PRECONDITION_FAILED,
 			);
+		} catch (RefusedException $e) {
+			return new DataResponse(['message' => $e->getMessage(), 'reason' => $e->reason], Http::STATUS_BAD_REQUEST);
 		} catch (\InvalidArgumentException $e) {
 			return new DataResponse(['message' => $e->getMessage()], Http::STATUS_BAD_REQUEST);
 		}

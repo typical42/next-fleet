@@ -14,6 +14,7 @@ use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
+use OCA\NextFleet\Exception\RefusedException;
 use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCP\AppFramework\Db\DoesNotExistException;
@@ -43,13 +44,13 @@ class TripService {
 	 * @var array<string, array{string, string, int|list<string>|null}>
 	 */
 	private const WRITABLE = [
-		'started_at' => ['setStartedAt', 'count', null],
+		'started_at' => ['setStartedAt', 'count', Field::MOMENT],
 		'started_at_off' => ['setStartedAtOff', 'offset', null],
-		'ended_at' => ['setEndedAt', 'count', null],
+		'ended_at' => ['setEndedAt', 'count', Field::MOMENT],
 		'ended_at_off' => ['setEndedAtOff', 'offset', null],
-		'start_odo' => ['setStartOdo', 'count', null],
-		'end_odo' => ['setEndOdo', 'count', null],
-		'distance' => ['setDistance', 'count', null],
+		'start_odo' => ['setStartOdo', 'count', Field::COUNTER],
+		'end_odo' => ['setEndOdo', 'count', Field::COUNTER],
+		'distance' => ['setDistance', 'count', Field::COUNTER],
 		'from_label' => ['setFromLabel', 'text', 255],
 		'to_label' => ['setToLabel', 'text', 255],
 		'purpose' => ['setPurpose', 'text', 255],
@@ -83,6 +84,13 @@ class TripService {
 	 */
 	private const TRIP_HISTORY = 1000;
 
+	/** The refusals the sheet words itself (RefusedException). */
+	public const END_BELOW_START = 'end_below_start';
+	public const ENDS_IN_FUTURE = 'ends_in_future';
+
+	/** How far ahead of the server's clock an arrival may lie, in seconds. */
+	private const FUTURE_SLACK = 86400;
+
 	public function __construct(
 		private TripMapper $trips,
 		private AuditMapper $audit,
@@ -94,6 +102,7 @@ class TripService {
 		private VehicleMapper $vehicles,
 		private BookingService $bookings,
 		private IDBConnection $db,
+		private LogbookPeriods $periods,
 	) {
 	}
 
@@ -111,12 +120,34 @@ class TripService {
 	 */
 	public function record(string $userId, string $vehicleUuid, array $fields): Trip {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
+		$once = Once::of(
+			$fields,
+			$this->trips,
+			static fn (Trip $row): bool => $row->getVehicleId() === (int)$vehicle->getId(),
+			static fn (Trip $row): Trip => $row,
+		);
 
+		return $once->run(fn (): Trip => $this->insert($userId, $vehicle, $fields, $once));
+	}
+
+	/**
+	 * What record() writes once it knows the request is no retry.
+	 *
+	 * @param array<string, mixed> $fields
+	 * @param Once<Trip> $once
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException
+	 * @throws \OCA\NextFleet\Exception\BookingConflictException
+	 * @throws \InvalidArgumentException
+	 * @throws \OCP\DB\Exception
+	 */
+	private function insert(string $userId, Vehicle $vehicle, array $fields, Once $once): Trip {
 		$trip = new Trip();
+		$once->stamp($trip);
 		$trip->setVehicleId((int)$vehicle->getId());
 		$trip->setCreatedBy($userId);
 		$this->apply($trip, $fields);
-		$booking = $this->read('booking_uuid', 'text', 64, $fields['booking_uuid'] ?? null);
+		$booking = Field::read('booking_uuid', 'text', 64, $fields['booking_uuid'] ?? null);
 
 		// The two rows are one fact. A trip whose Reading did not land is a logbook that disagrees
 		// with the counter it is measured against, and nothing later can tell which of the two is
@@ -126,11 +157,12 @@ class TripService {
 		// from outside this service - would otherwise be a 500 that loses the trip the driver
 		// typed. The replay inserts the id the rolled-back attempt was given, which auto-increment
 		// never hands out again.
-		return $this->atomicRetry(function () use ($userId, $vehicle, $trip, $booking): Trip {
+		return $this->atomicRetry(function () use ($userId, $vehicle, $trip, $booking, $once): Trip {
 			// Before anything is read or written: the Reading settles the vehicle's whole chain,
 			// and a second writer on the same vehicle has to wait and settle on this one's
 			// (VehicleMapper::hold()).
 			$this->vehicles->hold((int)$vehicle->getId());
+			$once->check();
 			$written = $this->trips->insert($trip);
 			$this->trail($vehicle, $written, $userId, self::CREATED, $this->stated($written));
 			$this->odometer->fromTrip($vehicle, $written);
@@ -148,7 +180,11 @@ class TripService {
 	 * one list, because where a trip ended is where the next one sets off. Asked with LOG, as the
 	 * trip it fills in is.
 	 *
-	 * @return array{places: list<string>, purposes: list<string>, partners: list<string>}
+	 * Beside the words: the category this person last entered here, and how the vehicle's last trip
+	 * ended - its end counter as the driver stated it (none for one logged by distance) and its
+	 * arrival. The sheet offers both and fills in neither counter (docs/ui.md).
+	 *
+	 * @return array{places: list<string>, purposes: list<string>, partners: list<string>, category: ?string, last: ?array{end_odo: ?int, ended_at: int, ended_at_off: int}}
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not log on this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCP\DB\Exception
@@ -164,10 +200,18 @@ class TripService {
 			$partners[] = $trip->getPartner();
 		}
 
+		$last = $this->trips->findLatest((int)$vehicle->getId());
+
 		return [
 			'places' => self::distinct($places),
 			'purposes' => self::distinct($purposes),
 			'partners' => self::distinct($partners),
+			'category' => $this->trips->findLatestEnteredBy((int)$vehicle->getId(), $userId)?->getCategory(),
+			'last' => $last === null ? null : [
+				'end_odo' => $last->getEndOdo(),
+				'ended_at' => $last->getEndedAt(),
+				'ended_at_off' => $last->getEndedAtOff(),
+			],
 		];
 	}
 
@@ -270,16 +314,23 @@ class TripService {
 			$this->fleet->change($userId, VehicleAccess::EDIT, $vehicle, $trip->getCreatedBy());
 			$was = clone $trip;
 			$this->apply($trip, $fields);
-			$edited = $this->trips->updateChecked($trip, $expectedUpdatedAt);
 
-			$changed = $this->changed($was, $edited);
 			// A save that changed nothing is not a revision, for the reason a vehicle's trail only
-			// records a flip.
-			if ($changed !== []) {
-				$this->trail($vehicle, $edited, $userId, self::EDITED, $changed, [
-					'late' => $this->late($vehicle, $was, $edited),
-				]);
+			// records a flip - and it writes nothing, because a token moved without a row is what the
+			// export prints as a change nobody recorded. It is still checked, as every save is.
+			$changed = $this->changed($was, $trip);
+			if ($changed === []) {
+				if ($was->getUpdatedAt() !== $expectedUpdatedAt) {
+					throw new StaleUpdateException('trip ' . $tripUuid . ' is not the row that was read');
+				}
+
+				return $was;
 			}
+
+			$edited = $this->trips->updateChecked($trip, $expectedUpdatedAt);
+			$this->trail($vehicle, $edited, $userId, self::EDITED, $changed, [
+				'late' => $this->late($vehicle, $was, $edited),
+			], $was);
 			$this->odometer->followEdit($vehicle, $was, $edited);
 
 			return $edited;
@@ -385,9 +436,10 @@ class TripService {
 	}
 
 	/**
-	 * The audit row the write leaves behind, and only under Logbook Mode
-	 * (docs/features.md#logbook-mode) - off the mode the trail would be a log nobody reads and a
-	 * private user never asked for.
+	 * The audit row the write leaves behind, under Logbook Mode or about a trip that set off - before
+	 * or after the change - inside a period the mode was on: the trail follows the trip, not the
+	 * switch (docs/features.md#logbook-mode). It carries the token the change left the trip with
+	 * (docs/architecture.md#data-model).
 	 *
 	 * Inside the caller's transaction on purpose: a change that landed without its row, or a row
 	 * about a change that rolled back, are both a trail that disagrees with the logbook it
@@ -403,10 +455,11 @@ class TripService {
 	 *
 	 * @param array<string, array{mixed, mixed}> $fields each changed column as `[before, after]`
 	 * @param array<string, mixed> $carried what the change itself carried, such as that it was late
+	 * @param ?Trip $was the trip before an edit, which may have set off somewhere else
 	 * @throws \OCP\DB\Exception
 	 */
-	private function trail(Vehicle $vehicle, Trip $trip, string $userId, string $change, array $fields, array $carried = []): void {
-		if ($vehicle->getLogbookMode() !== true) {
+	private function trail(Vehicle $vehicle, Trip $trip, string $userId, string $change, array $fields, array $carried = [], ?Trip $was = null): void {
+		if (!$this->kept($vehicle, $trip, $was)) {
 			return;
 		}
 
@@ -414,8 +467,20 @@ class TripService {
 		$row->setCreatedBy($userId);
 		$row->setEntity(Audit::TRIP);
 		$row->setEntityId((int)$trip->getId());
-		$row->setDiffJson(['change' => $change, 'fields' => $fields] + $carried);
+		$row->setDiffJson(['change' => $change, 'fields' => $fields] + $carried + ['updated_at' => $trip->getUpdatedAt()]);
 		$this->audit->insert($row);
+	}
+
+	/** Whether the trip, as it is or as it was before an edit, is in a logbook somebody keeps or kept. */
+	private function kept(Vehicle $vehicle, Trip $trip, ?Trip $was): bool {
+		if ($vehicle->getLogbookMode() === true) {
+			return true;
+		}
+
+		$periods = $this->periods->of($vehicle);
+
+		return LogbookPeriods::covering($periods, $trip->getStartedAt()) !== null
+			|| ($was !== null && LogbookPeriods::covering($periods, $was->getStartedAt()) !== null);
 	}
 
 	/**
@@ -469,7 +534,7 @@ class TripService {
 	 */
 	private function apply(Trip $trip, array $fields): void {
 		foreach (self::WRITABLE as $column => [$setter, $kind, $limit]) {
-			$value = $this->read($column, $kind, $limit, $fields[$column] ?? null);
+			$value = Field::read($column, $kind, $limit, $fields[$column] ?? null);
 			if ($value === null && in_array($column, self::REQUIRED, true)) {
 				throw new \InvalidArgumentException($column . ' is a field every trip carries');
 			}
@@ -493,29 +558,14 @@ class TripService {
 		if ($trip->getEndOdo() !== null && $trip->getDistance() !== null) {
 			throw new \InvalidArgumentException('a trip is a counter or a distance, not both');
 		}
-	}
-
-	/**
-	 * One field, as its column holds it. An absent value and an empty one are the same fact, so
-	 * both arrive here as null.
-	 *
-	 * @param int|list<string>|null $limit
-	 * @throws \InvalidArgumentException
-	 */
-	private function read(string $column, string $kind, int|array|null $limit, mixed $value): string|int|null {
-		if (is_string($value)) {
-			$value = trim($value);
+		// A negative trip would lower every sum it lands in, the claim's first among them.
+		if ($trip->getStartOdo() !== null && $trip->getEndOdo() !== null && $trip->getEndOdo() < $trip->getStartOdo()) {
+			throw new RefusedException('end_odo is below start_odo', self::END_BELOW_START);
 		}
-		if ($value === null || $value === '') {
-			return null;
+		// Past a day of clock and offset slack, an arrival ahead is a typo in the date, and its
+		// Reading would stand ahead of every one entered after it.
+		if ($trip->getEndedAt() > $this->time->getTime() + self::FUTURE_SLACK) {
+			throw new RefusedException('ended_at is more than a day ahead', self::ENDS_IN_FUTURE);
 		}
-
-		return match ($kind) {
-			'text' => Field::text($column, $value, is_int($limit) ? $limit : null),
-			'word' => Field::word($column, $value, is_array($limit) ? $limit : []),
-			'count' => Field::count($column, $value),
-			'offset' => Field::offset($column, $value),
-			default => throw new \InvalidArgumentException($column . ' has no readable kind'),
-		};
 	}
 }

@@ -71,19 +71,21 @@ class GrantController extends OCSController {
 	 * @param string|null $grantee required: the user's or the group's id
 	 * @param string|null $grantee_type required: user or group
 	 * @param string|null $role required: manager, driver or viewer
+	 * @param string|null $client_uuid a uuid of the client's for the new row: a retry under it answers that row
 	 * @return DataResponse<Http::STATUS_OK, list<NextFleetGrant>, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
 	 * @throws OCSForbiddenException the caller does not own this vehicle
 	 * @throws OCSNotFoundException no such vehicle
 	 *
-	 * 200: the grants as they now stand
+	 * 200: the grants as they now stand; a retry under the same `client_uuid` writes nothing
 	 * 400: no grantee the owner may grant to, the grantee is the owner, or the role is none
 	 * 412: another write to the grant raced this one; send it again
 	 */
 	#[NoAdminRequired]
 	#[UserRateLimit(limit: 60, period: 60)]
-	public function create(string $uuid, mixed $grantee = null, mixed $grantee_type = null, mixed $role = null): DataResponse {
-		return $this->write(fn (): DataResponse => new DataResponse(
-			$this->service->grant($this->userId(), $uuid, $this->request->getParams()),
+	public function create(string $uuid, mixed $grantee = null, mixed $grantee_type = null, mixed $role = null, mixed $client_uuid = null): DataResponse {
+		return $this->write(fn (): DataResponse => $this->created(
+			fn (): array => $this->service->grant($this->userId(), $uuid, $this->request->getParams()),
+			Http::STATUS_OK,
 		));
 	}
 

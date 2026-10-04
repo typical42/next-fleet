@@ -29,10 +29,10 @@ const HOURS = { uuid: 'v-hours', updated_at: 1, plate: 'GEN 1', jurisdiction: 'd
 const ELSEWHERE = { uuid: 'v-gen', updated_at: 1, plate: 'XX 42', jurisdiction: 'generic', lifecycle: 'active', odo_unit: 'km' }
 
 const settings = {
-	preferences: { jurisdiction: 'de', dismissed_hints: [], reclaim_vat: false, kpi_period: 'last-12', grid_factor: null, inbox_folder: null },
+	preferences: { jurisdiction: 'de', dismissed_hints: [], dismissed_logbook_hints: [], reclaim_vat: false, kpi_period: 'last-12', grid_factor: null, inbox_folder: null },
 	jurisdictions: [
-		{ key: 'de', name: 'Germany', logbook_export: true, mileage_claim: true, grid_factor: null },
-		{ key: 'generic', name: 'Generic', logbook_export: false, mileage_claim: false, grid_factor: null },
+		{ key: 'de', name: 'Germany', logbook_export: true, mileage_claim: true, logbook_rules: true, grid_factor: null },
+		{ key: 'generic', name: 'Generic', logbook_export: false, mileage_claim: false, logbook_rules: false, grid_factor: null },
 	],
 }
 
@@ -120,6 +120,20 @@ describe('reports screen', () => {
 		expect(link(wrapper).props('target')).toBe('_blank')
 	})
 
+	/** Until the end of February the reports people print are last year's: the tax return's. */
+	it.each([
+		['New Year', new Date(2027, 0, 1, 0, 1), '2026'],
+		['the last minute of February', new Date(2027, 1, 28, 23, 59), '2026'],
+		['the first of March', new Date(2027, 2, 1, 0, 1), '2027'],
+	])('on %s prefills the year %s', async (_, now, year) => {
+		vi.useFakeTimers({ toFake: ['Date'] })
+		vi.setSystemTime(now)
+
+		const wrapper = await screen()
+
+		expect(field(wrapper).props('modelValue')).toBe(year)
+	})
+
 	it('links to the vehicle and the year chosen', async () => {
 		const wrapper = await screen()
 
@@ -179,6 +193,20 @@ describe('reports screen', () => {
 
 		expect(claim(wrapper).props('href')).toBe('/index.php/apps/nextfleet/vehicles/v-de/mileage/2024')
 		expect(claim(wrapper).props('target')).toBe('_blank')
+	})
+
+	/** Who may claim the flat rate at all is said before the page is opened. */
+	it('says the flat rate is only for vehicles outside business assets', async () => {
+		const wrapper = await screen()
+
+		expect(wrapper.text()).toContain('The flat rate applies only to vehicles that are not business assets.')
+	})
+
+	/** The pages it opens are aids nobody checked in law, and the screen says so before them. */
+	it('says no lawyer reviewed the reports', async () => {
+		const wrapper = await screen()
+
+		expect(wrapper.get('.reports__logbook').text()).toContain('Not reviewed by a lawyer.')
 	})
 
 	/**

@@ -9,7 +9,9 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Controller;
 
 use OCA\NextFleet\Exception\AccessDeniedException;
+use OCA\NextFleet\Exception\AlreadyCreatedException;
 use OCA\NextFleet\Exception\BookingConflictException;
+use OCA\NextFleet\Exception\RefusedException;
 use OCA\NextFleet\Exception\StaleUpdateException;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Http;
@@ -32,6 +34,9 @@ trait EntryAnswers {
 	private function answer(\Closure $call): DataResponse {
 		try {
 			return $call();
+		} catch (AlreadyCreatedException $e) {
+			// A retried create: what the first one wrote, as it stands (Service\Once).
+			return new DataResponse($e->answer);
 		} catch (DoesNotExistException) {
 			return new DataResponse(['message' => 'No such vehicle'], Http::STATUS_NOT_FOUND);
 		} catch (AccessDeniedException) {
@@ -46,6 +51,8 @@ trait EntryAnswers {
 				['message' => 'Changed since you read it', 'conflict' => true],
 				Http::STATUS_PRECONDITION_FAILED,
 			);
+		} catch (RefusedException $e) {
+			return new DataResponse(['message' => $e->getMessage(), 'reason' => $e->reason], Http::STATUS_BAD_REQUEST);
 		} catch (\InvalidArgumentException $e) {
 			return new DataResponse(['message' => $e->getMessage()], Http::STATUS_BAD_REQUEST);
 		}

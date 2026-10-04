@@ -8,7 +8,6 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Integration;
 
-use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Service\GrantService;
 use OCA\NextFleet\Service\MileageClaimExport;
@@ -47,11 +46,10 @@ class MileageClaimTest extends TestCase {
 	}
 
 	protected function setUp(): void {
-		$container = (new Application())->getContainer();
-		$this->claim = $container->get(MileageClaimExport::class);
-		$this->trips = $container->get(TripService::class);
-		$this->vehicles = $container->get(VehicleService::class);
-		$this->grants = $container->get(GrantService::class);
+		$this->claim = \OCP\Server::get(MileageClaimExport::class);
+		$this->trips = \OCP\Server::get(TripService::class);
+		$this->vehicles = \OCP\Server::get(VehicleService::class);
+		$this->grants = \OCP\Server::get(GrantService::class);
 
 		$this->forgetTestRows();
 	}
@@ -86,6 +84,7 @@ class MileageClaimTest extends TestCase {
 			'ended_at_off' => 60,
 			'to_label' => 'Hamburg, Hafenstraße 1',
 			'purpose' => 'Abnahme',
+			'partner' => 'Muster GmbH',
 			'category' => Trip::BUSINESS,
 		]);
 	}
@@ -131,6 +130,27 @@ class MileageClaimTest extends TestCase {
 		$this->assertStringContainsString('9,90 €', $lines[1]);
 		$this->assertStringContainsString('45,90 €', (string)$page->evaluate('string(//table/tfoot)'));
 		$this->assertSame('https://www.gesetze-im-internet.de/estg/__9.html', (string)$page->evaluate('string(//footer//a/@href)'));
+	}
+
+	/**
+	 * A business trip that leaves out what the German ruleset requires is printed and left out of
+	 * the sum, whether or not the vehicle keeps a Fahrtenbuch: the Finanzamt asks the same of a
+	 * claim.
+	 */
+	public function testAnIncompleteTripIsListedButNotSummed(): void {
+		$uuid = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 132', 'jurisdiction' => 'de', 'vehicle_type' => 'car'])->getUuid();
+		$day = gmmktime(7, 0, 0, 3, 4, 2024);
+		$this->trip($uuid, $day, ['start_odo' => 1000, 'end_odo' => 1120, 'purpose' => 'Kunde A']);
+		$this->trip($uuid, $day + 86400, ['start_odo' => 1120, 'end_odo' => 1150, 'purpose' => 'Kunde B', 'partner' => null]);
+
+		$document = new \DOMDocument();
+		$this->assertTrue($document->loadHTML((string)$this->claim->year(self::AUTHOR, $uuid, 2024), LIBXML_NOERROR));
+		$page = new \DOMXPath($document);
+		$lines = $this->lines($page);
+
+		$this->assertCount(2, $lines);
+		$this->assertStringContainsString('(9,00 €) fehlt: Geschäftspartner', $lines[1]);
+		$this->assertStringContainsString('36,00 €', (string)$page->evaluate('string(//table/tfoot)'));
 	}
 
 	/** On a shared car each reader's claim holds the business trips they entered, and says so. */

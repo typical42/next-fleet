@@ -28,6 +28,11 @@ class ExpenseMapper extends BaseMapper {
 		return $this->findEntities($this->between('spent_at', $vehicleId, $from, $to));
 	}
 
+	/** @throws \OCP\DB\Exception */
+	public function hasMoney(int $vehicleId): bool {
+		return $this->anySet($vehicleId, ['amount']);
+	}
+
 	/**
 	 * One page of the timeline's expenses, newest first (docs/architecture.md#the-timeline).
 	 *

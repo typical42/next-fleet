@@ -30,6 +30,9 @@ return [
 		['name' => 'odometer#update', 'url' => '/api/vehicles/{uuid}/readings/{reading}', 'verb' => 'PUT'],
 		['name' => 'odometer#delete', 'url' => '/api/vehicles/{uuid}/readings/{reading}', 'verb' => 'DELETE'],
 		['name' => 'odometer#restore', 'url' => '/api/vehicles/{uuid}/readings/{reading}/restore', 'verb' => 'POST'],
+		// The answer "the counter was replaced" to any Reading in question, whichever Entry wrote
+		// it (docs/architecture.md#odometer-rules, rule 3).
+		['name' => 'odometer#reset', 'url' => '/api/vehicles/{uuid}/readings/{reading}/reset', 'verb' => 'POST'],
 
 		// A Trip is reached the same way, and writes the one Reading it left on the counter
 		// (docs/architecture.md#odometer-rules).
@@ -176,6 +179,7 @@ return [
 		['name' => 'Ocs\Odometer#update', 'url' => '/api/v1/vehicles/{uuid}/readings/{reading}', 'verb' => 'PUT'],
 		['name' => 'Ocs\Odometer#delete', 'url' => '/api/v1/vehicles/{uuid}/readings/{reading}', 'verb' => 'DELETE'],
 		['name' => 'Ocs\Odometer#restore', 'url' => '/api/v1/vehicles/{uuid}/readings/{reading}/restore', 'verb' => 'POST'],
+		['name' => 'Ocs\Odometer#reset', 'url' => '/api/v1/vehicles/{uuid}/readings/{reading}/reset', 'verb' => 'POST'],
 
 		['name' => 'Ocs\Trip#create', 'url' => '/api/v1/vehicles/{uuid}/trips', 'verb' => 'POST'],
 		['name' => 'Ocs\Trip#prefill', 'url' => '/api/v1/vehicles/{uuid}/trips/prefill', 'verb' => 'GET'],
