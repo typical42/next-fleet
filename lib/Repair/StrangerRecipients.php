@@ -28,7 +28,7 @@ class StrangerRecipients implements IRepairStep {
 	}
 
 	public function getName(): string {
-		return 'Take off the reminder lists whom the owner may not share the vehicle with';
+		return 'Take off the reminder lists whom nobody may share the vehicle with';
 	}
 
 	public function run(IOutput $output): void {
@@ -39,7 +39,7 @@ class StrangerRecipients implements IRepairStep {
 		}
 		$dropped = $this->recipients->dropStrangers();
 		if ($dropped > 0) {
-			$output->info('Took ' . $dropped . ' recipients off reminder lists: the owner may not share the vehicle with them, and they do not see it');
+			$output->info('Took ' . $dropped . ' recipients off reminder lists: neither the owner nor whoever listed them may share the vehicle with them, and they do not see it');
 		}
 	}
 }

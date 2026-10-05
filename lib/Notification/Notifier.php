@@ -113,7 +113,7 @@ class Notifier implements INotifier {
 
 		$subject = match ($notification->getObjectType()) {
 			GrantNotices::OBJECT => $this->granted($l, $user, $vehicle, $notification->getObjectId()),
-			BookingNotices::OBJECT => $this->cancelled($l, $vehicle, $notification->getObjectId()),
+			BookingNotices::OBJECT => $this->cancelled($l, $user, $vehicle, $notification->getObjectId()),
 			default => $this->reminded($l, $user, $vehicle, (int)$notification->getObjectId(), $notification->getSubject(), $p),
 		};
 		$notification->setParsedSubject($subject)->setIcon($icon);
@@ -230,12 +230,16 @@ class Notifier implements INotifier {
 	 * Which booking was cancelled, by its start where the booker planned it, and not by whom: a
 	 * name in a notice is one an erasure cannot take back. A notice stored before 0.3.0 still
 	 * carries `by`, and is not read for it. Shown only while the booking stays cancelled: one
-	 * brought back is no longer news.
+	 * brought back is no longer news, and only while the booker may see the vehicle: the notice
+	 * names it as it stands now, so a kept one would tell a former driver every later plate.
 	 *
-	 * @throws AlreadyProcessedException if the booking is gone or no longer cancelled
+	 * @throws AlreadyProcessedException if the booking is gone or no longer cancelled, or the reader lost the vehicle
 	 * @throws \OCP\DB\Exception
 	 */
-	private function cancelled(IL10N $l, Vehicle $vehicle, string $bookingUuid): string {
+	private function cancelled(IL10N $l, string $user, Vehicle $vehicle, string $bookingUuid): string {
+		if (!$this->sees($user, $vehicle)) {
+			throw new AlreadyProcessedException();
+		}
 		try {
 			$booking = $this->bookings->findOnVehicle((int)$vehicle->getId(), $bookingUuid);
 		} catch (DoesNotExistException) {

@@ -231,7 +231,9 @@ reminders, and access for the people who drive them, book them and hand them ove
 - Nextcloud's *user_migration* app exports your NextFleet data with your account: every row
   that names you (vehicles you own, entries you made, your grants, the reminder lists you are
   on and the reminders sent to you, bookings and audit rows) as a JSON file per table, deleted
-  rows included. Importing the archive restores nothing. Tried with `occ user:export` on NC 31
+  rows included. A vehicle, grant, reminder or audit row on a vehicle you can no longer see is
+  listed only by its id, since its content is now somebody else's. Importing the archive restores
+  nothing. Tried with `occ user:export` on NC 31
   and NC 34 (user_migration 10.5.0) and checked weekly.
 - Deleting a Nextcloud account pseudonymises every row that names it, bookings included, and deletes
   only its places on reminder lists
@@ -285,8 +287,9 @@ reminders, and access for the people who drive them, book them and hand them ove
   which vehicle, what and how many rows. Set `loglevel` to 1 to see them
   ([what is logged](https://github.com/typical42/next-fleet/blob/main/docs/security.md#what-is-logged)).
 - Running 0.2.0 or 0.3.0 from the repository's source? `occ upgrade` takes it to 0.3.1. It keeps
-  every row but one kind: it takes off the reminder lists anyone the owner may not share with who
-  does not see the vehicle, as adding them is refused now. An account named like an erased driver
+  every row but one kind: it takes off the reminder lists anyone whom neither the owner nor
+  whoever listed them may share with and who does not see the vehicle, as adding them is refused
+  now. An account named like an erased driver
   keeps its rows, and is named in the upgrade's output, the log and a notification to every admin.
   The upgrade adds indexes to most tables, so on a large fleet it takes a while.
   `tools/upgrade-check.sh` checks that it keeps the rows on NC 31 and NC 34, on MariaDB and
@@ -294,7 +297,8 @@ reminders, and access for the people who drive them, book them and hand them ove
 - Runs on Oracle as well as MariaDB/MySQL, PostgreSQL and SQLite. Oracle was tried on NC 34 with
   Oracle Free 23 and is checked weekly ([Oracle](https://github.com/typical42/next-fleet/blob/main/docs/development.md#oracle)).
 - Every field a request sets has a bound: notes 10 000 characters, money 10^12 cents, counters
-  10^9. A value past it is refused with a 400 that names the field ([security](https://github.com/typical42/next-fleet/blob/main/docs/security.md)).
+  10^9, and text must be UTF-8. A value past it is refused with a 400 that names the field
+  ([security](https://github.com/typical42/next-fleet/blob/main/docs/security.md)).
 - Report a vulnerability privately through GitHub's private vulnerability reporting, as
   `SECURITY.md` says. The first reply comes within 14 days.
 

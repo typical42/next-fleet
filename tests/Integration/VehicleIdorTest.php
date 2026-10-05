@@ -57,6 +57,7 @@ use OCA\NextFleet\Service\SyncService;
 use OCA\NextFleet\Service\TimelineService;
 use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleService;
+use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\DataResponse;
 use OCP\AppFramework\Http\Response;
@@ -941,6 +942,79 @@ class VehicleIdorTest extends TestCase {
 		}
 
 		return [(string)$row['uuid'], (int)$row['updated_at']];
+	}
+
+	/**
+	 * A row of one vehicle under the route of another the caller owns: every second path parameter
+	 * is looked up on the vehicle of the first, so the answer is the 404 of a row that is not there,
+	 * and the row stays as it was. The stranger sweep cannot see this, as it owns nothing.
+	 *
+	 * @dataProvider crossVehicleMatrix
+	 */
+	public function testARowOfAnotherVehicleIsNotFoundUnderItsRoute(string $route, bool $ocs): void {
+		$this->ocs = $ocs;
+		$other = $this->service->create(self::OWNER, ['plate' => 'B-XY 124'])->getUuid();
+		[$kind, $action] = explode('#', $route);
+		$handover = ['odo' => 52000, 'at_off' => 120];
+		if ($kind === 'booking') {
+			$booking = $this->pool->book(self::OWNER, $this->vehicle->getUuid(), self::tomorrow());
+			if ($action === 'check_in') {
+				$booking = $this->pool->checkOut(self::OWNER, $this->vehicle->getUuid(), $booking['uuid'], $handover);
+			}
+			[$row, $token] = [$booking['uuid'], $booking['updated_at']];
+		} else {
+			[$row, $token] = $this->entered($kind === 'timeline' ? 'trip' : $kind, self::OWNER, $action === 'restore');
+		}
+		$params = ($kind === 'timeline' || $kind === 'booking' ? [] : self::ENTRY_BODIES[$kind]) + ['updated_at' => $token];
+		$type = $kind === 'timeline' ? 'trip' : $kind;
+		// A voided Entry is no row a read finds; that it stays voided is checked below.
+		$before = $kind === 'booking' || $action === 'restore' ? null : $this->history->one(self::OWNER, $this->vehicle->getUuid(), $type, $row);
+
+		$response = $this->through(fn (): Response => match ($route) {
+			'odometer#update' => $this->odometer(self::OWNER, $params)->update($other, $row),
+			'odometer#delete' => $this->odometer(self::OWNER, $params)->delete($other, $row),
+			'odometer#restore' => $this->odometer(self::OWNER, $params)->restore($other, $row),
+			'trip#update' => $this->trip(self::OWNER, $params)->update($other, $row),
+			'trip#delete' => $this->trip(self::OWNER, $params)->delete($other, $row),
+			'trip#restore' => $this->trip(self::OWNER, $params)->restore($other, $row),
+			'energy#update' => $this->energy(self::OWNER, $params)->update($other, $row),
+			'energy#delete' => $this->energy(self::OWNER, $params)->delete($other, $row),
+			'energy#restore' => $this->energy(self::OWNER, $params)->restore($other, $row),
+			'maintenance#update' => $this->maintenance(self::OWNER, $params)->update($other, $row),
+			'maintenance#delete' => $this->maintenance(self::OWNER, $params)->delete($other, $row),
+			'maintenance#restore' => $this->maintenance(self::OWNER, $params)->restore($other, $row),
+			'expense#update' => $this->expense(self::OWNER, $params)->update($other, $row),
+			'expense#delete' => $this->expense(self::OWNER, $params)->delete($other, $row),
+			'expense#restore' => $this->expense(self::OWNER, $params)->restore($other, $row),
+			'booking#update' => $this->booking(self::OWNER, self::tomorrow(2) + $params)->update($other, $row),
+			'booking#delete' => $this->booking(self::OWNER, $params)->delete($other, $row),
+			'booking#check_out' => $this->booking(self::OWNER, $handover)->checkOut($other, $row),
+			'booking#check_in' => $this->booking(self::OWNER, $handover)->checkIn($other, $row),
+			'timeline#show' => $this->timeline(self::OWNER, [])->show($other, 'trip', $row),
+			default => $this->fail($route . ' has no arm in the cross-vehicle matrix'),
+		});
+
+		$this->assertSame(Http::STATUS_NOT_FOUND, $response->getStatus());
+		if ($kind === 'booking') {
+			$this->assertSame([$booking], $this->pool->list(self::OWNER, $this->vehicle->getUuid(), []));
+		} elseif ($action === 'restore') {
+			$this->expectException(DoesNotExistException::class);
+			$this->history->one(self::OWNER, $this->vehicle->getUuid(), $type, $row);
+		} else {
+			$this->assertEquals($before, $this->history->one(self::OWNER, $this->vehicle->getUuid(), $type, $row));
+		}
+	}
+
+	/** @return iterable<string, list<mixed>> */
+	public static function crossVehicleMatrix(): iterable {
+		$routes = ['booking#update', 'booking#delete', 'booking#check_out', 'booking#check_in', 'timeline#show'];
+		foreach (array_keys(self::ENTRY_BODIES) as $kind) {
+			foreach (['update', 'delete', 'restore'] as $action) {
+				$routes[] = "$kind#$action";
+			}
+		}
+
+		return self::throughBothDoors(array_map(static fn (string $route): array => [$route], array_combine($routes, $routes)));
 	}
 
 	/**

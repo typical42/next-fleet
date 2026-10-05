@@ -449,7 +449,8 @@ class GrantService {
 
 	/**
 	 * Who reads the vehicle, as a grantee may know it: whoever they hand a trip's purpose to
-	 * (docs/legal.md). Display names only, the uid not sent: it is a login. An account without a
+	 * (docs/legal.md). Display names only: the one list of people a grantee did not meet through a
+	 * row, which carry uids (docs/security.md, accepted risks). An account without a
 	 * display name shows its uid as one, as everywhere in Nextcloud. A grantee gone from the
 	 * instance reaches nobody, so it is left out rather than shown by the id its row keeps.
 	 *

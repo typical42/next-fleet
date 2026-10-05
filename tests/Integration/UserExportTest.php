@@ -13,12 +13,15 @@ use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\AccountTables;
 use OCA\NextFleet\Db\Audit;
 use OCA\NextFleet\Db\Trip;
+use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
+use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Service\ExpenseService;
 use OCA\NextFleet\Service\GrantService;
 use OCA\NextFleet\Service\RecipientService;
 use OCA\NextFleet\Service\TransferService;
 use OCA\NextFleet\Service\TripService;
+use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
 use OCA\NextFleet\Tests\Stub\SpyLogger;
 use OCA\NextFleet\UserMigration\FleetMigrator;
@@ -126,7 +129,14 @@ class UserExportTest extends TestCase {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'first_reg' => '2020-03-01']);
 		$this->vehicleIds[] = (int)$vehicle->getId();
 		$logger = new SpyLogger();
-		$this->migrator = new FleetMigrator(\OCP\Server::get(AccountTables::class), \OCP\Server::get(IFactory::class)->get(Application::APP_ID), $logger);
+		$this->migrator = new FleetMigrator(
+			\OCP\Server::get(AccountTables::class),
+			\OCP\Server::get(VehicleMapper::class),
+			\OCP\Server::get(TripMapper::class),
+			\OCP\Server::get(VehicleAccess::class),
+			\OCP\Server::get(IFactory::class)->get(Application::APP_ID),
+			$logger,
+		);
 
 		$files = $this->export(self::OWNER);
 
@@ -148,6 +158,34 @@ class UserExportTest extends TestCase {
 		$this->assertCount(1, $audit);
 		$this->assertSame(Audit::TRANSFERRED_BY, $audit[0]['created_by']);
 		$this->assertSame([self::OWNER, self::DRIVER], $audit[0]['diff_json']['fields']['user_id']);
+	}
+
+	/**
+	 * A row that mirrors a vehicle's shared state is the account's only while it may see the
+	 * vehicle: handed on, the vehicle is the new owner's, and the copy must not show its VIN or
+	 * notes as they are now (Art. 15(4) GDPR). What the account wrote of its own doing stays whole.
+	 */
+	public function testARowOnAVehicleTheAccountNoLongerSeesIsWithheld(): void {
+		$vehicle = $this->vehicle(self::OWNER, 'B-XY 123');
+		$driven = $this->trip(self::OWNER, $vehicle, 1750000000, 12000);
+		\OCP\Server::get(TransferService::class)->transfer($vehicle->getUuid(), self::DRIVER);
+		\OCP\Server::get(VehicleService::class)->update(self::DRIVER, $vehicle->getUuid(), $this->vehicles->find(self::DRIVER, $vehicle->getUuid())->getUpdatedAt(), ['vin' => 'WVWZZZ1KZBW000001']);
+		[$viewer] = array_values(array_filter(
+			\OCP\Server::get(GrantService::class)->list(self::DRIVER, $vehicle->getUuid()),
+			static fn (array $grant): bool => $grant['grantee'] === self::OWNER,
+		));
+		\OCP\Server::get(GrantService::class)->revoke(self::DRIVER, $vehicle->getUuid(), $viewer['uuid']);
+
+		$files = $this->export(self::OWNER);
+
+		$this->assertSame([[
+			'uuid' => $vehicle->getUuid(),
+			'created_by' => self::OWNER,
+			'created_at' => $vehicle->getCreatedAt(),
+			'withheld' => 'The rest of this row belongs to a vehicle you can no longer see.',
+		]], $files['nextfleet/fleet_vehicles.json']);
+		$this->assertSame([$driven->getUuid()], array_column($files['nextfleet/fleet_trips.json'], 'uuid'));
+		$this->assertSame(12000, $files['nextfleet/fleet_trips.json'][0]['end_odo']);
 	}
 
 	/** NextFleet does not restore from an export, and says so rather than failing the whole import. */

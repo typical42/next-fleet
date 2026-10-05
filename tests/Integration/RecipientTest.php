@@ -268,8 +268,9 @@ class RecipientTest extends TestCase {
 
 	/**
 	 * Before 0.3.1 the list took any account, so the plate went to people the owner may not share
-	 * with. The upgrade takes off whoever neither the owner may share with nor sees the vehicle;
-	 * once 0.3.1 is installed it no longer runs, so a sharing rule tightened later drops nobody.
+	 * with. The upgrade takes off whoever neither the owner nor whoever added them may share with,
+	 * nor sees the vehicle - add() asks the same of the caller. Once 0.3.1 is installed it no
+	 * longer runs, so a sharing rule tightened later drops nobody.
 	 */
 	public function testTheUpgradeDropsRecipientsTheOwnerCouldNotHaveAdded(): void {
 		$mates = $this->vehicles->create(self::MATE, ['plate' => 'B-XY 123']);
@@ -278,6 +279,10 @@ class RecipientTest extends TestCase {
 		foreach ([[$mates, self::RECIPIENT], [$mates, self::LONER], [$granted, self::LONER]] as [$vehicle, $uid]) {
 			$this->listedTheOldWay($vehicle, $uid);
 		}
+		// The owner shares no group with the recipient; the manager who listed them does.
+		$managed = $this->vehicles->create(self::LONER, ['plate' => 'B-XY 125']);
+		$this->grant($managed, self::MATE, 'manager');
+		$this->listedTheOldWay($managed, self::RECIPIENT, self::MATE);
 
 		$this->underSharingRules(['shareapi_only_share_with_group_members' => 'yes'], function () use ($mates, $granted): void {
 			$this->asInstalled('0.3.1', fn () => \OCP\Server::get(StrangerRecipients::class)->run($this->createMock(IOutput::class)));
@@ -290,16 +295,17 @@ class RecipientTest extends TestCase {
 
 		$this->assertSame([self::MATE, self::RECIPIENT], $this->userIds($mates, self::MATE), 'a group mate stays, a stranger goes');
 		$this->assertSame([self::MATE, self::LONER], $this->userIds($granted, self::MATE), 'whoever sees the vehicle stays');
+		$this->assertSame([self::LONER, self::RECIPIENT], $this->userIds($managed, self::LONER), 'whom the manager who listed them may share with stays');
 		// See writeInstalledVersion().
 		$this->assertSame(IAppConfig::VALUE_MIXED, \OCP\Server::get(IAppConfig::class)->getValueType(Application::APP_ID, 'installed_version'));
 	}
 
 	/** A recipient row as add() wrote it before 0.3.1, without asking whom the owner may share with. */
-	private function listedTheOldWay(Vehicle $vehicle, string $uid): void {
+	private function listedTheOldWay(Vehicle $vehicle, string $uid, ?string $by = null): void {
 		$row = new ReminderRecipient();
 		$row->setVehicleId((int)$vehicle->getId());
 		$row->setUserId($uid);
-		$row->setCreatedBy($vehicle->getUserId());
+		$row->setCreatedBy($by ?? $vehicle->getUserId());
 		\OCP\Server::get(ReminderRecipientMapper::class)->insert($row);
 	}
 

@@ -618,6 +618,15 @@ deleted rows included, with every column as stored. A grant counts when it names
 grantee, a transfer's audit row when its diff names it as an owner. A grant to a group the account
 is in does not name it and is not exported.
 
+**A row on a vehicle the account no longer sees is withheld.** The vehicle, its grants, its
+reminders, its recipient lists and its audit rows mirror the vehicle's shared state, and the export
+would show it as it is now, which can be somebody else's: a vehicle handed to a new owner, a
+reminder edited after a manager lost the grant. Where such a row names the account only as its
+writer and the account may not `view` the vehicle, it is exported as its uuid, `created_by`,
+`created_at` and a line saying the rest is withheld (Art. 15(4) GDPR). What the account wrote of its
+own doing - trips, fill-ups, maintenance, expenses, readings, bookings, documents, receipts - is
+exported whole either way (`FleetMigrator::AUTHORED`).
+
 **Export only.** An import writes a line saying NextFleet does not restore, and reads nothing:
 whose vehicle a row belongs to cannot be decided on a server with other people and vehicles. A throw
 would fail every other app's import with it.
@@ -930,8 +939,9 @@ takes `EDIT` as writing it does: who gets told is the managers' business, and th
 list only to whoever may change it. An added account must exist and, since a reminder names the
 plate, be one the sharing settings let the caller reach — the grantee rule (`Sharable`), the same 400 as a missing
 account. Whoever already reaches `view`, the caller included, knows the plate and is always
-accepted. Before 0.3.1 neither was asked, so the upgrade from there takes off every recipient the
-owner may not share with who does not see the vehicle (repair step `StrangerRecipients`). It runs
+accepted. Before 0.3.1 neither was asked, so the upgrade from there takes off every recipient whom
+neither the owner nor whoever listed them may share with and who does not see the vehicle (repair
+step `StrangerRecipients`). It runs
 only while the installed version is below 0.3.1: a later `occ maintenance:repair` must not drop
 people because an admin tightened sharing. Being on the list grants nothing, since Vehicle Access
 decides what the notification's link opens. A removal is a hard delete, so the

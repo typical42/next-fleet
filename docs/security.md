@@ -160,7 +160,8 @@ release goes out signed with our certificate, which means our name is on whateve
   app's own paths.
 - **Every input has a bound** (`lib/Service/Field.php`), refused with a 400 naming the field, never
   truncated or clamped. Free text: 10 000 characters (notes, handover notes); names and labels
-  their column's width. Money: 10^12 cents. Counters and distances: 10^9. Fill-up amounts:
+  their column's width. Text that is not UTF-8 is refused too: a form-encoded body can carry such
+  bytes, and a stored row with them would break every JSON answer that carries it. Money: 10^12 cents. Counters and distances: 10^9. Fill-up amounts:
   10^12 ml or Wh; tank and battery 10^9. VAT rates up to 100 %, months up to 1 200, instants
   up to the year 9999. Words come from a fixed list; dismissed hints hold 1 000 vehicles. The
   import reads a cell past these bounds as unreadable, so its preview refuses the row the write
@@ -206,6 +207,18 @@ The review of M6–M9 (2026-10-03) left these open on purpose:
   just after it: the same outcome as arriving a moment earlier.
 - **Undoing an import writes no log line.** It soft-deletes only what the caller imported, so no
   data leaves or enters ([what is logged](#what-is-logged)).
+
+The release review of 0.3.1 (2026-10-05) left these open on purpose:
+
+- **A grantee reads the uids of the people on the vehicle.** The vehicle, its trips and its
+  bookings carry `user_id` and `created_by`, which the screens need to say whose an entry is and
+  the clients need to sync. A uid is a login name, but Nextcloud's own sharing autocomplete shows it
+  to the same people. Only the list of who reads the vehicle (`GrantService::holders()`) sends
+  display names alone, as it is the one list of people a grantee did not meet through a row.
+- **Granting a group notifies every member.** Revoking and granting it again in a loop notifies
+  them again, as a group share in Files does. The job tells only grants still live when it runs,
+  and a revoke takes its notices back, so a loop yields at most one notice per cron run and
+  vehicle.
 
 ### Process
 

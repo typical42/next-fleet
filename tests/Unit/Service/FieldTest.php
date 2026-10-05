@@ -26,6 +26,16 @@ class FieldTest extends TestCase {
 		Field::text('purpose', 12, 255);
 	}
 
+	/**
+	 * A form-encoded body or a query string carries bytes JSON would refuse. Stored, they break
+	 * every JSON answer that carries the row, for everyone who reads the vehicle.
+	 */
+	public function testTextRefusesWhatIsNotUtf8(): void {
+		$this->expectException(\InvalidArgumentException::class);
+		$this->expectExceptionMessage('purpose is not UTF-8 text');
+		Field::text('purpose', "B\xFF\xFEro", 255);
+	}
+
 	public function testTextRefusesRatherThanTruncates(): void {
 		$this->expectExceptionObject(new \InvalidArgumentException('purpose is longer than 3 characters'));
 		Field::text('purpose', 'Büro', 3);

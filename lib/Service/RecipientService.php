@@ -119,8 +119,9 @@ class RecipientService {
 	}
 
 	/**
-	 * Takes off every list whoever add() would refuse there now: neither the owner may share with
-	 * them nor do they see the vehicle. Before 0.3.1 add() asked neither, so the plate may have
+	 * Takes off every list whoever add() would refuse there now: neither the owner nor whoever
+	 * listed them may share with them, nor do they see the vehicle. add() asks it of the caller,
+	 * who may be a manager; the row's `created_by` is that caller. Before 0.3.1 add() asked neither, so the plate may have
 	 * gone to people the admin's sharing settings keep apart; the upgrade from there runs this
 	 * once (lib/Repair/StrangerRecipients.php). Each vehicle under its hold, as remove() does.
 	 *
@@ -143,6 +144,7 @@ class RecipientService {
 				foreach ($this->recipients->findByVehicle($vehicleId) as $recipient) {
 					$uid = $recipient->getUserId();
 					if (!$this->sharable->reaches($vehicle->getUserId(), $uid, Access::USER)
+						&& !$this->sharable->reaches((string)$recipient->getCreatedBy(), $uid, Access::USER)
 						&& !$this->access->may($uid, VehicleAccess::VIEW, $vehicle)) {
 						$this->recipients->deleteByUser($vehicleId, $uid);
 						$gone[] = $uid;

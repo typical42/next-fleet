@@ -135,7 +135,9 @@ data, which in Germany brings the works council into it. Therefore:
   tool: neither format says who that was, and the app invents no author.
 - **The personal data export answers access and portability (Art. 15, 20 GDPR).** Nextcloud's
   *user_migration* app exports an account with every NextFleet row that names it, a JSON file per
-  table ([personal data export](architecture.md#personal-data-export)). The admin installs that
+  table ([personal data export](architecture.md#personal-data-export)). A row that only mirrors a
+  vehicle the account can no longer see is reduced to its id, so the copy does not reach into the
+  new owner's or the other drivers' data (Art. 15(4)). The admin installs that
   app; NextFleet ships none of its own. It is export only: importing the archive restores nothing.
   Per vehicle there is the [CSV export](architecture.md#csv-export) of a year's trips, energy,
   maintenance and expenses, and the Fahrtenbuch. That is also all a buyer gets when a vehicle is

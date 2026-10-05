@@ -71,8 +71,9 @@ When the version number in `appinfo/info.xml` increases, Nextcloud runs these st
    - `ErasedPseudonyms` changes the names of deleted accounts from versions before 0.3.0 to the
      new format. If a live account has a name in the old format, the step tells you. The message is
      in the upgrade output, in the log and in a notification to each administrator.
-   - `StrangerRecipients` removes each reminder recipient who cannot see the vehicle and whom the
-     owner cannot share with. It runs only when you upgrade from a version before 0.3.1.
+   - `StrangerRecipients` removes each reminder recipient who cannot see the vehicle, and whom
+     neither the owner nor the user who added them can share with. It runs only when you upgrade
+     from a version before 0.3.1.
 
 Before each release, the developers install the new version over the old one with
 `tools/upgrade-check.sh`. The test fails if a row is missing after the upgrade. It also fails if

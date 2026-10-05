@@ -89,6 +89,11 @@ final class Field {
 		if (!is_string($value)) {
 			throw new \InvalidArgumentException($column . ' is text');
 		}
+		// A form-encoded body or a query string carries bytes a JSON body cannot. Stored, they would
+		// make every JSON answer that carries the row throw, for everyone who reads the vehicle.
+		if (!mb_check_encoding($value, 'UTF-8')) {
+			throw new \InvalidArgumentException($column . ' is not UTF-8 text');
+		}
 		// Refused rather than truncated: the database would refuse it too, and a 500 tells the
 		// user nothing about which field was too long.
 		if (mb_strlen($value) > $length) {

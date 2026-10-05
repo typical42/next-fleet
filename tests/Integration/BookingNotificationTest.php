@@ -150,6 +150,23 @@ class BookingNotificationTest extends TestCase {
 		$this->assertSame(0, $this->stored($booking['uuid']));
 	}
 
+	/**
+	 * A booker whose access ended reads nothing more of the car: the notice names the vehicle as it
+	 * stands, so a kept notice would tell a former driver every later plate and name.
+	 */
+	public function testABookerWhoLostAccessIsToldNothingMore(): void {
+		$vehicle = $this->vehicle();
+		$booking = $this->bookings->book(self::BEN, $vehicle->getUuid(), $this->span());
+		$this->bookings->cancel(self::OWNER, $vehicle->getUuid(), $booking['uuid'], $booking['updated_at']);
+		$this->assertSame(1, $this->stored($booking['uuid']));
+		$qb = \OCP\Server::get(IDBConnection::class)->getQueryBuilder();
+		$qb->delete('fleet_access')->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter((int)$vehicle->getId(), $qb::PARAM_INT)));
+		$qb->executeStatement();
+
+		$this->assertSame([], $this->notifications(self::BEN));
+		$this->assertSame(0, $this->stored($booking['uuid']));
+	}
+
 	/** A notice of a deleted car is litter, as its grants' are (GrantNotificationTest). */
 	public function testDeletingTheVehicleTakesTheNoticeBack(): void {
 		$vehicle = $this->vehicle();
