@@ -370,6 +370,63 @@ class OdoReadingMapper extends BaseMapper {
 	}
 
 	/**
+	 * Every Reading another Entry wrote on one vehicle, deleted ones included, by id: what
+	 * `occ nextfleet:check` holds against the Entries (rule 5).
+	 *
+	 * @return list<OdoReading>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findAnyFromEntries(int $vehicleId): array {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->tableName)
+			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->neq('source_type', $qb->createNamedParameter(OdoReading::MANUAL)))
+			->orderBy('id', 'ASC');
+
+		return $this->findEntities($qb);
+	}
+
+	/**
+	 * The live Entries of one kind on one vehicle that state a counter and have no Reading on it,
+	 * live or deleted, though rule 5 has each write one: what findAnyFromEntries() cannot show.
+	 *
+	 * @param OdoReading::TRIP|OdoReading::ENERGY|OdoReading::MAINTENANCE $sourceType
+	 * @param string $entries the Entries' table
+	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
+	 * @param string|null $stated the Entry's column that states the counter; null where every Entry does, as a trip does `main`
+	 * @return list<string> their uuids, by id
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findUnreadEntries(int $vehicleId, string $sourceType, string $entries, string $counter, ?string $stated): array {
+		$qb = $this->db->getQueryBuilder();
+		$expr = $qb->expr();
+		$named = $expr->eq('r.counter', $qb->createNamedParameter($counter));
+		$qb->select('e.uuid')
+			->from($entries, 'e')
+			->leftJoin('e', $this->tableName, 'r', $expr->andX(
+				// Implied by the source, but it is what lets the (vehicle_id, source_type, source_id) index serve the join.
+				$expr->eq('r.vehicle_id', 'e.vehicle_id'),
+				$expr->eq('r.source_id', 'e.id'),
+				$expr->eq('r.source_type', $qb->createNamedParameter($sourceType)),
+				// As onCounter(), on the joined table.
+				$counter === OdoReading::MAIN ? $expr->orX($expr->isNull('r.counter'), $named) : $named,
+			))
+			->where($expr->eq('e.vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
+			->andWhere($expr->isNull('e.deleted_at'))
+			->andWhere($expr->isNull('r.id'))
+			->orderBy('e.id', 'ASC');
+		if ($stated !== null) {
+			$qb->andWhere($expr->isNotNull('e.' . $stated));
+		}
+		$result = $qb->executeQuery();
+		$uuids = array_map('strval', $result->fetchAll(\PDO::FETCH_COLUMN));
+		$result->closeCursor();
+
+		return $uuids;
+	}
+
+	/**
 	 * The one Reading a trip left on the counter (rule 5), whatever state it is in. `deleted_at`
 	 * is not filtered for the reason `findAnyByUuid` does not filter it: the caller is the one
 	 * that voids the Reading with its trip and brings it back with it, so a voided one is

@@ -438,6 +438,27 @@ class ErasureTest extends TestCase {
 		$this->assertSame(self::GHOST, $this->column('fleet_vehicles', 'user_id', $later->getId()));
 	}
 
+	/** A finish that fails again names the uid and why, for `occ nextfleet:pending` to print, and keeps the mark. */
+	public function testAFinishThatFailsAgainSaysWhichAndWhy(): void {
+		$this->vehicle(self::GHOST, 'B-GH 3');
+		try {
+			$this->breaking()->erase(self::GHOST);
+			$this->fail('The erasure did not break');
+		} catch (Exception) {
+		}
+
+		try {
+			// Other marks on the instance fail the same way under this service.
+			$failed = array_values(array_filter($this->breaking()->finish(), static fn (array $failure): bool => $failure['id'] === self::GHOST));
+
+			$this->assertCount(1, $failed);
+			$this->assertSame('the database broke', $failed[0]['error']->getMessage());
+			$this->assertContains(self::GHOST, array_column(\OCP\Server::get(Pending::class)->of(Pending::ERASURE), 'id'));
+		} finally {
+			\OCP\Server::get(Pending::class)->end(Pending::ERASURE, self::GHOST);
+		}
+	}
+
 	/** An account made again under the uid before the job came may be a real person: its rows stay. */
 	public function testAPendingErasureOfALiveAccountLeavesItsRows(): void {
 		$own = $this->vehicle(self::DRIVER, 'B-DR 1');

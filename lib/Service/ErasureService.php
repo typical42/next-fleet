@@ -129,8 +129,11 @@ class ErasureService {
 	/**
 	 * Finishes every erasure a failure left pending (PendingJob), but none whose uid an account
 	 * holds again (docs/architecture.md, "Both finish, whatever fails").
+	 *
+	 * @return list<array{id: string, error: \Throwable}> the erasures that failed again, still marked
 	 */
-	public function finish(): void {
+	public function finish(): array {
+		$failed = [];
 		foreach ($this->pending->of(Pending::ERASURE) as ['id' => $uid]) {
 			try {
 				if ($this->users->userExists($uid)) {
@@ -141,8 +144,11 @@ class ErasureService {
 				$this->erase($uid);
 			} catch (\Throwable $e) {
 				$this->logger->error('A pending erasure failed again', ['app' => Application::APP_ID, 'account' => $uid, 'exception' => $e]);
+				$failed[] = ['id' => $uid, 'error' => $e];
 			}
 		}
+
+		return $failed;
 	}
 
 	/**
@@ -158,24 +164,7 @@ class ErasureService {
 	 * @throws \OCP\DB\Exception
 	 */
 	public function renameOld(): array {
-		$found = [];
-		foreach ($this->tables as $table) {
-			foreach ($table->accountsStartingWith(self::OLD_PREFIX) as $account) {
-				// The prefix alone matches a uid somebody chose, which is no pseudonym.
-				if (preg_match('/^' . self::OLD_PREFIX . '[a-z0-9]{20}$/', $account) === 1) {
-					$found[$account] = true;
-				}
-			}
-		}
-		$old = [];
-		$kept = [];
-		foreach (array_keys($found) as $account) {
-			if ($this->users->userExists($account)) {
-				$kept[] = $account;
-			} else {
-				$old[] = $account;
-			}
-		}
+		['old' => $old, 'kept' => $kept] = $this->oldPseudonyms();
 		if ($old === []) {
 			return ['renamed' => 0, 'kept' => $kept];
 		}
@@ -192,5 +181,39 @@ class ErasureService {
 		$this->epoch->reset();
 
 		return ['renamed' => count($old), 'kept' => $kept];
+	}
+
+	/**
+	 * The pseudonyms from before 0.3.0 still on a row: the ones renameOld() renames, and the
+	 * ones it keeps because an account carries them. `occ nextfleet:check` reports both.
+	 *
+	 * @return array{old: list<string>, kept: list<string>}
+	 * @throws \OCP\DB\Exception
+	 */
+	public function oldPseudonyms(): array {
+		$found = [];
+		foreach ($this->tables as $table) {
+			foreach ($table->accountsStartingWith(self::OLD_PREFIX) as $account) {
+				if (self::isOld($account)) {
+					$found[$account] = true;
+				}
+			}
+		}
+		$old = [];
+		$kept = [];
+		foreach (array_keys($found) as $account) {
+			if ($this->users->userExists($account)) {
+				$kept[] = $account;
+			} else {
+				$old[] = $account;
+			}
+		}
+
+		return ['old' => $old, 'kept' => $kept];
+	}
+
+	/** The prefix alone matches a uid somebody chose, which is no pseudonym. */
+	private static function isOld(string $uid): bool {
+		return preg_match('/^' . self::OLD_PREFIX . '[a-z0-9]{20}$/', $uid) === 1;
 	}
 }

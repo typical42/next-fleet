@@ -285,15 +285,23 @@ class GrantService {
 		$this->pending->end(Pending::GROUP, $groupId);
 	}
 
-	/** Finishes every group's revokes a failure left pending (PendingJob), a group of that id made again or not. */
-	public function finish(): void {
+	/**
+	 * Finishes every group's revokes a failure left pending (PendingJob), a group of that id made again or not.
+	 *
+	 * @return list<array{id: string, error: \Throwable}> the groups whose revokes failed again, still marked
+	 */
+	public function finish(): array {
+		$failed = [];
 		foreach ($this->pending->of(Pending::GROUP) as ['id' => $groupId, 'since' => $since]) {
 			try {
 				$this->forgetGroup($groupId, $since);
 			} catch (\Throwable $e) {
 				$this->logger->error('A deleted group\'s pending revokes failed again', ['app' => Application::APP_ID, 'group' => $groupId, 'exception' => $e]);
+				$failed[] = ['id' => $groupId, 'error' => $e];
 			}
 		}
+
+		return $failed;
 	}
 
 	/**

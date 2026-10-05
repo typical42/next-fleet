@@ -85,14 +85,30 @@ class AccessMapper extends BaseMapper {
 	 * @throws \OCP\DB\Exception
 	 */
 	public function findByVehicle(int $vehicleId): array {
+		$qb = $this->onVehicle($vehicleId);
+		$qb->andWhere($qb->expr()->isNull('deleted_at'));
+
+		return $this->findEntities($qb);
+	}
+
+	/**
+	 * findByVehicle() with the revoked grants among them: who had access when.
+	 *
+	 * @return list<Access>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findAnyByVehicle(int $vehicleId): array {
+		return $this->findEntities($this->onVehicle($vehicleId));
+	}
+
+	private function onVehicle(int $vehicleId): IQueryBuilder {
 		$qb = $this->db->getQueryBuilder();
 		$qb->select('*')
 			->from($this->tableName)
 			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
-			->andWhere($qb->expr()->isNull('deleted_at'))
 			->orderBy('id');
 
-		return $this->findEntities($qb);
+		return $qb;
 	}
 
 	/**

@@ -18,6 +18,9 @@ notifications, mail. Frontend: Nextcloud web UI. An Android client comes later, 
 | [docs/security.md](docs/security.md) | Threat model, and the rules that follow from it |
 | [docs/legal.md](docs/legal.md) | Licence, trademarks, data protection |
 | [docs/development.md](docs/development.md) | Testing, CI, and the local WSL/Docker setup |
+| [docs/user/](docs/user/README.md) | The user manual |
+| [docs/admin/](docs/admin/README.md) | For an admin: install, upgrade, data and backups, the `occ` commands, troubleshooting |
+| [docs/developer/](docs/developer/README.md) | The entry point for developers: dev server, checks, code layout, how to send a change |
 | [design/](design/) | Mockups of the three screens |
 
 ## Who it is for
@@ -67,9 +70,10 @@ directory that someone else can add by merge request ([contributing](docs/contri
 | M11 | Review fixes, nothing released: a security contact through GitHub's private vulnerability reporting; a linear, capped CSV reader; erasure pseudonyms no account can take; recipients that follow the sharing rules; bookings that keep an overdue car accounted for; papers served only from their attacher's own Files; names shown as typed; a contract test that catches narrowing; an upgrade check that proves every table and index; a first-release CHANGELOG and an executable [release checklist](docs/development.md#release) | 0.3.0 is round and safe to use |
 | M12 | Round-two review fixes, nothing released: the trip audit follows the trip's period; late is decided at export; trip arithmetic and counter resets hold; a mileage claim the Finanzamt accepts; an erased owner's vehicles close and `occ nextfleet:transfer` hands a pool over; a personal data export; a bound on every input; reminders that ring again after an edit and survive a failed send; erasures and group revokes that finish; retried creates that do not duplicate; migration 7's indexes and bounded queries; no `IN` list over 1 000, tried on Oracle; Node 24 and a stricter CI; the UX review's wording | 0.3.1, the first release, is round and safe to use |
 | M13 | Loose ends, nothing released: a file deleted straight after its download, guarded by the API suite; Oracle green on five fresh stacks, its API suite and an upgrade check from 0.2.0; the personal data export tried on a real *user_migration* and tested weekly; a cron runner for NC 31's dev server | 0.3.1 goes out with no known open question |
+| M14 | Admin commands, nothing released: `occ nextfleet:` vehicles, check, recompute, access, audit, pending, reminders, mail-test and restore, each a thin shell over a service, and [docs/admin/](docs/admin/README.md) on where the data lives and what keeps it safe | An admin finds, checks, repairs and undoes without SQL |
 | Next | Not planned yet: the [feature backlog](docs/features.md#feature-backlog), which no milestone has claimed | — |
 
-**M0–M13 are built, and none is released.** M0–M5 are 0.2.0, M6–M11 are 0.3.0, M12 and M13 are
+**M0–M14 are built, and none is released.** M0–M5 are 0.2.0, M6–M11 are 0.3.0, M12 to M14 are
 0.3.1.
 0.3.1 is the first release; neither 0.2.0 nor 0.3.0 goes out alone
 ([release](docs/development.md#release), step 2).

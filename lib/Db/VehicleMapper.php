@@ -165,6 +165,33 @@ class VehicleMapper extends BaseMapper {
 	}
 
 	/**
+	 * Every vehicle on the instance, for the admin's commands. `occ nextfleet:vehicles` lists live
+	 * ones or the trash, never both, since a uuid from the trash takes other commands than a live
+	 * one; check and recompute take both.
+	 *
+	 * @param string|null $owner null for every owner
+	 * @param bool|null $deleted the trash, the live ones, or null for both
+	 * @return list<Vehicle> by owner, then plate
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findForAdmin(?string $owner, ?bool $deleted): array {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->tableName)
+			->orderBy('user_id', 'ASC')
+			->addOrderBy('plate', 'ASC')
+			->addOrderBy('id', 'ASC');
+		if ($deleted !== null) {
+			$qb->andWhere($deleted ? $qb->expr()->isNotNull('deleted_at') : $qb->expr()->isNull('deleted_at'));
+		}
+		if ($owner !== null) {
+			$qb->andWhere($qb->expr()->eq('user_id', $qb->createNamedParameter($owner)));
+		}
+
+		return $this->findEntities($qb);
+	}
+
+	/**
 	 * The vehicles one user reaches: the ones they own, and the ones they were granted, which
 	 * VehicleAccess has already resolved to ids. Ordering is the overview's business - it sorts
 	 * by urgency, which is not a column (docs/ui.md) - so this only makes the order stable.

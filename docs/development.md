@@ -193,7 +193,7 @@ in common, the fleet is still seeded, but the run exits 1 with a sentence saying
 trip or booking for the account.
 
 Testing the reminder job by waiting is not testing. Move the clock, then run
-`occ background-job:list` / `background-job:execute <id>` to fire the job on demand.
+`occ nextfleet:reminders --send` to fire the job on demand.
 
 ### Oracle
 

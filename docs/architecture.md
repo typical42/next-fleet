@@ -209,7 +209,7 @@ such user" for a live account, and an erasure cannot be undone. Erasing stays
 once the event has passed, so each is marked pending in app config before it starts
 (`Service\Pending`, `pending_erasure_…`/`pending_group_…`, the key a hash of the id) and unmarked
 once done. A run a crash or a database error cut short stays marked, and the hourly `PendingJob`
-runs it again. Rows already renamed or revoked match no more, so a second run changes only what
+runs it again; `occ nextfleet:pending --finish` runs it at once. Rows already renamed or revoked match no more, so a second run changes only what
 the first left; a notification whose withdrawal was lost after the commit is dropped by
 `Notifier::prepare()` when read, as its vehicle or grant is gone. A pending erasure whose uid an
 account holds again is dropped with a `warning`: that account may be a real person, and an erasure
@@ -377,13 +377,15 @@ This is where logbooks quietly break. Six rules, decided once:
 
 1. **Readings are ordered by `(read_at, id)`, never by value.** A trip entered three days late is
    dated three days back, not appended to the end.
-2. `fleet_vehicles.odo_value` **caches** the newest reading in that order. Any read may recompute
-   it; a nightly job does. Two drivers logging at once must not be able to corrupt a running total,
+2. `fleet_vehicles.odo_value` **caches** the newest reading in that order. Every write to a chain
+   recomputes it. Two drivers logging at once must not be able to corrupt a running total,
    so nothing is ever incremented in place. Recomputing alone is not enough: a write that read the
    chain before another's Reading committed would cache the older number, and could cache it last.
    So every write that recomputes holds the vehicle's row first, in its own transaction, with an
    `UPDATE` that changes nothing. A second writer waits for the first to commit and, at Nextcloud's
-   READ COMMITTED, reads its Reading.
+   READ COMMITTED, reads its Reading. No read writes the cache and no nightly job rewrites it: that
+   would only hide a bug. `occ nextfleet:check` finds a cache or flag that drifted, and
+   `occ nextfleet:recompute` settles it again under the same hold.
 3. **A lower reading is a flag, not an error.** Cluster swaps, engine changes and imports really do
    reset the counter — and the app cannot tell one from a typo. So the row is saved as `reading`,
    `flagged`, and the timeline offers the follow-up question on the Entry's row: *Counter
@@ -826,7 +828,7 @@ prints the created list the undo route takes.
 | Dashboard | `OCP\Dashboard\IAPIWidgetV2` over `ReminderService::due()`: the overview's reminder read (`fleet()`), open ones only, in the overview's urgency order, sorted in PHP because the widget has no browser code. It runs no query of its own. It lists red and amber only: the dashboard is what needs you now. |
 | Unified search | `OCP\Search\IProvider`: find a vehicle by plate (separators ignored), manufacturer or model, among the ones `VehicleService::list` gives the searcher, disposed ones left out. Vehicles only: searching trip purposes or notes would take the access check somewhere nobody tests it. |
 | Settings | Personal settings (default jurisdiction, "I reclaim VAT", grid factor, the [inbox](#the-inbox) folder). The mail cadence is per vehicle. |
-| CLI | `occ nextfleet:import` imports a CSV export as the user it names ([import](#import)); `occ nextfleet:transfer` hands a vehicle to another account ([data model](#data-model)); `occ nextfleet:seed` writes a demo fleet ([development](development.md)). |
+| CLI | `occ nextfleet:import` imports a CSV export as the user it names ([import](#import)); `occ nextfleet:transfer` hands a vehicle to another account ([data model](#data-model)); `occ nextfleet:seed` writes a demo fleet ([development](development.md)). The admin commands, with their options and exit codes, are in [occ commands](admin/occ.md); what they go through is here. Each is a thin shell and writes no SQL. `vehicles`, `access` and `audit` read the mappers rather than as the owner, so a vehicle in the trash or an erased owner's answers. `check` (`CheckService`) changes nothing. It reports a row whose `vehicle_id` names no vehicle (in the tables `Db\VehicleTables` lists), the drift `OdometerService::drift()` finds, an Entry's Readings out of step with it (rule 5; their values are not compared), twin live grants, a grantee no backend knows with nothing pending, and a pseudonym from before 0.3.0. `recompute` fixes the drift through `OdometerService::recompute()`, the settling a write runs, under each vehicle's hold. `pending --finish` and `reminders --send` run `PendingJob`'s and `ReminderJob`'s rounds. `mail-test` goes through `MailService::test()`. `restore` goes through `VehicleService::restore()` as the owner, so it leaves what the owner's undo leaves. `Command\Format` is the shared `--output`. |
 
 **No calendar.** Public `OCP` on NC 31–34 can create a calendar event but cannot update or delete
 one. A reminder that is changed, snoozed or completed would leave an event that still rings, so
@@ -940,7 +942,8 @@ added again tells them the next point, not one already told. `Notifier::prepare(
 reminder notice whose reader is no longer on the list. The mail cadence is the vehicle's
 `reminder_mail`, written with the vehicle like any other column.
 
-**The job.** `ReminderJob` runs hourly (`info.xml`) and hands the round to `NotificationService`.
+**The job.** `ReminderJob` runs hourly (`info.xml`), or at once with `occ nextfleet:reminders
+--send`, and hands the round to `NotificationService`.
 One query finds each vehicle not disposed of that has a reminder neither done nor dismissed, with
 its recipients (`VehicleMapper::findReminded()`); a fleet's other vehicles cost the job nothing.
 Each is held, one transaction each, and read again under the hold; every live reminder is evaluated at

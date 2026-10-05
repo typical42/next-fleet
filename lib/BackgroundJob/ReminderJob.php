@@ -15,8 +15,8 @@ use OCP\BackgroundJob\TimedJob;
 
 /**
  * Hourly: every reminder evaluated, its state persisted, its recipients told, and the day's mail
- * digests sent (docs/architecture.md#reminder-engine). `occ background-job:execute <id> --force-execute` runs
- * it on demand.
+ * digests sent (docs/architecture.md#reminder-engine). `occ nextfleet:reminders --send` runs the
+ * same round on demand.
  */
 class ReminderJob extends TimedJob {
 	public function __construct(

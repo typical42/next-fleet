@@ -139,6 +139,40 @@ class AuditMapper extends BaseMapper {
 	}
 
 	/**
+	 * One vehicle's whole trail, its own rows and its trips', oldest first by findForEntity()'s
+	 * rule (`occ nextfleet:audit`). A trip is never hard-deleted, so the join finds every one; a
+	 * voided trip's rows are in it.
+	 *
+	 * @param int $since only rows written at or after this instant
+	 * @return list<Audit>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findForVehicle(int $vehicleId, int $since = 0): array {
+		// Two queries, not one OR across a join: each half has its index, the OR would scan the table.
+		$own = $this->db->getQueryBuilder();
+		$own->select('*')
+			->from($this->tableName)
+			->where($own->expr()->eq('entity', $own->createNamedParameter(Audit::VEHICLE)))
+			->andWhere($own->expr()->eq('entity_id', $own->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
+			->andWhere($own->expr()->gte('created_at', $own->createNamedParameter($since, IQueryBuilder::PARAM_INT)));
+
+		$trips = $this->db->getQueryBuilder();
+		$trips->select('a.*')
+			->from('fleet_trips', 't')
+			->innerJoin('t', $this->tableName, 'a', $trips->expr()->andX(
+				$trips->expr()->eq('a.entity', $trips->createNamedParameter(Audit::TRIP)),
+				$trips->expr()->eq('a.entity_id', 't.id'),
+			))
+			->where($trips->expr()->eq('t.vehicle_id', $trips->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
+			->andWhere($trips->expr()->gte('a.created_at', $trips->createNamedParameter($since, IQueryBuilder::PARAM_INT)));
+
+		$rows = [...$this->findEntities($own), ...$this->findEntities($trips)];
+		usort($rows, static fn (Audit $a, Audit $b): int => $a->getId() <=> $b->getId());
+
+		return $rows;
+	}
+
+	/**
 	 * The trails of many rows of one table, each oldest first, so a year's export asks once per
 	 * InList chunk of trips rather than once per trip.
 	 *

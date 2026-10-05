@@ -27,6 +27,7 @@ use OCP\IURLGenerator;
 use OCP\IUser;
 use OCP\IUserManager;
 use OCP\L10N\IFactory;
+use OCP\Mail\IEMailTemplate;
 use OCP\Mail\IMailer;
 use Psr\Log\LoggerInterface;
 
@@ -97,14 +98,54 @@ class MailService {
 	}
 
 	/**
+	 * Mails the user one short test message at the address their digest goes to. It leaves the
+	 * digest's day mark alone, so the day's digest still goes. It does not ask whether a digest
+	 * is due them at all, which takes a place on a reminder list of a vehicle that mails.
+	 *
+	 * @return string the address
+	 * @throws \DomainException for an account the digest skips (unknown, disabled, no address), saying why
+	 * @throws \Exception when the mailer failed or the server refused the message
+	 */
+	public function test(string $userId): string {
+		$user = $this->users->get($userId);
+		if ($user === null) {
+			throw new \DomainException('No such user: ' . $userId);
+		}
+		if (!$user->isEnabled()) {
+			throw new \DomainException($userId . ' is disabled; the digest skips them');
+		}
+		$address = self::addressOf($user);
+		if ($address === null) {
+			throw new \DomainException($userId . ' has no email address; the digest skips them');
+		}
+
+		$template = $this->mailer->createEMailTemplate('nextfleet.testMail');
+		$template->setSubject('NextFleet test mail');
+		$template->addHeader();
+		$template->addHeading('NextFleet test mail');
+		$template->addBodyText('Your administrator sent this to check that NextFleet can mail you. NextFleet sends its reminder mails to this address.');
+		$template->addFooter('', 'en');
+		$this->deliver($user, $address, $template);
+
+		return $address;
+	}
+
+	/** Where the digest goes: the account's address, or null for none. */
+	private static function addressOf(IUser $user): ?string {
+		$address = $user->getEMailAddress();
+
+		return $address === null || $address === '' ? null : $address;
+	}
+
+	/**
 	 * @param list<Vehicle> $vehicles
 	 * @param ?string $checked the recipient's CHECKED value
 	 * @throws \Exception
 	 */
 	private function digestFor(string $userId, array $vehicles, ?string $checked): void {
 		$user = $this->users->get($userId);
-		$address = $user?->getEMailAddress();
-		if ($user === null || !$user->isEnabled() || $address === null || $address === '') {
+		$address = $user === null ? null : self::addressOf($user);
+		if ($user === null || !$user->isEnabled() || $address === null) {
 			return;
 		}
 		$now = $this->time->now();
@@ -242,7 +283,11 @@ class MailService {
 			}
 		}
 		$template->addFooter('', $language);
+		$this->deliver($user, $address, $template);
+	}
 
+	/** @throws \RuntimeException when the mail server refused it */
+	private function deliver(IUser $user, string $address, IEMailTemplate $template): void {
 		$message = $this->mailer->createMessage();
 		$message->setTo([$address => $user->getDisplayName()]);
 		$message->useTemplate($template);

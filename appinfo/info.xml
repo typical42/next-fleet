@@ -92,6 +92,11 @@ Beraterin oder Ihren Berater, bevor Sie sich darauf verlassen.
   <licence>AGPL-3.0-or-later</licence>
   <author>Johannes Kolb</author>
   <namespace>NextFleet</namespace>
+  <documentation>
+    <user>https://github.com/typical42/next-fleet/blob/main/docs/user/README.md</user>
+    <admin>https://github.com/typical42/next-fleet/blob/main/docs/admin/README.md</admin>
+    <developer>https://github.com/typical42/next-fleet/blob/main/docs/developer/README.md</developer>
+  </documentation>
   <category>tools</category>
   <category>organization</category>
   <bugs>https://github.com/typical42/next-fleet/issues</bugs>
@@ -125,6 +130,15 @@ Beraterin oder Ihren Berater, bevor Sie sich darauf verlassen.
     <command>OCA\NextFleet\Command\SeedCommand</command>
     <command>OCA\NextFleet\Command\ImportCommand</command>
     <command>OCA\NextFleet\Command\TransferCommand</command>
+    <command>OCA\NextFleet\Command\VehiclesCommand</command>
+    <command>OCA\NextFleet\Command\CheckCommand</command>
+    <command>OCA\NextFleet\Command\RecomputeCommand</command>
+    <command>OCA\NextFleet\Command\AccessCommand</command>
+    <command>OCA\NextFleet\Command\AuditCommand</command>
+    <command>OCA\NextFleet\Command\PendingCommand</command>
+    <command>OCA\NextFleet\Command\RemindersCommand</command>
+    <command>OCA\NextFleet\Command\MailTestCommand</command>
+    <command>OCA\NextFleet\Command\RestoreCommand</command>
   </commands>
   <settings>
     <personal>OCA\NextFleet\Settings\Personal</personal>

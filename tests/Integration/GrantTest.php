@@ -701,6 +701,35 @@ class GrantTest extends TestCase {
 		$this->assertSame([self::OWNER, self::ANNA], $this->recipientIds($second));
 	}
 
+	/** A finish that fails again names the group and why, for `occ nextfleet:pending` to print, and keeps the mark. */
+	public function testAFinishThatFailsAgainSaysWhichAndWhy(): void {
+		$vehicle = $this->vehicle();
+		$grant = new Access();
+		$grant->setVehicleId((int)$vehicle->getId());
+		$grant->setGrantee(self::VANISHED);
+		$grant->setGranteeType(Access::GROUP);
+		$grant->setRole('viewer');
+		$grant->setCreatedBy(self::OWNER);
+		\OCP\Server::get(AccessMapper::class)->insert($grant);
+		$broken = $this->racing(\OCP\Server::get(IUserManager::class), \OCP\Server::get(IGroupManager::class), (int)$vehicle->getId());
+		try {
+			$broken->forgetGroup(self::VANISHED);
+			$this->fail('The revoke did not break');
+		} catch (Exception) {
+		}
+
+		// A mark left by a failed run would be older than this grant, and its finish would skip it.
+		try {
+			$failed = array_values(array_filter($broken->finish(), static fn (array $failure): bool => $failure['id'] === self::VANISHED));
+
+			$this->assertCount(1, $failed);
+			$this->assertSame('the database broke', $failed[0]['error']->getMessage());
+			$this->assertContains(self::VANISHED, array_column(\OCP\Server::get(Pending::class)->of(Pending::GROUP), 'id'));
+		} finally {
+			\OCP\Server::get(Pending::class)->end(Pending::GROUP, self::VANISHED);
+		}
+	}
+
 	/**
 	 * A group made again under the id of one whose revokes were cut short keeps what it was
 	 * granted since: only the old group's grants were the leak.

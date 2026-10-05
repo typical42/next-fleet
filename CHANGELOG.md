@@ -266,6 +266,13 @@ reminders, and access for the people who drive them, book them and hand them ove
   fails the command.
 - `occ nextfleet:transfer <vehicle-uuid> <new-owner-uid>` hands a vehicle to another account. Its
   grants stay, the former owner keeps viewing it, and the vehicle's audit trail records the move.
+- Admin commands that find, check, repair and undo without SQL: `occ nextfleet:vehicles` lists
+  every vehicle's uuid, `access` and `audit` show who may do what and what changed, `check` finds
+  rows that break the data model and `recompute` settles a drifted odometer again, `pending`
+  finishes an erasure a failure cut short, `reminders` and `mail-test` show what a user is
+  reminded of and whether mail reaches them, and `restore` takes a vehicle out of the trash.
+  `docs/admin/` says where the data lives, that only the database backup protects it, and how
+  an upgrade migrates it.
 - `occ nextfleet:seed <user>` writes a demo fleet to try it on. `--grant-to <uid>` gives that
   account access to the demo Passat as a driver, with a trip of theirs and a booking tomorrow.
   Where the sharing settings refuse that account, the fleet is still seeded and the command says
@@ -286,3 +293,9 @@ reminders, and access for the people who drive them, book them and hand them ove
   10^9. A value past it is refused with a 400 that names the field ([security](docs/security.md)).
 - Report a vulnerability privately through GitHub's private vulnerability reporting, as
   `SECURITY.md` says. The first reply comes within 14 days.
+
+### Documentation
+
+- A user manual (`docs/user/`), an administration guide (`docs/admin/`) and a developer guide
+  (`docs/developer/`), written in Simplified Technical English. `appinfo/info.xml` links all three
+  for the app store.

@@ -179,6 +179,22 @@ class InfoXmlTest extends TestCase {
 	}
 
 	/**
+	 * docs/admin/occ.md is where an admin looks a command up, so a command it leaves out is one only
+	 * `occ list` reveals.
+	 */
+	public function testTheAdminDocNamesEveryCommand(): void {
+		$doc = (string)file_get_contents(self::ROOT . '/docs/admin/occ.md');
+
+		foreach ($this->commandClasses() as $class) {
+			// The constructors want services; the name is set in configure(), which needs none.
+			$command = (new \ReflectionClass($class))->newInstanceWithoutConstructor();
+			(new \ReflectionMethod(Command::class, '__construct'))->invoke($command);
+
+			$this->assertStringContainsString('occ ' . (string)$command->getName() . ' ', $doc, $class);
+		}
+	}
+
+	/**
 	 * The same trap one directory over: Nextcloud learns a settings form from this file alone, so
 	 * an ISettings class that is not listed here never reaches a user's settings page - and it is
 	 * loadable and green under its own unit test, so nothing says it is unreachable.

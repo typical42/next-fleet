@@ -159,12 +159,12 @@ or the row says why.
 | Screen | Purpose | Primary action |
 |---|---|---|
 | **Overview** | All vehicles, sorted by urgency, not alphabetically: laid-up ones last, then by the most urgent open reminder's state and day, then by plate. Traffic light (red due or overdue, amber coming up, green otherwise) with its word, plate, km, next due. A vehicle reached through a grant sorts among the reader's own and says "Owned by" its owner's display name, from the server's `owned_by`. A car that is out says who has it until when ([who has the car](#the-bookings-section)). | Open a vehicle |
-| **Vehicle** | Header KPIs + due banner + bookings + documents + timeline (above) | **+ Entry** |
+| **Vehicle** | Header KPIs + due banner + bookings + documents + timeline (above) | **New entry** |
 | **Entry sheet** | Trip / Energy / Maintenance / Odometer / Expense — see below | Save |
 | **Vehicle sheet** | Create with four fields; edit every writable one, plus lifecycle, jurisdiction, [logbook mode](features.md#logbook-mode), the inspection interval, the reminder recipients and mail cadence, [access](#the-access-section); delete, undoably | Save |
 | **Costs** | One year, one vehicle: stacked bars per month, table below, the CO₂ estimate, export button | Export |
 | **Inbox** | The files in the person's inbox folder that belong to no vehicle yet, as thumbnails ([the Inbox screen](#the-inbox-screen)). Shown once a folder is chosen | Attach |
-| **Reports** | Fahrtenbuch and mileage claim — pick a vehicle and a year, get a printable page ([ADR 0005](adr/0005-no-pdf-library.md)). Costs and CO₂ are not reports: they live on the Costs screen, and its CSV exports the rows behind the costs | Print |
+| **Reports** | Fahrtenbuch and mileage claim — pick a vehicle and a year, get a printable page ([ADR 0005](adr/0005-no-pdf-library.md)). Costs and CO₂ are not reports: they live on the Costs screen, and its CSV exports the rows behind the costs | Open logbook, Open mileage claim (the browser prints) |
 | **Personal settings** | The defaults a person keeps: jurisdiction first, then "I reclaim VAT", then the grid factor for charging (empty for the country's average, which it names), then the inbox folder. Not a screen in the app: it is the app's block on Nextcloud's own settings page, its own bundle, and it talks to the same API as everything else | Pick and it saves |
 
 **Reports** has two, each one vehicle and one year, opened as a page in a tab of its own: the

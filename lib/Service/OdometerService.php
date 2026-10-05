@@ -21,6 +21,8 @@ use OCP\IDBConnection;
 /**
  * The odometer rules of docs/architecture.md#odometer-rules, in the one place that writes a
  * Reading.
+ *
+ * @psalm-type Drift = array{counter: OdoReading::MAIN|OdoReading::SECOND, table: string, row: string, column: string, before: int|bool|null, after: int|bool|null}
  */
 class OdometerService {
 	use TTransactional;
@@ -633,15 +635,14 @@ class OdometerService {
 
 			return [];
 		}
-		$readings = $this->readings->findChain((int)$vehicle->getId(), $counter);
+		['readings' => $readings, 'flags' => $flags, 'newest' => $newest] = $this->settled((int)$vehicle->getId(), $counter);
 
-		foreach ($this->flags($readings) as $index => $flagged) {
+		foreach ($flags as $index => $flagged) {
 			if ($readings[$index]->getFlagged() !== $flagged) {
 				$this->readings->flag($readings[$index], $flagged);
 			}
 		}
 
-		$newest = $readings === [] ? null : end($readings)->getValue();
 		if ($counter === OdoReading::MAIN) {
 			$this->vehicles->cacheOdoValue((int)$vehicle->getId(), $newest);
 		} else {
@@ -649,6 +650,83 @@ class OdometerService {
 		}
 
 		return $readings;
+	}
+
+	/**
+	 * Settles both chains of one vehicle, live or deleted, as a write's settle() would, and answers
+	 * with what that changed. For `occ nextfleet:recompute`: every write already settles, so drift
+	 * means a row was written behind the services' back. No reach: the caller is the admin.
+	 *
+	 * @param bool $dryRun answer what would change, and write nothing
+	 * @return list<Drift>
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException if the vehicle's row is gone
+	 * @throws \OCP\DB\Exception
+	 */
+	public function recompute(Vehicle $vehicle, bool $dryRun): array {
+		if ($dryRun) {
+			return $this->drift($vehicle);
+		}
+
+		return $this->atomicRetry(function () use ($vehicle): array {
+			$this->vehicles->hold((int)$vehicle->getId());
+			$drift = $this->drift($vehicle);
+			$counters = [];
+			foreach ($drift as $change) {
+				$counters[$change['counter']] = true;
+			}
+			foreach (array_keys($counters) as $counter) {
+				$this->settle($vehicle, $counter);
+			}
+
+			return $drift;
+		}, $this->db);
+	}
+
+	/**
+	 * Each flag and cache that settling the vehicle's chains would change, written nowhere: the
+	 * stored value against what settle() would leave. `occ nextfleet:check` reports it.
+	 *
+	 * @return list<Drift>
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException if the vehicle's row is gone
+	 * @throws \OCP\DB\Exception
+	 */
+	public function drift(Vehicle $vehicle): array {
+		// The caches as they stand now, not as the caller read them: a check over every vehicle
+		// reads the list long before it reaches the last one, and a write in between moves them.
+		$vehicle = $this->vehicles->findAnyById((int)$vehicle->getId());
+		$drift = [];
+		foreach ([OdoReading::MAIN => 'odo_value', OdoReading::SECOND => 'second_value'] as $counter => $column) {
+			['readings' => $readings, 'flags' => $flags, 'newest' => $newest] = $this->settled((int)$vehicle->getId(), $counter);
+			foreach ($flags as $index => $flagged) {
+				if ($readings[$index]->getFlagged() !== $flagged) {
+					$drift[] = ['counter' => $counter, 'table' => 'fleet_odo_readings', 'row' => $readings[$index]->getUuid(), 'column' => 'flagged', 'before' => !$flagged, 'after' => $flagged];
+				}
+			}
+			$cached = $counter === OdoReading::MAIN ? $vehicle->getOdoValue() : $vehicle->getSecondValue();
+			if ($cached !== $newest) {
+				$drift[] = ['counter' => $counter, 'table' => 'fleet_vehicles', 'row' => $vehicle->getUuid(), 'column' => $column, 'before' => $cached, 'after' => $newest];
+			}
+		}
+
+		return $drift;
+	}
+
+	/**
+	 * What settle() leaves on one chain, written nowhere: the chain, the flag each of its Readings
+	 * should carry, and the value the vehicle should cache.
+	 *
+	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
+	 * @return array{readings: list<OdoReading>, flags: list<bool>, newest: ?int}
+	 * @throws \OCP\DB\Exception
+	 */
+	private function settled(int $vehicleId, string $counter): array {
+		$readings = $this->readings->findChain($vehicleId, $counter);
+
+		return [
+			'readings' => $readings,
+			'flags' => $this->flags($readings),
+			'newest' => $readings === [] ? null : end($readings)->getValue(),
+		];
 	}
 
 	/**

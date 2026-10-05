@@ -15,7 +15,9 @@ use Doctrine\DBAL\Platforms\SqlitePlatform;
 use Doctrine\DBAL\Schema\Column;
 use Doctrine\DBAL\Schema\Schema;
 use Doctrine\DBAL\Schema\Table;
+use OCA\NextFleet\Db\BaseMapper;
 use OCA\NextFleet\Db\ReminderRecipientMapper;
+use OCA\NextFleet\Db\VehicleTables;
 use OCA\NextFleet\Tests\Fixture\SchemaWrapper;
 use OCA\NextFleet\Tests\MigrationSteps as Steps;
 use OCA\NextFleet\Tests\SchemaExpectations;
@@ -104,6 +106,16 @@ class SchemaTest extends TestCase {
 		$this->assertNotNull(self::$live);
 
 		return self::$live->getTable($this->prefixed($name));
+	}
+
+	/** `occ nextfleet:check` finds orphans only in the tables VehicleTables lists. */
+	public function testVehicleTablesListsEveryTableWithAVehicleId(): void {
+		$withColumn = array_values(array_filter($this->fleetTableNames(), fn (string $name): bool => $this->table($name)->hasColumn('vehicle_id')));
+		$listed = array_map(static fn (BaseMapper $mapper): string => $mapper->getTableName(), Server::get(VehicleTables::class)->all());
+		sort($withColumn);
+		sort($listed);
+
+		$this->assertSame($withColumn, $listed);
 	}
 
 	/**
