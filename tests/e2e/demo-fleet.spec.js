@@ -53,9 +53,10 @@ test('the demo fleet is on screen with the rows that are awkward on purpose', as
 	await expect(row(trailer.plate)).toContainText('Laid up')
 	await expect(row(trailer.plate)).not.toContainText('km')
 
-	// Sold, kept for the retention period, and off the overview until something asks for it
-	// (docs/ui.md).
+	// Sold, kept for the retention period: off the fleet list, and in the Disposed of list below
+	// it, where it still opens (docs/ui.md).
 	await expect(row(disposed)).toHaveCount(0)
+	await expect(page.locator('#nextfleet').getByRole('main').locator('.overview__disposed')).toContainText(disposed)
 })
 
 test('a flagged reading is the demo fleet, not a broken write', async ({ page }) => {

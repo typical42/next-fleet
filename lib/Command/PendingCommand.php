@@ -11,6 +11,7 @@ namespace OCA\NextFleet\Command;
 use OCA\NextFleet\Service\ErasureService;
 use OCA\NextFleet\Service\GrantService;
 use OCA\NextFleet\Service\Pending;
+use OCP\IUserManager;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
@@ -24,6 +25,7 @@ class PendingCommand extends Command {
 		private Pending $pending,
 		private ErasureService $erasure,
 		private GrantService $grants,
+		private IUserManager $users,
 	) {
 		parent::__construct();
 	}
@@ -44,12 +46,22 @@ class PendingCommand extends Command {
 			return self::INVALID;
 		}
 
+		// An erasure whose uid an account carries again is dropped, not run: the new account keeps
+		// what the old one owned. The job only logs it, so the admin reads it here, before and after.
+		$finish = $input->getOption('finish') === true;
+		foreach ($this->pending->of(Pending::ERASURE) as ['id' => $uid]) {
+			if ($this->users->userExists($uid)) {
+				Format::error($output, 'erasure ' . $uid . ': an account of that uid exists again, so the erasure '
+					. ($finish ? 'is dropped' : 'will be dropped') . ' and that account keeps the deleted one\'s vehicles and rows');
+			}
+		}
+
 		$failed = false;
-		if ($input->getOption('finish') === true) {
+		if ($finish) {
 			// Each on its own, as in PendingJob: one that throws does not hold the other up.
-			foreach ([Pending::ERASURE => $this->erasure->finish(...), Pending::GROUP => $this->grants->finish(...)] as $kind => $finish) {
+			foreach ([Pending::ERASURE => $this->erasure->finish(...), Pending::GROUP => $this->grants->finish(...)] as $kind => $run) {
 				try {
-					foreach ($finish() as ['id' => $id, 'error' => $error]) {
+					foreach ($run() as ['id' => $id, 'error' => $error]) {
 						Format::error($output, $kind . ' ' . $id . ': ' . $error->getMessage());
 						$failed = true;
 					}

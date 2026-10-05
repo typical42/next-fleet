@@ -68,7 +68,7 @@ class CheckService {
 		$exists = [];
 		$findings = $only === null ? $this->orphans() : [];
 		foreach ($vehicles as $vehicle) {
-			array_push($findings, ...$this->odometer($vehicle), ...$this->entries($vehicle), ...$this->grants($vehicle, $pending, $exists));
+			array_push($findings, ...$this->owner($vehicle, $pending, $exists), ...$this->odometer($vehicle), ...$this->entries($vehicle), ...$this->grants($vehicle, $pending, $exists));
 		}
 		if ($only !== null) {
 			return ['findings' => $findings, 'warnings' => []];
@@ -198,6 +198,27 @@ class CheckService {
 		}
 
 		return $findings;
+	}
+
+	/**
+	 * The owner, an account that still exists. Gone with no erasure marked is an account deleted
+	 * while the app was disabled, since only then did no listener mark it: the vehicle keeps the
+	 * uid, and a new account made under it would own the vehicle and read every row. An erased
+	 * owner's pseudonym is how an erasure leaves a vehicle; one from before 0.3.0 is found here too.
+	 *
+	 * @param array{erasure: array<string, true>, group: array<string, true>} $pending
+	 * @param array<string, bool> $exists the accounts and groups asked about so far
+	 * @return list<Finding>
+	 */
+	private function owner(Vehicle $vehicle, array $pending, array &$exists): array {
+		$owner = $vehicle->getUserId();
+		if (isset($pending['erasure'][$owner]) || str_starts_with($owner, ErasureService::PREFIX)
+			|| ($exists['the user ' . $owner] ??= $this->users->userExists($owner))) {
+			return [];
+		}
+
+		return [self::finding('owner', 'fleet_vehicles', $vehicle->getUuid(), $vehicle,
+			'owned by the user ' . $owner . ', whom no backend knows (or it is out of reach), and no erasure is pending; deleted while the app was disabled?')];
 	}
 
 	/**

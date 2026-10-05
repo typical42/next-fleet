@@ -16,6 +16,7 @@ use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Service\ErasureService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\IDBConnection;
+use OCP\IUserManager;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Console\Tester\CommandTester;
 
@@ -25,7 +26,8 @@ use Symfony\Component\Console\Tester\CommandTester;
  * It writes to the instance it runs against (docs/development.md#testing).
  */
 class RestoreCommandTest extends TestCase {
-	/** Not an account: a vehicle's `user_id` is a string column. */
+	use Accounts;
+
 	private const OWNER = 'nextfleet-test-restore-owner';
 
 	private VehicleService $vehicles;
@@ -33,6 +35,16 @@ class RestoreCommandTest extends TestCase {
 	private CommandTester $command;
 	/** @var list<int> by id, since one test renames the owner */
 	private array $vehicleIds = [];
+
+	/** An account, since a vehicle whose owner no backend knows is a finding and refused a restore. */
+	public static function setUpBeforeClass(): void {
+		self::deleteAccounts([self::OWNER]);
+		\OCP\Server::get(IUserManager::class)->createUser(self::OWNER, bin2hex(random_bytes(16)));
+	}
+
+	public static function tearDownAfterClass(): void {
+		self::deleteAccounts([self::OWNER]);
+	}
 
 	protected function setUp(): void {
 		$this->vehicles = \OCP\Server::get(VehicleService::class);

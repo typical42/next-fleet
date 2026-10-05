@@ -3,10 +3,8 @@
 /node_modules/
 /js/
 /build/
-# The frontend build lands its stylesheets beside the hand-written one; only app.css is source.
-# One per Vite entry (vite.config.js), so the pattern rather than a list.
-/css/nextfleet-*.css
-/css/*.chunk.css
+# Build output, like /js/: the app keeps no hand-written stylesheet.
+/css/
 *.log
 .php-cs-fixer.cache
 /.phpunit.cache/

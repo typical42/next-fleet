@@ -49,7 +49,7 @@ entry to fix the number ([odometer rules](architecture.md#odometer-rules)).
 
 ```
 ┌─ NextFleet ──────────────────────────────────────────────────────────┐
-│ Overview        │  M-AB 1234     [+ Entry][Costs][Edit][QR sticker]  │
+│ Overview        │  M-AB 1234   [New entry][Costs][Edit][QR sticker]  │
 │ Inbox       (3) │  VW Passat Variant                                 │
 │                 │  148 320 km · 6,4 l/100 km · 42,10 €/100 km        │
 │ ● M-AB 1234  ⚠  │  ┌────────────────────────────────────────────┐   │
@@ -158,7 +158,7 @@ or the row says why.
 
 | Screen | Purpose | Primary action |
 |---|---|---|
-| **Overview** | All vehicles, sorted by urgency, not alphabetically: laid-up ones last, then by the most urgent open reminder's state and day, then by plate. Traffic light (red due or overdue, amber coming up, green otherwise) with its word, plate, km, next due. A vehicle reached through a grant sorts among the reader's own and says "Owned by" its owner's display name, from the server's `owned_by`. A car that is out says who has it until when ([who has the car](#the-bookings-section)). | Open a vehicle |
+| **Overview** | All vehicles, sorted by urgency, not alphabetically: laid-up ones last, then by the most urgent open reminder's state and day, then by plate. Traffic light (red due or overdue, amber coming up, green otherwise) with its word, plate, km, next due. A vehicle reached through a grant sorts among the reader's own and says "Owned by" its owner's display name, from the server's `owned_by`. A car that is out says who has it until when ([who has the car](#the-bookings-section)). Disposed vehicles are listed apart below, and open. | Open a vehicle |
 | **Vehicle** | Header KPIs + due banner + bookings + documents + timeline (above) | **New entry** |
 | **Entry sheet** | Trip / Energy / Maintenance / Odometer / Expense — see below | Save |
 | **Vehicle sheet** | Create with four fields; edit every writable one, plus lifecycle, jurisdiction, [logbook mode](features.md#logbook-mode), the inspection interval, the reminder recipients and mail cadence, [access](#the-access-section); delete, undoably | Save |
@@ -514,11 +514,13 @@ and after such a leave the words naming the group take it.
   and for the print/export path.
 - **Sort by urgency.** The overview is a to-do list, not an inventory. Alphabetical order is what a
   database returns, not what anyone wants. Vehicles that are `laid_up` sink; `disposed` ones leave
-  the list entirely ([data model](architecture.md#data-model)).
+  the list and the navigation for a *Disposed of* list of their own below it
+  ([data model](architecture.md#data-model)). That list is the only way back to one: a sale
+  recorded by mistake is set back in its edit sheet, and a sold car's trips can still be corrected.
 - **Never sum across currencies or units.** A figure that spans vehicles is grouped and sectioned,
   never totalled, and every KPI takes its label from the vehicle — `€/100 km` for a car, `€/h` for a
   generator ([the maths](architecture.md#numbers-consumption-cost-emissions)).
-- **One primary button per screen.** On the vehicle screen that is **+ Entry** — not "Edit
+- **One primary button per screen.** On the vehicle screen that is **New entry** — not "Edit
   vehicle", which people need twice a year.
 - **Keyboard:** `n` starts the primary action of the screen in view — a new entry on a vehicle, a
   new vehicle on the overview. `Esc` closes the sheet — except in a date field, where it belongs to

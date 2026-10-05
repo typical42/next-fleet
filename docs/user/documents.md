@@ -19,28 +19,30 @@ You can attach only your own files, not files that other users shared with you. 
 a manager can attach a document to the vehicle itself. A driver can attach a document only to
 their own entries and bookings.
 
-Each user who can see the vehicle can open its documents. NextFleet does not copy the file. The
-file stays in your Files.
+Each user who can see the vehicle can download its documents. To download one, click its name.
+NextFleet does not copy the file. The file stays in your Files.
 
 > [!WARNING]
 > If you delete or move an attached file out of your Files, nobody can open the document from the
 > vehicle.
 
-To remove a document from the vehicle, click **Remove**. The file stays in your Files.
+To remove a document from the vehicle, click **Remove**. A message with an **Undo** button shows.
+The file stays in your Files.
 
 ## Use the receipt inbox
 
 The receipt inbox is a folder in your Files. Photos and PDF files that you save in it wait in
 NextFleet until you attach them to a vehicle. Use it with the automatic upload of the Nextcloud
-mobile app. Then a photo of a receipt goes directly to NextFleet.
+mobile app. Then a photo of a receipt goes directly to NextFleet. NextFleet shows only the files
+directly in the folder, not the files in subfolders.
 
 ### Select the inbox folder
 
 1. In the navigation, click **Settings**.
 2. In the **NextFleet** section, at **Inbox folder**, click **Choose folder**.
 3. Select a folder of your own. A folder that another user shared with you cannot be the inbox.
-4. In the Nextcloud mobile app, set the automatic upload to this folder. Do not use subfolders.
-   NextFleet shows only the files directly in the folder.
+4. Click **Choose**.
+5. In the Nextcloud mobile app, set the automatic upload to this folder.
 
 The navigation now shows **Inbox**, with the number of files that wait.
 

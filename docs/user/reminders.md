@@ -9,15 +9,23 @@ You must be the owner or a manager of the vehicle to add, change, snooze or skip
 
 1. On the vehicle page, under the figures, click **+ Reminder**.
 2. In the **Reminder** list, select a template, for example **Oil change** or
-   **Technical inspection (HU/AU)**. To type your own title, select **Own title**.
+   **Technical inspection (HU/AU)**.
+
+   To use your own title, keep the list empty. Then type the title in **Title**.
 3. In **Due by**, select **Date**, **Counter** or **Date or counter, whichever comes first**.
 4. Type the due date or the counter reading.
 5. To repeat the reminder, type the interval in **Repeat every (months)** or
-   **Repeat every (km)**.
-6. Click **Add reminder**.
+   **Repeat every (km)**. For a vehicle in engine hours, the label shows **(h)**.
+6. Set the warnings:
+   - For a date, turn on **Warn a month before**, **Warn at the start of the month it is due** or
+     **Warn on the due date**.
+   - For a counter, type the distance in **Warn before (km)**.
+7. Click **Add reminder**.
 
-For a German vehicle without an HU/AU reminder, the vehicle page asks **When is the next HU/AU?**.
-Select the month and year from the sticker on the plate. Then click **Add HU/AU reminder**.
+For a German vehicle without an HU/AU reminder, the vehicle page asks the owner and the managers
+**When is the next HU/AU?**. Select the **Month** and type the **Year** from the sticker on the
+plate. Then click **Add HU/AU reminder**. Later, you can change the **Inspection interval** in
+**Edit vehicle**.
 
 ## When a reminder warns you
 
@@ -30,11 +38,13 @@ A reminder has these states:
 | **Due** | The due date or counter reading is reached. |
 | **Overdue** | The due date is past. A counter reminder stays **Due**. |
 | **Snoozed** | You moved the warning to a later date. |
-| **Done** | A maintenance record closed the reminder. |
-| **Skipped** | You skipped this occurrence. |
+| **Done** | A maintenance record closed a reminder that does not repeat. The reminder leaves the list. |
+| **Skipped** | You skipped a reminder that does not repeat. The reminder leaves the list. |
+
+A reminder that repeats moves to its next due date and stays in the list.
 
 For a counter reminder, NextFleet also shows **Expected around** with a date that it calculates
-from your counter readings.
+from your counter readings. If it cannot calculate the date yet, it shows **Not enough data yet**.
 
 A reminder on a vehicle that is laid up pauses. A reminder on a vehicle that is disposed of stops.
 
@@ -46,6 +56,8 @@ Drivers can also do this.
 
    The entry form opens with a maintenance record for this reminder.
 2. Complete the record.
+
+   If the reminder repeats by distance, the record needs the **Counter reading**.
 3. Click **Save**.
 
    If the reminder repeats, the next occurrence starts from the date and counter reading of the
@@ -68,9 +80,10 @@ NextFleet tells you in three ways:
 - **Notifications.** A Nextcloud notification shows at each warning that you selected, for
   example **Warn a month before**. It also shows when a counter reminder reaches its warning or
   due value, and when a reminder becomes overdue. The Nextcloud mobile app shows it on your phone.
-- **Reminder mail.** A mail with the title `Reminders for your vehicles` lists the news of all your
-  vehicles. The **Reminder mail** setting of each vehicle sets how often. The default is
-  **Weekly, on Monday**. You get one mail per day at most.
+- **Reminder mail.** A mail with the title `Reminders for your vehicles` lists the news of each
+  vehicle whose **Reminders go to** list has your name. The **Reminder mail** setting of each
+  vehicle sets how often. The default is **Weekly, on Monday**. Normally, you get one mail per day
+  at most.
 - **Dashboard.** Add the **Vehicle reminders** widget to your Nextcloud dashboard. It shows the
   reminders that are coming up, due or overdue.
 
@@ -78,8 +91,13 @@ NextFleet tells you in three ways:
 
 1. Click **Edit vehicle**.
 2. In **Reminders go to**, add or remove users. The owner is on the list by default.
+
+   The change to the list is immediate.
 3. In **Reminder mail**, select **No mail**, **Daily**, **Weekly, on Monday** or
    **Monthly, on the 1st**.
+4. Click **Save**.
 
-A user on this list gets the reminders, but does not get access to the vehicle. You can add a user
-that your administrator lets you share with, or a user who already has access to the vehicle.
+Only the users on this list get the notifications and mails of the vehicle. A user with access who
+is not on the list sees the reminders only in the app and on the dashboard. A user on this list
+does not get access to the vehicle. You can add a user that your administrator lets you share
+with, or a user who already has access to the vehicle.

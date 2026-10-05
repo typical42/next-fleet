@@ -37,16 +37,16 @@ class TransferCommand extends Command {
 		try {
 			$done = $this->transfers->transfer((string)$input->getArgument('vehicle'), (string)$input->getArgument('owner'));
 		} catch (\InvalidArgumentException $e) {
-			$output->writeln('<error>' . $e->getMessage() . '</error>');
+			Format::error($output, $e->getMessage());
 
 			return self::FAILURE;
 		} catch (DoesNotExistException) {
-			$output->writeln('<error>No vehicle has this uuid, or it is deleted</error>');
+			Format::error($output, 'No vehicle has this uuid, or it is deleted');
 
 			return self::FAILURE;
 		}
 
-		$output->writeln('The vehicle now belongs to ' . $done['vehicle']->getUserId() . ', no longer to ' . $done['from'] . '.');
+		Format::line($output, 'The vehicle now belongs to ' . $done['vehicle']->getUserId() . ', no longer to ' . $done['from'] . '.');
 
 		return self::SUCCESS;
 	}

@@ -38,7 +38,7 @@ use Symfony\Component\Console\Tester\CommandTester;
  * findings of its own, so a run over every vehicle is read for this suite's rows only.
  */
 class CheckCommandTest extends TestCase {
-	/** Not an account: a vehicle's `user_id` is a string column. Every row here is written as it. */
+	/** An account, since an owner no backend knows is a finding. Every row here is written as it. */
 	private const OWNER = 'nextfleet-test-check-owner';
 	/** An account and a group, since a grantee has to exist to be granted. */
 	private const ANNA = 'nextfleet-test-check-anna';
@@ -58,6 +58,7 @@ class CheckCommandTest extends TestCase {
 
 	public static function setUpBeforeClass(): void {
 		self::forgetAccounts();
+		\OCP\Server::get(IUserManager::class)->createUser(self::OWNER, bin2hex(random_bytes(16)));
 		\OCP\Server::get(IUserManager::class)->createUser(self::ANNA, bin2hex(random_bytes(16)));
 		\OCP\Server::get(IGroupManager::class)->createGroup(self::CREW);
 	}
@@ -67,6 +68,7 @@ class CheckCommandTest extends TestCase {
 	}
 
 	private static function forgetAccounts(): void {
+		\OCP\Server::get(IUserManager::class)->get(self::OWNER)?->delete();
 		\OCP\Server::get(IUserManager::class)->get(self::ANNA)?->delete();
 		\OCP\Server::get(IGroupManager::class)->get(self::CREW)?->delete();
 	}
@@ -300,6 +302,42 @@ class CheckCommandTest extends TestCase {
 		$this->assertSame($gone, array_column($found, 'row'));
 		$this->assertStringContainsString('no backend knows the user ' . self::NOBODY, $found[0]['reason']);
 		$this->assertStringContainsString('no backend knows the group ' . self::NOBODY, $found[1]['reason']);
+	}
+
+	/**
+	 * An owner no backend knows, with no erasure marked: an account deleted while the app was
+	 * disabled, whose vehicles a new account under that uid would own. A pending erasure renames
+	 * the owner, and an erased owner's pseudonym is how an erasure leaves a vehicle.
+	 */
+	public function testAVehicleOfAGoneOwnerIsAFinding(): void {
+		$pending = \OCP\Server::get(Pending::class);
+		$pending->begin(Pending::ERASURE, self::ERASING);
+		$cases = [];
+		try {
+			foreach ([
+				self::NOBODY => true,
+				self::ERASING => false,
+				ErasureService::PREFIX . 'abcdefghij0123456789' => false,
+				self::OWNER => false,
+			] as $owner => $finding) {
+				$vehicle = $this->vehicle();
+				$this->update('fleet_vehicles', (int)$vehicle->getId(), ['user_id' => $owner]);
+				$this->command->execute(['--vehicle' => $vehicle->getUuid(), '--output' => 'json']);
+				$cases[$owner] = [$finding, $vehicle, $this->found('owner')];
+			}
+		} finally {
+			$pending->end(Pending::ERASURE, self::ERASING);
+			foreach ($cases as [, $vehicle]) {
+				$this->update('fleet_vehicles', (int)$vehicle->getId(), ['user_id' => self::OWNER]);
+			}
+		}
+
+		foreach ($cases as $owner => [$finding, $vehicle, $found]) {
+			$this->assertCount($finding ? 1 : 0, $found, $owner);
+		}
+		$found = $cases[self::NOBODY][2][0];
+		$this->assertSame(['check' => 'owner', 'table' => 'fleet_vehicles', 'row' => $cases[self::NOBODY][1]->getUuid(), 'vehicle' => $cases[self::NOBODY][1]->getUuid()], self::where($found));
+		$this->assertStringContainsString('owned by the user ' . self::NOBODY . ', whom no backend knows', $found['reason']);
 	}
 
 	/**

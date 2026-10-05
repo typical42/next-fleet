@@ -88,6 +88,15 @@ sudo -E -u www-data php occ app:disable nextfleet
 When you disable the app, the data stays in the database. Users cannot open it until you enable
 the app again.
 
+> [!IMPORTANT]
+> While the app is disabled, NextFleet does not see account deletions, group deletions and removals
+> from a group. Their names, their access and their places on the reminder lists stay.
+
+After you enable the app again, run `nextfleet:check`. An `owner` finding shows a vehicle whose
+owner account is gone. A `grantee` finding shows access for an account or group that is gone. The
+check does not find an account that is only on a reminder list. Refer to
+[Troubleshooting](troubleshooting.md#a-vehicle-has-an-owner-that-does-not-exist).
+
 > [!WARNING]
 > If you want to keep the data, do not remove the app without `--keep-data`. Before you remove it,
 > make a database backup.

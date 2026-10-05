@@ -289,13 +289,13 @@ entry runs. `src/main.js` therefore holds nothing with state and mounts once. We
 entry, the second copy would mount it again the first time a picker opened, and the screen would
 fall back to the overview. NC 34 does not show it; only an NC 31 browser does.
 
-The build writes hashed `css/*.chunk.css` beside the hand-written `css/app.css`: `@nextcloud/vue`
-ships a stylesheet the bundle does not carry. The main entry's stylesheets load with its dynamic
+The build writes hashed `css/*.chunk.css`: `@nextcloud/vue` ships a stylesheet the bundle does
+not carry. The main entry's stylesheets load with its dynamic
 import, so `templates/main.php` asks only for the script. The settings entry imports statically, so
-the build writes `css/nextfleet-settings.css` and `templates/personal.php` asks for both. The
-generated files are gitignored by pattern — a new entry needs no new ignore line — and skipped by
-Stylelint; `css/app.css` is the only source there. The chunks carry a content hash and the build
-cannot empty a directory it shares with sources, so old ones pile up in `css/` and `js/`. Delete
+the build writes `css/nextfleet-settings.css` and `templates/personal.php` asks for both. Like
+`js/`, `css/` holds build output only, so git and Stylelint ignore the whole folder. The chunks
+carry a content hash and the build does not empty either folder, so old ones pile up in `css/` and
+`js/`. Delete
 them when they bother you; nothing reads them.
 
 `npm run lint` runs all three static frontend checks in turn — ESLint, Stylelint, then `tsc
@@ -562,15 +562,20 @@ there; until it is on, the link is a dead end.
    `npm run upgrade-check -- build/artifacts/nextfleet-<x>.tar.gz [<base>]`. It installs the
    tarball on throwaway NC 31 and NC 34 servers, fresh and over the base with its seed and enough
    use to fill every table, and fails if a row is lost or changed or the upgraded schema differs
-   from the fresh one in any column or index. The base defaults to `27142b4`, 0.2.0's source,
+   from the fresh one in any column or index. The base defaults to `9056da5`, 0.2.0's source,
    since a user may run it from the repository. Once a version is out, pass that release's
    tarball. It takes about ten minutes and never touches the dev servers. Run it a second time on
    PostgreSQL: `npm run upgrade-check -- --db pgsql <tarball> [<base>]`. Then run it a third time
    on Oracle with `--db oracle`, NC 34 only, since only [`.docker/oracle/`](#oracle) builds an image
    with `oci8`. `--db` goes before the tarball. How it works is in `tools/upgrade-check.sh`.
+   Until a release is out, also check the upgrade from 0.3.0's source, `e7bdbe1`, on MariaDB and
+   PostgreSQL: the weekly CI job that does runs only once this workflow is on `main`.
 7. **Publish the source.** Fast-forward `main` to `initial` (`git push origin initial:main`, or a
-   pull request if `main` is protected): `info.xml` points the store at the screenshots on `main`.
-   Then tag the release commit `v<x>` and push the tag.
+   pull request if `main` is protected): `info.xml` points the store at the screenshots and the
+   manuals on `main`. Then tag the release commit `v<x>` and push the tag. **The first release
+   cannot fast-forward:** the history was rewritten on 2026-10-04, and `origin/main` (`f6a099d`)
+   shares no commit with `initial`. Replace it once, with the ruleset that refuses force-pushes
+   lifted for that push: `git push --force-with-lease=main:f6a099d origin initial:main`.
 8. **Upload.** Attach the tarball to a GitHub release for the tag; the store downloads it from
    there. On apps.nextcloud.com, *Upload app release* takes that download URL and the tarball's
    signature:

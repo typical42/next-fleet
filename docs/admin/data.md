@@ -30,6 +30,8 @@ Include these items in the backup of Nextcloud:
 - The data folder. It contains the attached documents and receipts.
 
 To restore NextFleet data, restore the Nextcloud database and data folder from the same backup.
+A backup from before an account deletion brings back the account name in the NextFleet rows. After
+such a restore, delete that account again.
 The [Nextcloud administration manual](https://docs.nextcloud.com/server/latest/admin_manual/maintenance/restore.html)
 describes the procedure.
 
@@ -41,10 +43,11 @@ backup. An import of it restores no NextFleet data.
 - **Deletion is soft.** A deleted vehicle, entry, reminder or document stays in the database with
   a deletion date. Nothing removes it later. To restore a vehicle that a user deleted, use
   [`nextfleet:restore`](occ.md#nextfleetrestore).
-- **Account deletion keeps the rows.** When you delete an account, NextFleet replaces the account
-  name in its rows with a random name
-  ([ADR 0008](../adr/0008-erasing-a-driver-pseudonymises.md)). The vehicles of that account close
-  and go to the trash.
+- **Account deletion keeps the rows.** When you delete an account, NextFleet removes it from the
+  reminder lists. In all other rows, it replaces the account name with a random name
+  ([ADR 0008](../adr/0008-erasing-a-driver-pseudonymises.md)). NextFleet removes all access to the
+  vehicles of that account and moves them to the trash. This works only while the app is enabled.
+  Refer to [Disable or remove the app](README.md#disable-or-remove-the-app).
 
 > [!WARNING]
 > Before you delete the account of a vehicle owner, give their vehicles to a different account with
@@ -68,12 +71,12 @@ When the version number in `appinfo/info.xml` increases, Nextcloud runs these st
    - `ErasedPseudonyms` changes the names of deleted accounts from versions before 0.3.0 to the
      new format. If a live account has a name in the old format, the step tells you. The message is
      in the upgrade output, in the log and in a notification to each administrator.
-   - `StrangerRecipients` removes reminder recipients that the owner cannot share with. It runs
-     only when you upgrade from a version before 0.3.1.
+   - `StrangerRecipients` removes each reminder recipient who cannot see the vehicle and whom the
+     owner cannot share with. It runs only when you upgrade from a version before 0.3.1.
 
 Before each release, the developers install the new version over the old one with
-`tools/upgrade-check.sh`. The test fails if a row is not there after the upgrade, or if the schema
-is not the same as after a new installation ([release](../development.md#release)).
+`tools/upgrade-check.sh`. The test fails if a row is missing after the upgrade. It also fails if
+the schema is not the same as after a new installation ([release](../development.md#release)).
 
 ## Find and correct damaged data
 

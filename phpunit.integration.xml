@@ -17,6 +17,9 @@
     - A running server and a real database, so this suite has its own bootstrap and runs only
     - inside the dev container - see docs/development.md#testing.
   -->
+  <extensions>
+    <bootstrap class="OCA\NextFleet\Tests\Integration\ForgetOrphanedRecipients"/>
+  </extensions>
   <testsuites>
     <testsuite name="integration">
       <directory>tests/Integration</directory>

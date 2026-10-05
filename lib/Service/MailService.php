@@ -23,6 +23,7 @@ use OCP\AppFramework\Db\TTransactional;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\IConfig;
 use OCP\IDBConnection;
+use OCP\IL10N;
 use OCP\IURLGenerator;
 use OCP\IUser;
 use OCP\IUserManager;
@@ -119,12 +120,14 @@ class MailService {
 			throw new \DomainException($userId . ' has no email address; the digest skips them');
 		}
 
+		// In the language the digest would use, so the test mail looks like the mail it stands for.
+		[$l, $language] = $this->l10nOf($user);
 		$template = $this->mailer->createEMailTemplate('nextfleet.testMail');
-		$template->setSubject('NextFleet test mail');
+		$template->setSubject($l->t('NextFleet test mail'));
 		$template->addHeader();
-		$template->addHeading('NextFleet test mail');
-		$template->addBodyText('Your administrator sent this to check that NextFleet can mail you. NextFleet sends its reminder mails to this address.');
-		$template->addFooter('', 'en');
+		$template->addHeading($l->t('NextFleet test mail'));
+		$template->addBodyText($l->t('Your administrator sent this to check that NextFleet can mail you. NextFleet sends its reminder mails to this address.'));
+		$template->addFooter('', $language);
 		$this->deliver($user, $address, $template);
 
 		return $address;
@@ -257,9 +260,7 @@ class MailService {
 	 * @throws \RuntimeException when the mail server refused it
 	 */
 	private function send(IUser $user, string $address, array $news): void {
-		$language = $this->l10n->getUserLanguage($user);
-		$locale = $this->config->getUserValue($user->getUID(), 'core', 'locale', '');
-		$l = $this->l10n->get(Application::APP_ID, $language, $locale === '' ? null : $locale);
+		[$l, $language] = $this->l10nOf($user);
 
 		$template = $this->mailer->createEMailTemplate('nextfleet.reminderDigest');
 		$template->setSubject($l->t('Reminders for your vehicles'));
@@ -284,6 +285,18 @@ class MailService {
 		}
 		$template->addFooter('', $language);
 		$this->deliver($user, $address, $template);
+	}
+
+	/**
+	 * The recipient's language and locale.
+	 *
+	 * @return array{IL10N, string} the catalogue, and the language the footer takes
+	 */
+	private function l10nOf(IUser $user): array {
+		$language = $this->l10n->getUserLanguage($user);
+		$locale = $this->config->getUserValue($user->getUID(), 'core', 'locale', '');
+
+		return [$this->l10n->get(Application::APP_ID, $language, $locale === '' ? null : $locale), $language];
 	}
 
 	/** @throws \RuntimeException when the mail server refused it */

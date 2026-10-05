@@ -172,7 +172,7 @@ jobs:
         db: [mariadb, pgsql]
         # The two versions a user may run from source: 0.2.0 and 0.3.0. Once a release is out,
         # its tag replaces them.
-        base: [27142b4, a0ca1f0]
+        base: [9056da5, e7bdbe1]
     steps:
       # The base version is a commit, and the script builds it in a worktree.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

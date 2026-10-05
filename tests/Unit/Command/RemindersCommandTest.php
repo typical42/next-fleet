@@ -48,6 +48,19 @@ class RemindersCommandTest extends TestCase {
 		$this->assertSame("digest: the mail server went away\n", $command->getErrorOutput());
 	}
 
+	/** --output promises one JSON document, so --send alone prints one: whether the round went through. */
+	public function testSendWithJsonPrintsOneDocument(): void {
+		$command = $this->command($this->createMock(NotificationService::class), $this->createMock(MailService::class));
+		$this->assertSame(0, $command->execute(['--send' => true, '--output' => 'json']));
+		$this->assertSame(['sent' => true], json_decode($command->getDisplay(), true));
+
+		$failing = $this->createMock(MailService::class);
+		$failing->method('digest')->willThrowException(new \RuntimeException('down'));
+		$command = $this->command($this->createMock(NotificationService::class), $failing);
+		$this->assertSame(1, $command->execute(['--send' => true, '--output' => 'json'], ['capture_stderr_separately' => true]));
+		$this->assertSame(['sent' => false], json_decode($command->getDisplay(), true));
+	}
+
 	private function command(NotificationService $notifications, MailService $mail): CommandTester {
 		return new CommandTester(new RemindersCommand(
 			$this->createMock(ReminderService::class),

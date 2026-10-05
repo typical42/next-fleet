@@ -50,20 +50,22 @@ fleet.
    docker compose -f .docker/compose.yml exec -u www-data app31 php occ app:enable nextfleet
    ```
 
-5. Add the demonstration fleet to the `admin` account:
+5. Add the demonstration fleet to the `admin` account on both servers:
 
    ```bash
    docker compose -f .docker/compose.yml exec -u www-data app php occ nextfleet:seed admin
+   docker compose -f .docker/compose.yml exec -u www-data app31 php occ nextfleet:seed admin
    ```
 
 6. Open <http://localhost:8080> for Nextcloud 34, or <http://localhost:8081> for Nextcloud 31.
-   Log in as `admin` with the password `admin`.
+7. Log in as `admin` with the password `admin`.
+8. Open the **NextFleet** app.
 
-   The **NextFleet** page shows the vehicles of the demonstration fleet.
+   The page shows the vehicles of the demonstration fleet.
 
 The servers use your working copy of the repository. When you change PHP code, reload the page.
 The server can show the old code for up to one minute.
-To build the frontend again after each change, run `npm run watch`. Mailpit shows the sent mails
+To build the frontend again on each save, run `npm run watch`. Mailpit shows the sent mails
 at <http://localhost:8025>.
 
 [Local dev environment](../development.md#local-dev-environment) explains each service of the

@@ -1,7 +1,7 @@
 # Access and bookings
 
 The owner of a vehicle can give access to other users and to groups. Each user or group gets a
-role. A driver or a manager can book the vehicle, take it and return it.
+role. The owner, a driver or a manager can book the vehicle, take it and return it.
 
 ## Roles
 
@@ -9,7 +9,7 @@ role. A driver or a manager can book the vehicle, take it and return it.
 |---|---|
 | **Viewer** | See the vehicle, its entries, figures, reminders and documents. Export CSV files. |
 | **Driver** | Do what a viewer does. Add entries, and change or delete their own entries. Book the vehicle. Attach documents to their own entries and bookings. |
-| **Manager** | Do what a driver does. Change and delete all entries. Edit the vehicle, its reminders and the reminder recipients. |
+| **Manager** | Do what a driver does. Change and delete all entries. Change and cancel all bookings. Edit the vehicle, its reminders and the reminder recipients. Attach documents to the vehicle. Import CSV files. |
 | Owner | Do what a manager does. Give and remove access. Delete the vehicle. |
 
 Each vehicle has one owner: the user who added it. Only an administrator can give a vehicle to a
@@ -48,10 +48,11 @@ If you have access to the vehicle of another user, you can return the access.
 > [!WARNING]
 > After you leave, only the owner can give you access again.
 
-If you have access through a group, you cannot leave. Only the owner can change the access of the
-group.
+If you have access only through a group, you cannot leave. If you also have access through a
+group, you keep that access after you leave. Only the owner can change the access of the group.
 
-To see who has access, open **Who can see this vehicle** under the vehicle name.
+If you are not the owner, open **Who can see this vehicle** under the vehicle name to see who has
+access.
 
 ## Book a vehicle
 
@@ -71,7 +72,11 @@ A booking has these limits:
 - It ends not more than one year from now.
 - Nobody can book a vehicle that is laid up or disposed of.
 
-To change your booking, click **Change** on the booking.
+To change your booking:
+
+1. Click **Change** on the booking.
+2. Change the times or the purpose.
+3. Click **Save**.
 
 To cancel your booking:
 
@@ -84,12 +89,19 @@ you get a notification.
 ## Take and return a vehicle
 
 1. On your booking, click **Take the car**.
-2. Type the **Counter reading (km)** and the **Tank or battery (%)**. You can add **Notes**.
+2. Type the **Counter reading (km)** and the **Tank or battery (%)**. For a vehicle in engine
+   hours, the label shows **(h)**. You can add **Notes**.
 3. Click **Take the car**.
 
    The booking shows **Out**.
 
-To take a vehicle without a booking, click **Take it now**. Type the return time in **Back by**.
+To take a vehicle without a booking, use **Take it now**. It shows only if nobody has the vehicle
+or a booking for it now:
+
+1. In the **Bookings** section, click **Take it now**.
+2. Type the return time in **Back by**.
+3. Type the **Counter reading (km)** and the **Tank or battery (%)**.
+4. Click **Take the car**.
 
 To return the vehicle:
 

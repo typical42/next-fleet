@@ -85,15 +85,15 @@ class ImportCommand extends Command {
 			}
 			$result = $this->import->import($userId, $vehicleUuid, $fields + ['etag' => $preview['etag']]);
 		} catch (\InvalidArgumentException|DoesNotExistException|AccessDeniedException|FileChangedException|LockedException $e) {
-			$output->writeln('<error>' . $e->getMessage() . '</error>');
+			Format::error($output, $e->getMessage());
 
 			return self::FAILURE;
 		} catch (ImportRefusedException $e) {
-			$output->writeln('<error>The file is not one an import reads: ' . $e->getMessage() . '</error>');
+			Format::error($output, 'The file is not one an import reads: ' . $e->getMessage());
 
 			return self::FAILURE;
 		} catch (StaleUpdateException) {
-			$output->writeln('<error>Another write to the vehicle raced the import; nothing was written. Run it again.</error>');
+			Format::error($output, 'Another write to the vehicle raced the import; nothing was written. Run it again.');
 
 			return self::FAILURE;
 		}
@@ -210,21 +210,21 @@ class ImportCommand extends Command {
 	 * @param Preview $preview
 	 */
 	private function describe(array $preview, OutputInterface $output): void {
-		$output->writeln('Placed: ' . implode(', ', array_map(
+		Format::line($output, 'Placed: ' . implode(', ', array_map(
 			static fn (array $column): string => $column['header'] . ' → ' . $column['field'],
 			$preview['columns']['placed'],
 		)));
 		if ($preview['columns']['ignored'] !== []) {
-			$output->writeln('Not placed: ' . implode(', ', $preview['columns']['ignored']));
+			Format::line($output, 'Not placed: ' . implode(', ', $preview['columns']['ignored']));
 		}
 		if ($preview['category_defaults'] !== []) {
-			$output->writeln('By default: ' . implode(', ', array_map(
+			Format::line($output, 'By default: ' . implode(', ', array_map(
 				static fn (array $default): string => $default['text'] . ' → ' . $default['meaning'],
 				$preview['category_defaults'],
 			)));
 		}
 		foreach ($preview['questions'] as $question) {
-			$output->writeln('Still to be answered: ' . $question['name'] . ' (' . implode(', ', $question['choices']) . ')');
+			Format::line($output, 'Still to be answered: ' . $question['name'] . ' (' . implode(', ', $question['choices']) . ')');
 		}
 		$counts = $preview['counts'];
 		$output->writeln(sprintf(
@@ -235,7 +235,7 @@ class ImportCommand extends Command {
 			$counts['creates'],
 		));
 		if ($preview['reasons'] !== []) {
-			$output->writeln('Left out: ' . implode(', ', array_map(
+			Format::line($output, 'Left out: ' . implode(', ', array_map(
 				static fn (array $reason): string => $reason['reason'] . ': ' . $reason['count'],
 				$preview['reasons'],
 			)));

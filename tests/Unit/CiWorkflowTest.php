@@ -306,7 +306,7 @@ class CiWorkflowTest extends TestCase {
 		$this->assertSame("github.event_name == 'schedule'", $job['if'] ?? null);
 		$this->assertSame(['mariadb', 'pgsql'], $job['strategy']['matrix']['db'] ?? null);
 		// 0.2.0 and 0.3.0, the two a user may run from source (CHANGELOG, "For apps, scripts and admins").
-		$this->assertSame(['27142b4', 'a0ca1f0'], $job['strategy']['matrix']['base'] ?? null);
+		$this->assertSame(['9056da5', 'e7bdbe1'], $job['strategy']['matrix']['base'] ?? null);
 
 		$checkout = $job['steps'][0] ?? [];
 		$this->assertStringStartsWith('actions/checkout@', (string)($checkout['uses'] ?? ''));

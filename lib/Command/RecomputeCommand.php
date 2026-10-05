@@ -70,7 +70,7 @@ class RecomputeCommand extends Command {
 			} catch (DoesNotExistException) {
 				// Gone since it was listed: nothing left to settle.
 				continue;
-			} catch (\Exception $e) {
+			} catch (\Throwable $e) {
 				// Each vehicle commits on its own, so the ones before stay settled and are printed.
 				$failed = 'Stopped at vehicle ' . $vehicle->getUuid() . ': ' . $e->getMessage();
 				break;

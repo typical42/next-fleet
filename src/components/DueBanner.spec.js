@@ -261,6 +261,19 @@ describe('the HU/AU sticker question', () => {
 		expect(wrapper.findComponent(InspectionSticker).exists()).toBe(false)
 	})
 
+	/** A disposed vehicle's reminders stop: it is asked for no new one, sticker or + Reminder. */
+	it('is not asked of a vehicle disposed of, which offers no + Reminder either', async () => {
+		vi.mocked(listReminders).mockResolvedValue([OIL, DONE])
+		const wrapper = shallowMount(DueBanner, {
+			props: { vehicle: { ...VEHICLE, lifecycle: 'disposed' } },
+			global: { renderStubDefaultSlot: true },
+		})
+		await flushPromises()
+
+		expect(wrapper.findComponent(InspectionSticker).exists()).toBe(false)
+		expect(wrapper.findAllComponents(NcButton).some((one) => one.text() === '+ Reminder')).toBe(false)
+	})
+
 	it('is not asked where no inspection is required', async () => {
 		vi.mocked(listReminders).mockResolvedValue([OIL])
 		vi.mocked(reminderTemplates).mockResolvedValue([TEMPLATES[0]])

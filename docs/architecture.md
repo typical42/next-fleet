@@ -115,7 +115,7 @@ rule governs the vehicle's document folder: `folder_file_id` is the identity, th
 
 **`lifecycle` replaces an `active` flag.** `active`, `laid_up` (seasonal or off the road — reminders
 pause), `disposed` (sold or scrapped, with `disposed_at` — reminders stop, the vehicle leaves the
-overview, records stay for the retention period). A boolean cannot tell a Saisonkennzeichen from a
+fleet list for the overview's *Disposed of* list, records stay for the retention period). A boolean cannot tell a Saisonkennzeichen from a
 scrapyard.
 
 **An audit row's author and instant are `created_by` and `created_at`.** It is written in the same

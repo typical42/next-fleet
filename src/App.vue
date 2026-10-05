@@ -14,7 +14,7 @@ import NcCounterBubble from '@nextcloud/vue/components/NcCounterBubble'
 import NcEmptyContent from '@nextcloud/vue/components/NcEmptyContent'
 import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
 import { generateUrl } from '@nextcloud/router'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 import UndoToast from './components/UndoToast.vue'
 import VehicleList from './components/VehicleList.vue'
@@ -62,10 +62,21 @@ const loading = ref(true)
 /** The app's own settings are on the personal settings page (lib/Settings/). */
 const settingsUrl = generateUrl('/settings/user/additional')
 
-// Looked up in the fleet the navigation lists rather than in the whole store: a vehicle disposed
-// of in the edit sheet leaves that list (docs/ui.md), and its screen would otherwise stay open
-// with no entry to leave it by.
-const vehicle = computed(() => store.visible.find((one) => one.uuid === selected.value))
+/** Whether the selected vehicle was opened from the overview's list of disposed ones. */
+const openedDisposed = ref(false)
+// Looked up in the fleet the navigation lists: a vehicle disposed of in the edit sheet leaves that
+// list (docs/ui.md), and its screen goes with it. One opened from the disposed list stays open, or
+// a sale recorded by mistake could never be set back.
+const vehicle = computed(() => store.visible.find((one) => one.uuid === selected.value)
+	?? (openedDisposed.value ? store.list.find((one) => one.uuid === selected.value) : undefined))
+const disposed = computed(() => store.list.filter((one) => one.lifecycle === 'disposed'))
+// Set back to active, the vehicle is an ordinary one again: disposed of a second time, its screen
+// goes as any other's does.
+watch(() => store.visible.some((one) => one.uuid === selected.value), (listed) => {
+	if (listed) {
+		openedDisposed.value = false
+	}
+})
 // Read off what the content area shows, not off `selected`: a vehicle that left the fleet falls
 // back to the overview with its uuid still selected.
 const overview = computed(() => !reporting.value && !sorting.value && !vehicle.value)
@@ -120,6 +131,7 @@ function show(uuid) {
 	sorting.value = false
 	costing.value = false
 	arrivedToEnter.value = false
+	openedDisposed.value = disposed.value.some((one) => one.uuid === uuid)
 	selected.value = uuid
 }
 
@@ -193,6 +205,7 @@ function sort() {
 				@costs="arrivedToEnter = false; costing = true" />
 			<OverviewView v-else
 				:vehicles="store.visible"
+				:disposed="disposed"
 				@new="creating = true"
 				@select="show" />
 		</NcAppContent>

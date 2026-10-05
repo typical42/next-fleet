@@ -22,7 +22,9 @@ messages go to the standard error output, so the JSON output stays valid.
 |---|---|
 | 0 | The command is complete, or it found nothing. |
 | 1 | `check` or `recompute --dry-run` found a problem, or the command refused or failed. |
-| 2 | An argument or an option is not correct. `import`, `transfer` and `seed` return 1 for this error. |
+| 2 | The command refused a value that you gave. `import`, `transfer` and `seed` return 1 for this error. |
+
+If an argument is missing, or an option is unknown, `occ` itself stops with exit code 1.
 
 ## Commands to find data
 
@@ -79,7 +81,7 @@ sudo -E -u www-data php occ nextfleet:audit e95df47f-772d-4af6-8991-76d4adfdac33
 ### nextfleet:reminders
 
 Shows the open reminders of an account, most urgent first: overdue, due, coming up, planned and
-snoozed. The dashboard widget of the user shows only the overdue, due and coming-up reminders.
+snoozed. The dashboard widget of that account shows only the overdue, due and coming-up reminders.
 
 Usage: `occ nextfleet:reminders [<uid>] [--send] [--output <format>]`
 
@@ -87,9 +89,12 @@ Usage: `occ nextfleet:reminders [<uid>] [--send] [--output <format>]`
 |---|---|
 | `--send` | Run the hourly reminder job now, for all accounts. It sends the notifications and the reminder mails. |
 
-The reminder mail goes to each account one time per day at most. Thus `--send` never sends a
-second mail on the same day. If a mail to a recipient fails, the command writes the error to the
-Nextcloud log.
+The reminder mail normally goes to each account one time per day at most. If the hourly job runs at
+the same time as `--send`, an account can get the news in two mails. If a mail to a recipient fails,
+the command writes the error to the Nextcloud log.
+
+With `--send` and `--output=json`, and without an account, the command shows
+`{"sent":true}`, or `{"sent":false}` if the job failed.
 
 ```bash
 sudo -E -u www-data php occ nextfleet:reminders alice
@@ -98,6 +103,9 @@ sudo -E -u www-data php occ nextfleet:reminders alice
 ### nextfleet:pending
 
 Shows the account deletions and group deletions that an error stopped, with their start time.
+
+If an account with the same name exists again, the command shows a warning. The account deletion
+is then dropped, and the new account keeps the vehicles and rows of the deleted account.
 
 Usage: `occ nextfleet:pending [--finish] [--output <format>]`
 
@@ -120,7 +128,8 @@ Finds rows that break a rule of the data model. The command changes nothing. It 
   `flag`).
 - Counter readings of an entry that do not agree with the entry.
 - Two live grants for the same account or group on one vehicle.
-- A grant to an account or group that does not exist.
+- A grant to an account or group that does not exist (`grantee`).
+- A vehicle owner that no account has, and for whom no account deletion is pending (`owner`).
 - A name of a deleted account in the format from before 0.3.0.
 
 If a live account has a name in that old format, the command shows a warning. A warning does not
@@ -172,7 +181,8 @@ sudo -E -u www-data php occ nextfleet:mail-test alice
 ### nextfleet:restore
 
 Takes a deleted vehicle out of the trash, as the undo of the owner does. The command refuses a
-vehicle that is not deleted. It also refuses a vehicle whose owner account is deleted.
+vehicle that is not deleted. It also refuses a vehicle whose owner account is deleted, or whose
+account deletion is pending.
 
 Usage: `occ nextfleet:restore <vehicle>`
 
@@ -182,7 +192,8 @@ sudo -E -u www-data php occ nextfleet:restore e95df47f-772d-4af6-8991-76d4adfdac
 
 ### nextfleet:transfer
 
-Gives a vehicle to a different owner. The grants stay. The old owner can still see the vehicle.
+Gives a live vehicle to a different owner. The grants stay. If the account of the old owner exists,
+it keeps the role **Viewer**.
 
 Usage: `occ nextfleet:transfer <vehicle> <owner>`
 

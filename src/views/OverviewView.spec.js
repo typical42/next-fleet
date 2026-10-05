@@ -98,6 +98,40 @@ describe('the overview', () => {
 		expect(wrapper.emitted('select')?.[0]).toEqual([VEHICLE.uuid])
 	})
 
+	/**
+	 * A disposed vehicle leaves the fleet but not the app: listed apart, it opens, so a sale
+	 * recorded by mistake can be set back and a sold car's trips still corrected.
+	 */
+	it('lists the disposed vehicles apart and opens them', async () => {
+		vi.mocked(listFleetReminders).mockResolvedValue([])
+		const SOLD = { ...VEHICLE, uuid: 'v-2', plate: 'B-OL 1', lifecycle: 'disposed' }
+		const wrapper = shallowMount(OverviewView, {
+			props: { vehicles: [VEHICLE], disposed: [SOLD] },
+			global: { stubs: { NcListItem: { props: ['name'], template: '<li>{{ name }}</li>' } } },
+		})
+		await flushPromises()
+
+		const sold = wrapper.find('.overview__disposed')
+		expect(sold.text()).toBe('B-OL 1')
+		expect(wrapper.find('.overview__list').text()).not.toContain('B-OL 1')
+		await sold.find('li').trigger('click')
+		expect(wrapper.emitted('select')).toEqual([['v-2']])
+	})
+
+	/**
+	 * A fleet of sold vehicles still teaches the first new one, and the sold ones still open: the
+	 * overview is the only way back to them.
+	 */
+	it('shows the empty state and the disposed vehicles when no other is left', async () => {
+		vi.mocked(listFleetReminders).mockResolvedValue([])
+		const wrapper = shallowMount(OverviewView, { props: { vehicles: [], disposed: [{ ...VEHICLE, lifecycle: 'disposed' }] } })
+		await flushPromises()
+
+		expect(wrapper.find('.overview__disposed').exists()).toBe(true)
+		expect(wrapper.find('.overview__list').exists()).toBe(false)
+		expect(wrapper.findComponent({ name: 'NcEmptyContent' }).exists()).toBe(true)
+	})
+
 	/** An empty fleet is taught, not hinted at: there is no vehicle to complete yet. */
 	it('asks nothing of a fleet that has no vehicles', () => {
 		const wrapper = shallowMount(OverviewView, { props: { vehicles: [] } })

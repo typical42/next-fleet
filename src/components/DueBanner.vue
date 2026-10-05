@@ -39,6 +39,8 @@ const open = computed(() => openByUrgency(reminders.value))
 
 /** Reminders take `edit`; anyone else reads the list and opens no sheet on it. */
 const edits = computed(() => may(props.vehicle, 'edit'))
+/** A disposed vehicle's reminders stop (CONTEXT.md), so it is asked for no new one. */
+const live = computed(() => props.vehicle.lifecycle !== 'disposed')
 
 /**
  * Whether `reminders` is this vehicle's list. Until it is, the sticker question would be asked
@@ -48,7 +50,7 @@ const read = ref(false)
 
 /** @type {import('vue').Ref<import('../services/api.js').ReminderTemplate|null>} */
 const inspection = ref(null)
-const asking = computed(() => read.value && inspection.value !== null && inspectionOf(reminders.value) === null)
+const asking = computed(() => live.value && read.value && inspection.value !== null && inspectionOf(reminders.value) === null)
 
 onMounted(() => {
 	reload()
@@ -181,7 +183,7 @@ function estimateWords(reminder) {
 			class="due__sticker"
 			:vehicle="vehicle"
 			:template="inspection" />
-		<div v-if="edits" class="due__actions">
+		<div v-if="edits && live" class="due__actions">
 			<NcButton variant="tertiary" @click="opened = null">
 				{{ t('nextfleet', '+ Reminder') }}
 			</NcButton>

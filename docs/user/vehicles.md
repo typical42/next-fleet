@@ -5,7 +5,8 @@ documents and bookings belong to one vehicle.
 
 ## Add a vehicle
 
-1. In the navigation, click **New vehicle**.
+1. In the navigation, click **New vehicle**. On the **Overview** page, you can also push the `N`
+   key.
 2. Type the data that you know:
    - **Registration plate**, **Manufacturer** and **Model**.
    - **Engine**: **Petrol**, **Diesel**, **LPG**, **CNG**, **Electric** or **Hybrid**.
@@ -33,6 +34,9 @@ The vehicle page shows these parts, from top to bottom:
 5. The **Documents** section. Refer to [Documents](documents.md).
 6. The **Timeline**. Refer to [Entries and the timeline](entries.md).
 
+The buttons depend on your [role](access.md#roles). A viewer sees only **Costs**. **Edit vehicle**
+shows only for the owner and the managers.
+
 The **Overview** page shows all your vehicles. The vehicles with the most urgent reminders are at
 the top.
 
@@ -52,9 +56,10 @@ Some fields need an explanation:
   currency, you cannot change the currency.
 - **Country**: **Germany** or **Generic**. **Generic** has no national rules.
 
-If the overview shows **Some details are still missing**, the vehicle has no VIN, first
-registration, tank size, battery capacity or currency. Click the vehicle name and add the data. To
-hide the message, click **Dismiss**.
+If you are the owner or a manager, the overview can show **Some details are still missing**. Then
+one or more of these fields is empty: VIN, first registration, tank size, battery capacity or
+currency. **Still missing** names the fields. To add them, click the vehicle name, then click **Edit
+vehicle**. To hide the message, click **Dismiss**.
 
 ## Lay up or dispose of a vehicle
 
@@ -64,7 +69,15 @@ The **Lifecycle** field in **Edit vehicle** has three values:
 |---|---|
 | **Active** | The vehicle is in use. |
 | **Laid up** | The reminders pause. Nobody can book the vehicle. The vehicle moves to the end of the overview. Use this value for a seasonal vehicle. |
-| **Disposed of** | The vehicle is sold or scrapped. Type the date in **Disposed on**. The reminders stop. The vehicle leaves the navigation and the overview. Its records stay, and you can still print its logbook in **Reports**. |
+| **Disposed of** | The vehicle is sold or scrapped. Type the date in **Disposed on**. The reminders stop. The vehicle leaves the navigation and moves to the **Disposed of** list at the bottom of the **Overview** page. Its records stay, and you can still print its logbook in **Reports**. |
+
+Each user who can see a vehicle that is disposed of can open it from the **Disposed of** list. Only
+the owner and the managers can set it back:
+
+1. On the **Overview** page, in the **Disposed of** list, click the vehicle.
+2. Click **Edit vehicle**.
+3. In **Lifecycle**, select **Active** or **Laid up**.
+4. Click **Save**.
 
 ## Delete a vehicle
 
@@ -79,6 +92,9 @@ Only the owner can delete a vehicle.
 > [!WARNING]
 > When the message closes, you cannot restore the vehicle yourself. Then only your administrator
 > can restore it.
+
+The message closes when you click **Dismiss**. It also closes when you delete, remove or import
+something, or when you change an entry.
 
 ## Find a vehicle
 

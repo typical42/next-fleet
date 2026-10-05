@@ -62,8 +62,11 @@ await mkdir(out, { recursive: true })
 await login(page, 'admin', 'admin')
 await page.goto(appPage)
 
-// The overview: every seeded vehicle in one list, counters included.
+// The overview: every seeded vehicle in one list, counters included. The seed asks the logbook
+// question of each German vehicle, a card that would push the fleet out of frame; it is hidden as
+// answering it would hide it, since answering would change admin's preferences for good.
 await page.getByRole('main').getByRole('listitem').first().waitFor()
+await page.addStyleTag({ content: '#nextfleet .hint > :has(.hint__ask) { display: none; }' })
 await shoot(page, 'overview')
 
 // A vehicle screen, with a timeline long enough to show derived and flagged readings apart.

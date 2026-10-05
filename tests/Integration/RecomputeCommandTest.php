@@ -18,6 +18,7 @@ use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\DB\QueryBuilder\IQueryBuilder;
 use OCP\IDBConnection;
+use OCP\IUserManager;
 use PHPUnit\Framework\TestCase;
 use Symfony\Component\Console\Tester\CommandTester;
 
@@ -28,10 +29,21 @@ use Symfony\Component\Console\Tester\CommandTester;
  * vehicle there, so a run over all of them is read for this suite's rows only.
  */
 class RecomputeCommandTest extends TestCase {
-	/** Not an account: a vehicle's `user_id` is a string column. */
+	use Accounts;
+
 	private const OWNER = 'nextfleet-test-recompute-owner';
 
 	private CommandTester $command;
+
+	/** An account, since a vehicle whose owner no backend knows is a finding and refused a restore. */
+	public static function setUpBeforeClass(): void {
+		self::deleteAccounts([self::OWNER]);
+		\OCP\Server::get(IUserManager::class)->createUser(self::OWNER, bin2hex(random_bytes(16)));
+	}
+
+	public static function tearDownAfterClass(): void {
+		self::deleteAccounts([self::OWNER]);
+	}
 
 	protected function setUp(): void {
 		$this->command = new CommandTester(\OCP\Server::get(RecomputeCommand::class));

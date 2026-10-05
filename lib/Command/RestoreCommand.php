@@ -11,8 +11,11 @@ namespace OCA\NextFleet\Command;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Exception\AccessDeniedException;
 use OCA\NextFleet\Exception\StaleUpdateException;
+use OCA\NextFleet\Service\ErasureService;
+use OCA\NextFleet\Service\Pending;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Db\DoesNotExistException;
+use OCP\IUserManager;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
@@ -26,6 +29,8 @@ class RestoreCommand extends Command {
 	public function __construct(
 		private VehicleMapper $mapper,
 		private VehicleService $vehicles,
+		private IUserManager $users,
+		private Pending $pending,
 	) {
 		parent::__construct();
 	}
@@ -50,6 +55,21 @@ class RestoreCommand extends Command {
 
 			return self::FAILURE;
 		}
+		// An owner deleted while the erasure has not run, or not finished: it would rename them and
+		// close the vehicle, so bringing it back now would hand it to a uid nobody holds.
+		$owner = $vehicle->getUserId();
+		if (!str_starts_with($owner, ErasureService::PREFIX)) {
+			if ($this->pending->marks(Pending::ERASURE, $owner)) {
+				Format::error($output, 'The erasure of its owner ' . $owner . ' is still pending; occ nextfleet:pending --finish runs it, or drops it if the account exists again');
+
+				return self::FAILURE;
+			}
+			if (!$this->users->userExists($owner)) {
+				Format::error($output, 'No user backend knows its owner ' . $owner . ' (deleted, or out of reach); see occ nextfleet:check');
+
+				return self::FAILURE;
+			}
+		}
 		try {
 			$restored = $this->vehicles->restore($vehicle->getUserId(), $uuid, $vehicle->getUpdatedAt());
 		} catch (AccessDeniedException) {
@@ -62,7 +82,7 @@ class RestoreCommand extends Command {
 
 			return self::FAILURE;
 		}
-		$output->writeln('Restored ' . $restored->getUuid() . ' (' . $restored->getPlate() . ') for ' . $restored->getUserId() . '.');
+		Format::line($output, 'Restored ' . $restored->getUuid() . ' (' . $restored->getPlate() . ') for ' . $restored->getUserId() . '.');
 
 		return self::SUCCESS;
 	}

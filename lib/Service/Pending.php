@@ -43,6 +43,11 @@ class Pending {
 	}
 
 	/** @param self::ERASURE|self::GROUP $kind */
+	public function marks(string $kind, string $id): bool {
+		return $this->config->hasKey(Application::APP_ID, $this->key($kind, $id), lazy: true);
+	}
+
+	/** @param self::ERASURE|self::GROUP $kind */
 	public function end(string $kind, string $id): void {
 		$this->config->deleteKey(Application::APP_ID, $this->key($kind, $id));
 	}

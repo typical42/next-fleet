@@ -1,12 +1,12 @@
 # Logbook for the tax office
 
-In Germany, the private use of a company car is taxed by the 1 % rule, or by a logbook
-(Fahrtenbuch). The tax office accepts an electronic logbook only if nobody can change an entry
-without a record. NextFleet has **Logbook mode** for this purpose.
+In Germany, the tax office calculates the private use of a company car with the 1 % rule or with a
+logbook (Fahrtenbuch). The tax office accepts an electronic logbook only if nobody can change an
+entry without a record. NextFleet has **Logbook mode** for this purpose. Ask your tax adviser before
+you use the logbook for your tax return.
 
 > [!IMPORTANT]
-> Nobody did a legal review of NextFleet. Ask your tax adviser before you use the logbook for your
-> tax return.
+> Nobody did a legal review of NextFleet.
 
 ## What Logbook mode does
 
@@ -31,10 +31,10 @@ has rules for the necessary fields.
 
 ## Turn Logbook mode on
 
-For a German vehicle with Logbook mode off, the **Overview** page asks
-**Keep a logbook for the tax office with this vehicle?**. Click **Switch Logbook mode on**.
+For a German vehicle with Logbook mode off, the **Overview** page asks the owner and the managers a
+question: **Keep a logbook for the tax office with this vehicle?** Click **Switch Logbook mode on**.
 
-You can also turn it on in the vehicle settings:
+You can also turn it on with **Edit vehicle**:
 
 1. On the vehicle page, click **Edit vehicle**.
 2. Click the **Logbook mode** switch.
@@ -56,11 +56,12 @@ later change to that trip.
 ## Print the logbook
 
 1. In the navigation, click **Reports**.
-2. Select the **Vehicle** and the **Year**.
-3. Click **Open logbook**.
+2. Select the **Vehicle**.
+3. Type the **Year**. Until the end of February, the field shows the previous year.
+4. Click **Open logbook**.
 
    The logbook opens in a new browser tab.
-4. Print the page with your browser.
+5. Print the page with your browser.
 
 For a German vehicle, the logbook is in German and has the title **Fahrtenbuch**. For other
 vehicles, it is in your language.
@@ -71,9 +72,10 @@ The mileage claim lists the business trips that you recorded on one vehicle in o
 the flat rate per kilometre of the country. It is available for vehicles in kilometres with the
 country **Germany**.
 
-1. In **Reports**, select the **Vehicle** and the **Year**.
-2. Click **Open mileage claim**.
-3. Print the page with your browser.
+1. In **Reports**, select the **Vehicle**.
+2. Type the **Year**.
+3. Click **Open mileage claim**.
+4. Print the page with your browser.
 
 Commutes are not on the mileage claim. The flat rate applies only to vehicles that are not business
 assets.

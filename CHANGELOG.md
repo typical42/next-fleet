@@ -4,20 +4,20 @@
 
 The first release: a logbook for your vehicles, with their fill-ups, maintenance, costs and
 reminders, and access for the people who drive them, book them and hand them over. For Nextcloud
-31 to 34, in English and German, formal and informal. 0.x because it is new
-([plan](plan.md#milestones)).
+31 to 34, in English and German, formal and informal. 0.x because it is new.
 
 ### Vehicles and the odometer
 
 - A vehicle is a car, motorcycle, van, truck, trailer, tractor or generator, with its plate, the
-  energy it takes, its country and its lifecycle: in service, laid up (reminders pause) or
-  disposed (reminders stop, the records stay). Its country sets the logbook rules, the VAT rates
-  and the inspection. A new vehicle takes the country from your personal settings. Its currency is a
-  three-letter code such as EUR, and it stays once a cost is recorded in it. A change of the
-  plate, the country, the currency or the type is kept on the vehicle's audit trail.
+  energy it takes, its country and its lifecycle: in service, laid up (reminders pause) or disposed
+  (reminders stop, the records stay, and the vehicle moves to a *Disposed of* list under the
+  overview, where it still opens and can be set back). Its country sets the logbook rules, the VAT
+  rates and the inspection. A new vehicle takes the country from your personal settings. Its
+  currency is a three-letter code such as EUR, and it stays once a cost is recorded in it. A change
+  of the plate, the country, the currency or the type is kept on the vehicle's audit trail.
 - A new vehicle takes the energy from its engine, so the first fill-up needs no trip to *Edit
   vehicle*. The overview asks once whether a German vehicle keeps a logbook for the tax office;
-  Logbook Mode stays off until you say yes. An empty timeline offers *New entry* and *Import from a
+  Logbook mode stays off until you say yes. An empty timeline offers *New entry* and *Import from a
   file…*, and *Settings* in the navigation opens your personal settings.
 - The odometer is a history of readings, not a running total. A trip entered by its distance
   derives the reading. A counter read off the dashboard wins over a derived one, and a reading it
@@ -52,11 +52,11 @@ reminders, and access for the people who drive them, book them and hand them ove
   tap opens the entry to change or delete it. Two trips whose times overlap are flagged, and a
   private trip that closed a Gap says when a trip entered later overtook it, with *Void trip* on
   its row.
-- Logbook Mode, per vehicle. Trips become append-only: a delete voids the trip, which stays in the
+- Logbook mode, per vehicle. Trips become append-only: a delete voids the trip, which stays in the
   export, and every write leaves an audit row, also after the mode is switched off for a trip
   that set off while it was on. Switching it on locks nothing that came before. A trip that lacks
   what the country requires is saved, flagged and names what is missing.
-- Gaps. Under Logbook Mode the timeline shows the kilometres no trip accounts for, per month, and
+- Gaps. Under Logbook mode the timeline shows the kilometres no trip accounts for, per month, and
   closes them one at a time with a private trip you confirm.
 - The Fahrtenbuch for a German vehicle: one year as a page the browser prints, with voided trips,
   late edits and what they changed, trips changed without an audit row, and the periods the mode
@@ -233,10 +233,13 @@ reminders, and access for the people who drive them, book them and hand them ove
   on and the reminders sent to you, bookings and audit rows) as a JSON file per table, deleted
   rows included. Importing the archive restores nothing. Tried with `occ user:export` on NC 31
   and NC 34 (user_migration 10.5.0) and checked weekly.
-- Deleting a Nextcloud account pseudonymises every row that names it, bookings included, and
-  deletes none ([ADR 0008](docs/adr/0008-erasing-a-driver-pseudonymises.md)); the handover notes
-  stay, as trips do. The pseudonym is `erased:` and 20 letters and digits, which no account name
-  can be, so a new account under the same name inherits nothing.
+- Deleting a Nextcloud account pseudonymises every row that names it, bookings included, and deletes
+  only its places on reminder lists
+  ([ADR 0008](https://github.com/typical42/next-fleet/blob/main/docs/adr/0008-erasing-a-driver-pseudonymises.md));
+  the handover notes stay, as trips do. The pseudonym is `erased:` and 20 letters and digits, which
+  no account name can be, so a new account under the same name inherits nothing. An account deleted
+  while the app is disabled keeps its name on the rows; `occ nextfleet:check` reports the vehicles
+  it owned and the access it held.
 - Deleting an owner's account closes their vehicles: every grant on them is revoked and they move
   to the trash, their rows kept. An admin hands a vehicle on first with `occ nextfleet:transfer`.
 - An erasure or a deleted group's revokes that a database error cuts short are finished by a
@@ -247,8 +250,8 @@ reminders, and access for the people who drive them, book them and hand them ove
   purges a vehicle's rows yet.
 - An admin can read the database; nothing is encrypted on the client. Reminder mails go out
   through the server's mail account. What stays after an erasure, such as old trip text in the
-  audit and the server's logs, is listed in [docs/legal.md](docs/legal.md).
-- The logbooks, the Reports screen and Logbook Mode say that no lawyer reviewed them.
+  audit and the server's logs, is listed in [docs/legal.md](https://github.com/typical42/next-fleet/blob/main/docs/legal.md).
+- The logbooks, the Reports screen and Logbook mode say that no lawyer reviewed them.
 
 ### For apps, scripts and admins
 
@@ -256,9 +259,9 @@ reminders, and access for the people who drive them, book them and hand them ove
   with a Nextcloud app password, which a client gets through Login Flow v2. It does what the web UI
   does, and a sync endpoint hands a client what changed since its last call. v1 only grows: a
   change that would break a client fails the tests. `openapi.json` ships with the app, where
-  Nextcloud's OCS API viewer finds it. All of it is in `docs/api.md`.
+  Nextcloud's OCS API viewer finds it. All of it is in [docs/api.md](https://github.com/typical42/next-fleet/blob/main/docs/api.md).
 - Every create takes an optional `client_uuid`. Sent again under it, a create writes nothing and
-  answers the row it wrote, with 200 ([retried creates](docs/api.md#retried-creates)).
+  answers the row it wrote, with 200 ([retried creates](https://github.com/typical42/next-fleet/blob/main/docs/api.md#retried-creates)).
 - Sync sends what changed and no more: a Reading whose flag another entry changed comes, the rest
   of its chain does not. Deleting an account that never used the app starts no client over.
 - `occ nextfleet:import <uid> <vehicle-uuid> <path>` runs the import for scripts, as that user and
@@ -269,17 +272,18 @@ reminders, and access for the people who drive them, book them and hand them ove
 - Admin commands that find, check, repair and undo without SQL: `occ nextfleet:vehicles` lists
   every vehicle's uuid, `access` and `audit` show who may do what and what changed, `check` finds
   rows that break the data model and `recompute` settles a drifted odometer again, `pending`
-  finishes an erasure a failure cut short, `reminders` and `mail-test` show what a user is
-  reminded of and whether mail reaches them, and `restore` takes a vehicle out of the trash.
-  `docs/admin/` says where the data lives, that only the database backup protects it, and how
-  an upgrade migrates it.
+  finishes an erasure or a deleted group's revokes that a failure cut short, `reminders` and
+  `mail-test` show what a user is reminded of and whether mail reaches them, and `restore` takes
+  a vehicle out of the trash. The
+  [administration guide](https://github.com/typical42/next-fleet/blob/main/docs/admin/README.md) says where the
+  data lives, that only the database backup protects it, and how an upgrade migrates it.
 - `occ nextfleet:seed <user>` writes a demo fleet to try it on. `--grant-to <uid>` gives that
   account access to the demo Passat as a driver, with a trip of theirs and a booking tomorrow.
   Where the sharing settings refuse that account, the fleet is still seeded and the command says
   why and fails.
 - The CSV export, each sync page and each import write one `info` line to the Nextcloud log: who,
   which vehicle, what and how many rows. Set `loglevel` to 1 to see them
-  ([what is logged](docs/security.md#what-is-logged)).
+  ([what is logged](https://github.com/typical42/next-fleet/blob/main/docs/security.md#what-is-logged)).
 - Running 0.2.0 or 0.3.0 from the repository's source? `occ upgrade` takes it to 0.3.1. It keeps
   every row but one kind: it takes off the reminder lists anyone the owner may not share with who
   does not see the vehicle, as adding them is refused now. An account named like an erased driver
@@ -288,14 +292,15 @@ reminders, and access for the people who drive them, book them and hand them ove
   `tools/upgrade-check.sh` checks that it keeps the rows on NC 31 and NC 34, on MariaDB and
   PostgreSQL, before a release and weekly, and on NC 34 with Oracle before a release.
 - Runs on Oracle as well as MariaDB/MySQL, PostgreSQL and SQLite. Oracle was tried on NC 34 with
-  Oracle Free 23 and is checked weekly ([Oracle](docs/development.md#oracle)).
+  Oracle Free 23 and is checked weekly ([Oracle](https://github.com/typical42/next-fleet/blob/main/docs/development.md#oracle)).
 - Every field a request sets has a bound: notes 10 000 characters, money 10^12 cents, counters
-  10^9. A value past it is refused with a 400 that names the field ([security](docs/security.md)).
+  10^9. A value past it is refused with a 400 that names the field ([security](https://github.com/typical42/next-fleet/blob/main/docs/security.md)).
 - Report a vulnerability privately through GitHub's private vulnerability reporting, as
   `SECURITY.md` says. The first reply comes within 14 days.
 
 ### Documentation
 
-- A user manual (`docs/user/`), an administration guide (`docs/admin/`) and a developer guide
-  (`docs/developer/`), written in Simplified Technical English. `appinfo/info.xml` links all three
-  for the app store.
+- A [user manual](https://github.com/typical42/next-fleet/blob/main/docs/user/README.md), an
+  [administration guide](https://github.com/typical42/next-fleet/blob/main/docs/admin/README.md) and a
+  [developer guide](https://github.com/typical42/next-fleet/blob/main/docs/developer/README.md), written in Simplified
+  Technical English. `appinfo/info.xml` links all three for the app store.

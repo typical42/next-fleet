@@ -106,9 +106,7 @@ Beraterin oder Ihren Berater, bevor Sie sich darauf verlassen.
     - the images are on `main`. `npm run screenshots:docker` retakes them from a seeded dev
     - container; the fleet they show is what `occ nextfleet:seed` writes.
   -->
-  <screenshot small-thumbnail="https://raw.githubusercontent.com/typical42/next-fleet/main/design/screenshots/overview-thumb.png">
-    https://raw.githubusercontent.com/typical42/next-fleet/main/design/screenshots/overview.png
-  </screenshot>
+  <screenshot small-thumbnail="https://raw.githubusercontent.com/typical42/next-fleet/main/design/screenshots/overview-thumb.png">https://raw.githubusercontent.com/typical42/next-fleet/main/design/screenshots/overview.png</screenshot>
   <screenshot>https://raw.githubusercontent.com/typical42/next-fleet/main/design/screenshots/vehicle.png</screenshot>
   <screenshot>https://raw.githubusercontent.com/typical42/next-fleet/main/design/screenshots/entry-sheet.png</screenshot>
   <screenshot>https://raw.githubusercontent.com/typical42/next-fleet/main/design/screenshots/costs.png</screenshot>

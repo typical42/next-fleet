@@ -42,7 +42,8 @@ five minutes.
 
    NextFleet opens the vehicle page. The **Odometer** tile shows your counter reading.
 
-All fields are optional. You can add the data later with **Edit vehicle**.
+All fields are optional. Without an **Engine**, you cannot record an energy entry until you set
+**Energy types** in **Edit vehicle**. You can add the data later with **Edit vehicle**.
 
 ### Record an energy entry
 

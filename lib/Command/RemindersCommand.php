@@ -42,7 +42,7 @@ class RemindersCommand extends Command {
 			// Optional: --send covers every user, so it needs no uid.
 			->addArgument('uid', InputArgument::OPTIONAL, 'the user whose reminders to list')
 			->addOption('send', null, InputOption::VALUE_NONE, 'run the hourly reminder job now, for every user: notify and send the mail digests. '
-				. 'The digest keeps its once-a-day mark, so this never mails anyone twice in a day. '
+				. 'The digest keeps its once-a-day mark, so this mails nobody a second time that day, unless the hourly job runs at the same moment. '
 				. 'A recipient it fails for is logged, not printed');
 		Format::configure($this);
 	}
@@ -101,6 +101,9 @@ class RemindersCommand extends Command {
 				];
 			}
 			$format->rows($output, $rows, 'No reminders are due.');
+		} elseif ($format->isJson()) {
+			// --output promises one document on stdout, so a script piping to jq reads one.
+			$format->json($output, ['sent' => !$failed]);
 		}
 
 		return $failed ? self::FAILURE : self::SUCCESS;

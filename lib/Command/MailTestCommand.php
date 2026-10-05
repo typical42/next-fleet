@@ -47,7 +47,7 @@ class MailTestCommand extends Command {
 
 			return self::FAILURE;
 		}
-		$output->writeln('Sent a test mail to ' . $address . '.');
+		Format::line($output, 'Sent a test mail to ' . $address . '.');
 
 		return self::SUCCESS;
 	}

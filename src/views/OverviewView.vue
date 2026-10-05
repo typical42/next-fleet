@@ -19,6 +19,13 @@ import { t } from '../utils/l10n.js'
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle[]>} */
 	vehicles: { type: Array, required: true },
+	/**
+	 * The vehicles disposed of, which the fleet above leaves out. Listed apart so that a sale
+	 * recorded by mistake can be opened and set back, and a sold car's trips still corrected.
+	 *
+	 * @type {import('vue').PropType<import('../services/api.js').Vehicle[]>}
+	 */
+	disposed: { type: Array, default: () => [] },
 })
 
 const emit = defineEmits(['new', 'select'])
@@ -104,11 +111,31 @@ useHotKey('n', () => emit('new'))
 			</NcListItem>
 		</ul>
 	</div>
+	<!-- Apart from the fleet and after it, also below the empty state: a fleet of sold vehicles is
+	     still taught to add one, and the sold ones still open. -->
+	<section v-if="disposed.length > 0" class="overview overview--disposed">
+		<h3>{{ t('nextfleet', 'Disposed of') }}</h3>
+		<ul class="overview__disposed">
+			<NcListItem v-for="vehicle in disposed"
+				:key="vehicle.uuid"
+				:name="nameOf(vehicle)"
+				:details="formatOdometer(vehicle)"
+				@click="$emit('select', vehicle.uuid)">
+				<template v-if="subtitleOf(vehicle)" #subname>
+					{{ subtitleOf(vehicle) }}
+				</template>
+			</NcListItem>
+		</ul>
+	</section>
 </template>
 
 <style scoped>
 .overview {
 	padding: calc(var(--default-grid-baseline) * 4);
+}
+
+.overview--disposed {
+	padding-block-start: 0;
 }
 
 .overview__failure {

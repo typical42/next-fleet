@@ -55,7 +55,7 @@ class CheckCommand extends Command {
 		} else {
 			$format->rows($output, $found['findings'], 'No findings.');
 			foreach ($found['warnings'] as $warning) {
-				$output->writeln('<comment>Warning: ' . $warning['reason'] . '</comment>');
+				$output->writeln('<comment>Warning: ' . Format::safe($warning['reason']) . '</comment>');
 			}
 		}
 

@@ -167,6 +167,49 @@ describe('the app shell', () => {
 	})
 
 	/**
+	 * Opened on purpose from the overview's disposed list, a disposed vehicle's screen stays: its
+	 * edit sheet is where the sale is set back.
+	 */
+	it('opens a disposed vehicle from the overview', async () => {
+		const SOLD = { ...VEHICLE, uuid: 'v-2', lifecycle: 'disposed' }
+		vi.mocked(listVehicles).mockResolvedValue([VEHICLE, SOLD])
+		const wrapper = await shell()
+		await entry(wrapper, 'Overview').vm.$emit('click')
+		await flushPromises()
+
+		/** @type {any} */
+		const overview = wrapper.findComponent(OverviewView)
+		expect(overview.props('disposed').map((/** @type {{ uuid: string }} */ one) => one.uuid)).toEqual([SOLD.uuid])
+		await overview.vm.$emit('select', SOLD.uuid)
+
+		/** @type {any} */
+		const screen = wrapper.findComponent(VehicleView)
+		expect(screen.props('vehicle').uuid).toBe(SOLD.uuid)
+		/** @type {any} */
+		const list = wrapper.findComponent(VehicleList)
+		expect(list.props('vehicles').map((/** @type {{ uuid: string }} */ one) => one.uuid)).toEqual([VEHICLE.uuid])
+	})
+
+	/** Set back to active and then disposed of again, it leaves as any vehicle does. */
+	it('leaves a vehicle set back from the disposed list when it is disposed of again', async () => {
+		const SOLD = { ...VEHICLE, uuid: 'v-2', lifecycle: 'disposed' }
+		vi.mocked(listVehicles).mockResolvedValue([VEHICLE, SOLD])
+		const wrapper = await shell()
+		await entry(wrapper, 'Overview').vm.$emit('click')
+		await flushPromises()
+		await wrapper.findComponent(OverviewView).vm.$emit('select', SOLD.uuid)
+
+		useVehiclesStore().upsert({ ...SOLD, lifecycle: 'active' })
+		await flushPromises()
+		expect(wrapper.findComponent(VehicleView).exists()).toBe(true)
+		useVehiclesStore().upsert({ ...SOLD, lifecycle: 'disposed' })
+		await flushPromises()
+
+		expect(wrapper.findComponent(VehicleView).exists()).toBe(false)
+		expect(wrapper.findComponent(OverviewView).exists()).toBe(true)
+	})
+
+	/**
 	 * Reports sit under the vehicles in the navigation (docs/ui.md). The screen is handed the whole
 	 * fleet, sold vehicles too: a logbook outlives the vehicle it was kept for.
 	 */

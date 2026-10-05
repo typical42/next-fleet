@@ -4,14 +4,14 @@ Your NextFleet settings are on the Nextcloud settings page. To open them, click 
 NextFleet navigation. The settings are in the **NextFleet** section of
 **Personal settings** > **Additional settings**.
 
-Each setting saves immediately.
+Each setting saves immediately. The grid factor saves when you leave the field.
 
 ## NextFleet settings
 
 | Setting | Description |
 |---|---|
 | **Country** | The country for the vehicles that you add from now on: **Germany** or **Generic**. It sets their units, currency and rules. The vehicles that you have now keep their country. |
-| **I reclaim VAT** | Select it if you get the VAT back, for example as a business. The cost figures then show net of VAT. |
+| **I reclaim VAT** | Turn it on if you get the VAT back, for example as a business. The cost figures then show net of VAT. |
 | **Grid factor for charging, g CO₂/kWh** | The CO₂ emission of your electricity, in whole grams per kWh. Keep it empty to use the average of the country of each vehicle. |
 | **Inbox folder** | The folder for the [receipt inbox](documents.md#use-the-receipt-inbox). To select it, click **Choose folder**. To stop the inbox, click **Stop using it**. |
 
@@ -25,9 +25,11 @@ There are two ways to give an app access:
 - The app opens the Nextcloud login in your browser. You log in and grant access.
 - You make an app password yourself:
   1. Go to **Personal settings** > **Security**.
-  2. In **Devices & sessions**, type a name for the app.
+  2. In **Devices & sessions**, type a name in the **App name** field.
   3. Click **Create new app password**.
-  4. Type the login and the password that Nextcloud shows into the app.
+
+     The **New app password** window shows a **Login** and a **Password**.
+  4. Type the login and the password into the app.
 
 To stop the access of an app, delete its app password in **Devices & sessions**.
 

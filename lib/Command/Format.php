@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Command;
 
 use Symfony\Component\Console\Command\Command;
+use Symfony\Component\Console\Formatter\OutputFormatter;
 use Symfony\Component\Console\Helper\Table;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
@@ -23,6 +24,11 @@ final class Format {
 	private const PLAIN = 'plain';
 	private const JSON = 'json';
 	private const JSON_PRETTY = 'json_pretty';
+	/**
+	 * What a terminal acts on rather than shows: C0 but the newline, DEL and C1, and the bidi
+	 * overrides and isolates, which reorder what follows them on the line.
+	 */
+	private const CONTROLS = '\x{00}-\x{09}\x{0B}-\x{1F}\x{7F}-\x{9F}\x{202A}-\x{202E}\x{2066}-\x{2069}';
 
 	private function __construct(
 		private string $name,
@@ -50,7 +56,26 @@ final class Format {
 	 */
 	public static function error(OutputInterface $output, string $message): void {
 		($output instanceof ConsoleOutputInterface ? $output->getErrorOutput() : $output)
-			->writeln('<error>' . $message . '</error>');
+			->writeln('<error>' . self::safe($message) . '</error>');
+	}
+
+	/**
+	 * Text that may hold what a user typed - a plate, a title, a CSV header - made harmless for the
+	 * admin's terminal. A control character would drive it: an OSC 52 sequence in a plate rewrites
+	 * the clipboard, a cursor move hides a row. A `<…>` would be read as a console style or link.
+	 * A newline stays, since audit breaks its fields over lines on purpose.
+	 */
+	public static function safe(string $text): string {
+		// A field takes bytes as sent, so invalid UTF-8 can carry an encoded C1 past a /u pattern,
+		// which refuses the whole string. Scrubbed first, every control is a character /u sees.
+		$clean = (string)preg_replace('/[' . self::CONTROLS . ']/u', "\u{FFFD}", mb_scrub($text, 'UTF-8'));
+
+		return OutputFormatter::escape($clean);
+	}
+
+	/** One line of plain output, through safe(). */
+	public static function line(OutputInterface $output, string $text): void {
+		$output->writeln(self::safe($text));
 	}
 
 	public function isJson(): bool {
@@ -75,7 +100,7 @@ final class Format {
 				static fn (mixed $value): string => match (true) {
 					$value === null => '',
 					is_bool($value) => $value ? 'yes' : 'no',
-					default => (string)$value,
+					default => self::safe((string)$value),
 				},
 				array_values($row),
 			), $rows));
@@ -96,6 +121,11 @@ final class Format {
 		if ($this->name === self::JSON_PRETTY) {
 			$flags |= JSON_PRETTY_PRINT;
 		}
-		$output->writeln(json_encode($document, $flags), OutputInterface::OUTPUT_RAW);
+		// JSON escapes C0 itself. Unescaped Unicode keeps a plate as typed, so the rest of CONTROLS
+		// is escaped here; they occur only inside strings, where \uXXXX means the same.
+		$json = (string)preg_replace_callback('/[\x{7F}-\x{9F}\x{202A}-\x{202E}\x{2066}-\x{2069}]/u',
+			static fn (array $m): string => sprintf('\\u%04x', mb_ord($m[0], 'UTF-8')),
+			json_encode($document, $flags));
+		$output->writeln($json, OutputInterface::OUTPUT_RAW);
 	}
 }

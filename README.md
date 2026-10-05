@@ -2,12 +2,11 @@
 
 NextFleet is a logbook for your vehicles in Nextcloud. It records the counter, trips, fuel and
 charging, maintenance and costs. It reminds you of inspections and services. You can give other
-users access to a vehicle. A driver or a manager can book it, take it and return it.
+users access to a vehicle. The owner, a driver or a manager can book it, take it and return it.
 
 - Nextcloud 31 to 34.
 - English and German (formal and informal).
-- Version 0.3.1 is the first release. It is not published yet. [CHANGELOG.md](CHANGELOG.md) lists
-  its functions.
+- Version 0.3.1 is the first release. [CHANGELOG.md](CHANGELOG.md) lists its functions.
 
 ## Documentation
 
@@ -46,5 +45,5 @@ Report a security problem privately. [SECURITY.md](SECURITY.md) tells you how.
 
 Copyright (C) 2026 Johannes Kolb
 
-AGPL-3.0-or-later. Refer to [LICENSE](LICENSE). The Nextcloud app store requires it, and the
-frontend includes `@nextcloud/vue`, which has the AGPL licence.
+AGPL-3.0-or-later. Refer to [LICENSE](LICENSE). The frontend includes `@nextcloud/vue`, which has
+the AGPL licence. [legal.md](docs/legal.md) gives the reasons for the licence.

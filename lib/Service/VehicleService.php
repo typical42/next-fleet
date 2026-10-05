@@ -395,10 +395,17 @@ class VehicleService {
 	 * @throws \OCP\DB\Exception
 	 */
 	public function restore(string $userId, string $uuid, int $expectedUpdatedAt): Vehicle {
-		$restored = $this->mapper->restoreChecked(
-			$this->permit($userId, VehicleAccess::OWN, $this->mapper->findAnyByUuid($uuid)),
-			$expectedUpdatedAt,
-		);
+		$vehicleId = $this->permit($userId, VehicleAccess::OWN, $this->mapper->findAnyByUuid($uuid))->getId();
+		$restored = $this->atomic(function () use ($userId, $vehicleId, $expectedUpdatedAt): Vehicle {
+			// An erasure renames the owner and leaves `updated_at` alone, so the token cannot tell.
+			// Read again under the hold: an erasure that committed meanwhile is seen and refused.
+			$this->mapper->hold($vehicleId);
+
+			return $this->mapper->restoreChecked(
+				$this->permit($userId, VehicleAccess::OWN, $this->mapper->findAnyById($vehicleId)),
+				$expectedUpdatedAt,
+			);
+		}, $this->db);
 		$this->pool($userId, [$restored]);
 
 		return $restored;
