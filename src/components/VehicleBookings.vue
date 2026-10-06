@@ -296,7 +296,7 @@ function stateWord(booking) {
 
 		<NcNoteCard v-if="failure" type="error" :text="failure" />
 		<NcNoteCard v-if="refusal" type="warning" :text="refusal" />
-		<NcLoadingIcon v-if="bookings === null && failure === ''" />
+		<NcLoadingIcon v-if="bookings === null && failure === ''" :name="t('nextfleet', 'Loading…')" />
 		<p v-else-if="bookings !== null && bookings.length === 0" class="bookings__empty">
 			{{ books
 				? t('nextfleet', 'No bookings. Book the vehicle before you take it, so nobody else plans on it.')

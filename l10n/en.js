@@ -181,6 +181,7 @@ OC.L10N.register(
 		'Its category is still to be chosen.': 'Its category is still to be chosen.',
 		'Keep it': 'Keep it',
 		Litres: 'Litres',
+		'Loading…': 'Loading…',
 		'Log the trip': 'Log the trip',
 		'Log the trip, booked {span}': 'Log the trip, booked {span}',
 		'Maintenance: {type}': 'Maintenance: {type}',

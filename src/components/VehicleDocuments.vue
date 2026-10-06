@@ -238,7 +238,7 @@ async function attach() {
 		</div>
 
 		<NcNoteCard v-if="failure" type="error" :text="failure" />
-		<NcLoadingIcon v-if="documents === null && failure === ''" />
+		<NcLoadingIcon v-if="documents === null && failure === ''" :name="t('nextfleet', 'Loading…')" />
 		<p v-else-if="documents !== null && documents.length === 0" class="documents__empty">
 			{{ keepsVehicles
 				? t('nextfleet', 'No documents yet. Attach the registration, the insurance policy or a receipt from your Files.')

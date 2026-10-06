@@ -140,7 +140,7 @@ async function logged(entry) {
 				</NcButton>
 			</template>
 		</NcEmptyContent>
-		<NcLoadingIcon v-else-if="!loaded" />
+		<NcLoadingIcon v-else-if="!loaded" :name="t('nextfleet', 'Loading…')" />
 		<NcEmptyContent v-else-if="inbox.folder === null"
 			:name="t('nextfleet', 'No inbox folder')"
 			:description="t('nextfleet', 'Choose a folder of your own under NextFleet in your personal settings, and point the auto-upload of the Nextcloud mobile app at it. A folder that was deleted or shared with you cannot be the inbox.')">
