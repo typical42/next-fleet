@@ -278,9 +278,9 @@ for its block on the user's settings page. Vite names each output after its entr
 `vite.config.js`, which is what the template then asks `script()` for. `npm run watch` does the
 same in development mode and rebuilds on save. Two bits of noise to ignore: `@nextcloud/vite-config`
 sets `outDir` to the repo root on purpose, so that every build prints Vite's "build.outDir must not
-be … a parent directory of root"; and its polyfill chain pulls in `elliptic` and `crypto-browserify`,
-so `npm audit` reports seven low-severity advisories with no upstream fix. Gate CI at `--audit-level
-moderate` rather than muting the tool.
+be … a parent directory of root"; and `npm audit` reports advisories in the dev tools, such as
+`elliptic` in `@nextcloud/vite-config`'s polyfill chain. None of those packages reaches the bundle,
+so CI audits only what ships (the frontend job in `ci.yml`) rather than muting the tool.
 
 **The main entry is one dynamic import of `src/boot.js`.** NC 31 loads an entry as
 `nextfleet-main.mjs?v=…`, while a lazy chunk (the file picker, a date locale) imports Vite's preload

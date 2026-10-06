@@ -135,8 +135,8 @@ user-entered date, so a wrong or hostile clock cannot silently move a logbook en
 
 ### Supply chain
 
-- Lockfiles committed, `npm ci` in CI, `npm audit` and `composer audit` as gates, Renovate for
-  updates. Every dependency added is a decision, not a convenience.
+- Lockfiles committed, `npm ci` in CI, `npm audit` (on what ships) and `composer audit` as gates,
+  Renovate for updates. Every dependency added is a decision, not a convenience.
 - **GitHub Actions pinned to commit SHAs**, least-privilege `GITHUB_TOKEN`, no `pull_request_target`
   that checks out PR code. A compromised action owns the release.
 - **Releases are signed.** Apps on apps.nextcloud.com are code-signed: request a certificate by CSR

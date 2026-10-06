@@ -84,9 +84,9 @@ jobs:
       - run: composer install --no-progress
       - run: php vendor/bin/phpunit --fail-on-skipped --filter LicensingTest
 
-      # @nextcloud/vite-config's polyfill chain carries seven low-severity advisories with
-      # no upstream fix, so gate above them rather than mute the tool.
-      - run: npm audit --audit-level moderate
+      # Only the bundle ships, so only its packages gate. The dev tools' advisories have no
+      # upstream fix or need a major upgrade of @nextcloud/eslint-config.
+      - run: npm audit --omit=dev --audit-level moderate
 
   e2e:
     name: Playwright and axe, NC 31 and NC 34

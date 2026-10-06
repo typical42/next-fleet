@@ -341,6 +341,16 @@ class CiWorkflowTest extends TestCase {
 		$this->assertLessThan($check, $build, 'the licences are checked before the build');
 	}
 
+	/** One gate, on the packages the bundle ships; the step's comment says why not the dev tools. */
+	public function testTheFrontendJobAuditsTheShippedPackages(): void {
+		$audits = array_values(array_filter(
+			explode("\n", $this->script('frontend')),
+			static fn (string $line): bool => str_starts_with($line, 'npm audit'),
+		));
+
+		$this->assertSame(['npm audit --omit=dev --audit-level moderate'], $audits);
+	}
+
 	private function script(string $job): string {
 		$script = '';
 		foreach ((array)$this->job($job)['steps'] as $step) {
