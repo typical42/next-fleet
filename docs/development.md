@@ -458,6 +458,8 @@ It needs the stack up and `js/` built — without a bundle the root stays empty 
 the assertion, not the missing build. It logs in through the form — Nextcloud redirects a browser to
 `/login` whatever `Authorization` header it carries, so basic auth is no shortcut.
 `NEXTFLEET_URL_NC34` and `NEXTFLEET_URL_NC31` override the two ports.
+A failed test leaves a screenshot and `error-context.md` in `test-results/`, on CI a trace as well;
+the e2e job uploads the folder when it fails, as the artifact `e2e-test-results`, kept five days.
 
 Every vehicle the run makes wears a plate its own spec file owns — `E2E-` for the M1 slice,
 `M2-E2E-` to `M7-E2E-` for the next six, `M9-E2E-` for the M9 slice, `ROLES-` for the role cases — and each file deletes what it finds under its prefix before it starts.

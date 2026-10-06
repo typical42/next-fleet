@@ -400,6 +400,29 @@ class CiWorkflowTest extends TestCase {
 	}
 
 	/**
+	 * A runner is gone when the job ends, and a red E2E is read from its traces, not its log.
+	 * Only a failure uploads, and only for days: a green run's evidence answers nothing.
+	 */
+	public function testTheEndToEndJobKeepsPlaywrightsEvidenceWhenItFails(): void {
+		$steps = array_values((array)$this->job('e2e')['steps']);
+		$run = array_search('npm run test:e2e', array_map(static fn (mixed $step): string => (string)(((array)$step)['run'] ?? ''), $steps), true);
+		$this->assertIsInt($run, 'the job never runs the E2E');
+
+		$uploads = array_filter(
+			$steps,
+			static fn (mixed $step): bool => str_starts_with((string)(((array)$step)['uses'] ?? ''), 'actions/upload-artifact@'),
+		);
+		$this->assertCount(1, $uploads, 'the job uploads nothing');
+		$at = array_key_first($uploads);
+		$upload = (array)$uploads[$at];
+
+		$this->assertGreaterThan($run, $at, 'the evidence is uploaded before the run that writes it');
+		$this->assertSame('failure()', $upload['if'] ?? null);
+		$this->assertSame('test-results/', $upload['with']['path'] ?? null);
+		$this->assertLessThanOrEqual(7, (int)($upload['with']['retention-days'] ?? 90));
+	}
+
+	/**
 	 * The lists are data the job reads through the environment; a renamed variable leaves
 	 * the data in place and silently selects nothing.
 	 */

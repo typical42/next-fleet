@@ -127,6 +127,16 @@ jobs:
 
       - run: npm run test:e2e
 
+      # The runner is gone once the job ends, and a red spec is read from its trace and
+      # error-context.md (playwright.config.js keeps them on failure), not from the log.
+      - name: Keep Playwright's evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-test-results
+          path: test-results/
+          retention-days: 5
+
   # The job above meets 31 and 34. A component the bundle needs that 32 or 33 lacks would reach
   # users unseen, so weekly the two majors between load the app and take a vehicle and a reading.
   e2e-weekly:
