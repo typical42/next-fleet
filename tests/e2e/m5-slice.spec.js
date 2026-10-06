@@ -322,9 +322,14 @@ for (const viewport of [{ width: 320, height: 640 }, { width: 1280, height: 800 
 				const plate = `${plates}${at}`
 				const { vehicle } = await march(page, plate)
 				await soonDue(page, vehicle.uuid)
+				// As long as a plate may be, in wide letters: a button does not wrap its text, so the
+				// overview's hints are as wide as the longest name in them, whatever the font.
+				const longest = `${plates}${at}-`.padEnd(32, 'W')
+				await api(page, { method: 'POST', path: '/api/vehicles', body: { plate: longest } })
 
 				await page.goto(appPage)
 				await expect(row(page, plate)).toBeVisible()
+				await expect(page.locator('.hint')).toContainText(longest)
 				await check(page, 'the overview')
 
 				await open(page, plate)
