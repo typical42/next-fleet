@@ -285,7 +285,9 @@ same in development mode and rebuilds on save. Two bits of noise to ignore: `@ne
 sets `outDir` to the repo root on purpose, so that every build prints Vite's "build.outDir must not
 be … a parent directory of root"; and `npm audit` reports advisories in the dev tools, such as
 `elliptic` in `@nextcloud/vite-config`'s polyfill chain. None of those packages reaches the bundle,
-so CI audits only what ships (the frontend job in `ci.yml`) rather than muting the tool.
+so CI audits only the runtime packages (the frontend job in `ci.yml`) rather than muting the tool.
+Of the dev packages that `LicensingTest` notes do reach it, that audit skips two: the Vue plugin
+and the node polyfills. Vite stays in, because `vue-router` pulls it in.
 
 **The main entry is one dynamic import of `src/boot.js`.** NC 31 loads an entry as
 `nextfleet-main.mjs?v=…`, while a lazy chunk (the file picker, a date locale) imports Vite's preload
@@ -464,7 +466,7 @@ the assertion, not the missing build. It logs in through the form — Nextcloud 
 `/login` whatever `Authorization` header it carries, so basic auth is no shortcut.
 `NEXTFLEET_URL_NC34` and `NEXTFLEET_URL_NC31` override the two ports.
 A failed test leaves a screenshot and `error-context.md` in `test-results/`, on CI a trace as well;
-the e2e job uploads the folder when it fails, as the artifact `e2e-test-results`, kept five days,
+the e2e job uploads the folder when it fails or times out, as the artifact `e2e-test-results`, kept five days,
 and the weekly smoke run as `e2e-weekly-test-results`.
 
 Every vehicle the run makes wears a plate its own spec file owns — `E2E-` for the M1 slice,

@@ -87,7 +87,10 @@ jobs:
       - run: php vendor/bin/phpunit --fail-on-skipped --filter LicensingTest
 
       # Only the bundle ships, so only its packages gate. The dev tools' advisories have no
-      # upstream fix or need a major upgrade of @nextcloud/eslint-config.
+      # upstream fix or need a major upgrade of @nextcloud/eslint-config. Two build plugins are
+      # dev packages that put code in the bundle (the Vue plugin's helper, the node polyfills'
+      # shims), and this does not audit them. Vite, whose preload helper ships too, is audited:
+      # vue-router pulls it in.
       - run: npm audit --omit=dev --audit-level moderate
 
   e2e:
@@ -130,9 +133,10 @@ jobs:
       - run: npm run test:e2e
 
       # The runner is gone once the job ends, and a red spec is read from its trace and
-      # error-context.md (playwright.config.js keeps them on failure), not from the log.
+      # error-context.md (playwright.config.js keeps them on failure), not from the log. A job
+      # past its timeout ends cancelled, not failed.
       - name: Keep Playwright's evidence
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-test-results
@@ -178,7 +182,7 @@ jobs:
 
       # As in the e2e job; the name differs because one run holds both.
       - name: Keep Playwright's evidence
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-weekly-test-results

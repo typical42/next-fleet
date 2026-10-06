@@ -280,6 +280,13 @@ class CiWorkflowTest extends TestCase {
 		));
 		$this->assertCount(1, $installs, 'the notifications app\'s dependencies are never installed');
 		$this->assertGreaterThan($checkouts[0], $installs[0]);
+		// The install enables it, and on 34 it fails to load without lib/Vendor.
+		$install = array_key_first(array_filter(
+			$steps,
+			static fn (mixed $step): bool => str_contains((string)(((array)$step)['run'] ?? ''), 'php occ maintenance:install'),
+		));
+		$this->assertIsInt($install, 'the server job never installs Nextcloud');
+		$this->assertLessThan($install, $installs[0], 'the notifications app is enabled before its dependencies are installed');
 		$this->assertContains('gmp', $this->phpExtensions());
 
 		$script = $this->script('server');
@@ -538,7 +545,8 @@ class CiWorkflowTest extends TestCase {
 
 	/**
 	 * A runner is gone when the job ends, and a red E2E is read from its traces, not its log.
-	 * Only a failure uploads, and only for days: a green run's evidence answers nothing.
+	 * Only a failure uploads, and only for days: a green run's evidence answers nothing. A job
+	 * past its `timeout-minutes` ends cancelled, not failed, and a stalled spec is the one to read.
 	 */
 	public function testEveryEndToEndJobKeepsPlaywrightsEvidenceWhenItFails(): void {
 		$names = [];
@@ -559,7 +567,7 @@ class CiWorkflowTest extends TestCase {
 			$upload = (array)$uploads[$at];
 
 			$this->assertGreaterThan($run, $at, "'$job' uploads the evidence before the run that writes it");
-			$this->assertSame('failure()', $upload['if'] ?? null);
+			$this->assertSame('failure() || cancelled()', $upload['if'] ?? null);
 			$this->assertSame('test-results/', $upload['with']['path'] ?? null);
 			$this->assertLessThanOrEqual(7, (int)($upload['with']['retention-days'] ?? 90));
 			$names[] = $upload['with']['name'] ?? null;

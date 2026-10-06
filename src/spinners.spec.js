@@ -18,6 +18,8 @@ describe('NcLoadingIcon', () => {
 	 * It draws `role="img"` with an empty `aria-label` unless given a name, which axe reports as
 	 * an image without alternative text, and a screen reader announces as nothing. An audit sees it
 	 * only while a request is still out, so it fails on a slow server and passes on a fast one.
+	 * NcSelect's `:loading` draws one unnamed and offers no slot to change that, so this check
+	 * cannot cover it.
 	 */
 	it('is never drawn without a name', () => {
 		const unnamed = readdirSync(SRC, { recursive: true, encoding: 'utf8' })
