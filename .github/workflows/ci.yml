@@ -370,15 +370,34 @@ jobs:
         with:
           path: apps/nextfleet
 
+      # The app's notices are stored, counted and read back through it. A release and the image
+      # ship it; a checkout of the server does not.
+      - name: Check out the notifications app
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: nextcloud/notifications
+          ref: ${{ matrix.nextcloud }}
+          path: apps/notifications
+
+      # apcu: the dev stack's image caches in it, and the import and OwnFiles remember through
+      # the cache. gmp: the notifications app's web-push dependencies require it.
       - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
         with:
           php-version: ${{ matrix.php }}
-          extensions: bcmath, ctype, curl, dom, fileinfo, gd, iconv, intl, mbstring, openssl, pdo_mysql, pdo_pgsql, pdo_sqlite, posix, sqlite3, xml, zip
+          extensions: apcu, bcmath, ctype, curl, dom, fileinfo, gd, gmp, iconv, intl, mbstring, openssl, pdo_mysql, pdo_pgsql, pdo_sqlite, posix, sqlite3, xml, zip
+          ini-values: apc.enable_cli=1
           coverage: none
 
       - name: Install the app's dependencies
         working-directory: apps/nextfleet
         run: composer install --no-progress
+
+      # On 34 its lib/ uses web-push classes this builds into lib/Vendor, and without them the
+      # app fails to load; before 34 it installs nothing. Before the install, which enables the
+      # app by default.
+      - name: Install the notifications app's dependencies
+        working-directory: apps/notifications
+        run: composer install --no-dev --no-progress
 
       - name: Install Nextcloud
         env:
@@ -400,6 +419,14 @@ jobs:
           php occ config:system:set mail_smtpport --value=1025 --type=integer
           php occ config:system:set mail_from_address --value=nextfleet
           php occ config:system:set mail_domain --value=example.org
+
+      # As the dev stack's image sets it. With no distributed cache set, Nextcloud uses this one.
+      - name: Cache in APCu
+        run: php occ config:system:set memcache.local --value='\OC\Memcache\APCu'
+
+      # The install has enabled it by default already; said here, the suite's need of it is too.
+      - name: Enable the notifications app
+        run: php occ app:enable notifications
 
       # The migration runs here, and a class the server refuses takes the whole app down
       # with it - see tests/Unit/MigrationsTest.php.

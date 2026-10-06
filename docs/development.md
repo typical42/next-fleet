@@ -109,8 +109,10 @@ because that is the axis users actually vary.
 | Merge to `main` | Add PostgreSQL, on NC 34 |
 | Weekly | The fuller matrix with *user_migration*, plus Oracle, the upgrade check and an E2E smoke run on NC 32 and NC 33, allowed to fail loudly without blocking anyone |
 
-`.github/workflows/ci.yml` implements it. Alongside the matrix run — a Nextcloud checkout, a real
-database and Mailpit, `occ maintenance:install` with mail sent to Mailpit, `occ app:enable`, the
+`.github/workflows/ci.yml` implements it. Alongside the matrix run — a Nextcloud checkout with the
+*notifications* app of the same branch beside it, a real database and Mailpit,
+`occ maintenance:install` with mail sent to Mailpit and APCu as the memcache, as the dev stack's
+image has them, `occ app:enable`, the
 unit suite, then `php -S localhost:8080` in front of the checkout (four workers, so the API suite's
 two requests at once can meet) and against it the integration suite, which is where the schema
 meets PostgreSQL and SQLite, and the API suite — three jobs run once each:

@@ -230,6 +230,69 @@ class CiWorkflowTest extends TestCase {
 	}
 
 	/**
+	 * A notice is stored, counted and read back by the notifications app, which a release and the
+	 * image ship and a checkout of the server does not. It comes from the same branch as the server.
+	 */
+	public function testTheServerJobRunsTheNotificationsAppBeforeTheIntegrationSuite(): void {
+		$steps = (array)$this->job('server')['steps'];
+		$checkouts = array_keys(array_filter(
+			$steps,
+			static fn (mixed $step): bool => (((array)$step)['with']['repository'] ?? null) === 'nextcloud/notifications',
+		));
+		$this->assertCount(1, $checkouts, 'the server job never checks out the notifications app');
+		$checkout = (array)$steps[$checkouts[0]];
+		$this->assertSame('${{ matrix.nextcloud }}', $checkout['with']['ref'] ?? null);
+		$this->assertSame('apps/notifications', $checkout['with']['path'] ?? null);
+
+		// Its lib/ uses the web-push classes `composer install` builds into lib/Vendor, which
+		// need gmp.
+		$installs = array_keys(array_filter(
+			$steps,
+			static fn (mixed $step): bool => (((array)$step)['working-directory'] ?? null) === 'apps/notifications'
+				&& str_starts_with((string)(((array)$step)['run'] ?? ''), 'composer install --no-dev'),
+		));
+		$this->assertCount(1, $installs, 'the notifications app\'s dependencies are never installed');
+		$this->assertGreaterThan($checkouts[0], $installs[0]);
+		$this->assertContains('gmp', $this->phpExtensions());
+
+		$script = $this->script('server');
+		$enable = strpos($script, 'php occ app:enable notifications');
+		$this->assertIsInt($enable, 'the server job never enables the notifications app');
+		$this->assertLessThan(strpos($script, 'composer run test:integration'), $enable);
+	}
+
+	/**
+	 * The import's remembered answer and the names of a vehicle's files live in the distributed
+	 * cache. Without a memcache that is a NullCache, which remembers nothing. The dev stack's
+	 * image sets APCu, which the integration suite reaches from the command line.
+	 */
+	public function testTheServerJobCachesInApcuAsTheDevStackDoes(): void {
+		$this->assertContains('apcu', $this->phpExtensions());
+		$this->assertStringContainsString('apc.enable_cli=1', (string)($this->setupPhp()['with']['ini-values'] ?? ''));
+
+		$script = $this->script('server');
+		$cache = strpos($script, "php occ config:system:set memcache.local --value='\\OC\\Memcache\\APCu'");
+		$this->assertIsInt($cache, 'the server job sets no local memcache');
+		$this->assertLessThan(strpos($script, 'composer run test:integration'), $cache);
+	}
+
+	/** @return array<string, mixed> the server job's setup-php step */
+	private function setupPhp(): array {
+		$steps = array_values(array_filter(
+			(array)$this->job('server')['steps'],
+			static fn (mixed $step): bool => str_starts_with((string)(((array)$step)['uses'] ?? ''), 'shivammathur/setup-php@'),
+		));
+		$this->assertCount(1, $steps, 'the server job sets PHP up not exactly once');
+
+		return (array)$steps[0];
+	}
+
+	/** @return list<string> */
+	private function phpExtensions(): array {
+		return array_map('trim', explode(',', (string)($this->setupPhp()['with']['extensions'] ?? '')));
+	}
+
+	/**
 	 * The environment of the one step of `$job` that runs `$command`.
 	 *
 	 * @return array<string, mixed>
