@@ -31,6 +31,9 @@ class CiWorkflowTest extends TestCase {
 		'stable34' => ['8.2', '8.3', '8.4', '8.5'],
 	];
 
+	/** The gate of every weekly job and step: the schedule, or a run started by hand. */
+	private const WEEKLY = "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'";
+
 	/** @var array<string, mixed> */
 	private static array $workflow;
 
@@ -56,13 +59,29 @@ class CiWorkflowTest extends TestCase {
 	 */
 	private function combinations(string $event): array {
 		$env = (array)($this->job('plan')['env'] ?? []);
-		$key = 'ON_' . strtoupper($event);
+		$key = $this->variableFor($event);
 		$this->assertArrayHasKey($key, $env, "the plan job holds no combinations for '$event'");
 
 		/** @var list<array{nextcloud: string, php: string, db: string}> $decoded */
 		$decoded = json_decode((string)$env[$key], true, 512, JSON_THROW_ON_ERROR);
 
 		return $decoded;
+	}
+
+	/**
+	 * The variable the plan step's `case` reads for `$event`, picked as bash picks the arm: the
+	 * first whose patterns name the event, else the first `*`.
+	 */
+	private function variableFor(string $event): string {
+		preg_match_all('/^\s*([\w|*]+)\) combinations="\$(\w+)" ;;$/m', $this->script('plan'), $arms, PREG_SET_ORDER);
+		foreach ($arms as [, $patterns, $variable]) {
+			$names = explode('|', $patterns);
+			if (in_array($event, $names, true) || in_array('*', $names, true)) {
+				return $variable;
+			}
+		}
+
+		$this->fail("the plan step picks no list for '$event'");
 	}
 
 	/**
@@ -104,10 +123,10 @@ class CiWorkflowTest extends TestCase {
 		$this->assertSame(['contents' => 'read'], (array)(self::$workflow['permissions'] ?? []));
 	}
 
-	public function testTheWorkflowRunsOnPullRequestsOnMainAndWeekly(): void {
+	public function testTheWorkflowRunsOnPullRequestsOnMainWeeklyAndOnDemand(): void {
 		$triggers = $this->triggers();
 
-		$this->assertSame(['pull_request', 'push', 'schedule'], array_keys($triggers));
+		$this->assertSame(['pull_request', 'push', 'schedule', 'workflow_dispatch'], array_keys($triggers));
 		$this->assertSame(['main'], (array)$triggers['push']['branches']);
 		$this->assertNotEmpty($triggers['schedule'][0]['cron'] ?? null);
 	}
@@ -143,6 +162,14 @@ class CiWorkflowTest extends TestCase {
 		$this->assertGreaterThan(count($this->combinations('push')), count($this->combinations('schedule')));
 
 		$this->assertArrayNotHasKey('continue-on-error', $this->job('server'));
+	}
+
+	/**
+	 * Started by hand, the run is the weekly one: before a release, or to see a fix to a weekly
+	 * job without waiting for Monday.
+	 */
+	public function testARunStartedByHandRunsTheWeeklyMatrix(): void {
+		$this->assertSame($this->combinations('schedule'), $this->combinations('workflow_dispatch'));
 	}
 
 	/**
@@ -328,7 +355,7 @@ class CiWorkflowTest extends TestCase {
 			static fn (mixed $step): bool => str_contains((string)(((array)$step)['run'] ?? ''), 'php occ app:install user_migration'),
 		));
 		$this->assertCount(1, $installs, 'the server job never installs user_migration');
-		$this->assertSame("github.event_name == 'schedule'", $installs[0]['if'] ?? null);
+		$this->assertSame(self::WEEKLY, $installs[0]['if'] ?? null);
 
 		$script = $this->script('server');
 		$this->assertLessThan(strpos($script, 'composer run test:integration'), strpos($script, 'php occ app:install user_migration'));
@@ -354,7 +381,7 @@ class CiWorkflowTest extends TestCase {
 	 * suite. Weekly only - the image build fetches Oracle's client and takes minutes.
 	 */
 	public function testOracleRunsWeeklyThroughTheIntegrationSuite(): void {
-		$this->assertSame("github.event_name == 'schedule'", $this->job('oracle')['if'] ?? null);
+		$this->assertSame(self::WEEKLY, $this->job('oracle')['if'] ?? null);
 		$script = $this->script('oracle');
 
 		$steps = [
@@ -380,7 +407,7 @@ class CiWorkflowTest extends TestCase {
 	 */
 	public function testTheWeeklyRunSmokesTheEndToEndOnNextcloud32And33(): void {
 		$job = $this->job('e2e-weekly');
-		$this->assertSame("github.event_name == 'schedule'", $job['if'] ?? null);
+		$this->assertSame(self::WEEKLY, $job['if'] ?? null);
 		$script = $this->script('e2e-weekly');
 
 		$steps = [
@@ -405,7 +432,7 @@ class CiWorkflowTest extends TestCase {
 	 */
 	public function testTheWeeklyRunChecksTheUpgradeOnMariadbAndPostgresql(): void {
 		$job = $this->job('upgrade');
-		$this->assertSame("github.event_name == 'schedule'", $job['if'] ?? null);
+		$this->assertSame(self::WEEKLY, $job['if'] ?? null);
 		$this->assertSame(['mariadb', 'pgsql'], $job['strategy']['matrix']['db'] ?? null);
 		// 0.2.0 and 0.3.0, the two a user may run from source (CHANGELOG, "For apps, scripts and admins").
 		$this->assertSame(['9056da5', 'e7bdbe1'], $job['strategy']['matrix']['base'] ?? null);
@@ -513,23 +540,33 @@ class CiWorkflowTest extends TestCase {
 	 * A runner is gone when the job ends, and a red E2E is read from its traces, not its log.
 	 * Only a failure uploads, and only for days: a green run's evidence answers nothing.
 	 */
-	public function testTheEndToEndJobKeepsPlaywrightsEvidenceWhenItFails(): void {
-		$steps = array_values((array)$this->job('e2e')['steps']);
-		$run = array_search('npm run test:e2e', array_map(static fn (mixed $step): string => (string)(((array)$step)['run'] ?? ''), $steps), true);
-		$this->assertIsInt($run, 'the job never runs the E2E');
+	public function testEveryEndToEndJobKeepsPlaywrightsEvidenceWhenItFails(): void {
+		$names = [];
+		foreach ([
+			'e2e' => 'npm run test:e2e',
+			'e2e-weekly' => 'npx playwright test tests/e2e/m0-gate.spec.js tests/e2e/m1-slice.spec.js --project nc32 --project nc33',
+		] as $job => $command) {
+			$steps = array_values((array)$this->job($job)['steps']);
+			$run = array_search($command, array_map(static fn (mixed $step): string => (string)(((array)$step)['run'] ?? ''), $steps), true);
+			$this->assertIsInt($run, "'$job' never runs the E2E");
 
-		$uploads = array_filter(
-			$steps,
-			static fn (mixed $step): bool => str_starts_with((string)(((array)$step)['uses'] ?? ''), 'actions/upload-artifact@'),
-		);
-		$this->assertCount(1, $uploads, 'the job uploads nothing');
-		$at = array_key_first($uploads);
-		$upload = (array)$uploads[$at];
+			$uploads = array_filter(
+				$steps,
+				static fn (mixed $step): bool => str_starts_with((string)(((array)$step)['uses'] ?? ''), 'actions/upload-artifact@'),
+			);
+			$this->assertCount(1, $uploads, "'$job' uploads its evidence not exactly once");
+			$at = array_key_first($uploads);
+			$upload = (array)$uploads[$at];
 
-		$this->assertGreaterThan($run, $at, 'the evidence is uploaded before the run that writes it');
-		$this->assertSame('failure()', $upload['if'] ?? null);
-		$this->assertSame('test-results/', $upload['with']['path'] ?? null);
-		$this->assertLessThanOrEqual(7, (int)($upload['with']['retention-days'] ?? 90));
+			$this->assertGreaterThan($run, $at, "'$job' uploads the evidence before the run that writes it");
+			$this->assertSame('failure()', $upload['if'] ?? null);
+			$this->assertSame('test-results/', $upload['with']['path'] ?? null);
+			$this->assertLessThanOrEqual(7, (int)($upload['with']['retention-days'] ?? 90));
+			$names[] = $upload['with']['name'] ?? null;
+		}
+
+		// One run holds both, and an artifact's name is unique within a run.
+		$this->assertSame($names, array_unique($names));
 	}
 
 	/**

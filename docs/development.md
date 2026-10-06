@@ -107,7 +107,7 @@ because that is the axis users actually vary.
 |---|---|
 | Pull request | Three: NC 31 with the oldest PHP it supports, and NC 34 with the newest, MariaDB both — the oldest combination is where breakage hides, so it belongs on every PR rather than in a nightly nobody reads — and NC 34 on SQLite, which a first try runs on and which accepts the least |
 | Merge to `main` | Add PostgreSQL, on NC 34 |
-| Weekly | The fuller matrix with *user_migration*, plus Oracle, the upgrade check and an E2E smoke run on NC 32 and NC 33, allowed to fail loudly without blocking anyone |
+| Weekly, or by hand with `gh workflow run ci.yml` | The fuller matrix with *user_migration*, plus Oracle, the upgrade check and an E2E smoke run on NC 32 and NC 33, allowed to fail loudly without blocking anyone |
 
 `.github/workflows/ci.yml` implements it. Alongside the matrix run — a Nextcloud checkout with the
 *notifications* app of the same branch beside it, a real database and Mailpit,
@@ -464,7 +464,8 @@ the assertion, not the missing build. It logs in through the form — Nextcloud 
 `/login` whatever `Authorization` header it carries, so basic auth is no shortcut.
 `NEXTFLEET_URL_NC34` and `NEXTFLEET_URL_NC31` override the two ports.
 A failed test leaves a screenshot and `error-context.md` in `test-results/`, on CI a trace as well;
-the e2e job uploads the folder when it fails, as the artifact `e2e-test-results`, kept five days.
+the e2e job uploads the folder when it fails, as the artifact `e2e-test-results`, kept five days,
+and the weekly smoke run as `e2e-weekly-test-results`.
 
 Every vehicle the run makes wears a plate its own spec file owns — `E2E-` for the M1 slice,
 `M2-E2E-` to `M7-E2E-` for the next six, `M9-E2E-` for the M9 slice, `ROLES-` for the role cases — and each file deletes what it finds under its prefix before it starts.

@@ -15,6 +15,8 @@ on:
   schedule:
     # Monday, 04:30 UTC.
     - cron: '30 4 * * 1'
+  # The weekly set, started by hand.
+  workflow_dispatch:
 
 # A compromised action owns the release (docs/security.md#supply-chain), so the token can
 # only read and every `uses` below names a commit, not a tag that can move under it.
@@ -141,7 +143,7 @@ jobs:
   # users unseen, so weekly the two majors between load the app and take a vehicle and a reading.
   e2e-weekly:
     name: Playwright smoke, NC 32 and NC 33
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     # Three minutes of specs after a cold install; a stalled one should not hold the runner.
     timeout-minutes: 45
@@ -174,10 +176,19 @@ jobs:
         # The files first: `--project` takes every word after it as a project name.
         run: npx playwright test tests/e2e/m0-gate.spec.js tests/e2e/m1-slice.spec.js --project nc32 --project nc33
 
+      # As in the e2e job; the name differs because one run holds both.
+      - name: Keep Playwright's evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-weekly-test-results
+          path: test-results/
+          retention-days: 5
+
   # The one test of what users keep across a release, weekly so a break shows that week.
   upgrade:
     name: Upgrade check from ${{ matrix.base }}, ${{ matrix.db }}
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     # A run takes about ten minutes; a hung `occ upgrade` should not hold the runner for six hours.
     timeout-minutes: 45
@@ -211,7 +222,7 @@ jobs:
   # (docs/development.md#oracle) and weekly only: the build fetches Oracle's client.
   oracle:
     name: NC 34 on Oracle
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     # A cold run builds, starts Oracle and runs the suite in about 15 minutes; a stalled start
     # should not hold the runner for GitHub's six hours.
@@ -309,7 +320,7 @@ jobs:
         run: |
           case "$GITHUB_EVENT_NAME" in
             pull_request) combinations="$ON_PULL_REQUEST" ;;
-            schedule) combinations="$ON_SCHEDULE" ;;
+            schedule|workflow_dispatch) combinations="$ON_SCHEDULE" ;;
             *) combinations="$ON_PUSH" ;;
           esac
           matrix=$(jq -c '{include: .}' <<< "$combinations")
@@ -435,7 +446,7 @@ jobs:
 
       # docs/development.md#testing. Weekly only: the app store is a download.
       - name: Install user_migration
-        if: github.event_name == 'schedule'
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: php occ app:install user_migration
 
       - name: Test
