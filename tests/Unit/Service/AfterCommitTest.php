@@ -66,7 +66,7 @@ class AfterCommitTest extends TestCase {
 
 		$this->assertSame(['begin', 'rollback'], $this->events);
 		// Nor does it run with the next transaction.
-		$this->after->run(static fn (): null => null);
+		$this->after->run(static fn (): mixed => null);
 		$this->assertSame(['begin', 'rollback', 'begin', 'commit'], $this->events);
 	}
 
