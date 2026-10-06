@@ -583,12 +583,9 @@ The steps:
    with `oci8`. `--db` goes before the tarball. How it works is in `tools/upgrade-check.sh`.
    Until a release is out, also check the upgrade from 0.3.0's source, `e7bdbe1`, on MariaDB and
    PostgreSQL: the weekly CI job that does runs only once this workflow is on `main`.
-7. **Publish the source.** Fast-forward `main` to `initial` (`git push origin initial:main`, or a
-   pull request if `main` is protected): `info.xml` points the store at the screenshots and the
-   manuals on `main`. Then tag the release commit `v<x>` and push the tag. **The first release
-   cannot fast-forward:** the history was rewritten on 2026-10-04, and `origin/main` (`f6a099d`)
-   shares no commit with `initial`. Replace it once, with the ruleset that refuses force-pushes
-   lifted for that push: `git push --force-with-lease=main:f6a099d origin initial:main`.
+7. **Publish the source.** Merge the release branch into `main` through a pull request; the
+   ruleset on `main` takes no direct push. `info.xml` points the store at the screenshots and the
+   manuals on `main`. Then tag the release commit on `main` `v<x>` and push the tag.
 8. **Upload.** Attach the tarball to a GitHub release for the tag; the store downloads it from
    there. On apps.nextcloud.com, *Upload app release* takes that download URL and the tarball's
    signature:
