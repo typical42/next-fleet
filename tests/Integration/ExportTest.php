@@ -22,8 +22,8 @@ use OCP\IUserManager;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The CSV export against the real database, written the way the app writes it. What is checked
- * is which rows a year's file holds and what a spreadsheet reads out of them.
+ * The CSV export against the real database: which rows a year's file holds and what a
+ * spreadsheet reads out of them.
  *
  * It writes to the instance it runs against (docs/development.md#testing).
  */
@@ -130,9 +130,8 @@ class ExportTest extends TestCase {
 	}
 
 	/**
-	 * A year's trips are those that set off in it where they set off, the way the Fahrtenbuch
-	 * counts them. A voided one is in the file and says so: a gap in an export is exactly what an
-	 * auditor asks about.
+	 * A year's trips are those that set off in it on the local clock, as the Fahrtenbuch counts
+	 * them. A voided one stays in the file, marked: a gap is what an auditor asks about.
 	 */
 	public function testTheYearsTripsAreThoseThatSetOffInItVoidedOnesMarked(): void {
 		$uuid = $this->vehicle();
@@ -180,10 +179,7 @@ class ExportTest extends TestCase {
 		$this->assertSame('40', $rows[2]['distance']);
 	}
 
-	/**
-	 * Once someone else was given access, each trip names who entered it, by display name, as the
-	 * timeline and the Fahrtenbuch do - and still after the grant is revoked.
-	 */
+	/** By display name, as the timeline and the Fahrtenbuch do, and still after the revoke. */
 	public function testOnceAccessWasGivenEachTripSaysWhoEnteredIt(): void {
 		$uuid = $this->vehicle();
 		$grants = $this->grants->grant(self::OWNER, $uuid, ['grantee' => self::DRIVER, 'grantee_type' => 'user', 'role' => 'driver']);
@@ -205,7 +201,7 @@ class ExportTest extends TestCase {
 		$this->assertSame([self::OWNER, 'Ben Fahrer'], array_column($rows, 'entered_by'));
 	}
 
-	/** The other kinds name who entered each row by the trips' rule, and leave it empty on a vehicle never shared. */
+	/** By the trips' rule: empty on a vehicle never shared. */
 	public function testFillUpsMaintenanceAndExpensesSayWhoEnteredEachRow(): void {
 		$uuid = $this->vehicle();
 		$this->energy->record(self::OWNER, $uuid, ['filled_at' => gmmktime(9, 0, 0, 2, 1, 2025), 'filled_at_off' => 60, 'energy' => 'diesel', 'amount' => 40000, 'total' => 6000, 'full_tank' => true, 'odo' => 10000]);
@@ -226,6 +222,23 @@ class ExportTest extends TestCase {
 		}
 	}
 
+	/** New Year's Eve 23:30 UTC is next year in Berlin: each file counts its rows on the clock they were entered on. */
+	public function testEachFileTakesTheYearOnTheEntrysOwnClock(): void {
+		$uuid = $this->vehicle();
+		foreach ([2024 => 10000, 2025 => 20000] as $year => $odo) {
+			$at = gmmktime(23, 30, 0, 12, 31, $year);
+			$this->trip($uuid, $at, ['start_odo' => $odo, 'end_odo' => $odo + 10]);
+			$this->energy->record(self::OWNER, $uuid, ['filled_at' => $at, 'filled_at_off' => 60, 'energy' => 'diesel', 'amount' => 40000, 'total' => 6000, 'full_tank' => true, 'odo' => $odo + 20]);
+			$this->maintenance->record(self::OWNER, $uuid, ['done_at' => $at, 'done_at_off' => 60, 'title' => 'Oil change', 'cost' => 19000]);
+			$this->expenses->record(self::OWNER, $uuid, ['spent_at' => $at, 'spent_at_off' => 60, 'category' => 'parking', 'amount' => 300]);
+		}
+
+		foreach (['trips' => 'started', 'energy' => 'filled', 'maintenance' => 'done', 'expenses' => 'spent'] as $table => $column) {
+			$rows = $this->read($this->export->csv(self::OWNER, $uuid, 2025, $table)['body']);
+			$this->assertSame(['2025-01-01 00:30'], array_column($rows, $column), $table);
+		}
+	}
+
 	/** A purpose is the user's, and a colleague's Excel must read it as text. */
 	public function testATripsPurposeCannotRunAsAFormula(): void {
 		$uuid = $this->vehicle();
@@ -236,7 +249,7 @@ class ExportTest extends TestCase {
 		$this->assertSame('\'=HYPERLINK("http://evil.example")', $rows[0]['purpose']);
 	}
 
-	/** One file per table, each money column beside its currency, every figure the integer stored. */
+	/** Each money column beside its currency, every figure the integer stored. */
 	public function testFillUpsMaintenanceAndExpensesAreAFileEach(): void {
 		$uuid = $this->vehicle();
 		$this->energy->record(self::OWNER, $uuid, ['filled_at' => gmmktime(9, 0, 0, 2, 1, 2025), 'filled_at_off' => 60, 'energy' => 'diesel', 'amount' => 40000, 'total' => 6000, 'full_tank' => true, 'odo' => 10000, 'station' => 'Aral']);

@@ -16,7 +16,8 @@ use OCA\NextFleet\Db\Vehicle;
 use PHPUnit\Framework\TestCase;
 
 /**
- * What M3's columns mean when they come back from the database, before any service reads them.
+ * What the counter, fill-up, maintenance and expense columns mean when they come back from the
+ * database, before any service reads them.
  */
 class M3EntitiesTest extends TestCase {
 	public function testAReadingWrittenBeforeM3ReadsAsTheMainCounter(): void {

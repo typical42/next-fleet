@@ -195,8 +195,8 @@ class GapsTest extends TestCase {
 	}
 
 	/**
-	 * The task: a counter somebody read between two journeys proves the vehicle moved, not who drove
-	 * it. The claim is measured against where the last trip left the counter.
+	 * A counter somebody read between two journeys proves the vehicle moved, not who drove it. The
+	 * claim is measured against where the last trip left the counter.
 	 */
 	public function testAReadingBetweenTwoTripsAccountsForNoKilometre(): void {
 		$this->trip(self::T0, 119900, self::T0 + 3600, 120000);

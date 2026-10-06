@@ -58,13 +58,9 @@ function pinnedVersions() {
 describe('the Playwright pin', () => {
 	/**
 	 * Playwright refuses browsers it did not build (docs/development.md#testing), so the image
-	 * and the `@playwright/test` that drives it are one version in three places. Bumping one of
-	 * them alone breaks inside a container, with a message about the browser rather than about
-	 * the tag - and `npm update` moves the lockfile without touching any of the three, which is
-	 * why they are all measured against what is installed rather than against each other.
-	 *
-	 * Naming the two scripts rather than counting them means a renamed one fails here too,
-	 * instead of leaving a check that finds nothing and passes.
+	 * and `@playwright/test` are one version in three places. Each is measured against what is
+	 * installed, because `npm update` moves the lockfile alone. The scripts are named, not
+	 * counted, so a renamed one fails rather than leaving a check that finds nothing.
 	 */
 	it('names the installed version in the dependency and in both docker scripts', () => {
 		const installed = installedVersion()

@@ -63,9 +63,9 @@ class VehicleService {
 	 * as an ISO 4217 code in capitals.
 	 *
 	 * What is missing is the point. `uuid` is the identity and `user_id`/`created_by` the
-	 * provenance, so a request cannot choose them; `odo_value` and `second_value` are caches recomputed from the
-	 * Readings (docs/architecture.md#odometer-rules); and `folder_file_id` waits for the documents
-	 * that fill the folder.
+	 * provenance, so a request cannot choose them; `odo_value` and `second_value` are caches
+	 * recomputed from the Readings (docs/architecture.md#odometer-rules); and `folder_file_id` is
+	 * the app's to set (docs/architecture.md#nextcloud-integration).
 	 *
 	 * @var array<string, array{string, string, int|list<string>|null}>
 	 */
@@ -191,9 +191,8 @@ class VehicleService {
 		$vehicle->setCreatedBy($userId);
 		$jurisdiction = $this->jurisdictionOf($userId, $fields);
 		$profile = $this->jurisdictions->get($jurisdiction);
-		// Written before the request is applied, so a payload value wins - and written at all,
-		// however well a property default already agrees, because a clean property is not
-		// dirty and QBMapper leaves it out of the INSERT.
+		// Before the request, so a payload value wins; and set even where the property default
+		// agrees, because QBMapper leaves a clean property out of the INSERT.
 		$vehicle->setVehicleType(self::VEHICLE_TYPE_FALLBACK);
 		$vehicle->setLifecycle(self::LIFECYCLE_FALLBACK);
 		$vehicle->setJurisdiction($jurisdiction);
@@ -210,8 +209,7 @@ class VehicleService {
 			$vehicle->setEnergyTypes(self::ENGINE_ENERGIES[$engine] ?? null);
 		}
 
-		// The owner is where the reminders go until somebody edits the list, which is what the
-		// migration gave every vehicle that existed before it.
+		// The owner is where the reminders go until somebody edits the list.
 		return $this->atomic(function () use ($userId, $vehicle): Vehicle {
 			$written = $this->mapper->insert($vehicle);
 			$owner = new ReminderRecipient();
@@ -246,10 +244,9 @@ class VehicleService {
 	}
 
 	/**
-	 * One candidate key, or null where it is no key at all. A stored setting reaches no
-	 * validator on its way in, so one the column cannot hold would otherwise fail every create
-	 * rather than the one screen that wrote it; a request stating the same thing is refused by
-	 * `apply()` a moment later, which is where a 400 belongs.
+	 * One candidate key, or null where it is no key at all. A stored setting reaches no validator
+	 * on its way in, so one the column cannot hold would otherwise fail every create; a request
+	 * stating it is refused by `apply()` a moment later, which is where a 400 belongs.
 	 */
 	private function jurisdictionIn(mixed $value): ?string {
 		[, $kind, $limit] = self::WRITABLE['jurisdiction'];
@@ -304,19 +301,15 @@ class VehicleService {
 
 	/**
 	 * The audit row a save leaves on the vehicle when it flipped the Logbook Mode or changed one of
-	 * its `FACTS`. The mode is what the export reads the periods it was on off
-	 * (docs/features.md#logbook-mode), and a flip nobody recorded would leave the export with
-	 * trips it cannot place on either side of it.
+	 * its `FACTS`. The export reads the mode's periods off these rows
+	 * (docs/features.md#logbook-mode); an unrecorded flip leaves trips it cannot place.
 	 *
-	 * Only a change. A sheet sends every column on every save (docs/ui.md), and a trail that
-	 * records a mode it already had makes an auditor count periods that never began. `null` and
-	 * `false` are the same answer here - the column is three-valued
-	 * (docs/architecture.md#data-model), but a vehicle nobody ever switched is off, not in a third
-	 * state.
+	 * Only a change: a sheet sends every column on every save (docs/ui.md), and a recorded mode it
+	 * already had makes an auditor count periods that never began. `null` and `false` are both off
+	 * here - the column is three-valued (docs/architecture.md#data-model), but a vehicle nobody
+	 * ever switched is off.
 	 *
-	 * Where the first period begins is not a row: a vehicle created with the mode already on
-	 * has been under it since it was created, which is `created_at` and nothing this has to
-	 * state.
+	 * A vehicle created with the mode on has been under it since `created_at`; that needs no row.
 	 *
 	 * Inside the caller's transaction on purpose, the reason TripService::trail() gives.
 	 *
@@ -384,9 +377,9 @@ class VehicleService {
 	}
 
 	/**
-	 * Undo, and it takes the right the delete took - only the owner brings a vehicle back.
-	 * The lookup ignores `deleted_at`, so a stranger gets the same refusal here as on every other
-	 * route rather than a 404 that would tell them which uuids are in somebody's trash.
+	 * Undo, and it takes the right the delete took: only the owner brings a vehicle back. The
+	 * lookup ignores `deleted_at`, so a stranger gets the same refusal as on every other route, not
+	 * a 404 that would tell which uuids are in somebody's trash.
 	 *
 	 * @param int $expectedUpdatedAt the `updated_at` the delete answered with
 	 * @throws DoesNotExistException
@@ -424,10 +417,9 @@ class VehicleService {
 	}
 
 	/**
-	 * The one gate every uuid-addressed route goes through
-	 * (docs/adr/0001-own-access-table.md): the row, or the reason there is none for this user.
-	 * Public because everything hanging off a vehicle passes through it too - the odometer
-	 * first - and a second copy of it is a second place to forget an operation.
+	 * The one gate every uuid-addressed route goes through (docs/adr/0001-own-access-table.md):
+	 * the row, or the reason there is none for this user. Public because everything hanging off a
+	 * vehicle passes through it too; a second copy is a second place to forget an operation.
 	 *
 	 * @throws DoesNotExistException
 	 * @throws AccessDeniedException
@@ -580,9 +572,8 @@ class VehicleService {
 			$vehicle->$setter($value);
 		}
 
-		// Hours beside hours would be one chain counted twice. Dropped rather than refused: the
-		// sheet never blocks on validation, and switching the main counter to hours is the
-		// answer that makes the second one moot. Its Readings stay (docs/architecture.md).
+		// Hours beside hours would be one chain counted twice. Dropped rather than refused, as the
+		// sheet never blocks on validation. Its Readings stay (docs/architecture.md).
 		if ($vehicle->getOdoUnit() !== 'km' && $vehicle->getSecondUnit() !== null) {
 			$vehicle->setSecondUnit(null);
 		}

@@ -348,7 +348,16 @@ class ImportTest extends TestCase {
 		$this->import->import(self::OWNER, $vehicle->getUuid(), $this->request($this->file(self::OWNER, 'lubelogger-fuel.csv')));
 	}
 
-	/** A row already there is skipped, unless the request includes duplicates. */
+	/** A form-encoded request can carry any bytes; one that is not UTF-8 is the caller's, a 400. */
+	public function testAnImportWithAFieldThatIsNotUtf8IsRefused(): void {
+		$vehicle = $this->vehicle(['energy_types' => ['diesel']]);
+		$file = $this->file(self::OWNER, 'lubelogger-fuel.csv');
+		$etag = $this->import->preview(self::OWNER, $vehicle->getUuid(), $this->request($file))['etag'];
+
+		$this->expectException(\InvalidArgumentException::class);
+		$this->import->import(self::OWNER, $vehicle->getUuid(), $this->request($file, answers: ['etag' => $etag, 'category_map' => ["\xff" => 'skip']]));
+	}
+
 	public function testADuplicateIsCreatedOnlyWhenIncluded(): void {
 		$vehicle = $this->vehicle(['energy_types' => ['diesel']]);
 		$file = $this->file(self::OWNER, 'lubelogger-fuel.csv');

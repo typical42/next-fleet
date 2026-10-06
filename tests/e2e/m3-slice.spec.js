@@ -22,8 +22,8 @@ test.beforeEach(async ({ page }) => {
 })
 
 /**
- * A vehicle with energy, under `de` by name: the personal settings case in the M1 slice may have
- * moved this user's default, and `de` is what gives it a currency.
+ * A vehicle with energy, under `de` by name: the personal settings case in m1-slice.spec.js may
+ * have moved this user's default, and `de` is what gives it a currency.
  *
  * @param {import('@playwright/test').Page} page - a page on a signed-in Nextcloud
  * @param {string} plate - the label to find it by
@@ -166,8 +166,8 @@ test('the period picker changes the figures, and each is compared with the perio
 })
 
 /**
- * Dark mode and 320 px are acceptance criteria for the header and the sheet, as they are for the
- * timeline (tests/e2e/m2-slice.spec.js says why this runs on one major).
+ * The header and the sheet hold at 320 px in the dark, as the timeline does
+ * (tests/e2e/m2-slice.spec.js says why this runs on one major).
  */
 test.describe('at 320 x 640, in the dark', { tag: '@nc34' }, () => {
 	test.use({ viewport: { width: 320, height: 640 }, colorScheme: 'dark' })

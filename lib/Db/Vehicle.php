@@ -195,18 +195,9 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 		$this->ownedBy = $ownedBy;
 	}
 
-	/** @return array{user_id: string, user_name: string, ends_at: int, ends_at_off: int}|null */
-	public function getOutWith(): ?array {
-		return $this->outWith;
-	}
-
 	/** @param array{user_id: string, user_name: string, ends_at: int, ends_at_off: int}|null $outWith */
 	public function setOutWith(?array $outWith): void {
 		$this->outWith = $outWith;
-	}
-
-	public function getEverGranted(): bool {
-		return $this->everGranted;
 	}
 
 	public function setEverGranted(bool $everGranted): void {

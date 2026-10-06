@@ -123,4 +123,29 @@ class FieldTest extends TestCase {
 		$this->expectExceptionObject(new \InvalidArgumentException('read_at_off is a UTC offset in minutes'));
 		Field::offset('read_at_off', $value);
 	}
+
+	public function testAPrefillsMomentIsItsInstantAndOffset(): void {
+		$this->assertSame([1_750_000_000, 120], Field::prefillMoment(['at' => '1750000000', 'off' => '120', 'category' => 'toll']));
+	}
+
+	/** @return array<string, array{array<string, mixed>}> */
+	public static function halfMoments(): array {
+		return [
+			'no at' => [['off' => 60]],
+			'no off' => [['at' => 1_750_000_000]],
+			'empty at' => [['at' => '', 'off' => 60]],
+		];
+	}
+
+	/** @param array<string, mixed> $fields */
+	#[DataProvider('halfMoments')]
+	public function testAPrefillWantsBoth(array $fields): void {
+		$this->expectExceptionObject(new \InvalidArgumentException('at and off are the moment a prefill is for'));
+		Field::prefillMoment($fields);
+	}
+
+	public function testAPrefillsOffsetIsAnOffset(): void {
+		$this->expectExceptionObject(new \InvalidArgumentException('off is a UTC offset in minutes'));
+		Field::prefillMoment(['at' => 1_750_000_000, 'off' => 900]);
+	}
 }

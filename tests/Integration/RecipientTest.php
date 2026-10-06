@@ -142,6 +142,33 @@ class RecipientTest extends TestCase {
 		$this->assertSame([self::OWNER, self::RECIPIENT], $this->userIds($vehicle));
 	}
 
+	/** add() takes any spelling, so remove() does too. */
+	public function testAnAccountIsRemovedInAnySpelling(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$this->recipients->add(self::OWNER, $vehicle->getUuid(), self::RECIPIENT);
+
+		$this->recipients->remove(self::OWNER, $vehicle->getUuid(), strtoupper(self::RECIPIENT));
+
+		$this->assertSame([self::OWNER], $this->userIds($vehicle));
+	}
+
+	/**
+	 * A row an account of another spelling left, while its erasure is pending: the list shows it
+	 * as stored, so it goes as listed, not as the live account spells it.
+	 */
+	public function testARowIsRemovedAsListedBeforeAsTheAccountSpellsIt(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$left = new ReminderRecipient();
+		$left->setVehicleId((int)$vehicle->getId());
+		$left->setUserId(strtoupper(self::RECIPIENT));
+		$left->setCreatedBy(self::OWNER);
+		\OCP\Server::get(ReminderRecipientMapper::class)->insert($left);
+
+		$this->recipients->remove(self::OWNER, $vehicle->getUuid(), strtoupper(self::RECIPIENT));
+
+		$this->assertSame([self::OWNER], $this->userIds($vehicle));
+	}
+
 	/** A name the instance does not know would be a recipient nothing can ever reach. */
 	public function testSomebodyWithoutAnAccountIsRefused(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
@@ -267,10 +294,9 @@ class RecipientTest extends TestCase {
 	}
 
 	/**
-	 * Before 0.3.1 the list took any account, so the plate went to people the owner may not share
-	 * with. The upgrade takes off whoever neither the owner nor whoever added them may share with,
-	 * nor sees the vehicle - add() asks the same of the caller. Once 0.3.1 is installed it no
-	 * longer runs, so a sharing rule tightened later drops nobody.
+	 * Before 0.3.1 the list took any account. The upgrade drops whoever neither the owner nor their
+	 * adder may share with, nor sees the vehicle - add() asks the same. It runs only from below
+	 * 0.3.1, so a sharing rule tightened later drops nobody.
 	 */
 	public function testTheUpgradeDropsRecipientsTheOwnerCouldNotHaveAdded(): void {
 		$mates = $this->vehicles->create(self::MATE, ['plate' => 'B-XY 123']);
@@ -339,7 +365,7 @@ class RecipientTest extends TestCase {
 		return array_column($this->recipients->list($asking, $vehicle->getUuid()), 'user_id');
 	}
 
-	/** One grant on the vehicle, as the sharing UI will write it (M6). */
+	/** One grant on the vehicle, as the sharing sheet writes it. */
 	private function grant(Vehicle $vehicle, string $grantee, string $role): void {
 		$grant = new Access();
 		$grant->setVehicleId((int)$vehicle->getId());

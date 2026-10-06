@@ -14,6 +14,8 @@ use OCP\Files\File;
 use OCP\Files\Folder;
 use OCP\Files\IHomeStorage;
 use OCP\Files\IRootFolder;
+use OCP\Files\NotFoundException;
+use OCP\Files\NotPermittedException;
 use OCP\Files\Storage\IStorage;
 use OCP\ICache;
 use OCP\ICacheFactory;
@@ -71,9 +73,8 @@ class OwnFilesTest extends TestCase {
 	}
 
 	/**
-	 * A list of papers names each file. Mounting the attacher's Files per row is what made a long
-	 * list slow, so what a list shows is asked once and kept five minutes, for this request and
-	 * the next.
+	 * Mounting the attacher's Files per row makes a long list of papers slow, so what a list shows
+	 * is asked once and kept five minutes, for this request and the next.
 	 */
 	public function testAListAsksFilesOnceAndThenTheCache(): void {
 		$file = $this->file(self::ANNA, true);
@@ -117,6 +118,32 @@ class OwnFilesTest extends TestCase {
 		$files->find(self::ANNA, 42);
 
 		$this->assertSame(3, $this->mounted);
+	}
+
+	/** @return array<string, array{\Exception|false}> */
+	public static function unopenable(): array {
+		return [
+			'deleted' => [new NotFoundException()],
+			'no longer readable' => [new NotPermittedException()],
+			'refused by its storage' => [false],
+		];
+	}
+
+	/**
+	 * Gone or closed off between the lookup and the read: the download answers as for a file never there.
+	 *
+	 * @dataProvider unopenable
+	 */
+	public function testAFileThatWillNotOpenIsNotFound(\Exception|false $answer): void {
+		$file = $this->createMock(File::class);
+		if ($answer === false) {
+			$file->method('fopen')->willReturn(false);
+		} else {
+			$file->method('fopen')->willThrowException($answer);
+		}
+
+		$this->expectException(DoesNotExistException::class);
+		$this->ownFiles($file)->open($file);
 	}
 
 	private function file(string $owner, bool $home, bool $readable = true): File {

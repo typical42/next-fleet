@@ -56,10 +56,9 @@ onMounted(() => {
 	reload()
 	offer()
 })
-// Another vehicle is another list, and a counter that moved moves a reminder by km. The undo
-// toast lives in the app shell and knows no banner; a reminder it brought back is one this list
-// does not hold yet, and so is one the vehicle sheet added.
-// An open sheet goes only with its vehicle: it holds values nobody has saved yet.
+// Another vehicle is another list, a moved counter moves a reminder by km, and the undo toast and
+// the vehicle sheet add reminders behind the banner's back. An open sheet goes only with its
+// vehicle: it holds values nobody has saved yet.
 watch([() => props.vehicle.uuid, () => props.vehicle.odo_value, () => store.restored, () => store.reminded], ([uuid], [before]) => {
 	if (uuid !== before) {
 		opened.value = undefined
@@ -123,10 +122,9 @@ function written() {
 }
 
 /**
- * Rule 5 (docs/architecture.md#reminder-engine): a date by counter only with enough data behind
- * it, and otherwise the banner says so rather than guessing. A date reminder needs none, and one
- * whose km the counter has reached has nothing left to estimate - the server answers null there
- * too, which is not a lack of data.
+ * Rule 5 (docs/architecture.md#reminder-engine): a date by counter only with enough data, else the
+ * banner says so. A date reminder needs none; a reached km has nothing left to estimate, so the
+ * server's null there is not a lack of data.
  *
  * @param {import('../services/api.js').Reminder} reminder - one open reminder
  * @return {string} the estimate, the lack of one, or nothing

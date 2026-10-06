@@ -15,7 +15,11 @@ use OCA\NextFleet\Jurisdiction\ILogbookRules;
 use OCA\NextFleet\Jurisdiction\IRateProvider;
 use OCA\NextFleet\Jurisdiction\IReportRenderer;
 
-/** Germany, the first jurisdiction (plan.md). */
+/**
+ * Germany. Its parts are built here rather than injected: each answers out of its own constants
+ * and takes nothing. The first that needs a clock or a rate table takes it in this profile's
+ * constructor, which the container already builds (`Jurisdictions`).
+ */
 class Profile implements IJurisdiction {
 	public function key(): string {
 		return 'de';
@@ -33,31 +37,22 @@ class Profile implements IJurisdiction {
 		return 'EUR';
 	}
 
-	/**
-	 * Built here rather than injected: the ruleset answers out of its own constants and takes
-	 * nothing. The first one that needs a clock or a rate table takes it in this profile's
-	 * constructor, which the container already builds (`Jurisdictions`).
-	 */
 	public function logbookRules(): ?ILogbookRules {
 		return new LogbookRules();
 	}
 
-	/** Built here for the reason the ruleset is. */
 	public function logbookRenderer(): ?IReportRenderer {
 		return new FahrtenbuchRenderer();
 	}
 
-	/** Built here for the reason the ruleset is. */
 	public function claimRenderer(): ?IClaimRenderer {
 		return new MileageClaimRenderer();
 	}
 
-	/** Built here for the reason the ruleset is: the table is its own constants. */
 	public function rates(): ?IRateProvider {
 		return new RateProvider();
 	}
 
-	/** Built here for the reason the ruleset is. */
 	public function inspectionScheme(): ?IInspectionScheme {
 		return new InspectionScheme();
 	}

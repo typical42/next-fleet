@@ -15,9 +15,8 @@ use OCP\DB\Types;
 
 /**
  * The data model of docs/architecture.md#data-model, stated once and asserted twice: against
- * the schema the first migration builds, and against the one MariaDB materialises from it.
- * A column the database quietly widens or drops is the kind of defect that only shows up in
- * production.
+ * the schema the migrations build, and against the one a real database materialises from it,
+ * which may quietly widen or drop a column.
  */
 trait SchemaExpectations {
 	/**
@@ -190,7 +189,7 @@ trait SchemaExpectations {
 			'flagged' => 'boolean, null, default false',
 			'source_type' => 'string(16), not null',
 			'source_id' => 'bigint, null',
-			// `main` or `second`. Null reads as `main`: every Reading before M3 is one.
+			// `main` or `second`. Null, on a Reading older than the column, reads as `main`.
 			'counter' => 'string(8), null',
 		]);
 	}
@@ -384,7 +383,7 @@ trait SchemaExpectations {
 
 	/**
 	 * Indexes are part of the schema, not an optimisation: the unique one on `uuid` is the
-	 * database stating the identity, and the rest are the reads M1 makes.
+	 * database stating the identity, and the rest serve the app's reads.
 	 */
 	public function testIndexesAreTheOnesTheDataModelNames(): void {
 		$this->assertSame([

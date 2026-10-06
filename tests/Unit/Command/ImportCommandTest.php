@@ -19,6 +19,7 @@ use OCP\Files\IRootFolder;
 use OCP\Files\Node;
 use OCP\Files\NotFoundException;
 use OCP\IConfig;
+use OCP\IUser;
 use OCP\IUserManager;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\MockObject\MockObject;
@@ -60,7 +61,16 @@ class ImportCommandTest extends TestCase {
 	protected function setUp(): void {
 		$this->import = $this->createMock(ImportService::class);
 		$this->users = $this->createMock(IUserManager::class);
-		$this->users->method('userExists')->willReturnCallback(static fn (string $uid): bool => $uid === self::USER);
+		// As the backends do: a uid is found in any case.
+		$this->users->method('get')->willReturnCallback(function (string $uid): ?IUser {
+			if (strtolower($uid) !== self::USER) {
+				return null;
+			}
+			$user = $this->createMock(IUser::class);
+			$user->method('getUID')->willReturn(self::USER);
+
+			return $user;
+		});
 		$file = $this->createMock(File::class);
 		$file->method('getId')->willReturn(self::FILE_ID);
 		$folder = $this->createMock(Folder::class);
@@ -111,6 +121,15 @@ class ImportCommandTest extends TestCase {
 		$tester = $this->command(['--units' => 'km,l', '--dry-run' => true]);
 
 		$this->assertStringContainsString('By default: 6 → expense.tax, 1 → maintenance.service', $tester->getDisplay());
+	}
+
+	/** The vehicle's owner is stored as the backend spells the uid, and access compares it so. */
+	public function testAUidTypedInAnotherCaseImportsAsTheAccount(): void {
+		$this->import->expects($this->once())->method('preview')->with(self::USER, self::VEHICLE)->willReturn(self::PREVIEW);
+
+		$tester = $this->command(['user' => 'Alice', '--units' => 'km,l', '--dry-run' => true]);
+
+		$this->assertSame(0, $tester->getStatusCode());
 	}
 
 	/** Without `--dry-run` the import follows, sending the etag its preview answered. */

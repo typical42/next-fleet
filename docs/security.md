@@ -46,7 +46,7 @@ The app holds a movement profile: where someone was, when, and why. Treat it acc
   revoked ([data model](architecture.md#data-model)). Otherwise whoever creates a group under an
   old id inherits every car it reached.
 - **A refusal is a 403 and an unknown uuid a 404**, which does tell a caller that a uuid exists.
-  That is the trade the PRD asks for, and it costs nothing: a v4 uuid is not guessed, it is leaked —
+  That is a trade we accept, and it costs nothing: a v4 uuid is not guessed, it is leaked —
   and whoever leaked it also leaked the answer.
 - **File downloads are proxied** ([Nextcloud integration](architecture.md#nextcloud-integration)).
   The app's ACL decides, not the file's. That makes attaching the gate on the file side: a

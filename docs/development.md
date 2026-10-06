@@ -231,9 +231,9 @@ What Oracle covers, measured 2026-10-04:
 | Upgrade check from 0.2.0, NC 34 only (`--db oracle`, [release](#release)) | 12 tables' rows intact, schema the fresh one's |
 | E2E | not run |
 
-The API suite runs as on the dev stack, with `-c phpunit.api.xml`. M12 once saw a first run end
-with 10 errors and a failure. Its output was not kept, and the five runs above did not repeat it.
-If the weekly job goes red that way, read its log first.
+The API suite runs as on the dev stack, with `-c phpunit.api.xml`. A first run has ended once with
+10 errors and a failure that no later run repeated. If the weekly job goes red that way, read its
+log first.
 
 0.2.0 and 0.3.0 could not create a vehicle on Oracle, because of the sequence name above. So the
 upgrade check gives the base a synonym under the uncut name, which lets it write its rows. The
@@ -375,10 +375,9 @@ gate would test one version twice. The image creates only the schema `MARIADB_DA
 with `app`. `cron31` does the same for `app31`.
 
 Each major needs its own cron runner. Without one a major runs only an AJAX tick on a page load, and
-`CleanupFileLocks` falls behind. NC 31 had no runner until M13. By then its `oc_file_locks` held 102
-locks past their TTL, the oldest eleven days old. A stale lock on a reused E2E path answers 423
-to a `DELETE`. `cron31`'s first `cron.php` run switched NC 31 to cron mode and took ten minutes to
-work off the backlog.
+`CleanupFileLocks` falls behind: `oc_file_locks` fills with locks past their TTL, and a stale lock on
+a reused E2E path answers 423 to a `DELETE`. A runner's first `cron.php` switches its major to cron
+mode and can take minutes to work off such a backlog.
 
 Setup, once:
 
@@ -516,7 +515,18 @@ Before the first upload, enable private vulnerability reporting in the repositor
 (*Security → Private vulnerability reporting*). [`SECURITY.md`](../SECURITY.md) sends reporters
 there; until it is on, the link is a dead end.
 
-**Each release:**
+**Each release.** Steps 2 to 6 below are two commands of `tools/release.sh`. It refuses to start
+on a tree with changes, and each phase stops where you act. The steps say what each phase does;
+the commands in them are the reference for a phase that fails.
+
+- **`npm run release -- prepare <YYYY-MM-DD>`** does steps 2 and 3. Then it runs `npm run build`,
+  `composer test`, `composer lint`, `npm test` and `npm run lint`, and stops at the first that
+  fails. Review its diff and commit it with the message it prints.
+- **`npm run release -- build --key <path>/nextfleet.key --cert <path>/nextfleet.crt`** does
+  steps 4 to 6 and prints the signature for step 8. It refuses a key inside the repository and a
+  commit that prepare has not made. It runs for about an hour, mostly the five upgrade checks.
+
+The steps:
 
 1. **Review and commit.** `composer test`, `composer lint`, `npm test` and `npm run lint` pass.
    Review everything since the last commit, untracked files included (`git status` lists them),
@@ -526,7 +536,7 @@ there; until it is on, the link is a dead end.
    /dev/null`): the whole app. Fix what it finds before going on.
 2. **Date the CHANGELOG section.** `## <x> — not released` becomes `## <x> — <YYYY-MM-DD>`. The
    store shows only the section named after the version, so it must read whole on its own. 0.3.1's
-   already does: neither 0.2.0 nor 0.3.0 was released (decided 2026-10-03), so 0.3.1 is the first
+   already does: neither 0.2.0 nor 0.3.0 was released, so 0.3.1 is the first
    release and its section says what the app does. The version is already set in `appinfo/info.xml`,
    `package.json` and `package-lock.json`; `InfoXmlTest` fails until all four agree and while any
    other section is `not released`.
@@ -544,7 +554,10 @@ there; until it is on, the link is a dead end.
    `occ` reads it from stdin, so it never lands in the container or the repository. The
    certificate is public; copy it to `build/nextfleet.crt`, which git ignores and `package.sh`
    never packs. `occ` runs as `www-data` and writes `appinfo/signature.json`, so that folder is
-   opened to it for the signing and closed again before packing. Run from the repository's root:
+   opened to it for the signing and closed again before packing. The build phase signs the same
+   way on a throwaway NC 34 of the upgrade check's stack instead, so the dev servers need not run.
+   Then it installs the signed tarball there and runs `occ integrity:check-app -v nextfleet`,
+   which must say `No errors found`. By hand, from the repository's root:
 
    ```bash
    rm -rf build/sign && mkdir -p build/sign && tar -xzf build/artifacts/nextfleet-<x>.tar.gz -C build/sign

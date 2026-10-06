@@ -36,9 +36,9 @@ export const useInboxStore = defineStore('inbox', () => {
 	}
 
 	/**
-	 * Reads the inbox again after a paper was attached, detached or restored somewhere else, which
-	 * moves the count beside the menu - while a folder is set, since without one nothing waits. The
-	 * write it follows stands, so a refused read keeps the count it had.
+	 * Reads the inbox again after a paper was attached, detached or restored elsewhere, which moves
+	 * the count beside the menu; without a folder nothing waits. The write it follows stands, so a
+	 * refused read keeps the count it had.
 	 *
 	 * @return {Promise<void>} when the inbox is read, or the read was refused
 	 */

@@ -8,11 +8,8 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Controller;
 
-use OCA\NextFleet\Exception\AccessDeniedException;
 use OCA\NextFleet\Service\TimelineService;
 use OCP\AppFramework\Controller;
-use OCP\AppFramework\Db\DoesNotExistException;
-use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\Attribute\NoAdminRequired;
 use OCP\AppFramework\Http\DataResponse;
 use OCP\IRequest;
@@ -22,7 +19,7 @@ use OCP\IUserSession;
  * The one timeline a vehicle has. Every rule lives in TimelineService, including the access check.
  */
 class TimelineController extends Controller {
-	use RequestValues;
+	use EntryAnswers;
 
 	public function __construct(
 		string $appName,
@@ -42,18 +39,18 @@ class TimelineController extends Controller {
 	 */
 	#[NoAdminRequired]
 	public function index(string $uuid, mixed $type = null, mixed $cursor = null): DataResponse {
-		return $this->answer(fn (): array => $this->service->page(
+		return $this->answer(fn (): DataResponse => new DataResponse($this->service->page(
 			$this->userId(),
 			$uuid,
 			$this->word('type', $type),
 			$this->word('cursor', $cursor),
-		));
+		)));
 	}
 
 	/** The Gaps the month headers state, for the whole timeline at once. */
 	#[NoAdminRequired]
 	public function gaps(string $uuid): DataResponse {
-		return $this->answer(fn (): array => $this->service->gaps($this->userId(), $uuid));
+		return $this->answer(fn (): DataResponse => new DataResponse($this->service->gaps($this->userId(), $uuid)));
 	}
 
 	/**
@@ -64,34 +61,6 @@ class TimelineController extends Controller {
 	 */
 	#[NoAdminRequired]
 	public function show(string $uuid, string $type, string $entry): DataResponse {
-		return $this->answer(fn (): array => $this->service->one($this->userId(), $uuid, $type, $entry));
-	}
-
-	/**
-	 * The refusals every read shares, each as the status the screen acts on.
-	 *
-	 * @param callable(): array<array-key, mixed> $read
-	 */
-	private function answer(callable $read): DataResponse {
-		try {
-			return new DataResponse($read());
-		} catch (DoesNotExistException) {
-			return new DataResponse(['message' => 'No such vehicle'], Http::STATUS_NOT_FOUND);
-		} catch (AccessDeniedException) {
-			return new DataResponse(['message' => 'Not yours'], Http::STATUS_FORBIDDEN);
-		} catch (\InvalidArgumentException $e) {
-			return new DataResponse(['message' => $e->getMessage()], Http::STATUS_BAD_REQUEST);
-		}
-	}
-
-	private function userId(): string {
-		$user = $this->session->getUser();
-		if ($user === null) {
-			// The route requires a login, so this is a broken container rather than an anonymous
-			// request.
-			throw new \RuntimeException('No user in session');
-		}
-
-		return $user->getUID();
+		return $this->answer(fn (): DataResponse => new DataResponse($this->service->one($this->userId(), $uuid, $type, $entry)));
 	}
 }

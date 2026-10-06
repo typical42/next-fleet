@@ -140,9 +140,8 @@ class GrantTest extends TestCase {
 	}
 
 	/**
-	 * A vehicle reads as ever granted once anybody was given access, and stays so after the revoke:
-	 * the bookings and trips they made stay on it. Every read says so, the list, the vehicle's own
-	 * and an edit's answer alike.
+	 * Ever granted outlasts the revoke: the bookings and trips they made stay on it. The list, the
+	 * single read and an edit's answer all say so.
 	 */
 	public function testAVehicleReadsAsEverGrantedOnceAnybodyWasGivenAccess(): void {
 		$vehicle = $this->vehicle();
@@ -204,9 +203,22 @@ class GrantTest extends TestCase {
 		$this->assertSame([[self::ANNA, 'manager']], array_map(static fn (array $grant): array => [$grant['grantee'], $grant['role']], $list));
 	}
 
+	/** The same role again writes nothing, so no sync hands the grant out again. */
+	public function testGrantingTheSameRoleAgainLeavesTheGrantAsItWas(): void {
+		$vehicle = $this->vehicle();
+		$this->grants->grant(self::OWNER, $vehicle->getUuid(), ['grantee' => self::ANNA, 'grantee_type' => 'user', 'role' => 'viewer']);
+		[$first] = \OCP\Server::get(AccessMapper::class)->findByVehicle((int)$vehicle->getId());
+
+		$this->grants->grant(self::OWNER, $vehicle->getUuid(), ['grantee' => self::ANNA, 'grantee_type' => 'user', 'role' => 'viewer']);
+		$this->grants->change(self::OWNER, $vehicle->getUuid(), $first->getUuid(), ['role' => 'viewer']);
+
+		[$after] = \OCP\Server::get(AccessMapper::class)->findByVehicle((int)$vehicle->getId());
+		$this->assertSame([$first->getUuid(), 'viewer', $first->getUpdatedAt()], [$after->getUuid(), $after->getRole(), $after->getUpdatedAt()]);
+	}
+
 	/**
-	 * What cannot be a grant: nobody the instance knows, the owner, a role the domain lacks, and a
-	 * kind of grantee that is neither a user nor a group - a circle or a team included.
+	 * What cannot be a grant: nobody the instance knows, no role or one the domain lacks, no
+	 * grantee, and a grantee that is neither a user nor a group (a circle or a team).
 	 *
 	 * @dataProvider refusedGrants
 	 * @param array<string, mixed> $fields
@@ -854,8 +866,8 @@ class GrantTest extends TestCase {
 
 	/**
 	 * A backend that answers "no such user" once for a live account - LDAP briefly out of reach -
-	 * costs the account this grant and nothing else: erasing cannot be undone, so it is never
-	 * decided on one answer.
+	 * costs the account this grant and nothing else: erasing cannot be undone, so one answer never
+	 * triggers it.
 	 */
 	public function testAUserMissingForOneAnswerLosesOnlyTheNewGrant(): void {
 		$vehicle = $this->vehicle();

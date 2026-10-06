@@ -45,14 +45,12 @@ const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', odo_va
 const TRUCK = { ...VEHICLE, odo_unit: 'km', second_unit: 'h', second_value: 5004, energy_types: ['diesel'] }
 const HYBRID = { ...VEHICLE, odo_unit: 'km', energy_types: ['petrol', 'electric'] }
 
-/** The two moments of one journey, an hour and a quarter apart. */
 const DEPARTURE = new Date(2026, 0, 15, 8, 30)
 const ARRIVAL = new Date(2026, 0, 15, 9, 45)
 
 /**
- * The sheet, mounted. shallowMount renders no stub's slots and every field sits inside the dialog,
- * so that one component is rendered and the rest stay stubs (docs/development.md). The choosers
- * hold their choices in their own slot, so the stubs render theirs.
+ * The sheet, mounted. Every field sits inside the dialog, so that one component is rendered and
+ * the rest stay stubs, which render their slots for the choosers' choices (docs/development.md).
  *
  * @param {object} [vehicle] - the vehicle the sheet is on
  * @param {object|null} [entry] - the timeline row it was opened on, or null for a new entry
@@ -146,8 +144,7 @@ function toggle(wrapper, label) {
 }
 
 /**
- * The sheet's own button: the last of the two the dialog's actions hold, because a failed save
- * renames it (docs/ui.md).
+ * The button that writes, found as the last one rather than by its words: a failed save renames it.
  *
  * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted sheet
  * @return {any} the button that writes
@@ -199,12 +196,7 @@ beforeEach(() => {
 })
 
 describe('the entry sheet', () => {
-	/**
-	 * `Esc` closes the sheet and NcDialog already gives it (docs/ui.md), so nothing here listens
-	 * for the key. What is pinned is the one wire it travels along: the dialog reports itself
-	 * closed and the sheet leaves. A sheet that bound `:open` and no listener would swallow the
-	 * key silently and never reopen.
-	 */
+	/** A sheet that bound `:open` and no listener would swallow the dialog's own close. */
 	it('closes when the dialog reports itself closed', async () => {
 		const wrapper = sheet()
 
@@ -213,11 +205,7 @@ describe('the entry sheet', () => {
 		expect(wrapper.emitted('close')?.length).toBe(1)
 	})
 
-	/**
-	 * The other half of the key, and the half NcDialog does not give: its own Escape handler is a
-	 * useHotKey, and useHotKey passes over every keystroke aimed at a text field. This sheet opens
-	 * with the caret in one, so Escape would otherwise reach nobody.
-	 */
+	/** NcDialog's own Escape skips text fields, and the sheet opens with the caret in one. */
 	it('closes when Esc is pressed in a field', async () => {
 		const wrapper = sheet()
 
@@ -226,11 +214,6 @@ describe('the entry sheet', () => {
 		expect(wrapper.emitted('close')?.length).toBe(1)
 	})
 
-	/**
-	 * A journey is what a logbook is for and what a driver enters daily; the counter on its own is
-	 * the escape hatch for everything not otherwise recorded (docs/ui.md). So the sheet opens on
-	 * the trip and the other kinds are one tap away.
-	 */
 	it('opens on a trip and offers the other kinds beside it, the expense last', () => {
 		const wrapper = sheet(HYBRID)
 
@@ -238,7 +221,6 @@ describe('the entry sheet', () => {
 		expect(chooser(wrapper, 'Entry type').props('modelValue')).toBe('trip')
 	})
 
-	/** The escape hatch is one number and stays one number (docs/ui.md). */
 	it('asks for nothing but the counter under the odometer', async () => {
 		const wrapper = sheet()
 
@@ -251,8 +233,8 @@ describe('the entry sheet', () => {
 	})
 
 	/**
-	 * A truck that also counts engine hours has two chains (docs/architecture.md#odometer-rules,
-	 * rule 4), so the one number has to say which it is. Kilometres first: the chain trips run on.
+	 * Engine hours are a second chain (docs/architecture.md#odometer-rules, rule 4). Kilometres
+	 * first: the chain trips run on.
 	 */
 	it('asks which counter it reads on a vehicle that counts engine hours', async () => {
 		const wrapper = sheet(TRUCK)
@@ -264,7 +246,7 @@ describe('the entry sheet', () => {
 		expect(field(wrapper, 'Counter reading').props('modelValue')).toBe('148320')
 	})
 
-	/** The hours are prefilled as they stand, like the kilometres, and land on their own chain. */
+	/** The hours are prefilled as they stand, like the kilometres. */
 	it('records engine hours on the hour chain', async () => {
 		const wrapper = sheet(TRUCK)
 
@@ -278,12 +260,7 @@ describe('the entry sheet', () => {
 		expect(recordReading).toHaveBeenCalledWith('v-1', expect.objectContaining({ value: 5011, counter: 'second' }))
 	})
 
-	/**
-	 * Everything that can be prefilled is prefilled (docs/ui.md), and the two counters are the one
-	 * thing that cannot be: `start_odo` is a claim about what the dashboard read when the journey
-	 * set off (docs/architecture.md#odometer-rules), and the vehicle's own counter is not that
-	 * claim. Filling it in would answer the question gap detection exists to ask.
-	 */
+	/** The counters are the one exception to prefilling (docs/ui.md#the-entry-sheet-in-detail). */
 	it('prefills what it knows and claims nothing about the counter', async () => {
 		const wrapper = sheet()
 		await flushPromises()
@@ -303,11 +280,7 @@ describe('the entry sheet', () => {
 		expect(field(sheet({ ...VEHICLE, odo_unit: 'h' }), 'End counter')).toBeDefined()
 	})
 
-	/**
-	 * Route, purpose and partner complete from this vehicle's own trips, which is what keeps six
-	 * spellings of one client out of the reports (docs/ui.md). Both ends of the route offer the
-	 * same places.
-	 */
+	/** Completing from this vehicle's trips keeps six spellings of one client out of reports. */
 	it('offers the places, purposes and partners of this vehicle\'s trips', async () => {
 		const wrapper = sheet()
 		await flushPromises()
@@ -333,10 +306,8 @@ describe('the entry sheet', () => {
 	})
 
 	/**
-	 * The driver knows one of the two, never both, and the toggle is which one they are being
-	 * asked for. A counter the trip set off on is a claim rather than a reading
-	 * (docs/architecture.md#odometer-rules), so it belongs to the counter half - a distance is
-	 * counted from the chain and nothing is claimed about where the journey started.
+	 * The start counter is a claim (docs/architecture.md#odometer-rules), so it belongs to the
+	 * counter half; a distance claims nothing about where the journey started.
 	 */
 	it('asks for a distance instead of the two counters when that is what the driver knows', async () => {
 		const wrapper = sheet()
@@ -349,12 +320,7 @@ describe('the entry sheet', () => {
 		expect(field(wrapper, 'Odometer at arrival')).toBeUndefined()
 	})
 
-	/**
-	 * Every instant is two facts - when it happened and the offset it was entered at
-	 * (docs/architecture.md#time) - and the offset is the moment's own, so a January trip typed up
-	 * in July is stated as it was driven. What the journey did to the counter is not computed here:
-	 * the two counters travel as they were typed.
-	 */
+	/** Each instant carries its own offset (docs/architecture.md#time); counters go as typed. */
 	it('writes the journey and the counter it ended on', async () => {
 		const wrapper = sheet()
 
@@ -385,9 +351,8 @@ describe('the entry sheet', () => {
 	})
 
 	/**
-	 * A distance leaves the counter it set off on unsaid (docs/architecture.md#odometer-rules):
-	 * the Reading is counted from the chain, and a claim the sheet invented would be spent before
-	 * gap detection could measure it.
+	 * The Reading is counted from the chain, and a start counter the sheet invented would be spent
+	 * before gap detection could measure it (docs/architecture.md#odometer-rules).
 	 */
 	it('writes the kilometres and no counter at all when that is what the driver knows', async () => {
 		const wrapper = sheet()
@@ -401,8 +366,7 @@ describe('the entry sheet', () => {
 	})
 
 	/**
-	 * An empty field is a question the driver did not answer, and the sheet never answers it for
-	 * them: what the row is missing is the server's to judge and the timeline's to ask about
+	 * What the row is missing is the server's to judge and the timeline's to ask about
 	 * (docs/features.md#logbook-mode).
 	 */
 	it('leaves out the counter the driver did not read', async () => {
@@ -414,10 +378,6 @@ describe('the entry sheet', () => {
 		expect(recordTrip).toHaveBeenCalledWith('v-1', expect.objectContaining({ end_odo: 148402 }))
 	})
 
-	/**
-	 * The screen behind the sheet is the one listing what was just written, and a sheet that only
-	 * reports itself closed tells it nothing: a cancel closes too (src/views/VehicleView.vue).
-	 */
 	it('reports the write, which closing on a cancel does not', async () => {
 		const wrapper = sheet()
 
@@ -431,7 +391,6 @@ describe('the entry sheet', () => {
 		expect(useVehiclesStore().saved).toEqual({ vehicle: 'v-1', type: 'trip', entry: null, before: null })
 	})
 
-	/** The escape hatch still writes one Reading, at the moment it was read (docs/ui.md). */
 	it('records a plain counter reading under the odometer', async () => {
 		const wrapper = sheet()
 
@@ -445,10 +404,7 @@ describe('the entry sheet', () => {
 		expect(wrapper.emitted('close')?.length).toBe(1)
 	})
 
-	/**
-	 * A failed save is never lost (docs/ui.md): the sheet stays open with every value intact and
-	 * offers the retry, because the open sheet is the queue and nothing is written anywhere else.
-	 */
+	/** A failed save is never lost (docs/ui.md#the-entry-sheet-in-detail). */
 	it('stays open with every value intact when the write is refused', async () => {
 		vi.mocked(recordTrip).mockRejectedValue(new Error('ended_at is not before started_at'))
 		const wrapper = sheet()
@@ -464,9 +420,8 @@ describe('the entry sheet', () => {
 	})
 
 	/**
-	 * A save whose answer was lost may have landed, so the retry names the row the first one would
-	 * have written, and the server answers that row instead of a second (docs/api.md#retried-creates).
-	 * The next sheet is another Entry.
+	 * A save whose answer was lost may have landed, so the retry names the same row
+	 * (docs/api.md#retried-creates). The next sheet is another Entry.
 	 */
 	it('sends one client uuid per open sheet, the same on a retry', async () => {
 		vi.mocked(recordTrip).mockRejectedValueOnce(new Error('No connection'))
@@ -497,11 +452,7 @@ describe('the entry sheet', () => {
 		expect(wrapper.emitted('close')).toBeUndefined()
 	})
 
-	/**
-	 * A field nobody can read is a question for the driver rather than a number to round: `7,2` is
-	 * not a counter (src/utils/format.js). Asked here rather than by the server, which would spend
-	 * a round trip to answer in its own words.
-	 */
+	/** `7,2` is not a whole number (src/utils/format.js), and the sheet asks rather than rounds. */
 	it('writes nothing when the kilometres are not kilometres', async () => {
 		const wrapper = sheet()
 
@@ -513,11 +464,6 @@ describe('the entry sheet', () => {
 		expect(field(wrapper, 'Distance').props('modelValue')).toBe('7,2')
 	})
 
-	/**
-	 * An Odometer Entry is the number and nothing else (CONTEXT.md), so an empty field is not an
-	 * entry with a question left open - it is nothing to record, and asking here saves the driver
-	 * a round trip that comes back in the server's own words.
-	 */
 	it('writes nothing when the counter reading is empty', async () => {
 		const wrapper = sheet()
 
@@ -531,12 +477,7 @@ describe('the entry sheet', () => {
 		expect(wrapper.emitted('close')).toBeUndefined()
 	})
 
-	/**
-	 * A date field the driver cleared leaves the picker holding null, and a journey with no moment
-	 * is one no logbook can place: the instant is what every other row is ordered against
-	 * (docs/architecture.md#time). Said in the sheet's own words rather than thrown as whatever a
-	 * null does to the arithmetic.
-	 */
+	/** A cleared date field leaves the picker holding null, and no logbook can place that trip. */
 	it('writes nothing when a trip has lost one of its two moments', async () => {
 		const wrapper = sheet()
 
@@ -550,10 +491,7 @@ describe('the entry sheet', () => {
 			.toBe('A trip needs a departure and an arrival.')
 	})
 
-	/**
-	 * A fill-up is of an energy the vehicle takes (docs/architecture.md#data-model), so a vehicle
-	 * that names none cannot log one - but it is shown the kind, and told where to unlock it.
-	 */
+	/** A vehicle with no energy is shown the kind anyway, and told where to unlock it. */
 	it('offers energy only to a vehicle that takes some, and says how to get there', () => {
 		const none = sheet()
 		const energy = chooser(none, 'Entry type').findAllComponents(NcRadioGroupButton)
@@ -570,7 +508,6 @@ describe('the entry sheet', () => {
 		expect(chooser(hybrid, 'Entry type').props('description')).toBeUndefined()
 	})
 
-	/** A plug-in hybrid logs either of its two energies, and nothing else (docs/ui.md). */
 	it('asks which of the vehicle energies a fill-up is of', async () => {
 		const wrapper = sheet(HYBRID)
 
@@ -583,9 +520,8 @@ describe('the entry sheet', () => {
 	})
 
 	/**
-	 * Amounts and money are typed as a pump shows them and sent as the integers their columns hold
-	 * (docs/architecture.md#data-model). The VAT rate is the jurisdiction's on the day, asked of the
-	 * server for the moment the sheet is on, and "full tank" is on because it usually is.
+	 * Typed as a pump shows them, sent as the integers their columns hold
+	 * (docs/architecture.md#data-model). The VAT rate is the server's for the day.
 	 */
 	it('writes a fill-up as the columns hold it', async () => {
 		const wrapper = sheet(TRUCK)
@@ -651,11 +587,7 @@ describe('the entry sheet', () => {
 		expect(vi.mocked(recordEnergy).mock.calls[0][1]).toHaveProperty('vat_rate', 0)
 	})
 
-	/**
-	 * The station completes from this vehicle's history and prefills the price it last charged
-	 * for this energy (docs/ui.md). A total answers the price better than a guess does, so the
-	 * guess is not sent beside one - the server derives it instead.
-	 */
+	/** A total answers the price better than the station's last one, so that guess is not sent. */
 	it('prefills the price the station last charged, and lets a total overrule it', async () => {
 		const wrapper = sheet(TRUCK)
 
@@ -672,11 +604,6 @@ describe('the entry sheet', () => {
 		expect(vi.mocked(recordEnergy).mock.calls[0][1]).not.toHaveProperty('unit_price')
 	})
 
-	/**
-	 * The prefilled price belongs to one station and one energy. Another station, or another
-	 * energy, is asked afresh, and one with no price leaves the field empty rather than carrying
-	 * the last station's guess into this fill-up.
-	 */
 	it('follows the station and the energy with the price it prefilled', async () => {
 		const wrapper = sheet(HYBRID)
 
@@ -709,10 +636,6 @@ describe('the entry sheet', () => {
 		expect(recordEnergy).toHaveBeenLastCalledWith('v-1', expect.objectContaining({ unit_price: 1759, total: 7000 }))
 	})
 
-	/**
-	 * A charge is at home or in public, and only a public charger offers direct current. The sheet
-	 * does not answer where for the driver.
-	 */
 	it('asks an electric charge where it was, and DC only in public', async () => {
 		const wrapper = sheet(HYBRID)
 
@@ -753,10 +676,6 @@ describe('the entry sheet', () => {
 		expect(field(hours, 'Counter reading').props('helperText')).toBe('Consumption needs the counter reading.')
 	})
 
-	/**
-	 * The rate changes on a day, so a fill-up dated back is asked about again - and a rate the
-	 * driver typed is theirs and stays.
-	 */
 	it('asks the rate again for another day, unless the driver stated one', async () => {
 		const wrapper = sheet(TRUCK)
 		await choose(wrapper, 'Entry type', 'energy')
@@ -776,7 +695,6 @@ describe('the entry sheet', () => {
 		expect(field(wrapper, 'VAT rate (%)').props('modelValue')).toBe('7')
 	})
 
-	/** The amount is the one field a fill-up requires (docs/ui.md), so it is asked for here. */
 	it('writes nothing when a fill-up has no amount', async () => {
 		const wrapper = sheet(TRUCK)
 
@@ -788,11 +706,7 @@ describe('the entry sheet', () => {
 		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('That is not an amount.')
 	})
 
-	/**
-	 * A Maintenance Record asks for its title and cost (docs/ui.md), and sends money and rates as
-	 * the integers their columns hold. The VAT is the jurisdiction's on the day, and the counters,
-	 * as on a fill-up, are never prefilled.
-	 */
+	/** As on a fill-up: integers as the columns hold them, and counters never prefilled. */
 	it('writes a maintenance record as the columns hold it', async () => {
 		const wrapper = sheet(TRUCK)
 
@@ -827,7 +741,6 @@ describe('the entry sheet', () => {
 		expect(wrapper.emitted('close')?.length).toBe(1)
 	})
 
-	/** Everything but the title may be left out, and what was left out is not sent. */
 	it('sends only what a maintenance record was given', async () => {
 		const wrapper = sheet()
 
@@ -843,7 +756,6 @@ describe('the entry sheet', () => {
 		expect(field(wrapper, 'Engine hours')).toBeUndefined()
 	})
 
-	/** The vendor completes from this vehicle's history, the latest first (docs/ui.md). */
 	it('offers the vendors this vehicle has used', async () => {
 		const wrapper = sheet()
 
@@ -880,8 +792,8 @@ describe('the entry sheet', () => {
 		})
 
 		/**
-		 * The open reminders, most urgent first. Nothing is picked until the work is a kind the most
-		 * urgent one is: a guess past it closes a reminder nobody meant.
+		 * Picked only when the work is the most urgent one's kind: a wider guess closes a reminder
+		 * nobody meant.
 		 */
 		it('offers the open reminders and picks the most urgent once the work is its kind', async () => {
 			const wrapper = sheet()
@@ -934,8 +846,8 @@ describe('the entry sheet', () => {
 		})
 
 		/**
-		 * An edit sends back the reminder the record closed - a full replace would otherwise take the
-		 * link away - and offers it even when that occurrence is over.
+		 * An edit is a full replace, so it sends the link back, offered even when that occurrence
+		 * is over.
 		 */
 		it('keeps what the record closed when it is edited', async () => {
 			const wrapper = sheet(VEHICLE, /** @type {any} */ ({
@@ -955,7 +867,6 @@ describe('the entry sheet', () => {
 		})
 	})
 
-	/** The title is the one field a Maintenance Record requires, so it is asked for here. */
 	it('writes nothing when a maintenance record has no title', async () => {
 		const wrapper = sheet()
 
@@ -968,10 +879,7 @@ describe('the entry sheet', () => {
 		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('A maintenance record needs a title.')
 	})
 
-	/**
-	 * An Expense asks for its amount, and a category, the VAT and notes beside it (docs/ui.md). The
-	 * VAT is the jurisdiction's on the day, and it asks for no counter: an Expense has none.
-	 */
+	/** An Expense asks for no counter: insurance or a toll says nothing about the dashboard. */
 	it('writes an expense as the columns hold it', async () => {
 		const wrapper = sheet(TRUCK)
 
@@ -998,10 +906,7 @@ describe('the entry sheet', () => {
 		expect(wrapper.emitted('close')?.length).toBe(1)
 	})
 
-	/**
-	 * A category the jurisdiction charges no VAT on is asked about, and opens the rate at 0; the
-	 * next category puts the day's rate back. A rate the person typed is theirs and stays.
-	 */
+	/** A VAT-free category opens the rate at 0, another restores the day's; a typed rate stays. */
 	it('asks for the rate again when the category changes', async () => {
 		vi.mocked(expensePrefill).mockImplementation(async (uuid, at, off, category) => ({ vat_rate: category === 'insurance' ? 0 : 1900 }))
 		const wrapper = sheet()
@@ -1039,7 +944,7 @@ describe('the entry sheet', () => {
 		expect(vi.mocked(recordExpense).mock.calls[0][1]).toHaveProperty('vat_rate', 0)
 	})
 
-	/** Everything but the amount may be left out; no category is picked for the person. */
+	/** No category is picked for the person. */
 	it('sends only what an expense was given', async () => {
 		const wrapper = sheet()
 
@@ -1055,7 +960,6 @@ describe('the entry sheet', () => {
 			.toEqual(['amount', 'client_uuid', 'spent_at', 'spent_at_off'])
 	})
 
-	/** The amount is the one field an Expense requires, so it is asked for here. */
 	it('writes nothing when an expense has no amount', async () => {
 		const wrapper = sheet()
 
@@ -1067,11 +971,7 @@ describe('the entry sheet', () => {
 		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('That is not an amount.')
 	})
 
-	/**
-	 * Escape in a date field belongs to the picker the browser opened over it, not to the sheet.
-	 * Chromium dismisses that picker on the key and delivers the keydown to the input all the same,
-	 * so a sheet that took it would close over a typed-up journey.
-	 */
+	/** Escape in a date field belongs to the browser's picker (EntrySheet.vue, keepPicker()). */
 	it('stays open when Esc is pressed in a date field', async () => {
 		const wrapper = sheet()
 
@@ -1094,10 +994,7 @@ describe('the entry sheet on a phone', () => {
 		return wrapper.findComponent(NcNoteCard).props('text')
 	}
 
-	/**
-	 * A trip that cannot have been driven is said before it is sent: on a phone the round trip is
-	 * the slow part, and the server's words name columns (docs/ui.md).
-	 */
+	/** Said before sending: a phone's round trip is slow, and the server's words name columns. */
 	it('says the arrival comes after the departure before it sends anything', async () => {
 		const wrapper = sheet()
 
@@ -1134,10 +1031,7 @@ describe('the entry sheet on a phone', () => {
 		expect(said(wrapper)).toBe('The counter at the end is below the start.')
 	})
 
-	/**
-	 * Where the last trip ended is offered, never filled in: the start counter is the driver's claim
-	 * (docs/architecture.md#odometer-rules), and one tap makes it theirs.
-	 */
+	/** Offered, never filled in: the start counter is the driver's claim, and a tap makes it so. */
 	it('offers the counter the last trip ended at, and takes it on one tap', async () => {
 		vi.mocked(tripPrefill).mockResolvedValue({ places: [], purposes: [], partners: [], category: null, last: LAST })
 		const wrapper = sheet()
@@ -1183,7 +1077,6 @@ describe('the entry sheet on a phone', () => {
 			vi.useRealTimers()
 		})
 
-		/** The next trip sets off where the last one arrived, when that was today. */
 		it('defaults to the last trip\'s arrival when that was today', async () => {
 			vi.mocked(tripPrefill).mockResolvedValue({ places: [], purposes: [], partners: [], category: null, last: LAST })
 			const wrapper = sheet()
@@ -1202,7 +1095,6 @@ describe('the entry sheet on a phone', () => {
 		})
 	})
 
-	/** *Done* in the due banner is the work the reminder names, so the record opens saying so. */
 	it('fills in the title and the type of the reminder it closes', async () => {
 		vi.mocked(listReminders).mockResolvedValue(/** @type {any} */ ([
 			{ uuid: 'rem-tyres', template_key: 'tyre_swap', title: null, mode: 'date', due_date: '2026-10-15', due_odo: null, estimate: null, state: 'warned' },
@@ -1224,7 +1116,6 @@ describe('the entry sheet on a phone', () => {
 		expect(dropdown(towbar, 'Type').props('modelValue')).toBeNull()
 	})
 
-	/** A receipt states what was paid first, so the counter at the pump comes right after it. */
 	it('asks a fill-up for the counter right after the total', async () => {
 		const wrapper = sheet(TRUCK)
 
@@ -1233,7 +1124,7 @@ describe('the entry sheet on a phone', () => {
 		expect(labels(wrapper)).toEqual(['Amount (l)', 'Total price', 'Counter reading', 'Engine hours', 'Station', 'Price per litre', 'VAT rate (%)'])
 	})
 
-	/** A counter is a whole number, so a phone opens its number pad, not the one with a decimal key. */
+	/** A counter is whole, so a phone opens its number pad, not the one with a decimal key. */
 	it('opens the number pad for every whole-number counter', async () => {
 		const wrapper = sheet(TRUCK)
 
@@ -1304,10 +1195,6 @@ describe('the entry sheet on an Entry from the timeline', () => {
 		vi.mocked(deleteEntry).mockImplementation(async (uuid, type, entry) => ({ ...entry, updated_at: entry.updated_at + 1 }))
 	})
 
-	/**
-	 * The row is one Entry of one kind, so the sheet opens on that kind with what the Entry says,
-	 * and offers no other kind: a fill-up does not become an expense.
-	 */
 	it('opens on the Entry with what it says, and offers no other kind', async () => {
 		const wrapper = sheet(TRUCK, FILL_ROW)
 		await flushPromises()
@@ -1324,10 +1211,7 @@ describe('the entry sheet on an Entry from the timeline', () => {
 		expect(moment(wrapper, 'Date').props('modelValue')).toEqual(new Date(1788391800 * 1000))
 	})
 
-	/**
-	 * A rate left unstated is the person's word, and "not stated" is not a gap the jurisdiction
-	 * fills on the next read (docs/architecture.md#data-model).
-	 */
+	/** "Not stated" is the person's word, not a gap the jurisdiction fills on the next read. */
 	it('keeps a rate that was not stated', async () => {
 		const wrapper = sheet(TRUCK, { ...FILL_ROW, energy: { ...FILL, vat_rate: null } })
 		await flushPromises()
@@ -1347,11 +1231,7 @@ describe('the entry sheet on an Entry from the timeline', () => {
 		expect(vi.mocked(updateEntry).mock.calls[0][3]).toHaveProperty('vat_rate', 0)
 	})
 
-	/**
-	 * The edit is the whole Entry under the token it was read with. The price the server derived
-	 * from the total is derived again rather than pinned, so a corrected total is not contradicted
-	 * by the price it replaced.
-	 */
+	/** The derived price is not sent, so a corrected total is not contradicted by the old price. */
 	it('writes the whole Entry back under the token it was read with', async () => {
 		const wrapper = sheet(TRUCK, FILL_ROW)
 		await field(wrapper, 'Total price').vm.$emit('update:modelValue', '84,10')
@@ -1375,10 +1255,7 @@ describe('the entry sheet on an Entry from the timeline', () => {
 		expect(wrapper.emitted('close')).toHaveLength(1)
 	})
 
-	/**
-	 * The toast's way back is the Entry as the sheet opened on it, written under the token the edit
-	 * answered with - its price included, which the edit itself leaves the server to derive.
-	 */
+	/** Undo writes the Entry as opened, price included, under the token the edit answered with. */
 	it('leaves the way back to what the Entry said with the store', async () => {
 		const wrapper = sheet(TRUCK, FILL_ROW)
 		await field(wrapper, 'Total price').vm.$emit('update:modelValue', '84,10')
@@ -1393,7 +1270,6 @@ describe('the entry sheet on an Entry from the timeline', () => {
 		})
 	})
 
-	/** An Odometer Entry keeps the moment it was read at: the sheet asks only for the number. */
 	it('corrects an Odometer Entry at the moment it was read', async () => {
 		const reading = { uuid: 'r-1', updated_at: 1750000000, read_at: 1788217200, read_at_off: 60, value: 148320, counter: 'second', flagged: true }
 		const wrapper = sheet(TRUCK, { type: 'odometer', occurred_at: 1788217200, occurred_at_off: 60, odometer: reading })
@@ -1407,11 +1283,7 @@ describe('the entry sheet on an Entry from the timeline', () => {
 		expect(updateEntry).toHaveBeenCalledWith('v-1', 'odometer', reading, { value: 5011, counter: 'second', read_at: 1788217200, read_at_off: 60 })
 	})
 
-	/**
-	 * Somebody else changed the Entry while the sheet was open. The sheet says so, and the retry
-	 * becomes _Save anyway_: it reads the Entry back and writes what is on screen under the token
-	 * that came with it (docs/ui.md).
-	 */
+	/** What is on screen wins, under the token read back (docs/ui.md#the-entry-sheet-in-detail). */
 	it('offers to save anyway when the Entry moved on, under the token read back', async () => {
 		vi.mocked(updateEntry).mockRejectedValueOnce(new ConflictError('Changed since you read it'))
 		vi.mocked(readEntry).mockResolvedValue(/** @type {any} */ ({ ...FILL_ROW, energy: { ...FILL, amount: 50000, updated_at: 1750000900 } }))
@@ -1430,10 +1302,7 @@ describe('the entry sheet on an Entry from the timeline', () => {
 		expect(wrapper.emitted('close')).toHaveLength(1)
 	})
 
-	/**
-	 * Nothing asks "are you sure?": the delete goes, and the way back is the toast's
-	 * (src/components/UndoToast.vue), which the store hands the token the delete answered with.
-	 */
+	/** Nothing asks "are you sure?": the way back is the toast's (src/components/UndoToast.vue). */
 	it('deletes the Entry and leaves the way back with the store', async () => {
 		const wrapper = sheet(TRUCK, FILL_ROW)
 
@@ -1454,10 +1323,7 @@ describe('the entry sheet on an Entry from the timeline', () => {
 		expect(saveButton(wrapper)).toBeDefined()
 	})
 
-	/**
-	 * Under Logbook Mode a trip is voided, not deleted (docs/features.md#logbook-mode); the button
-	 * says what the click does. The journey opens as it was stated - here, as a distance.
-	 */
+	/** The journey opens as it was stated - here, as a distance. */
 	it('voids a trip under Logbook Mode, and opens it as it was stated', () => {
 		const trip = {
 			uuid: 't-1',
@@ -1508,10 +1374,7 @@ describe('the entry sheet on a returned booking', () => {
 		})
 	}
 
-	/**
-	 * The handover is the trip's evidence; whether it was business is the driver's word, so the
-	 * category is the one thing not chosen for them (docs/features.md#logbook-mode).
-	 */
+	/** Whether it was business is the driver's word, so the handover does not choose it. */
 	it('opens on the trip the handover describes, and leaves the category to the driver', () => {
 		const wrapper = fromBooking()
 
@@ -1552,7 +1415,7 @@ describe('the entry sheet on a returned booking', () => {
 		expect(wrapper.emitted('close')?.length).toBe(1)
 	})
 
-	/** Logged meanwhile, in another tab or by a manager: the second trip is refused, and the sheet says why. */
+	/** Logged meanwhile, in another tab or by a manager. */
 	it('says so when the booking has its trip already', async () => {
 		vi.mocked(recordTrip).mockRejectedValue(new BookingConflictError('the booking has its trip already', /** @type {any} */ ({ uuid: 'b-8', state: 'returned' })))
 		const wrapper = fromBooking()
@@ -1565,7 +1428,9 @@ describe('the entry sheet on a returned booking', () => {
 		expect(wrapper.emitted('close')).toBeUndefined()
 	})
 
-	/** Not back yet is not something the row offers the trip for; the server's words say what happened. */
+	/**
+	 * The row never offers the trip of a car not back, so only the server can say what happened.
+	 */
 	it('passes on any other refusal of the booking as the server words it', async () => {
 		vi.mocked(recordTrip).mockRejectedValue(new BookingConflictError('only a booking whose car is back is logged as a trip', /** @type {any} */ ({ uuid: 'b-8', state: 'out' })))
 		const wrapper = fromBooking()
@@ -1612,10 +1477,7 @@ describe('the entry sheet on a receipt from the inbox', () => {
 		expect(energyPrefill).toHaveBeenCalledWith('v-1', SAVED, -new Date(SAVED * 1000).getTimezoneOffset())
 	})
 
-	/**
-	 * The screen behind attaches the file to it, so it is told which one was written, and of which
-	 * kind, so the vehicle screen reads back only what that kind can change.
-	 */
+	/** The screen behind files the receipt on it, and reads back only what that kind can change. */
 	it('tells which entry it wrote, and its kind', async () => {
 		vi.mocked(recordExpense).mockResolvedValue({ uuid: 'x-5', amount: 4250 })
 		const wrapper = fromReceipt('expense')

@@ -16,9 +16,8 @@ use OCP\Migration\IOutput;
 use OCP\Migration\SimpleMigrationStep;
 
 /**
- * The three tables M1 ships: a vehicle, the readings that give it an odometer, and who may see
- * it (docs/architecture.md#data-model). Every further table arrives with the milestone that
- * needs it.
+ * A vehicle, the readings that give it an odometer, and who may see it
+ * (docs/architecture.md#data-model).
  */
 class Version000001Date20260101000000 extends SimpleMigrationStep {
 	/**
@@ -63,7 +62,7 @@ class Version000001Date20260101000000 extends SimpleMigrationStep {
 	/**
 	 * The odometer itself: every Entry that knows a mileage writes one of these, and the
 	 * vehicle only caches the newest (docs/architecture.md#odometer-rules). No foreign key on
-	 * `source_id` - the tables it points into arrive with M2.
+	 * `source_id`: it points into more than one table.
 	 */
 	private function odoReadings(Table $table): void {
 		$table->addColumn('vehicle_id', Types::BIGINT, ['notnull' => true, 'unsigned' => true]);
@@ -86,7 +85,7 @@ class Version000001Date20260101000000 extends SimpleMigrationStep {
 	}
 
 	/**
-	 * A vehicle is the only thing M1 lets a user create. Money is integer cents, volumes
+	 * Money is integer cents, volumes
 	 * millilitres, energy watt-hours; `odo_value` is a cache of the newest reading and no column
 	 * is named after a unit it might not hold.
 	 */

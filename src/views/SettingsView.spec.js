@@ -15,15 +15,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { getPreferences, readInbox, savePreferences } from '../services/api.js'
 import SettingsView from './SettingsView.vue'
 
-// The network is the api client's own seam (api.spec.js); what is under test here is what the
-// screen does with the answers it can get.
 vi.mock('../services/api.js', () => ({
 	getPreferences: vi.fn(),
 	readInbox: vi.fn(),
 	savePreferences: vi.fn(),
 }))
 
-// Nextcloud's picker is the library's own; what the screen decides is what it does with the folder.
 vi.mock('@nextcloud/dialogs', () => ({
 	FilePickerClosed: class extends Error {},
 	getFilePickerBuilder: vi.fn(),
@@ -37,13 +34,11 @@ let folders = false
 const INBOX = { folder: { file_id: 7, path: '/Belege' }, files: [], count: 0 }
 const NO_INBOX = { folder: null, files: [], count: 0 }
 
-// @nextcloud/l10n is left alone: no page registers a catalogue in a spec, so `t()` answers with
-// the source string - and @nextcloud/vue's own components load the module too, so a mock of it
-// would have to stand in for the whole library's use of it as well.
+// @nextcloud/l10n stays real: with no catalogue registered, `t()` answers with the source string,
+// and @nextcloud/vue loads it too.
 
 const settings = {
-	// The whole envelope, dismissed hints included: this screen reads only the jurisdiction, but
-	// what the route answers with is one shape (lib/Service/PreferencesService.php).
+	// The route's whole shape (lib/Service/PreferencesService.php), though the screen reads less.
 	preferences: { jurisdiction: 'de', dismissed_hints: [], dismissed_logbook_hints: [], reclaim_vat: false, kpi_period: 'last-12', grid_factor: null, inbox_folder: null },
 	jurisdictions: [
 		{ key: 'de', name: 'Germany', logbook_export: true, mileage_claim: true, logbook_rules: true, grid_factor: { grams: 363, year: 2024, source: 'https://example.org/grid' } },
@@ -52,14 +47,11 @@ const settings = {
 }
 
 /**
- * The screen, mounted and loaded.
- *
  * @return {Promise<import('@vue/test-utils').VueWrapper>} the wrapper, past its first read
  */
 async function screen() {
 	const wrapper = shallowMount(SettingsView, {
-		// shallowMount renders no stub's slots, and everything this screen shows sits inside the
-		// section - so that one component is rendered and the rest stay stubs.
+		// Everything sits inside the section, so that one renders; the rest stay stubs.
 		global: { renderStubDefaultSlot: true, stubs: { NcSettingsSection: { template: '<div><slot /></div>' } } },
 	})
 	await flushPromises()
@@ -92,8 +84,7 @@ function gridField(wrapper) {
 }
 
 /**
- * What the screen is telling the user went wrong. Read off the note rather than out of the
- * rendered text: a stubbed component renders its props, not its own markup.
+ * Read off the note's prop: a stub renders its props, not its own markup.
  *
  * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted screen
  * @return {string} the message, or the empty string when there is no note
@@ -136,10 +127,7 @@ beforeEach(() => {
 })
 
 describe('settings screen', () => {
-	/**
-	 * The list comes from lib/Jurisdiction/, so a country added there reaches this dropdown
-	 * without the frontend being touched (docs/contributing.md).
-	 */
+	/** A country added in lib/Jurisdiction/ needs no frontend change (docs/contributing.md). */
 	it('offers the jurisdictions the server registered', async () => {
 		const wrapper = await screen()
 
@@ -163,10 +151,6 @@ describe('settings screen', () => {
 		expect(dropdown(wrapper).props('modelValue').id).toBe('de')
 	})
 
-	/**
-	 * A country this release no longer offers is still what the next vehicle would be written
-	 * under. Selecting nothing says so; quietly showing the default would not.
-	 */
 	it('selects nothing when the stored jurisdiction is not on offer', async () => {
 		vi.mocked(getPreferences).mockResolvedValue({ ...settings, preferences: { ...settings.preferences, jurisdiction: 'zz' } })
 
@@ -175,7 +159,6 @@ describe('settings screen', () => {
 		expect(dropdown(wrapper).props('modelValue')).toBe(null)
 	})
 
-	/** A personal setting saves when it is changed - a settings page has no Save button. */
 	it('saves the choice as it is made', async () => {
 		const wrapper = await screen()
 
@@ -186,11 +169,6 @@ describe('settings screen', () => {
 		expect(dropdown(wrapper).props('modelValue').id).toBe('generic')
 	})
 
-	/**
-	 * A refused write leaves the dropdown showing what is really stored: a screen that keeps the
-	 * new value would tell the user their vehicles are written under a country the server never
-	 * accepted.
-	 */
 	it('falls back to the stored jurisdiction when the write is refused', async () => {
 		vi.mocked(savePreferences).mockRejectedValue(new Error('jurisdiction is one of de, generic'))
 		const wrapper = await screen()
@@ -214,7 +192,6 @@ describe('settings screen', () => {
 		expect(vatSwitch(wrapper).props('modelValue')).toBe(false)
 	})
 
-	/** Same as the country: a refused write shows what is really stored. */
 	it('falls back to the stored VAT answer when the write is refused', async () => {
 		vi.mocked(savePreferences).mockRejectedValue(new Error('reclaim_vat is true or false'))
 		const wrapper = await screen()
@@ -226,7 +203,6 @@ describe('settings screen', () => {
 		expect(note(wrapper)).toBe('reclaim_vat is true or false')
 	})
 
-	/** Empty means the country's average, and the screen says what that is. */
 	it('shows this user\'s grid factor, and the country average an empty field stands for', async () => {
 		vi.mocked(getPreferences).mockResolvedValue({ ...settings, preferences: { ...settings.preferences, grid_factor: 120 } })
 		const wrapper = await screen()
@@ -235,10 +211,6 @@ describe('settings screen', () => {
 		expect(gridField(wrapper).props('helperText')).toBe('Empty for the average of the country each vehicle is kept under: Germany 363 g/kWh in 2024')
 	})
 
-	/**
-	 * An empty field is read per vehicle, at the vehicle's country and not at this user's default:
-	 * a generic default says nothing about the German car they share.
-	 */
 	it('names every country\'s average, whichever this user defaults to', async () => {
 		vi.mocked(getPreferences).mockResolvedValue({ ...settings, preferences: { ...settings.preferences, jurisdiction: 'generic' } })
 		const wrapper = await screen()
@@ -260,7 +232,6 @@ describe('settings screen', () => {
 		expect(savePreferences).toHaveBeenLastCalledWith({ grid_factor: null })
 	})
 
-	/** A figure the field cannot read is a question, not a cleared setting. */
 	it('saves nothing for a grid factor it cannot read, and says so', async () => {
 		const wrapper = await screen()
 
@@ -272,7 +243,7 @@ describe('settings screen', () => {
 		expect(gridField(wrapper).props('error')).toBe(true)
 	})
 
-	/** The preference holds an id; the path is the inbox's own label for it (docs/architecture.md#the-inbox). */
+	/** The preference holds an id; the inbox reads its path (docs/architecture.md#the-inbox). */
 	it('names the inbox folder by its path in Files', async () => {
 		vi.mocked(getPreferences).mockResolvedValue({ ...settings, preferences: { ...settings.preferences, inbox_folder: 7 } })
 		vi.mocked(readInbox).mockResolvedValue(INBOX)
@@ -291,7 +262,7 @@ describe('settings screen', () => {
 		expect(button(wrapper, 'Stop using it')).toBeUndefined()
 	})
 
-	/** A folder deleted in Files is still the preference; the screen says it is gone instead of naming nothing. */
+	/** A folder deleted in Files is still the preference. */
 	it('says the chosen folder is gone', async () => {
 		vi.mocked(getPreferences).mockResolvedValue({ ...settings, preferences: { ...settings.preferences, inbox_folder: 7 } })
 
@@ -300,7 +271,6 @@ describe('settings screen', () => {
 		expect(wrapper.find('.inbox__folder').text()).toBe('The folder is gone, or no longer yours alone')
 	})
 
-	/** Nextcloud's own picker in folder mode, and a pick saves as every setting here does. */
 	it('saves the folder picked, and names it', async () => {
 		picked = Promise.resolve([{ fileid: 7, basename: 'Belege' }])
 		const wrapper = await screen()
@@ -314,7 +284,6 @@ describe('settings screen', () => {
 		expect(wrapper.find('.inbox__folder').text()).toBe('/Belege')
 	})
 
-	/** The pick is saved; the old folder's path must not stand for the new one, nor the read look like a refused save. */
 	it('says the folder is saved but unnamed when the name cannot be read', async () => {
 		vi.mocked(getPreferences).mockResolvedValue({ ...settings, preferences: { ...settings.preferences, inbox_folder: 7 } })
 		vi.mocked(readInbox).mockResolvedValue(INBOX)
@@ -367,7 +336,6 @@ describe('settings screen', () => {
 		expect(wrapper.find('.inbox__folder').text()).toBe('None chosen')
 	})
 
-	/** A settings page that cannot be read says why, rather than showing an empty dropdown. */
 	it('says so when the settings cannot be read', async () => {
 		vi.mocked(getPreferences).mockRejectedValue(new Error('The server answered 500'))
 

@@ -9,9 +9,8 @@ import { computed, ref } from 'vue'
 import { getPreferences, savePreferences } from '../services/api.js'
 
 /**
- * This user's own choices, as the app's screens read them. Its own store rather than a corner of
- * the vehicles one: a preference belongs to the person and outlives every vehicle they keep
- * (CONTEXT.md), and the server keeps the two apart for the same reason.
+ * This user's own choices. Not part of the vehicles store: a preference belongs to the person and
+ * outlives every vehicle they keep (CONTEXT.md).
  */
 export const usePreferencesStore = defineStore('preferences', () => {
 	/** The vehicles whose hint this user has answered. @type {import('vue').Ref<string[]>} */
@@ -24,9 +23,8 @@ export const usePreferencesStore = defineStore('preferences', () => {
 	const ruled = ref([])
 
 	/**
-	 * Whether the preferences have been read at all. Not the same fact as an empty list: until the
-	 * answer is in, a screen cannot tell a hint nobody dismissed from one somebody did, and
-	 * showing it again would undo the dismissal in the only way that matters to the reader.
+	 * Whether the preferences have been read. Not the same as an empty list: until then a screen
+	 * cannot tell an open hint from a dismissed one; showing a dismissed one undoes the dismissal.
 	 */
 	const loaded = ref(false)
 
@@ -45,8 +43,8 @@ export const usePreferencesStore = defineStore('preferences', () => {
 	let picked = null
 
 	/**
-	 * The inbox folder's file id, or null while none is chosen. Chosen on the settings page, which
-	 * is another page, so this session never writes it.
+	 * The inbox folder's file id, or null while none is chosen. The settings page, another page,
+	 * chooses it, so this session never writes it.
 	 *
 	 * @type {import('vue').Ref<number|null>}
 	 */
@@ -71,9 +69,8 @@ export const usePreferencesStore = defineStore('preferences', () => {
 	}
 
 	/**
-	 * The dismissal being written, if one is. The route replaces the whole list, so two of them at
-	 * once would each send the list as it stood before the other - and the one that answered
-	 * second would take the first one's dismissal back out.
+	 * The dismissal being written, if one is. The route replaces the whole list, so two at once
+	 * would each send it without the other's, and the second answer would undo the first.
 	 *
 	 * @type {Promise<void>}
 	 */
@@ -81,10 +78,8 @@ export const usePreferencesStore = defineStore('preferences', () => {
 
 	/**
 	 * Answer one vehicle's hint, for good and on every machine this user opens the app on.
-	 *
-	 * A refusal is not caught here - the hint stays and the screen that offered the click says so,
-	 * as with every other write (src/store/index.js). It is caught for the *next* dismissal
-	 * though, which is a different click and gets its own answer.
+	 * A refusal rejects to the screen that offered the click (src/store/index.js); the next
+	 * dismissal, a different click, does not inherit it.
 	 *
 	 * @param {string} uuid - the vehicle whose hint was answered
 	 * @return {Promise<void>} when it is stored
@@ -109,8 +104,8 @@ export const usePreferencesStore = defineStore('preferences', () => {
 
 	/**
 	 * What is stored is read first: the route replaces the whole list
-	 * (lib/Service/PreferencesService.php), so a write off a list this session never saw would drop
-	 * every earlier dismissal.
+	 * (lib/Service/PreferencesService.php), so a write off an unread list would drop every earlier
+	 * dismissal.
 	 *
 	 * @param {string} key - the preference holding the list
 	 * @param {import('vue').Ref<string[]>} list - this store's copy of it

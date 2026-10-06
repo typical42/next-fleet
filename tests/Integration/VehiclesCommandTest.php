@@ -73,7 +73,7 @@ class VehiclesCommandTest extends TestCase {
 		}
 	}
 
-	/** Every owner's, by owner and then plate; the instance may hold others', so only ours are compared. */
+	/** The instance may hold other vehicles, so only ours are compared. */
 	public function testItListsEveryLiveVehicleByOwnerThenPlate(): void {
 		$second = $this->vehicle(self::ANNA, ['plate' => 'NF-VL 2', 'manufacturer' => 'Škoda', 'model' => 'Octavia']);
 		$first = $this->vehicle(self::ANNA, ['plate' => 'NF-VL 1']);
@@ -120,6 +120,15 @@ class VehiclesCommandTest extends TestCase {
 		$display = $this->command->getDisplay();
 		$this->assertMatchesRegularExpression('/\|\s*uuid\s*\|\s*plate\s*\|\s*name\s*\|\s*owner\s*\|\s*lifecycle\s*\|\s*deleted_at\s*\|/', $display);
 		$this->assertStringContainsString($vehicle->getUuid(), $display);
+	}
+
+	/** The owner column holds the uid as stored, and the database compares it exactly. */
+	public function testAUidTypedInAnotherCaseListsTheAccountsVehicles(): void {
+		$vehicle = $this->vehicle(self::ANNA, ['plate' => 'NF-VL 1']);
+
+		$this->command->execute(['--user' => strtoupper(self::ANNA), '--output' => 'json']);
+
+		$this->assertSame([$vehicle->getUuid()], array_column($this->listed(), 'uuid'));
 	}
 
 	public function testAnAccountWithNoVehicleIsNothingFound(): void {

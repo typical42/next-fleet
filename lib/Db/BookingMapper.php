@@ -87,11 +87,10 @@ class BookingMapper extends BaseMapper {
 	 * order - and the counter of the newest return by then whose trip is not logged yet, which no
 	 * Reading holds. A logged trip is the record and overrides the check-in it came from.
 	 *
-	 * Three queries for any number of bookings, so a page costs what one does: the two instants
-	 * per booking, each a MAX in the SELECT list that runs once per booking off the
-	 * `(vehicle_id, read_at)` and `(vehicle_id, state)` indexes; then the rows at those instants by
-	 * key. A MAX in a join condition ran once per candidate row, and grew with the square of a
-	 * vehicle's bookings.
+	 * Three queries for any number of bookings: the two instants per booking, each a MAX in the
+	 * SELECT list that runs once per booking off the `(vehicle_id, read_at)` and
+	 * `(vehicle_id, state)` indexes; then the rows at those instants by key. A MAX in a join
+	 * condition would run once per candidate row and grow with the square of a vehicle's bookings.
 	 *
 	 * @param list<Booking> $bookings
 	 * @return array<int, int> by booking id; one not taken, or with neither to go by, is left out

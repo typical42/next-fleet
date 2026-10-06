@@ -109,11 +109,21 @@ class RecipientService {
 	 */
 	public function remove(string $userId, string $vehicleUuid, string $recipient): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
-		$this->atomicRetry(function () use ($vehicle, $recipient): void {
+		$gone = $recipient;
+		$this->atomicRetry(function () use ($vehicle, $recipient, &$gone): void {
 			$this->vehicles->hold((int)$vehicle->getId());
-			$this->recipients->deleteByUser((int)$vehicle->getId(), $recipient);
+			$listed = array_map(
+				static fn (ReminderRecipient $row): string => $row->getUserId(),
+				$this->recipients->findByVehicle((int)$vehicle->getId()),
+			);
+			// The row as the list shows it, else the spelling add() stores. A row an erased account
+			// left can share its uid with a live account in another case.
+			$gone = in_array($recipient, $listed, true)
+				? $recipient
+				: ($this->users->get($recipient)?->getUID() ?? $recipient);
+			$this->recipients->deleteByUser((int)$vehicle->getId(), $gone);
 		}, $this->db);
-		$this->notifications->withdrawFrom((int)$vehicle->getId(), $recipient);
+		$this->notifications->withdrawFrom((int)$vehicle->getId(), $gone);
 
 		return $this->of($vehicle);
 	}
@@ -121,9 +131,9 @@ class RecipientService {
 	/**
 	 * Takes off every list whoever add() would refuse there now: neither the owner nor whoever
 	 * listed them may share with them, nor do they see the vehicle. add() asks it of the caller,
-	 * who may be a manager; the row's `created_by` is that caller. Before 0.3.1 add() asked neither, so the plate may have
-	 * gone to people the admin's sharing settings keep apart; the upgrade from there runs this
-	 * once (lib/Repair/StrangerRecipients.php). Each vehicle under its hold, as remove() does.
+	 * who may be a manager; the row's `created_by` is that caller. For the upgrade repair step
+	 * (lib/Repair/StrangerRecipients.php, docs/architecture.md#reminder-engine). Each vehicle
+	 * under its hold, as remove() does.
 	 *
 	 * @return int how many entries went
 	 * @throws \OCP\DB\Exception

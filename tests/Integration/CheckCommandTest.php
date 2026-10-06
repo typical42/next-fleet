@@ -211,6 +211,20 @@ class CheckCommandTest extends TestCase {
 		$this->assertStringContainsString('live and states the main counter, but wrote no Reading on it', $reasons['fleet_trips ' . $unread->getUuid()]);
 	}
 
+	/** No row is deleted for good, so a live Reading whose Entry is not there at all was cut off by hand. */
+	public function testAReadingOfAnEntryThatIsNotThereIsAFinding(): void {
+		$vehicle = $this->vehicle();
+		$trip = $this->trip($vehicle, 1750000000, 120000);
+		$orphan = $this->readingOf($vehicle, $trip);
+		$this->deleteRow('fleet_trips', (int)$trip->getId());
+
+		$this->assertSame(1, $this->command->execute(['--vehicle' => $vehicle->getUuid(), '--output' => 'json']));
+
+		$found = $this->found('entry');
+		$this->assertSame([['fleet_odo_readings', $orphan->getUuid()]], array_map(static fn (array $one): array => [$one['table'], $one['row']], $found));
+		$this->assertSame('live, but its trip #' . $trip->getId() . ' does not exist', $found[0]['reason']);
+	}
+
 	/**
 	 * A fill-up has a Reading per counter it states and none for one it does not: a counter
 	 * emptied by an edit leaves a deleted Reading behind, by design.

@@ -52,7 +52,6 @@ class ExpenseTest extends TestCase {
 		}
 	}
 
-	/** Every field the sheet offers is stored as given. */
 	public function testTheFieldsAreStoredAsGiven(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
 

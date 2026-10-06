@@ -12,6 +12,7 @@ use OCA\NextFleet\Command\RemindersCommand;
 use OCA\NextFleet\Service\MailService;
 use OCA\NextFleet\Service\NotificationService;
 use OCA\NextFleet\Service\ReminderService;
+use OCP\IUser;
 use OCP\IUserManager;
 use OCP\L10N\IFactory;
 use PHPUnit\Framework\TestCase;
@@ -61,13 +62,39 @@ class RemindersCommandTest extends TestCase {
 		$this->assertSame(['sent' => false], json_decode($command->getDisplay(), true));
 	}
 
-	private function command(NotificationService $notifications, MailService $mail): CommandTester {
+	/** Owned and user-granted vehicles carry the uid as stored, which a binary collation compares exactly. */
+	public function testAUidTypedInAnotherCaseListsTheAccountsReminders(): void {
+		$reminders = $this->createMock(ReminderService::class);
+		$reminders->expects($this->once())->method('due')->with('alice')->willReturn([]);
+		$alice = $this->createMock(IUser::class);
+		$alice->method('getUID')->willReturn('alice');
+		$users = $this->createMock(IUserManager::class);
+		// As the backends do: a uid is found in any case.
+		$users->method('userExists')->willReturnCallback(static fn (string $uid): bool => strtolower($uid) === 'alice');
+		$users->method('get')->willReturnCallback(static fn (string $uid): ?IUser => strtolower($uid) === 'alice' ? $alice : null);
+
+		$command = $this->command($this->createMock(NotificationService::class), $this->createMock(MailService::class), $reminders, $users);
+
+		$this->assertSame(0, $command->execute(['uid' => 'Alice']));
+	}
+
+	public function testAUidNoAccountHasIsRefused(): void {
+		$users = $this->createMock(IUserManager::class);
+		$users->method('get')->willReturn(null);
+
+		$command = $this->command($this->createMock(NotificationService::class), $this->createMock(MailService::class), users: $users);
+
+		$this->assertSame(2, $command->execute(['uid' => 'mallory'], ['capture_stderr_separately' => true]));
+		$this->assertSame("No such user: mallory\n", $command->getErrorOutput());
+	}
+
+	private function command(NotificationService $notifications, MailService $mail, ?ReminderService $reminders = null, ?IUserManager $users = null): CommandTester {
 		return new CommandTester(new RemindersCommand(
-			$this->createMock(ReminderService::class),
+			$reminders ?? $this->createMock(ReminderService::class),
 			$notifications,
 			$mail,
 			$this->createMock(IFactory::class),
-			$this->createMock(IUserManager::class),
+			$users ?? $this->createMock(IUserManager::class),
 		));
 	}
 }

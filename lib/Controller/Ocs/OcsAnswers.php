@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Controller\Ocs;
 
 use OCA\NextFleet\Controller\RequestValues;
+use OCA\NextFleet\Controller\SessionUser;
 use OCA\NextFleet\Exception\AccessDeniedException;
 use OCA\NextFleet\Exception\AlreadyCreatedException;
 use OCA\NextFleet\Exception\BookingConflictException;
@@ -40,6 +41,7 @@ use OCP\AppFramework\OCS\OCSNotFoundException;
  */
 trait OcsAnswers {
 	use RequestValues;
+	use SessionUser;
 
 	/**
 	 * The refusals any route can meet. Split from write()'s so a read's type does not promise a
@@ -78,8 +80,7 @@ trait OcsAnswers {
 		try {
 			return $this->read($call);
 		} catch (StaleUpdateException) {
-			// `conflict` tells this apart from Nextcloud's own failed CSRF check, which is a 412 as
-			// well (docs/architecture.md#concurrency).
+			// `conflict` sets this apart from a failed CSRF check (docs/architecture.md#concurrency).
 			return new DataResponse(['message' => 'Changed since you read it', 'conflict' => true], Http::STATUS_PRECONDITION_FAILED);
 		}
 	}
@@ -123,16 +124,5 @@ trait OcsAnswers {
 
 			return new DataResponse($body);
 		}
-	}
-
-	private function userId(): string {
-		$user = $this->session->getUser();
-		if ($user === null) {
-			// The routes require a login, so this is a broken container rather than an anonymous
-			// request.
-			throw new \RuntimeException('No user in session');
-		}
-
-		return $user->getUID();
 	}
 }

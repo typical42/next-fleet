@@ -35,8 +35,7 @@ use Psr\Log\LoggerInterface;
  * lacks, and when Logbook Mode was on. How it prints is tests/Country's; the renderer here only
  * keeps what it was given.
  *
- * The mappers are stores, the way TimelineServiceTest keeps them. What the trips query selects
- * against a real database is tests/Integration/LogbookExportTest.php's.
+ * The mappers are stores; the trips query itself is tests/Integration/LogbookExportTest.php's.
  */
 class LogbookExportTest extends TestCase {
 	private const VEHICLE = '0195e2f1-0000-4000-8000-000000000001';
@@ -145,10 +144,10 @@ class LogbookExportTest extends TestCase {
 			$this->logged[] = [(string)$message, $context];
 		});
 
-		// Who entered what is tests/Integration/LogbookExportTest.php's: it reads accounts and grants.
 		$zone = $this->createMock(IDateTimeZone::class);
 		$zone->method('getTimeZone')->willReturn(new \DateTimeZone('America/New_York'));
 
+		// EnteredBy is a stub: who entered what is tests/Integration/LogbookExportTest.php's.
 		return new LogbookExport($fleet, $trips, $audit, new Completeness($jurisdictions), $jurisdictions, $this->createMock(EnteredBy::class), $logger, new LogbookPeriods($audit), $zone);
 	}
 
@@ -421,7 +420,6 @@ class LogbookExportTest extends TestCase {
 		$this->assertSame([null], array_column($this->printed?->trips ?? [], 'unlogged'));
 	}
 
-	/** A vehicle whose jurisdiction states no requirement cites none. */
 	public function testNoRulesetCitesNoSource(): void {
 		$this->hasRules = false;
 
@@ -450,7 +448,6 @@ class LogbookExportTest extends TestCase {
 		$this->assertSame([['from' => self::CREATED_AT, 'to' => null]], $this->periods());
 	}
 
-	/** A vehicle nobody ever switched on was never under the mode. */
 	public function testAModeNeverSwitchedOnHasNoPeriod(): void {
 		$this->export();
 

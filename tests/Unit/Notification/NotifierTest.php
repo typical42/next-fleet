@@ -106,6 +106,23 @@ class NotifierTest extends TestCase {
 		$this->notifier(gone: true)->prepare($this->notification('due_date', '2031-05-31', null), 'en');
 	}
 
+	/** Deleted for good since, or its owner erased. */
+	public function testANoticeWhoseVehicleIsGoneIsProcessed(): void {
+		$this->expectException(AlreadyProcessedException::class);
+		$this->notifier(vehicleGone: true)->prepare($this->notification('due_date', '2031-05-31', null), 'en');
+	}
+
+	/** The server hands every notice to every notifier; this one prepares its app's alone. */
+	public function testAnotherAppsNoticeIsRefused(): void {
+		$notifier = $this->notifier();
+		$notification = $this->createMock(INotification::class);
+		$notification->method('getApp')->willReturn('files');
+
+		$this->assertSame('nextfleet', $notifier->getID());
+		$this->expectException(UnknownNotificationException::class);
+		$notifier->prepare($notification, 'en');
+	}
+
 	/** Stored before 0.3.1, it names no occurrence; the reminder's state still decides. */
 	public function testANoticeWithoutAnOccurrenceStillReads(): void {
 		$reminder = self::reminder();
@@ -121,6 +138,20 @@ class NotifierTest extends TestCase {
 		$this->notifier(reminder: $reminder)->prepare($notification, 'en');
 
 		$this->assertSame('B-XY 123: Oil change is due today', $parsed);
+	}
+
+	public function testATractorsLeadNamesItsHours(): void {
+		$parsed = null;
+		$notification = $this->notification('odo', null, 1500);
+		$notification->method('setParsedSubject')->willReturnCallback(function (string $subject) use (&$parsed, $notification) {
+			$parsed = $subject;
+
+			return $notification;
+		});
+
+		$this->notifier(reminder: self::reminder(null, 1500), unit: 'h')->prepare($notification, 'en');
+
+		$this->assertSame('B-XY 123: Oil change is due at 1500 h', $parsed);
 	}
 
 	/**
@@ -259,6 +290,15 @@ class NotifierTest extends TestCase {
 		$this->notifier()->prepare($this->cancelNotice(), 'en');
 	}
 
+	/** A kept notice would tell a former driver the vehicle's plate as it changes. */
+	public function testACancelTheBookerNoLongerSeesIsProcessed(): void {
+		$booking = new Booking();
+		$booking->setState(Booking::CANCELLED);
+
+		$this->expectException(AlreadyProcessedException::class);
+		$this->notifier(null, $booking, sees: false)->prepare($this->cancelNotice(), 'en');
+	}
+
 	/** The upgrade kept an account named like an erased driver; the admin is told which to look at. */
 	public function testALookalikeNoticeNamesTheAccount(): void {
 		$parsed = null;
@@ -319,7 +359,7 @@ class NotifierTest extends TestCase {
 		return $reminder;
 	}
 
-	private function notifier(?Access $grant = null, ?Booking $booking = null, bool $sees = true, bool $listed = true, ?Reminder $reminder = null, bool $gone = false): Notifier {
+	private function notifier(?Access $grant = null, ?Booking $booking = null, bool $sees = true, bool $listed = true, ?Reminder $reminder = null, bool $gone = false, bool $vehicleGone = false, string $unit = 'km'): Notifier {
 		$l = $this->createMock(IL10N::class);
 		$l->method('t')->willReturnCallback(static fn (string $text, array $parameters = []): string => vsprintf($text, $parameters));
 		$l->method('l')->willReturnCallback(static fn (string $type, \DateTime $day): string => $day->format($type === 'time' ? 'H:i' : 'j F Y'));
@@ -328,11 +368,12 @@ class NotifierTest extends TestCase {
 		$vehicle = new Vehicle();
 		$vehicle->setPlate('B-XY 123');
 		$vehicle->setUserId('anna');
+		$vehicle->setOdoUnit($unit);
 		$vehicles = $this->createMock(VehicleMapper::class);
-		$vehicles->method('findByUuid')->willReturnCallback(function () use ($vehicle): Vehicle {
+		$vehicles->method('findByUuid')->willReturnCallback(function () use ($vehicle, $vehicleGone): Vehicle {
 			$this->asked[] = 'vehicle';
 
-			return $vehicle;
+			return $vehicleGone ? throw new DoesNotExistException('gone') : $vehicle;
 		});
 		$grants = $this->createMock(AccessMapper::class);
 		$grants->method('findOnVehicle')->willReturnCallback(function () use ($grant): Access {

@@ -51,10 +51,9 @@ trait RequestValues {
 	}
 
 	/**
-	 * One query-string value as a service takes it. The framework casts a controller's int,
-	 * float and bool parameters and nothing else, so `?type[]=trip` arrives as an array - a
-	 * `?string` parameter would make that a 500, when it is a request no route handed out like
-	 * any other.
+	 * One query-string value as a service takes it. The framework casts only int, float and bool
+	 * parameters, so `?type[]=trip` arrives as an array; a `?string` parameter would make that a
+	 * 500 rather than the 400 any other bad request gets.
 	 *
 	 * @throws \InvalidArgumentException
 	 */

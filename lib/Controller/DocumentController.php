@@ -103,7 +103,7 @@ class DocumentController extends Controller {
 		$name = $file->getName();
 		// The quoted form for old clients, in ASCII a header can carry; `filename*` is the real name.
 		$fallback = preg_replace('/[^\x20-\x7e]|["\\\\]/u', '_', $name);
-		// Nextcloud's stream takes a copy of no bytes for a failure and answers 400.
+		// StreamResponse takes zero bytes copied for a failure and answers 400.
 		$response = $file->getSize() === 0 ? new DataDisplayResponse('') : new StreamResponse($stream);
 		// Set after construction: DataDisplayResponse writes an inline disposition of its own.
 		$response->addHeader('Content-Disposition', 'attachment; filename="' . $fallback . '"; filename*=UTF-8\'\'' . rawurlencode($name));

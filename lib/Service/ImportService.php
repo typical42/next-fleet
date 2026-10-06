@@ -161,7 +161,12 @@ class ImportService {
 		// The same request about the same file at the same etag: a retry of an answer that got
 		// lost, not a second import. The file's etag is in the request, so a file written since
 		// imports anew; another answer to a question is another request.
-		$request = hash('sha256', json_encode([$userId, $fields], JSON_THROW_ON_ERROR));
+		try {
+			$request = hash('sha256', json_encode([$userId, $fields], JSON_THROW_ON_ERROR));
+		} catch (\JsonException) {
+			// A decoded request nests no deeper than JSON allows, so only its bytes can fail here.
+			throw new \InvalidArgumentException('a field is not UTF-8 text');
+		}
 		$remembered = $this->remembered($vehicle, $request);
 		if ($remembered !== null) {
 			return $remembered;
@@ -355,7 +360,6 @@ class ImportService {
 		};
 	}
 
-	/** The mapper of one kind of entry, a Proposal's. */
 	private function rows(string $kind): EnergyMapper|MaintenanceMapper|ExpenseMapper|OdoReadingMapper {
 		return match ($kind) {
 			Proposal::ENERGY => $this->energyRows,

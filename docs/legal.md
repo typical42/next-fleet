@@ -32,10 +32,17 @@ REUSE reads any file, tests included, so a string literal that merely *mentions*
 is picked up as a declaration and rejected. Fence such a line between `REUSE-IgnoreStart` and
 `REUSE-IgnoreEnd` comments.
 
-The frontend bundle is a combined work with its MIT dependencies, and `@nextcloud/vite-config`
-emits a `.license` file beside each output listing each one. The app's code and its dependencies
-sit in `js/boot-*.chunk.mjs.license`, since the entry is only a loader
-([development](development.md)). So `LICENSE.third-party` is only needed for code we vendor by hand.
+The store screenshots in `design/screenshots/` show Nextcloud's interface, logo and default
+background, so `REUSE.toml` names Nextcloud GmbH beside us: the background is CC-BY-SA-4.0, the
+logo falls under Nextcloud's trademark guidelines. Both texts are in `LICENSES/`.
+
+The frontend bundle is a combined work with its dependencies, and `@nextcloud/vite-config` emits a
+`.license` file beside each output listing each one. The app's code and its dependencies sit in
+`js/boot-*.chunk.mjs.license`, since the entry is only a loader ([development](development.md)).
+Those files name the licences; MIT, ISC and BSD also want the notice itself to travel with the
+code, Apache-2.0 and the GPL the licence text. So `tools/package.sh` writes every bundled package's
+own licence file into the tarball's `THIRD-PARTY-NOTICES.txt` (`tools/third-party-notices.mjs`),
+and `LICENSE.third-party` is only needed for code we vendor by hand.
 
 **Can another vehicle-logbook project sue us?** Not for the feature set. Copyright protects code,
 not ideas or functionality — the EU Software Directive excludes the ideas and principles underlying
@@ -45,11 +52,11 @@ data formats are not protected. What creates actual exposure:
 | Risk | Rule we follow |
 |---|---|
 | Copied source | Write our own. Never paste from LubeLogger (MIT), Vehicle Manager, or any GPL project. If we ever do vendor MIT code, keep its notice and record it in `LICENSE.third-party`. |
-| Copied schema/strings/icons | Same rule. Icons from Nextcloud's own icon set or a permissive set, tracked in a `NOTICE` file. |
+| Copied schema/strings/icons | Same rule. Icons from Nextcloud's own icon set or a permissive set, installed through npm, so the bundle's `.license` files name them. |
 | Other projects' names | "Drivvo", "LubeLogger", "Spritmonitor" never stand alone in the UI, as a feature or a logo. An import format is "CSV (LubeLogger format)" — nominative use of a name to say what a file is, nothing more. |
 | **"TÜV"** | A registered trademark since 1979, actively enforced, and *not* usable as a synonym for inspection. The UI says **HU/AU** or "Hauptuntersuchung". Never "TÜV-Termin", never a TÜV-like seal. |
 | "Nextcloud" | App store rule: not in the app name. `NextFleet` is clear of it, though the `Next` prefix invites confusion — `FleetLog` is the safer fallback if anyone objects. Never restyle it "NextCloud"; the brand is one word, one capital. |
-| Dependencies | CI check that every npm/composer dependency is AGPL-compatible. One GPL-incompatible transitive package can block a release. v1 avoids the hardest case by shipping no PDF library at all ([ADR 0005](adr/0005-no-pdf-library.md)). |
+| Dependencies | `tests/Unit/LicensingTest.php` checks that every runtime npm and Composer package in the lock files, and every package the bundle's `.license` files name, is under a licence the AGPL admits. One GPL-incompatible transitive package can block a release. The bundle half needs a build in `js/`, so CI's frontend job runs it after the build. v1 avoids the hardest case by shipping no PDF library at all ([ADR 0005](adr/0005-no-pdf-library.md)). |
 
 **Contributions carry the licensing risk now.** Country directories arrive by merge request
 ([contributing](contributing.md)) and ship in a release signed with our certificate, so a

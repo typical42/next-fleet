@@ -257,8 +257,8 @@ class EnergyService {
 	/**
 	 * What the sheet prefills a fill-up with (docs/ui.md): the VAT rate of the vehicle's
 	 * jurisdiction on the day of the fill-up, and the stations this vehicle has filled up at, each
-	 * with the unit price it last charged per energy. Latest first, which is the order a driver
-	 * who fills up where they did last time wants them in.
+	 * with the unit price it last charged per energy. Latest first: a driver mostly fills up where
+	 * they did last time.
 	 *
 	 * @param array<string, mixed> $fields `at` and `off`: the moment the sheet is on
 	 * @return array{vat_rate: ?int, stations: list<array{station: string, energy: string, unit_price: ?int}>}
@@ -269,11 +269,7 @@ class EnergyService {
 	 */
 	public function prefill(string $userId, string $vehicleUuid, array $fields): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
-		$at = Field::read('at', 'count', Field::MOMENT, $fields['at'] ?? null);
-		$off = Field::read('off', 'offset', null, $fields['off'] ?? null);
-		if (!is_int($at) || !is_int($off)) {
-			throw new \InvalidArgumentException('at and off are the moment a prefill is for');
-		}
+		[$at, $off] = Field::prefillMoment($fields);
 
 		$stations = [];
 		foreach ($this->energies->findLatestAtStations((int)$vehicle->getId(), self::STATION_HISTORY) as $energy) {

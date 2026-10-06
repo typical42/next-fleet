@@ -51,7 +51,7 @@ class ToolchainTest extends TestCase {
 		$this->assertMatchesRegularExpression('/^\^22\.\d+\.\d+$/', $range);
 	}
 
-	/** Why: docs/development.md, "A deprecation is an error". Psalm only mentions one below level 2. */
+	/** docs/development.md, "A deprecation is an error". Psalm only mentions one below level 2. */
 	public function testPsalmFailsOnEveryDeprecation(): void {
 		$psalm = simplexml_load_file(self::ROOT . '/psalm.xml');
 		$this->assertNotFalse($psalm);

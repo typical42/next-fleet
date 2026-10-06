@@ -47,7 +47,6 @@ describe('the bars', () => {
 		expect(bars[1].bands).toEqual([{ band: 'energy', from: 0, to: 0.5 }])
 	})
 
-	/** A month with no rows is not a zero (docs/architecture.md#numbers-consumption-cost-emissions). */
 	it('marks a month without rows as empty rather than drawing it at zero', () => {
 		const bars = barsOf(year({ 3: cost({ total: 5000, energy: 5000 }) }))
 
@@ -99,14 +98,12 @@ describe('the table', () => {
 		expect(rows.map((row) => row.cells[12])).toEqual(['€200.00', '€60.00', '€40.00', '€10.00', '€30.00', '€300.00'])
 	})
 
-	/** A priced month without that category spent nothing on it; that is a real zero. */
 	it('states a zero for a category a priced month did not have', () => {
 		const { rows } = tableOf(answer, 'en')
 
 		expect(rows.find((row) => row.label === 'Toll')?.cells[1]).toBe('€0.00')
 	})
 
-	/** A month with no rows says so and is not a zero (docs/architecture.md#numbers-consumption-cost-emissions). */
 	it('says a month without rows has none, rather than a zero', () => {
 		const { rows } = tableOf(answer, 'en')
 
@@ -114,7 +111,6 @@ describe('the table', () => {
 	})
 })
 
-/** Always an estimate, with each factor's year and source (docs/architecture.md#numbers-consumption-cost-emissions). */
 describe('the CO₂ estimate', () => {
 	const FUELS = 'https://example.org/fuels'
 	const GRID = 'https://example.org/grid'
@@ -147,7 +143,6 @@ describe('the CO₂ estimate', () => {
 		expect(co2.sources).toEqual([{ label: 'Fuel factors', href: FUELS }])
 	})
 
-	/** Null is "not stated", never zero. */
 	it('says it left out what has no factor', () => {
 		expect(co2Of({ grams: 1000, unstated: true, source: FUELS, year: null, grid: null }, 'en').notes)
 			.toContain('Leaves out fill-ups of an energy with no emission factor')

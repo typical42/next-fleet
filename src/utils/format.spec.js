@@ -23,7 +23,6 @@ describe('formatCount', () => {
 })
 
 describe('formatEnergyAmount', () => {
-	/** `amount` is millilitres or watt-hours by `energy` (docs/architecture.md#data-model). */
 	it('says litres for a fuel and kilowatt-hours for electricity', () => {
 		expect(formatEnergyAmount(48200, 'diesel', 'de-DE')).toBe('48,2 l')
 		expect(formatEnergyAmount(13456, 'electric', 'en-GB')).toBe('13.46 kWh')
@@ -32,7 +31,6 @@ describe('formatEnergyAmount', () => {
 })
 
 describe('formatConsumption', () => {
-	/** Units stay metric in both languages (docs/ui.md), one decimal like the mockup's `6,1 l/100`. */
 	it('says litres or kWh per 100 km, or per hour on an hour counter', () => {
 		expect(formatConsumption({ value: 6.125, per: 'km' }, 'diesel', 'de-DE')).toBe('6,1 l/100 km')
 		expect(formatConsumption({ value: 18, per: 'km' }, 'electric', 'en-GB')).toBe('18.0 kWh/100 km')
@@ -41,7 +39,6 @@ describe('formatConsumption', () => {
 })
 
 describe('formatWallSide', () => {
-	/** Labelled approximate, and noted as including charging losses (docs/architecture.md#numbers-consumption-cost-emissions). */
 	it('marks the figure approximate and says the losses are in it', () => {
 		const { figure, note } = formatWallSide({ value: 19.04, per: 'km' }, 'de-DE')
 
@@ -57,7 +54,6 @@ describe('formatMoney', () => {
 		expect(formatMoney(8210, 'EUR', 'en-GB')).toBe('€82.10')
 	})
 
-	/** A vehicle without a currency still saves its costs (PRD); the figure carries no symbol. */
 	it('writes the bare amount when the vehicle has no currency', () => {
 		expect(formatMoney(8210, null, 'de-DE')).toBe('82,10')
 	})
@@ -69,29 +65,18 @@ describe('formatMoney', () => {
 })
 
 describe('formatOdometer', () => {
-	/**
-	 * The unit is the vehicle's, never a global switch: a generator is counted in hours and a car
-	 * in kilometres, and a figure without its unit means nothing (docs/ui.md).
-	 */
 	it('takes its unit from the vehicle', () => {
 		expect(formatOdometer({ odo_value: 148320, odo_unit: 'km' }, 'de-DE')).toBe('148.320 km')
 		expect(formatOdometer({ odo_value: 1200, odo_unit: 'h' }, 'de-DE')).toBe('1.200 h')
 	})
 
-	/**
-	 * A vehicle nobody has read yet has no odometer, which is a different fact from zero - and the
-	 * overview shows a row for it either way.
-	 */
+	/** A vehicle never read has no odometer, which is a different fact from zero. */
 	it('says nothing about a vehicle that has never been read', () => {
 		expect(formatOdometer({ odo_value: null, odo_unit: 'km' }, 'de-DE')).toBe('')
 	})
 })
 
 describe('nameOf', () => {
-	/**
-	 * The plate is what a driver calls the vehicle, so it is the label wherever one is needed - and
-	 * it stays a label: identity is the uuid (CONTEXT.md), which is why a plate may be missing.
-	 */
 	it('calls a vehicle by its plate, and by its make when it has none', () => {
 		expect(nameOf({ plate: 'M-AB 1234', manufacturer: 'VW', model: 'Passat' })).toBe('M-AB 1234')
 		expect(nameOf({ manufacturer: 'VW', model: 'Passat' })).toBe('VW Passat')
@@ -112,11 +97,6 @@ describe('subtitleOf', () => {
 		expect(subtitleOf({ manufacturer: 'VW', model: 'Passat', lifecycle: 'active' })).toBe('')
 	})
 
-	/**
-	 * A lifecycle is a code in the database and a word on screen (docs/ui.md#languages), and it is
-	 * only worth a line when it is not the ordinary one: an off-the-road vehicle explains why it
-	 * sank down the list.
-	 */
 	it('spells out a lifecycle that is not the ordinary one', () => {
 		expect(subtitleOf({ plate: 'M-EV 7', lifecycle: 'laid_up' })).toBe('Laid up')
 		expect(subtitleOf({ plate: 'M-EV 7', manufacturer: 'Kia', lifecycle: 'laid_up' }))
@@ -125,11 +105,7 @@ describe('subtitleOf', () => {
 })
 
 describe('parseWhole', () => {
-	/**
-	 * The counter is what the app itself wrote out a moment earlier, and in German that reads
-	 * `148.320` (docs/ui.md#languages). Reading the dot as a decimal point would turn it into 148
-	 * and cache that as the vehicle's odometer, with nothing on screen to say so.
-	 */
+	/** Reading German `148.320` with a decimal point would silently cache 148 as the odometer. */
 	it('reads a grouped number back the way any locale writes it', () => {
 		expect(parseWhole('148.320')).toBe(148320)
 		expect(parseWhole('148,320')).toBe(148320)
@@ -137,10 +113,6 @@ describe('parseWhole', () => {
 		expect(parseWhole('148320')).toBe(148320)
 	})
 
-	/**
-	 * A counter reads in whole kilometres or whole hours (docs/architecture.md#data-model). A
-	 * field that says something else is a question for the driver, not a number to round.
-	 */
 	it('says nothing about a field that is not a whole number', () => {
 		expect(parseWhole('7,2')).toBeNull()
 		expect(parseWhole('full')).toBeNull()
@@ -150,11 +122,7 @@ describe('parseWhole', () => {
 })
 
 describe('formatDecimal', () => {
-	/**
-	 * A prefilled rate or price is written the way the reader's locale writes a decimal, and reads
-	 * back through parseDecimal() to what it was: 1 900 basis points is 19 %, 1 799 tenths of a
-	 * cent is 1.799 a litre.
-	 */
+	/** Reads back via parseDecimal(): 1 900 basis points is 19 %, 1 799 tenths of a cent 1.799. */
 	it('writes a scaled integer as the field would hold it', () => {
 		expect(formatDecimal(1900, 2, 'de-DE')).toBe('19')
 		expect(formatDecimal(1650, 2, 'de-DE')).toBe('16,5')
@@ -167,11 +135,7 @@ describe('formatDecimal', () => {
 })
 
 describe('parseDecimal', () => {
-	/**
-	 * A decimal field takes `7,2` and `7.2` alike (docs/ui.md#languages) and stores whole
-	 * thousandths or hundredths (docs/architecture.md#data-model): 48,2 litres is 48 200 ml, 85,10
-	 * euros is 8 510 cents, 1,799 a litre is 1 799 tenths of a cent.
-	 */
+	/** 48,2 litres is 48 200 ml, 85,10 euros 8 510 cents, 1,799 a litre 1 799 tenths of a cent. */
 	it('reads either decimal mark into the integer the column holds', () => {
 		expect(parseDecimal('48,2', 3)).toBe(48200)
 		expect(parseDecimal('48.2', 3)).toBe(48200)
@@ -182,11 +146,7 @@ describe('parseDecimal', () => {
 		expect(parseDecimal(',5', 3)).toBe(500)
 	})
 
-	/**
-	 * A German receipt groups thousands with a point and marks the decimals with a comma. A point
-	 * alone groups where it cannot be the decimal mark: three digits after it in a field that keeps
-	 * two. In a field that keeps three, `25.000` is twenty-five litres.
-	 */
+	/** In a field that keeps three decimals, `25.000` is twenty-five litres. */
 	it('reads a point that groups thousands where nothing else can be meant', () => {
 		expect(parseDecimal('1.234,56', 2)).toBe(123456)
 		expect(parseDecimal('1.234,5', 3)).toBe(1234500)
@@ -196,10 +156,6 @@ describe('parseDecimal', () => {
 		expect(parseDecimal('25.000', 3)).toBe(25000)
 	})
 
-	/**
-	 * More digits than the column keeps, or a grouping it cannot read without guessing, is a
-	 * question for the driver rather than a number to round.
-	 */
 	it('says nothing about a field it cannot read without guessing', () => {
 		expect(parseDecimal('1,2345', 3)).toBeNull()
 		expect(parseDecimal('1,234.56', 2)).toBeNull()
@@ -216,18 +172,12 @@ describe('parseDecimal', () => {
 })
 
 describe('a calendar day', () => {
-	/**
-	 * A day is one fact and carries no time of day (docs/architecture.md#time). The date picker
-	 * speaks Date, so the day has to survive the trip through one - and a UTC midnight read back
-	 * with a local getter is the day before, west of Greenwich.
-	 */
 	it('survives the trip through the picker', () => {
 		expect(formatDay(parseDay('2019-03-07'))).toBe('2019-03-07')
 		expect(formatDay(parseDay('2024-01-01'))).toBe('2024-01-01')
 		expect(parseDay('2019-03-07')?.getDate()).toBe(7)
 	})
 
-	/** A vehicle that was never disposed of has no disposal day, and says so. */
 	it('is nothing when there is no day', () => {
 		expect(parseDay(null)).toBeNull()
 		expect(parseDay('')).toBeNull()
@@ -235,11 +185,7 @@ describe('a calendar day', () => {
 	})
 })
 
-/**
- * Half past midnight in Berlin on the 3rd, which is half past eleven the evening before in UTC. A
- * Fahrtenbuch is judged on local calendar dates (docs/architecture.md#time), so the pair is what
- * says which day a row belongs to - the instant on its own says the wrong one.
- */
+/** Half past midnight in Berlin on the 3rd, half past eleven on the 2nd in UTC. */
 const BERLIN_NIGHT = { at: 1788391800, off: 120 }
 
 /** An hour into September in Berlin, still August in UTC: the same question at a month boundary. */
@@ -252,28 +198,16 @@ describe('an instant on screen', () => {
 		expect(shortDate(BERLIN_NIGHT.at, BERLIN_NIGHT.off, 'en-GB')).toBe('03/09')
 	})
 
-	/**
-	 * The same instant read without its offset is the 2nd, which is the whole reason the offset is
-	 * stored beside it (docs/adr/0007-time-is-an-instant-plus-an-offset.md).
-	 */
-	/**
-	 * A moment a question names on its own, with no month header above it to say the rest: the whole
-	 * date and the wall clock the entry was made against.
-	 */
 	it('is named whole when nothing around it gives the month and year', () => {
 		expect(fullMoment(BERLIN_NIGHT.at, BERLIN_NIGHT.off, 'de-DE')).toBe('03.09.2026, 01:30')
 		expect(fullMoment(BERLIN_NIGHT.at, BERLIN_NIGHT.off, 'en-GB')).toBe('3 Sept 2026, 01:30')
 	})
 
+	/** The reason the offset is stored (docs/adr/0007-time-is-an-instant-plus-an-offset.md). */
 	it('is a different day without its offset', () => {
 		expect(shortDate(BERLIN_NIGHT.at, 0, 'de-DE')).toBe('02.09.')
 	})
 
-	/**
-	 * What a machine reads off the markup, and it has to be the moment the text beside it states -
-	 * the plain UTC instant names the day before, which is what anyone not reading the rendered
-	 * text would be told.
-	 */
 	it('states the same moment to a machine as to a reader', () => {
 		expect(isoInstant(BERLIN_NIGHT.at, BERLIN_NIGHT.off)).toBe('2026-09-03T01:30:00+02:00')
 		expect(isoInstant(BERLIN_NIGHT.at, 0)).toBe('2026-09-02T23:30:00+00:00')
@@ -290,7 +224,6 @@ describe('an instant on screen', () => {
 })
 
 describe('formatSpan', () => {
-	/** A booking is looked at within days of it: the weekday says more than the year would. */
 	it('names a span within one day once, with both clock times', () => {
 		expect(formatSpan(1790942400, 120, 1790956800, 120, 'en-GB')).toBe('Fri 02/10, 14:00–18:00')
 		expect(formatSpan(1790942400, 120, 1790956800, 120, 'de-DE')).toBe('Fr., 02.10., 14:00–18:00 Uhr')
@@ -308,7 +241,6 @@ describe('formatSpan', () => {
 })
 
 describe('formatWhen', () => {
-	/** One end of a span, worded as formatSpan() words both. */
 	it('names the weekday, the day and the clock time at the moment\'s own offset', () => {
 		expect(formatWhen(1790956800, 120, 'en-GB')).toBe('Fri 02/10, 18:00')
 		expect(formatWhen(1790956800, 120, 'de-DE')).toBe('Fr., 02.10., 18:00')
@@ -316,7 +248,6 @@ describe('formatWhen', () => {
 })
 
 describe('categoryWord', () => {
-	/** A category is a code in the database and a word on screen (docs/ui.md#languages). */
 	it('has a word for every category a trip is entered under', () => {
 		expect(categoryWord('business')).toBe('Business')
 		expect(categoryWord('private')).toBe('Private')

@@ -67,14 +67,22 @@ jobs:
       - run: npm run lint
       - run: npm test
 
-      # The runner's clock is UTC, where a local date and a UTC date are one day. Behind UTC
-      # all year, a spec that mixes them fails here.
+      # Behind UTC all year, so a spec that mixes local and UTC dates fails here.
       - name: npm test, in Los Angeles
         env:
           TZ: America/Los_Angeles
         run: npm test
 
       - run: npm run build
+
+      # Build plugins are dev packages the lock file cannot follow into the bundle, so the
+      # bundle's own .license files are read, which only exist here.
+      - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
+        with:
+          php-version: '8.1'
+          coverage: none
+      - run: composer install --no-progress
+      - run: php vendor/bin/phpunit --fail-on-skipped --filter LicensingTest
 
       # @nextcloud/vite-config's polyfill chain carries seven low-severity advisories with
       # no upstream fix, so gate above them rather than mute the tool.
@@ -93,17 +101,15 @@ jobs:
 
       - run: npm ci
 
-      # Not optional: the gate asserts what Vue mounted, and an unbuilt js/ leaves the root
-      # empty - which reads as a broken app rather than as a missing build.
+      # An unbuilt js/ leaves the Vue root empty, which reads as a broken app, not a missing build.
       - run: npm run build
 
       # A runner has root, so the browser's system libraries install here. Locally they do
       # not, which is what npm run test:e2e:docker is for.
       - run: npx playwright install --with-deps chromium
 
-      # --wait means installed rather than merely running only because both app services
-      # carry a healthcheck that asks status.php - see tests/Unit/ComposeStackTest.php.
-      # Mailpit too: tests/e2e/m4-slice.spec.js reads the reminder digest out of it.
+      # --wait waits for the install through each app's status.php healthcheck. Mailpit holds
+      # the reminder digest tests/e2e/m4-slice.spec.js reads.
       - name: Start both majors
         run: docker compose -f .docker/compose.yml up -d --wait app app31 mail
 
@@ -158,8 +164,7 @@ jobs:
         # The files first: `--project` takes every word after it as a project name.
         run: npx playwright test tests/e2e/m0-gate.spec.js tests/e2e/m1-slice.spec.js --project nc32 --project nc33
 
-  # The one test of what users keep across a release. Run only at release time, a change that
-  # breaks it would be found then; weekly, it is found that week.
+  # The one test of what users keep across a release, weekly so a break shows that week.
   upgrade:
     name: Upgrade check from ${{ matrix.base }}, ${{ matrix.db }}
     if: github.event_name == 'schedule'
@@ -287,10 +292,9 @@ jobs:
     outputs:
       matrix: ${{ steps.select.outputs.matrix }}
     steps:
-      # jq wraps the list in the object `strategy.matrix` expects and collapses it onto the
-      # one line an output can carry. Its own assignment, not a substitution inside `echo`:
-      # there its exit status is the echo's, and a list broken while editing would leave an
-      # empty output to fail two jobs later in `fromJson`.
+      # jq wraps the list in the object `strategy.matrix` expects, on the one line an output can
+      # carry. Assigned on its own, not inside `echo`, so a broken list fails here rather than
+      # in `fromJson` two jobs later.
       - id: select
         run: |
           case "$GITHUB_EVENT_NAME" in
@@ -305,9 +309,8 @@ jobs:
     name: NC ${{ matrix.nextcloud }}, PHP ${{ matrix.php }}, ${{ matrix.db }}
     needs: plan
     runs-on: ubuntu-24.04
-    # No `continue-on-error` for the weekly run. It is allowed to fail because nothing waits
-    # on a scheduled run, not because the failure should be hidden - and continue-on-error
-    # concludes green, which is the one outcome that tells nobody.
+    # No `continue-on-error` for the weekly run: nothing waits on it, and continue-on-error
+    # concludes green, which tells nobody.
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
@@ -395,9 +398,8 @@ jobs:
           NEXTCLOUD_ROOT: ${{ github.workspace }}
         run: composer run test:integration
 
-      # The API suite is a client, and a checkout is no web server. PHP's own is enough; it lives
-      # until the job ends. status.php answers once it listens. One worker serves one request at a
-      # time, and the race the suite sends would then never meet, so it gets four.
+      # The API suite needs a web server; PHP's own lives until the job ends. One worker serves
+      # one request at a time and the suite's race would never meet, so it gets four.
       - name: Serve Nextcloud
         env:
           PHP_CLI_SERVER_WORKERS: 4

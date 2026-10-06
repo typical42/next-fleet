@@ -15,9 +15,8 @@ use OCP\Settings\ISettings;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The form Nextcloud puts into a user's own settings. It carries no logic - the screen it renders
- * talks to /api/preferences like any other client - so what is worth checking is that the
- * framework can place it and that it names a page that exists.
+ * The form in a user's own settings. It has no logic (its screen talks to /api/preferences), so
+ * the tests check that Nextcloud can place it and that its template exists.
  */
 class PersonalTest extends TestCase {
 	private const ROOT = __DIR__ . '/../../..';
@@ -36,9 +35,8 @@ class PersonalTest extends TestCase {
 	}
 
 	/**
-	 * The settings page renders this into a section of its own page. A response's default is the
-	 * whole user layout, which would nest a second page - doctype, navigation and all - inside
-	 * that section, and nothing about the result would throw.
+	 * A response's default is the whole user layout, which would nest a second page, doctype and
+	 * navigation included, inside the settings section without any error.
 	 */
 	public function testItRendersIntoTheSettingsPageRatherThanAroundIt(): void {
 		$this->assertSame(TemplateResponse::RENDER_AS_BLANK, (new Personal())->getForm()->getRenderAs());

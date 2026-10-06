@@ -36,7 +36,7 @@ class ApplicationTest extends TestCase {
 		$this->assertTrue(is_subclass_of(Application::class, IBootstrap::class));
 	}
 
-	/** The personal data export is reached through Nextcloud's user migration, which asks only what was registered. */
+	/** Nextcloud's user migration runs the data export, and knows only what is registered. */
 	public function testItRegistersTheDataExport(): void {
 		$context = $this->createMock(IRegistrationContext::class);
 		$context->expects($this->once())->method('registerUserMigrator')->with(FleetMigrator::class);

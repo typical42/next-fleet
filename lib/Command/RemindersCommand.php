@@ -62,16 +62,20 @@ class RemindersCommand extends Command {
 
 			return self::INVALID;
 		}
-		$userId = (string)$uid;
-		if ($uid !== null && !$this->users->userExists($userId)) {
-			Format::error($output, 'No such user: ' . $userId);
+		$userId = null;
+		if ($uid !== null) {
+			// The uid as stored, for the reason SeedCommand gives.
+			$userId = $this->users->get((string)$uid)?->getUID();
+			if ($userId === null) {
+				Format::error($output, 'No such user: ' . (string)$uid);
 
-			return self::INVALID;
+				return self::INVALID;
+			}
 		}
 
 		$failed = false;
 		if ($send) {
-			// In ReminderJob's order and with its stop: the digest reads the states the sweep persists.
+			// In ReminderJob's order, and stopping where it would.
 			foreach (['notifications' => $this->notifications->sweep(...), 'digest' => $this->mail->digest(...)] as $step => $run) {
 				try {
 					$run();
@@ -83,7 +87,7 @@ class RemindersCommand extends Command {
 			}
 		}
 
-		if ($uid !== null) {
+		if ($userId !== null) {
 			// English, as the rest of this command speaks.
 			$l = $this->l10n->get(Application::APP_ID, 'en');
 			$rows = [];

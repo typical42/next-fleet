@@ -116,7 +116,6 @@ class CompletenessTest extends TestCase {
 		$this->assertSame([], $this->completeness($this->rules())->missing($this->vehicle(null), $trip));
 	}
 
-	/** A jurisdiction with no logbook ruleset requires nothing of any trip. */
 	public function testAJurisdictionWithNoRulesetMissesNothing(): void {
 		$trip = $this->trip();
 		$trip->setPartner(null);

@@ -37,12 +37,11 @@ use PHPUnit\Framework\TestCase;
 use Psr\Container\ContainerInterface;
 
 /**
- * The one timeline a vehicle has (docs/ui.md): trips and Odometer Entries merged into one order,
- * newest first, a page at a time.
+ * A vehicle's one timeline (docs/ui.md): every kind of Entry merged into one order, newest first,
+ * a page at a time.
  *
- * The mappers are stores rather than expectations, the way TripServiceTest keeps them - what the
- * screen shows is the merge, not which query produced a row. What the two queries do against a real
- * database is tests/Integration/TimelineTest.php's.
+ * The mappers are stores, not expectations: what counts is the merge, not which query produced a
+ * row. The real queries are tests/Integration/TimelineTest.php's.
  */
 class TimelineServiceTest extends TestCase {
 	private const VEHICLE = '0195e2f1-0000-4000-8000-000000000001';
@@ -364,10 +363,7 @@ class TimelineServiceTest extends TestCase {
 		);
 	}
 
-	/**
-	 * The whole point of the route: one order over two tables, newest first, whichever table a row
-	 * came from (docs/ui.md). A tab per table would have answered no question anybody asks.
-	 */
+	/** One order across tables (docs/ui.md): a tab per table answers no question anybody asks. */
 	public function testTripsAndOdometerEntriesAreOneOrder(): void {
 		$older = $this->trip(1750000000);
 		$entry = $this->entry(1750100000);
@@ -382,10 +378,7 @@ class TimelineServiceTest extends TestCase {
 		$this->assertNull($page['next']);
 	}
 
-	/**
-	 * The chips above the timeline (docs/ui.md), which narrow it to one kind of Entry and nothing
-	 * else about it.
-	 */
+	/** The chips above the timeline (docs/ui.md). */
 	public function testAChipNarrowsTheTimelineToOneKind(): void {
 		$this->trip(1750000000);
 		$entry = $this->entry(1750100000);
@@ -433,7 +426,7 @@ class TimelineServiceTest extends TestCase {
 	}
 
 	/**
-	 * The cursor's tie-break holds across the new tables too: rows of three kinds at one instant,
+	 * The cursor's tie-break holds across the cost tables too: rows of three kinds at one instant,
 	 * with the page ending among them, are each served exactly once.
 	 */
 	public function testAPageBoundaryAmongTheNewKindsLosesAndRepeatsNothing(): void {
@@ -496,8 +489,8 @@ class TimelineServiceTest extends TestCase {
 	}
 
 	/**
-	 * A fill-up or maintenance counter writes a Reading per counter (docs/architecture.md, rule 5),
-	 * and a flag on either is a question the row it belongs to carries - as a trip's does.
+	 * A fill-up or maintenance counter writes a Reading per counter
+	 * (docs/architecture.md#odometer-rules, rule 5), and the row carries their flags, as a trip's.
 	 */
 	public function testAFillUpAndAMaintenanceRecordCarryTheReadingsTheyWrote(): void {
 		$fill = $this->fillUp(1750000000);
@@ -558,10 +551,16 @@ class TimelineServiceTest extends TestCase {
 		$this->service()->page(self::OWNER, self::VEHICLE, 'fuel', null);
 	}
 
+	/** The one row's URL names its kind too; one the timeline has no table for is a 400, not a 404. */
+	public function testOneRowOfAKindTheTimelineDoesNotServeIsRefused(): void {
+		$this->expectException(\InvalidArgumentException::class);
+
+		$this->service()->one(self::OWNER, self::VEHICLE, 'fuel', '0195e2f1-1111-4000-8000-000000000001');
+	}
+
 	/**
-	 * Fifty rows, then more on scroll (docs/ui.md). The page says there is more by handing back a
-	 * cursor, and says there is none by handing back null - a client that had to ask again to find
-	 * out would fetch an empty page at the bottom of every timeline.
+	 * Fifty rows, then more on scroll (docs/ui.md). A cursor says more follow and null says none;
+	 * otherwise every timeline would end on an empty fetch.
 	 */
 	public function testAPageIsFiftyRowsAndSaysWhetherMoreFollow(): void {
 		for ($i = 0; $i < 51; $i++) {
@@ -576,13 +575,12 @@ class TimelineServiceTest extends TestCase {
 	}
 
 	/**
-	 * The case the cursor exists for. Two rows can carry the same instant - a trip entered at the
-	 * moment the counter was read, an import that dates a day's rows alike - and a page can end
-	 * between them. Paging on the instant alone would then either skip the second row or serve the
-	 * first one twice, and both are silent.
+	 * The case the cursor exists for: two rows can share an instant (a trip entered as the counter
+	 * was read, an import dating a day's rows alike), and a page can end between them. Paging on
+	 * the instant alone would silently skip or repeat a row.
 	 *
-	 * Walked with the boundary inside a trip's instant and inside an Odometer Entry's, because the
-	 * two sides of the tie-break are different arithmetic.
+	 * Walked with the boundary inside a trip's instant and inside an Odometer Entry's: the two
+	 * sides of the tie-break are different arithmetic.
 	 *
 	 * @dataProvider boundaries
 	 */
@@ -760,11 +758,7 @@ class TimelineServiceTest extends TestCase {
 		$this->assertSame(['trip ' . $trip->getUuid()], $this->shown($page));
 	}
 
-	/**
-	 * A uuid is all it takes to name a vehicle, and everything hanging off one goes through the
-	 * same gate (docs/security.md). A timeline is the whole movement profile, so this is the
-	 * refusal that matters most.
-	 */
+	/** A timeline is the whole movement profile: this refusal matters most (docs/security.md). */
 	public function testAStrangerReadsNoTimeline(): void {
 		$this->trip(1750000000);
 		$this->expectException(AccessDeniedException::class);

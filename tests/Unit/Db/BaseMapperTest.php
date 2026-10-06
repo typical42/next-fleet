@@ -36,6 +36,8 @@ class BaseMapperTest extends TestCase {
 	private array $bound = [];
 	/** The WHERE predicates, in the order they were added. */
 	private array $predicates = [];
+	/** The ORDER BY columns. */
+	private array $order = [];
 	/** What the database reports back from the statement. */
 	private int $affectedRows = 1;
 	/** What a query finds. */
@@ -45,18 +47,12 @@ class BaseMapperTest extends TestCase {
 	/** What an Oracle sequence hands out next. */
 	private const NEXTVAL = 42;
 
-	/**
-	 * Every column the mapper wrote, with the values it bound - the row as the database
-	 * would have seen it.
-	 */
+	/** The row as the database would see it: each written column with its bound value. */
 	private function row(): array {
 		return array_map(fn (string $placeholder) => $this->bound[$placeholder], $this->written);
 	}
 
-	/**
-	 * The WHERE predicates with their bound values substituted, as the row the statement
-	 * demands to find.
-	 */
+	/** The WHERE predicates with bound values substituted: the row the statement demands. */
 	private function conditions(): array {
 		$values = array_map(static fn ($value) => (string)$value, $this->bound);
 
@@ -128,8 +124,7 @@ class BaseMapperTest extends TestCase {
 		foreach (['insert', 'update', 'select', 'from'] as $method) {
 			$qb->method($method)->willReturnSelf();
 		}
-		// Rows are never removed - a soft delete that reached DELETE would still look right
-		// in every other assertion here.
+		// A soft delete that reached DELETE would pass every other assertion here.
 		$qb->expects($this->never())->method('delete');
 		$qb->method('createNamedParameter')->willReturnCallback(function ($value) {
 			$placeholder = ':p' . count($this->bound);
@@ -150,6 +145,10 @@ class BaseMapperTest extends TestCase {
 				return $qb;
 			});
 		}
+		$qb->method('orderBy')->willReturnCallback(function (string $column) use ($qb) {
+			$this->order[] = $column;
+			return $qb;
+		});
 		$qb->method('executeStatement')->willReturnCallback(fn () => $this->affectedRows);
 
 		$rows = $this->rows;
@@ -188,9 +187,8 @@ class BaseMapperTest extends TestCase {
 	}
 
 	/**
-	 * An identity the row already carries is kept - an import brings its own, and offline sync
-	 * will. The mapper only fills the gap; whether a request may carry one is the controller's
-	 * business.
+	 * An identity the row already carries is kept: an import brings its own, and offline sync
+	 * will. Whether a request may carry one is the controller's business.
 	 */
 	public function testInsertKeepsAnIdentityThatCameWithTheRow(): void {
 		$thing = new Thing();
@@ -203,14 +201,11 @@ class BaseMapperTest extends TestCase {
 	}
 
 	/**
-	 * QBMapper writes the columns a setter changed, and a setter handed the property's own
-	 * starting value changed nothing - so the column is left out of the INSERT and a NOT NULL
-	 * column with no database default refuses the row. That is the ordinary case, not an edge
-	 * one: `read_at_off` is 0 for a reading taken in UTC, and `value` is 0 on a counter nobody
-	 * has driven yet.
+	 * QBMapper leaves out a column whose setter got the property's starting value, and a NOT NULL
+	 * column without a database default then refuses the row. That is the ordinary case:
+	 * `read_at_off` is 0 for a reading in UTC, `value` 0 on a counter nobody has driven yet.
 	 *
-	 * `id` stays out: an explicit NULL is an auto-increment on MariaDB and a refusal on
-	 * PostgreSQL, and CI runs both.
+	 * `id` stays out: an explicit NULL auto-increments on MariaDB but is refused on PostgreSQL.
 	 */
 	public function testInsertWritesEveryColumnAndNotTheIdentity(): void {
 		$thing = new Thing();
@@ -225,7 +220,7 @@ class BaseMapperTest extends TestCase {
 
 	/**
 	 * Doctrine names an Oracle table's id sequence after the table, cut to 30 characters; core's
-	 * lastInsertId() asks for the uncut name, which does not exist. Seen on the Oracle stack.
+	 * lastInsertId() asks for the uncut name, which does not exist.
 	 */
 	public function testOnOracleATableWithACutSequenceNameTakesItsIdFromThatSequence(): void {
 		$recipient = new ReminderRecipient();
@@ -240,7 +235,7 @@ class BaseMapperTest extends TestCase {
 		$this->assertSame(self::NEXTVAL, $recipient->getId());
 	}
 
-	/** Where the name fits, and on the other databases, the database picks the id as before. */
+	/** Where the name fits, and on the other databases, the database picks the id. */
 	public function testElsewhereTheDatabasePicksTheId(): void {
 		$recipient = new ReminderRecipient();
 		$recipient->setVehicleId(1);
@@ -328,8 +323,7 @@ class BaseMapperTest extends TestCase {
 	}
 
 	/**
-	 * The uuid is the identity and created_at/created_by are the server's record of where the
-	 * row came from. An update moves none of them, however the entity reached the mapper.
+	 * An update moves neither the uuid nor created_at/created_by, whatever the entity carries.
 	 */
 	public function testUpdateLeavesIdentityAndProvenanceAlone(): void {
 		$thing = $this->stored(self::NOW - 60);
@@ -420,9 +414,32 @@ class BaseMapperTest extends TestCase {
 		$this->mapper()->restoreChecked($this->deleted(self::NOW - 60), self::NOW - 3600);
 	}
 
+	/** @return array<string, array{string}> */
+	public static function checkedWrites(): array {
+		return ['an update' => ['updateChecked'], 'a restore' => ['restoreChecked']];
+	}
+
 	/**
-	 * The uuid is the identity, and a soft-deleted row is gone as far as a read is concerned.
+	 * A row never inserted has no id to name in the WHERE: a caller's bug, refused before any SQL.
+	 *
+	 * @dataProvider checkedWrites
 	 */
+	public function testACheckedWriteOfARowNeverInsertedIsRefused(string $method): void {
+		$this->expectException(\InvalidArgumentException::class);
+
+		try {
+			$this->mapper()->$method(new Thing(), self::NOW);
+		} finally {
+			$this->assertSame([], $this->predicates);
+		}
+	}
+
+	/** An empty IN () is no SQL on any of the databases. */
+	public function testCountingNoUuidsAsksNothing(): void {
+		$this->assertSame(0, $this->mapper()->countLive(7, []));
+		$this->assertSame([], $this->predicates);
+	}
+
 	public function testFindByUuidPassesOverDeletedRows(): void {
 		$this->rows = [[
 			'id' => 7,
@@ -440,9 +457,8 @@ class BaseMapperTest extends TestCase {
 	}
 
 	/**
-	 * The one lookup that does not: a restore is after precisely the row findByUuid() passes over,
-	 * and it still has to find a live one, or an undo of a delete somebody else already undid
-	 * would answer 404 where the truth is that there was nothing to undo.
+	 * A restore needs the row findByUuid() passes over, and a live one too: undoing a delete
+	 * somebody already undid must say there is nothing to undo, not answer 404.
 	 */
 	public function testFindAnyByUuidReachesADeletedRow(): void {
 		$this->rows = [[
@@ -456,5 +472,25 @@ class BaseMapperTest extends TestCase {
 
 		$this->assertSame(self::NOW, $thing->getDeletedAt());
 		$this->assertSame(['uuid = 0195e2f1-0000-4000-8000-000000000001'], $this->conditions());
+	}
+
+	/** A job or an erasure starts from an id the row's own writes never hand out. */
+	public function testFindAnyByIdReachesADeletedRow(): void {
+		$this->rows = [['id' => 7, 'uuid' => '0195e2f1-0000-4000-8000-000000000001', 'deleted_at' => self::NOW]];
+
+		$thing = $this->mapper()->findAnyById(7);
+
+		$this->assertSame(self::NOW, $thing->getDeletedAt());
+		$this->assertSame(['id = 7'], $this->conditions());
+	}
+
+	public function testFindByVehicleListsItsLiveRowsInTheOrderTheyCame(): void {
+		$this->rows = [['id' => 3, 'label' => 'first'], ['id' => 9, 'label' => 'second']];
+
+		$things = $this->mapper()->findByVehicle(7);
+
+		$this->assertSame(['first', 'second'], array_map(static fn (Thing $thing): string => $thing->getLabel(), $things));
+		$this->assertSame(['vehicle_id = 7', 'deleted_at IS NULL'], $this->conditions());
+		$this->assertSame(['id'], $this->order);
 	}
 }

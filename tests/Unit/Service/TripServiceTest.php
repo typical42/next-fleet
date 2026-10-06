@@ -41,12 +41,11 @@ use PHPUnit\Framework\TestCase;
 use Psr\Container\ContainerInterface;
 
 /**
- * What adding a trip does to the vehicle it hangs off: the journey is stored, and the counter it
- * ended on becomes one Reading at `ended_at` (docs/architecture.md#odometer-rules, rule 5).
+ * Adding a trip: the journey is stored, and its end counter becomes one Reading at `ended_at`
+ * (docs/architecture.md#odometer-rules, rule 5).
  *
- * The odometer is the real service here rather than a mock. "The vehicle's kilometres move" is a
- * statement about what the two do together, and a mock of the second one could only repeat what
- * this test already assumed.
+ * The odometer is the real service: "the kilometres move" is about what the two do together, and
+ * a mock could only repeat what the test assumed.
  */
 class TripServiceTest extends TestCase {
 	private const VEHICLE = '0195e2f1-0000-4000-8000-000000000001';
@@ -59,7 +58,7 @@ class TripServiceTest extends TestCase {
 
 	/** The clock the fake mappers stamp a row with, and the token a client then holds. */
 	private const ENTERED_AT = 1750500000;
-	/** The moment a void happens, which is both the stamp and the token it leaves behind. */
+	/** The moment a void lands, and the token it leaves behind. */
 	private const VOIDED_AT = 1750600000;
 	/** The moment an edit lands, and the token it leaves behind. */
 	private const EDITED_AT = 1750700000;
@@ -72,7 +71,7 @@ class TripServiceTest extends TestCase {
 
 	/** The trips the mapper stands for, in insertion order. @var list<Trip> */
 	private array $trips = [];
-	/** The readings the odometer wrote. @var list<OdoReading> */
+	/** @var list<OdoReading> */
 	private array $readings = [];
 	/** The audit trail, in the order it was written. @var list<Audit> */
 	private array $audits = [];
@@ -112,8 +111,7 @@ class TripServiceTest extends TestCase {
 		$this->now = self::ENTERED_AT;
 		$this->odometer = null;
 
-		// Stores rather than expectations, for the reason OdometerServiceTest keeps them: what a
-		// trip is worth is what the vehicle shows once the row is in.
+		// Stores rather than expectations: a trip is judged by what the vehicle shows afterwards.
 		$this->tripMapper = $this->createMock(TripMapper::class);
 		$this->tripMapper->method('insert')->willReturnCallback(function (Trip $trip): Trip {
 			$trip->setId($this->nextTripId);
@@ -305,9 +303,6 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
-	 * The trip that uuid names, as the two lookups answer: one passes over a voided row, the other
-	 * is the one caller that wants it.
-	 *
 	 * @throws DoesNotExistException
 	 */
 	private function tripNamed(string $uuid, bool $anyState): Trip {
@@ -333,8 +328,7 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
-	 * One vehicle's readings in the order rule 1 puts them in, which is the order both mapper
-	 * reads answer in. A voided one is out of it, as it is out of the query.
+	 * One vehicle's live readings in rule-1 order, as both mapper reads answer.
 	 *
 	 * @return list<OdoReading>
 	 */
@@ -398,10 +392,7 @@ class TripServiceTest extends TestCase {
 		return $clock;
 	}
 
-	/**
-	 * One odometer, the way the container hands out one: a case that writes an Odometer Entry of its
-	 * own reaches the same service the trips went through.
-	 */
+	/** Shared, as the container's is: an Odometer Entry a case writes sees the trips' Readings. */
 	private function odometer(): OdometerService {
 		return $this->odometer ??= new OdometerService($this->readingMapper, $this->vehicles, $this->fleet, $this->db);
 	}
@@ -418,8 +409,7 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
-	 * The vehicle's odometer as the timeline shows it: what each Reading holds, and whether it is
-	 * still waiting for its follow-up question.
+	 * Each live Reading's value and whether it is flagged.
 	 *
 	 * @return array<int, bool>
 	 */
@@ -449,8 +439,7 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
-	 * A trip as the sheet posts one with the toggle the other way round: a distance, and no counter
-	 * at either end. How long it ran matters to where its Reading lands, so a case that cares says.
+	 * A trip posted with a distance and no counter. `$ranFor` moves where its Reading lands.
 	 *
 	 * @return array<string, mixed>
 	 */
@@ -465,10 +454,7 @@ class TripServiceTest extends TestCase {
 		];
 	}
 
-	/**
-	 * The whole of this task: the journey is stored, and the counter it ended on is what the
-	 * vehicle then shows. Nothing counts anything up - the Reading is the number that was read.
-	 */
+	/** Nothing counts up: the vehicle shows the number that was read. */
 	public function testATripEndingOnACounterMovesTheVehiclesKilometres(): void {
 		$trip = $this->service()->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
 
@@ -562,13 +548,10 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
-	 * The shape only a trip can make. A Reading is written at `ended_at` and counted from
-	 * `started_at` (rules 5 and 6), so a long journey's counted row lands after counters that were
-	 * read while it was still running - and below them, because the kilometres it added were counted
-	 * from before they were read. Observed beats derived: the counted row is flagged, the counter
-	 * nobody computed stands, and neither number is rewritten.
-	 *
-	 * An Odometer Entry counts from the moment it is written at and can never produce this.
+	 * A distance trip's Reading is written at `ended_at` but counted from `started_at` (rules 5
+	 * and 6), so a long journey can land after, and below, a counter read while it ran. Observed
+	 * beats derived: the counted row is flagged, and neither number is rewritten. Only a trip can
+	 * make this shape.
 	 */
 	public function testACounterReadDuringALongTripDiscreditsWhatThatTripCounted(): void {
 		$service = $this->service();
@@ -583,9 +566,8 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
-	 * There is one chain, whatever wrote it. An Odometer Entry somebody typed discredits the
-	 * Readings a distance-only trip left behind exactly as a trip's own counter does - the rows are
-	 * judged by where their number came from, never by which table it names.
+	 * One chain, whatever wrote it: rows are judged by where their number came from, never by which
+	 * table they name.
 	 */
 	public function testAnOdometerEntryDiscreditsTheCountedRowsATripLeftBehind(): void {
 		$service = $this->service();
@@ -608,7 +590,6 @@ class TripServiceTest extends TestCase {
 		);
 	}
 
-	/** The trip is written under the vehicle the route named, and the person who posted it. */
 	public function testATripBelongsToTheVehicleAndTheDriverWhoEnteredIt(): void {
 		$this->service()->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
 
@@ -618,7 +599,6 @@ class TripServiceTest extends TestCase {
 		$this->assertSame(self::OWNER, $this->readings[0]->getCreatedBy());
 	}
 
-	/** Where the journey went and what it was for, kept as entered. */
 	public function testWhatTheJourneyWasForIsStoredAsEntered(): void {
 		$trip = $this->service()->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450) + [
 			'from_label' => 'Köln, Hauptbahnhof',
@@ -634,8 +614,8 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
-	 * A Reconciliation Trip is one the app created to close a Gap (CONTEXT.md), and the audit trail
-	 * says it was derived. A client that could set the flag could dress a hand-typed trip as one.
+	 * Only the app creates a Reconciliation Trip (CONTEXT.md); a client setting the flag could
+	 * dress a hand-typed trip as one.
 	 */
 	public function testAClientCannotDeclareItsOwnTripReconciled(): void {
 		$trip = $this->service()->record(
@@ -648,9 +628,8 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
-	 * The database would refuse each of these too, but as a 500 that names no field. Refusing them
-	 * here is what makes the answer a 400 the sheet can point at. It is not the same as blocking on
-	 * a field a German logbook wants and the driver has not filled in - that one is a flag
+	 * The database would refuse these as a 500 naming no field; refused here, they are a 400 the
+	 * sheet can point at. A field the logbook wants but the driver left empty is a flag instead
 	 * (docs/features.md#logbook-mode).
 	 *
 	 * @param array<string, mixed> $fields
@@ -744,10 +723,7 @@ class TripServiceTest extends TestCase {
 		$this->service()->update(self::OWNER, self::VEHICLE, (string)$trip->getUuid(), self::ENTERED_AT, ['start_odo' => 120451] + $this->drove(1750000000, 120450));
 	}
 
-	/**
-	 * A uuid is all it takes to name a vehicle, and everything hanging off one goes through the
-	 * same gate (docs/security.md). Nothing is written on the way to the refusal.
-	 */
+	/** A uuid names a vehicle, so every write passes the gate first (docs/security.md). */
 	public function testAStrangerWritesNoTrip(): void {
 		try {
 			$this->service()->record(self::STRANGER, self::VEHICLE, $this->drove(1750000000, 120450));
@@ -767,9 +743,8 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
-	 * The task: under Logbook Mode a trip is not just written, it is recorded as having been
-	 * written (docs/features.md#logbook-mode). The row points at the trip through the table it
-	 * names and the id it carries, and its author and instant are its own two common columns.
+	 * Under Logbook Mode a trip is recorded as written (docs/features.md#logbook-mode): the row
+	 * names the trip by table and id, and carries its own author and instant.
 	 */
 	public function testATripWrittenUnderLogbookModeLeavesAnAuditRow(): void {
 		$this->logbookMode = true;
@@ -783,9 +758,8 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
-	 * Off the mode there is no trail. A private driver never asked for one, and a row written
-	 * anyway would claim an integrity the vehicle's records do not have
-	 * (docs/adr/0003-logbook-mode-does-not-lock-the-past.md).
+	 * Off the mode there is no trail: a private driver never asked for one, and a row would claim
+	 * an integrity the records do not have (docs/adr/0003-logbook-mode-does-not-lock-the-past.md).
 	 */
 	public function testATripOnAVehicleWithoutTheModeLeavesNoAuditRow(): void {
 		$this->service()->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
@@ -794,9 +768,8 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
-	 * The diff is what the driver stated, each field as the pair an auditor reads: nothing before
-	 * it, because the trip is new. The row's own author and dating are not in it - the audit row
-	 * carries those itself.
+	 * The diff is each stated field as `[null, value]`; author and dating are the audit row's own
+	 * columns, not in it.
 	 */
 	public function testTheAuditRowCarriesTheFieldsTheTripWasWrittenWith(): void {
 		$this->logbookMode = true;
@@ -824,8 +797,8 @@ class TripServiceTest extends TestCase {
 
 	/**
 	 * A field the driver left empty did not change, so it is not in the diff: a trail that lists
-	 * what stayed as it was buries what did not. `reconciled` is the one column that is false
-	 * rather than absent when nobody touched it, and it is left out for the same reason.
+	 * what stayed as it was buries what did not. `reconciled` is false rather than absent when
+	 * nobody touched it, and is left out for the same reason.
 	 */
 	public function testAFieldTheDriverLeftEmptyIsNotInTheDiff(): void {
 		$this->logbookMode = true;
@@ -839,10 +812,9 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
-	 * The trail's vocabulary is the trip's columns, and it is read off the wire form because that
-	 * is the one place this app spells them out. This is what holds the two together: an edit to
-	 * what the client reads that is not meant for the audit trail fails here rather than quietly
-	 * giving later rows a different field set from the ones already written.
+	 * The trail's field names are read off the wire form, the one place the app spells out a trip's
+	 * columns. A change to the wire form fails here rather than quietly giving later rows a
+	 * different field set.
 	 */
 	public function testTheAuditRowNamesEveryColumnATripCarries(): void {
 		$this->logbookMode = true;
@@ -873,9 +845,8 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
-	 * The row and the change it records are one write, for the reason the trip and its Reading
-	 * are: a trail that outlives a rolled-back trip, or a trip that outlives its missing row, is
-	 * evidence of something that did not happen either way.
+	 * The row and the change are one write: a trail that outlives a rolled-back trip, or a trip
+	 * without its row, records something that did not happen.
 	 */
 	public function testTheAuditRowIsWrittenInsideTheSameTransactionAsTheTrip(): void {
 		$this->logbookMode = true;
@@ -888,9 +859,8 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
-	 * The task: a delete voids, it does not remove (docs/features.md#logbook-mode). The row stays
-	 * where it was with `deleted_at` stamped on it, which is what the trash, the undo and the
-	 * Fahrtenbuch export all read it back through.
+	 * A delete voids, it does not remove (docs/features.md#logbook-mode): the trash, the undo and
+	 * the Fahrtenbuch export read the row back through `deleted_at`.
 	 */
 	public function testDeletingATripVoidsItRatherThanRemovingIt(): void {
 		$service = $this->service();
@@ -904,9 +874,8 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
-	 * The trip and its Reading are one fact (rule 5), so the Reading goes where the trip goes. A
-	 * counter left standing on a journey nobody claims any more would put the vehicle's kilometres
-	 * on a row the timeline no longer shows and nothing can explain.
+	 * The trip and its Reading are one fact (rule 5), so the Reading goes where the trip goes; left
+	 * standing, it would hold the vehicle's kilometres on a row nothing explains.
 	 */
 	public function testTheReadingAVoidedTripLeftGoesWithIt(): void {
 		$service = $this->service();
@@ -920,9 +889,8 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
-	 * What the chain says is decided again once a row leaves it (rule 3). The counter that
-	 * discredited the kilometres a distance-only trip counted is gone with the trip that carried
-	 * it, so those rows stand again - the flag was never a fact about them on their own.
+	 * The chain is judged again once a row leaves it (rule 3): with the discrediting counter gone,
+	 * the counted rows stand again.
 	 */
 	public function testTheRowsAVoidedCounterDiscreditedStandAgain(): void {
 		$service = $this->service();
@@ -938,10 +906,8 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
-	 * A void under the mode is recorded like every other change: who, when, and what it did to the
-	 * row. `deleted_at` is the column that changed, so it is the diff - the row's own instant says
-	 * when the trail was written, and those are two different moments only when one of them is
-	 * wrong.
+	 * A void is recorded like any change, with `deleted_at` as the diff. The row's own instant is
+	 * when the trail was written; the two differ only when one is wrong.
 	 */
 	public function testAVoidUnderLogbookModeIsRecordedInTheTrail(): void {
 		$this->logbookMode = true;
@@ -1026,9 +992,8 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
-	 * Voiding the row a distance was counted from rewrites nothing. Rule 6 never corrects a derived
-	 * value, and this is the same rule from the other side: the kilometres that journey covered are
-	 * a fact of their own, and a recomputed number would be a counter nobody ever read.
+	 * Voiding the row a distance was counted from rewrites nothing: rule 6 never corrects a derived
+	 * value, and a recomputed number would be a counter nobody read.
 	 */
 	public function testVoidingTheRowADistanceWasCountedFromLeavesTheCountedNumberAlone(): void {
 		$service = $this->service();
@@ -1112,8 +1077,7 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
-	 * A uuid is all it takes to name a trip, so the gate is what stands between a stranger and one.
-	 * Nothing is written on the way to the refusal - the trip stands, and so does the counter.
+	 * A refusal writes nothing: the trip stands, and so does the counter.
 	 *
 	 * @dataProvider voids
 	 */
@@ -1365,10 +1329,7 @@ class TripServiceTest extends TestCase {
 		], $edit->getDiffJson());
 	}
 
-	/**
-	 * The task: an edit arriving after the ruleset's lock delay is allowed - the mode refuses no
-	 * write - and its audit row says it was late.
-	 */
+	/** The mode refuses no write; it only marks the late one. */
 	public function testAnEditPastTheLockDelayIsAllowedAndMarkedLate(): void {
 		$this->logbookMode = true;
 		$service = $this->service();
@@ -1470,8 +1431,9 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
-	 * A save that changed nothing writes nothing: no row, so no token moved without one - which the
-	 * export would print as a change nobody recorded.
+	 * A save that changed nothing writes nothing: no token moved without an audit row - which the
+	 * export would print as a change nobody recorded - and no audit row, since a trail of
+	 * non-changes buries the changes an auditor is looking for.
 	 */
 	public function testASaveThatChangesNothingLeavesTheTripAsItWas(): void {
 		$this->logbookMode = true;
@@ -1559,26 +1521,6 @@ class TripServiceTest extends TestCase {
 		$this->assertFalse($this->audits[1]->getDiffJson()['late']);
 	}
 
-	/**
-	 * A save that changes nothing records nothing, for the reason a mode flip is only a row when it
-	 * flips: a trail of non-changes buries the changes an auditor is looking for.
-	 */
-	public function testAnEditThatChangesNothingLeavesNoAuditRow(): void {
-		$this->logbookMode = true;
-		$service = $this->service();
-		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450));
-
-		$service->update(
-			self::OWNER,
-			self::VEHICLE,
-			$trip->getUuid(),
-			$trip->getUpdatedAt(),
-			$this->drove(1750000000, 120450),
-		);
-
-		$this->assertCount(1, $this->audits);
-	}
-
 	/** Off the mode an edit is an edit, late or not, and no trail claims otherwise. */
 	public function testAnEditOnAVehicleWithoutTheModeLeavesNoAuditRow(): void {
 		$service = $this->service();
@@ -1658,7 +1600,6 @@ class TripServiceTest extends TestCase {
 		);
 	}
 
-	/** A driver corrects the journeys they entered, and not somebody else's. */
 	public function testADriverEditsTheTripsTheyEnteredAndNoOthers(): void {
 		$service = $this->service();
 		$theirs = $service->record(self::DRIVER, self::VEHICLE, $this->drove(1750000000, 120450));
@@ -1699,7 +1640,7 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
-	 * The task: a confirmation closes one Gap as one private trip the app marks reconciled, over the
+	 * A confirmation closes one Gap as one private trip the app marks reconciled, over the
 	 * kilometres and between the two moments that bracket them. Its Reading lands on the claim, so
 	 * the Gap is gone on the next read.
 	 */
@@ -1872,10 +1813,9 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
-	 * Every trip write ends by settling the odometer: it reads the chain and caches the newest
-	 * value. Two at once on one vehicle - two tabs, two drivers of a shared car - would each read
-	 * a chain without the other's Reading, and whichever cached last could leave the vehicle on the
-	 * older number. Held first, the second waits for the first to commit and reads its Reading.
+	 * Every trip write ends by reading the chain and caching the newest value. Two at once on one
+	 * vehicle would each miss the other's Reading, and the later cache could hold the older number;
+	 * held first, the second waits for the first to commit.
 	 *
 	 * @dataProvider settlingWrites
 	 */

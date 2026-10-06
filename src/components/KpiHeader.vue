@@ -27,8 +27,7 @@ const preferences = usePreferencesStore()
 const periods = computed(() => PERIODS.map((id) => ({ id, label: periodWord(id) })))
 const period = computed({
 	get: () => periods.value.find(({ id }) => id === preferences.period) ?? periods.value[0],
-	// A refused write keeps the choice for this session (src/store/preferences.js); the figures
-	// are what the header is for, not a message about the next session.
+	// A refused write still keeps the choice for this session (src/store/preferences.js).
 	set: ({ id }) => preferences.choosePeriod(id).catch(() => {}),
 })
 /** The month the one-month period shows, as its first day. */
@@ -42,17 +41,12 @@ const failure = ref('')
 
 const tiles = computed(() => tilesOf(props.vehicle, now.value, before.value))
 
-/**
- * Bumped by every read, so an answer to a period or vehicle nobody is looking at any more is
- * dropped rather than shown under the new one.
- */
+/** Bumped by every read, so a late answer for an earlier period or vehicle is dropped. */
 let asked = 0
 
 onMounted(reload)
-// An edit of the vehicle can change its currency or prices, and an undo from the toast in the shell
-// (src/components/UndoToast.vue) brings back an Entry; both move the figures. A new Entry is the
-// screen's to report, through reload().
-// The preferences may land after the first read (src/App.vue reads them after the fleet).
+// A vehicle edit can change its currency or prices, an undo (UndoToast.vue) brings back an Entry,
+// and the preferences may land after the first read. A new Entry the screen reports via reload().
 watch([() => props.vehicle.uuid, () => props.vehicle.updated_at, () => period.value.id, month, () => store.restored, () => preferences.reclaimVat], reload)
 
 /**

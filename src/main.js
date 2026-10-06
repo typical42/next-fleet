@@ -3,9 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-// The bundle is loaded by the app's own page template, which carries this
-// element. Guarded so that loading it anywhere else is inert, not a console
-// error.
+// Only the app's page template carries this element; anywhere else the bundle is inert.
 const root = document.getElementById('nextfleet')
 
 // On NC 31 a second copy of this entry runs, so it mounts once and holds no state of

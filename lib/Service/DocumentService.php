@@ -219,13 +219,8 @@ class DocumentService {
 	}
 
 	/**
-	 * What the attached file is while it is still the attacher's own, wherever in their Files it
-	 * moved, or null. Access follows the vehicle, so the file's side is what the attacher vouched
-	 * for: moved into a share, a group folder or an external storage, somebody else can change or
-	 * remove it (docs/security.md#authorization). A file in the trash bin is outside their Files.
-	 *
-	 * OwnFiles mounts the attacher's Files, not `IRootFolder::getById`: in a web request that
-	 * searches only the session user's mounts, so a driver would never find the owner's file.
+	 * What OwnFiles answers about the attached file, or null where the attacher has no Files to
+	 * ask (docs/architecture.md#documents).
 	 *
 	 * @template T
 	 * @param \Closure(): T $ask
@@ -248,8 +243,7 @@ class DocumentService {
 	/**
 	 * Whether the user may attach a paper to `$linked`, or take one off it: the rule for changing
 	 * that row - an Entry's own-entry rule, a booking's (VehicleAccess::mayBooking()) - and `edit`
-	 * for the vehicle's own papers. A driver files the receipt of their own fill-up; the
-	 * registration and the insurance stay a manager's.
+	 * for the vehicle's own papers.
 	 *
 	 * @throws AccessDeniedException
 	 */

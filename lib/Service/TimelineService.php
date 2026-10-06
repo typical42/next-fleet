@@ -82,15 +82,11 @@ class TimelineService {
 	}
 
 	/**
-	 * One page of one vehicle's timeline, newest first: at most PAGE rows and the cursor the next
-	 * page starts at, which is null when there is no next page.
+	 * One page of one vehicle's timeline, newest first: at most PAGE rows and the cursor of the
+	 * next page, null when there is none.
 	 *
-	 * A row names its kind and the moment it happened, and carries the Entry itself under that
-	 * kind's key. A trip, fill-up or maintenance record carries the Readings it left on the counter
-	 * as well, so the screen shows one row for them; a trip also carries the fields its
-	 * jurisdiction requires that it leaves unstated, and a fill-up what it is flagged for. Every row
-	 * says what the reader may do to it, as `may`, and on a vehicle others use who entered it, as
-	 * `entered_by`.
+	 * A row names its kind and the moment it happened, and carries the Entry under that kind's
+	 * key, dressed as dressed() says.
 	 *
 	 * @param ?string $type one of TYPES, or null for all of them
 	 * @param ?string $cursor what a previous page answered with, or null for the newest rows
@@ -204,9 +200,8 @@ class TimelineService {
 
 	/**
 	 * Where a kind sorts against another at the same instant: its place in TYPES. The merge and the
-	 * cursor read it from here rather than each deciding for itself - two rankings that agree by
-	 * the alphabet would part company the day a kind is added, and part company silently, at a page
-	 * boundary inside one instant.
+	 * cursor both read it here; two rankings would drift apart silently, at a page boundary inside
+	 * one instant.
 	 */
 	private static function rank(string $type): int {
 		return (int)array_search($type, self::TYPES, true);
@@ -308,8 +303,8 @@ class TimelineService {
 	}
 
 	/**
-	 * The Readings each Entry on the page left on the counter, hung on its row - one query per kind
-	 * rather than one per row. It is what makes an Entry and its Readings one row on screen
+	 * The Readings each Entry on the page left on the counter, hung on its row with one query per
+	 * kind. It makes an Entry and its Readings one row on screen
 	 * (docs/architecture.md#odometer-rules, rule 5), flag and all.
 	 *
 	 * A trip leaves exactly one, as `reading`. A fill-up or maintenance record leaves one per
@@ -433,9 +428,8 @@ class TimelineService {
 	}
 
 	/**
-	 * Which kinds the chips asked for: one of them, or all of them when the filter is absent
-	 * (docs/ui.md). A kind nobody serves is refused rather than answered with everything, which
-	 * would look to a client like a filter that silently does nothing.
+	 * Which kinds the chips asked for: one, or all when the filter is absent (docs/ui.md). An
+	 * unknown kind is refused: answering everything would look like a filter that does nothing.
 	 *
 	 * @return list<string>
 	 * @throws \InvalidArgumentException
@@ -455,10 +449,9 @@ class TimelineService {
 	 * Where the next page starts, as each table has to ask for it: the instant, and the id each
 	 * kind must stay under at that instant.
 	 *
-	 * A kind that sorts under the cursor's own at the same instant has that whole instant still to
-	 * come, so it is handed an id no row reaches; a kind that sorts over it is done with that
-	 * instant and is handed one no row is under. Without that, a page boundary between two rows
-	 * that share an instant would drop the rows on the wrong side of it.
+	 * A kind that sorts under the cursor's own has that whole instant still to come, so it gets an
+	 * id no row reaches; a kind that sorts over it is done with it and gets one no row is under.
+	 * Otherwise a page boundary inside one instant would drop the rows on the wrong side of it.
 	 *
 	 * @return array{int, array<string, int>}
 	 * @throws \InvalidArgumentException if the cursor is not one this route handed out

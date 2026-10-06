@@ -22,7 +22,7 @@ use OCP\IL10N;
 use OCP\IURLGenerator;
 
 /**
- * What is due across the fleet (docs/architecture.md, "Dashboard"). An adapter over
+ * What is due across the fleet (docs/architecture.md#nextcloud-integration). An adapter over
  * `ReminderService::due()`: the dashboard loads on every login, so it reads nothing else.
  */
 class DueWidget implements IAPIWidgetV2, IIconWidget {

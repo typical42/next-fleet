@@ -13,8 +13,7 @@ use OCA\NextFleet\Jurisdiction\De;
 use PHPUnit\Framework\TestCase;
 
 /**
- * What Germany answers, as opposed to that it answers at all - which is
- * `JurisdictionTestCase`'s question, asked of every country
+ * What Germany answers; that it answers at all is `JurisdictionTestCase`'s question
  * (docs/contributing.md#what-a-country-owes-us).
  *
  * Each figure here is a legal one and carries the source it came from, never the reasoning that

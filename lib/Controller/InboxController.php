@@ -20,6 +20,8 @@ use OCP\IUserSession;
  * nothing here writes.
  */
 class InboxController extends Controller {
+	use SessionUser;
+
 	public function __construct(
 		string $appName,
 		IRequest $request,
@@ -31,11 +33,6 @@ class InboxController extends Controller {
 
 	#[NoAdminRequired]
 	public function index(): DataResponse {
-		$user = $this->session->getUser()
-			// The route requires a login, so this is a broken container rather than an anonymous
-			// request.
-			?? throw new \RuntimeException('No user in session');
-
-		return new DataResponse($this->service->list($user->getUID()));
+		return new DataResponse($this->service->list($this->userId()));
 	}
 }

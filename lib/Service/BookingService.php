@@ -289,8 +289,8 @@ class BookingService {
 	}
 
 	/**
-	 * The trip a returned booking describes, for the entry sheet to prefill: out to in, counter to
-	 * counter. The category is left out - only the driver knows whether it was business.
+	 * The trip a returned booking describes: out to in, counter to counter. No category, for the
+	 * reason checkIn() gives.
 	 *
 	 * @return array{started_at: ?int, started_at_off: ?int, ended_at: ?int, ended_at_off: ?int, start_odo: ?int, end_odo: ?int, purpose: ?string}
 	 */

@@ -9,9 +9,8 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Jurisdiction;
 
 /**
- * The periodic inspection a country requires, and how often (docs/contributing.md). It replaces
- * a due-date column: the next inspection is a reminder made from `template()`
- * (docs/architecture.md#data-model).
+ * The periodic inspection a country requires, and how often. It replaces a due-date column: the
+ * next inspection is a reminder made from `template()` (docs/architecture.md#data-model).
  *
  * Internal seam, not a public API - see docs/contributing.md. A jurisdiction that requires none
  * has no scheme and says so with a null (`IJurisdiction::inspectionScheme()`).

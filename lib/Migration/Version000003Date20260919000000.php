@@ -16,9 +16,8 @@ use OCP\Migration\IOutput;
 use OCP\Migration\SimpleMigrationStep;
 
 /**
- * What M3 ships: what a vehicle burns and what it costs, and a second counter for engine hours
- * beside the kilometres (docs/architecture.md#data-model). The milestone's only migration, for
- * the reason M2's is.
+ * What a vehicle burns and what it costs, and a second counter for engine hours beside the
+ * kilometres (docs/architecture.md#data-model).
  */
 class Version000003Date20260919000000 extends SimpleMigrationStep {
 	/**
@@ -87,8 +86,8 @@ class Version000003Date20260919000000 extends SimpleMigrationStep {
 	}
 
 	/**
-	 * One service, repair, inspection, tyre change or upgrade. No `reminder_id`: reminders
-	 * arrive with M4, and the column with them.
+	 * One service, repair, inspection, tyre change or upgrade. Its `reminder_id` is
+	 * Version000004Date20260922000000's, with the table it points into.
 	 */
 	private function maintenance(Table $table): void {
 		$table->addColumn('vehicle_id', Types::BIGINT, ['notnull' => true, 'unsigned' => true]);
@@ -124,7 +123,8 @@ class Version000003Date20260919000000 extends SimpleMigrationStep {
 	}
 
 	/**
-	 * The row every table has. Copied, not shared, for the reason M2's copy gives.
+	 * The row every table has. Copied, not shared, for the reason
+	 * Version000002Date20260909000000 gives.
 	 */
 	private function common(Table $table): Table {
 		$table->addColumn('id', Types::BIGINT, ['autoincrement' => true, 'notnull' => true, 'unsigned' => true]);

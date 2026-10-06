@@ -52,11 +52,7 @@ class Expense extends BaseEntity implements \JsonSerializable {
 		$this->addType('notes', Types::STRING);
 	}
 
-	/**
-	 * The wire form is the column names, as it is for every entity.
-	 *
-	 * @return NextFleetExpense
-	 */
+	/** @return NextFleetExpense */
 	public function jsonSerialize(): array {
 		return [
 			'uuid' => $this->uuid,

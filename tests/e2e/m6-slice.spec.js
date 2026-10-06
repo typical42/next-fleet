@@ -67,9 +67,8 @@ async function give(sheet, uid, role) {
 }
 
 /**
- * PRD M6's story on one vehicle: a driver and a viewer get access through the Access section,
- * each sees what their role allows, the owner takes the driver's back, and a driver given it again
- * leaves on their own.
+ * One vehicle: a driver and a viewer get access through the Access section, the owner takes the
+ * driver's back, and the driver, given it again, leaves on their own.
  */
 test('the owner gives access, each role is offered what it may do, and access ends', async ({ page, browser }, testInfo) => {
 	// Two new accounts, whose first sign-in took 30 s each on an idle stack.

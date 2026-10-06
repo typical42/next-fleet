@@ -34,8 +34,7 @@ export async function savePaper(uuid, paper) {
 	link.href = URL.createObjectURL(new Blob([file], { type: 'application/octet-stream' }))
 	link.download = paper.name ?? ''
 	link.click()
-	// Revoked at once, some browsers save nothing, and no event says when the save has the bytes; a
-	// minute is long past it, and the memory is given back on leaving the page in any case.
+	// Revoked at once, some browsers save nothing; no event marks the save done, so wait a minute.
 	setTimeout(() => URL.revokeObjectURL(link.href), 60_000)
 
 	return ''

@@ -16,8 +16,7 @@ use OCP\IDBConnection;
 use PHPUnit\Framework\TestCase;
 
 /**
- * M7's bookings through their mapper and back. No route writes the table yet, so this is the
- * only proof its columns and reads hold.
+ * Bookings through their mapper and back: the columns, the overlap reads and pseudonymisation.
  *
  * It writes to the instance it runs against (docs/development.md#testing).
  */

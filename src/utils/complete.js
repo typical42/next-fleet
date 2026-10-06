@@ -4,9 +4,8 @@
  */
 
 /**
- * Which capacity each energy implies. A vehicle's Energy Types are what it actually accepts
- * (CONTEXT.md), so they and not the Engine decide which number there is to ask for: a plug-in
- * hybrid has a tank and a battery, a diesel has only a tank, and a trailer has neither.
+ * Which capacity each energy implies. The Energy Types, not the Engine, decide it (CONTEXT.md): a
+ * plug-in hybrid has a tank and a battery, a trailer has neither.
  *
  * @type {Record<string, string>}
  */
@@ -18,18 +17,13 @@ const CAPACITY = {
 	electric: 'battery_wh',
 }
 
-/**
- * The order the fields are asked for in, which is the order the edit sheet shows them in
- * (src/components/VehicleSheet.vue) - so following the hint reads top to bottom.
- */
+/** The edit sheet's order (src/components/VehicleSheet.vue), so the hint reads top to bottom. */
 const ORDER = ['vin', 'first_reg', 'tank_ml', 'battery_wh', 'currency']
 
 /**
- * What creating a vehicle in four fields left out (docs/ui.md): its identity, its age, the
- * capacity of whatever it is filled with, and the currency its costs are in - asked of every
- * vehicle, since a trailer has costs too. This is the whole rule behind the "complete this
- * vehicle" hint, and it is a question rather than a validation - a vehicle is perfectly usable
- * without any of it.
+ * What creating a vehicle in four fields left out (docs/ui.md): its identity, its age, its
+ * capacities and its currency, asked of every vehicle since a trailer has costs too. The hint is a
+ * question, not a validation: a vehicle is usable without any of it.
  *
  * @param {Partial<import('../services/api.js').Vehicle>} vehicle - the vehicle as it was read
  * @return {string[]} the columns still unanswered, as the API spells them
@@ -43,8 +37,7 @@ export function missingFrom(vehicle) {
 /**
  * @param {Partial<import('../services/api.js').Vehicle>} vehicle - the vehicle as it was read
  * @param {string} column - the column to look at
- * @return {boolean} whether somebody has answered it. A zero is an answer; it may be a wrong one,
- *   and the hint is not a validator.
+ * @return {boolean} whether somebody has answered it; a zero is an answer, if maybe a wrong one
  */
 function answered(vehicle, column) {
 	const value = /** @type {Record<string, unknown>} */ (vehicle)[column]

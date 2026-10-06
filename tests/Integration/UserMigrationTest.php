@@ -121,10 +121,7 @@ class UserMigrationTest extends TestCase {
 		self::deleteAccounts(self::ACCOUNTS);
 	}
 
-	/**
-	 * Done when: a driver who used every part of the app finds each of their rows in the archive,
-	 * and every row there names them - the owner's trip and the stranger's are not there.
-	 */
+	/** A driver who used every part of the app; the owner's and the stranger's rows stay out. */
 	public function testTheArchiveHoldsEveryRowNamingTheAccountAndNoOther(): void {
 		$files = $this->nextfleetFiles((string)self::$archive);
 

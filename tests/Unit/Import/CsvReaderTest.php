@@ -211,7 +211,7 @@ class CsvReaderTest extends TestCase {
 	}
 
 	/**
-	 * Each appended line is scanned, not the whole record again: this took seconds while it was.
+	 * Each appended line is scanned, not the whole record again; a rescan takes seconds here.
 	 *
 	 * @dataProvider multiLineCells
 	 */
@@ -268,6 +268,7 @@ class CsvReaderTest extends TestCase {
 	}
 
 	public function testAnEmptyFileIsRefused(): void {
+		$this->assertRefused('empty', null, self::stream(''));
 		$this->assertRefused('empty', null, self::stream("\u{FEFF}\r\n"));
 	}
 

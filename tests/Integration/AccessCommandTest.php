@@ -116,7 +116,7 @@ class AccessCommandTest extends TestCase {
 		$this->assertNull($listed[2]['deleted_at']);
 	}
 
-	/** A vehicle in the trash keeps its grants, and a restore brings them back with it. */
+	/** A vehicle in the trash keeps its grants. */
 	public function testAVehicleInTheTrashStillAnswers(): void {
 		$vehicle = $this->vehicle();
 		$this->grant($vehicle, self::ANNA, 'user', 'driver');

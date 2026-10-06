@@ -368,7 +368,6 @@ class FahrtenbuchRendererTest extends TestCase {
 		$this->assertSame(self::SOURCE, $this->text($page, '//footer//a/@href'));
 	}
 
-	/** The page's heading names the vehicle and the year. */
 	public function testThePageNamesTheVehicleAndTheYear(): void {
 		$page = $this->render([]);
 

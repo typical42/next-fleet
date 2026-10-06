@@ -149,18 +149,15 @@ class TripService {
 		$this->apply($trip, $fields);
 		$booking = Field::read('booking_uuid', 'text', 64, $fields['booking_uuid'] ?? null);
 
-		// The two rows are one fact. A trip whose Reading did not land is a logbook that disagrees
-		// with the counter it is measured against, and nothing later can tell which of the two is
-		// wrong.
+		// The two rows are one fact: a trip without its Reading is a logbook that disagrees with
+		// its counter, and nothing later can tell which is wrong.
 		//
-		// Retried rather than atomic() alone: a deadlock the hold does not order - with a write
-		// from outside this service - would otherwise be a 500 that loses the trip the driver
-		// typed. The replay inserts the id the rolled-back attempt was given, which auto-increment
-		// never hands out again.
+		// Retried: a deadlock the hold does not order, with a write from outside this service,
+		// would otherwise be a 500 that loses the trip. The replay inserts the id the rolled-back
+		// attempt was given, which auto-increment never hands out again.
 		return $this->atomicRetry(function () use ($userId, $vehicle, $trip, $booking, $once): Trip {
-			// Before anything is read or written: the Reading settles the vehicle's whole chain,
-			// and a second writer on the same vehicle has to wait and settle on this one's
-			// (VehicleMapper::hold()).
+			// First: the Reading settles the vehicle's whole chain, so a second writer on it has
+			// to wait and settle on this one's (VehicleMapper::hold()).
 			$this->vehicles->hold((int)$vehicle->getId());
 			$once->check();
 			$written = $this->trips->insert($trip);
@@ -176,13 +173,12 @@ class TripService {
 
 	/**
 	 * What the sheet's trip fields complete from (docs/ui.md): the places, purposes and partners of
-	 * this vehicle's own trips, each once and the latest first. Starting points and destinations are
-	 * one list, because where a trip ended is where the next one sets off. Asked with LOG, as the
-	 * trip it fills in is.
+	 * this vehicle's own trips, each once and the latest first. Starts and destinations are one
+	 * list, because where a trip ended is where the next sets off. Asked with LOG, as the trip it
+	 * fills in is.
 	 *
 	 * Beside the words: the category this person last entered here, and how the vehicle's last trip
-	 * ended - its end counter as the driver stated it (none for one logged by distance) and its
-	 * arrival. The sheet offers both and fills in neither counter (docs/ui.md).
+	 * ended - its stated end counter (none for one logged by distance) and its arrival.
 	 *
 	 * @return array{places: list<string>, purposes: list<string>, partners: list<string>, category: ?string, last: ?array{end_odo: ?int, ended_at: int, ended_at_off: int}}
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not log on this vehicle
@@ -224,13 +220,13 @@ class TripService {
 	}
 
 	/**
-	 * Closes one Gap as one Reconciliation Trip (CONTEXT.md): private, over the Gap's kilometres, from
-	 * the Reading it was measured against to the start of the trip that claimed it. A distance and not a counter, so
-	 * its Reading is counted from that Reading and lands on the claim (rule 6).
+	 * Closes one Gap as one Reconciliation Trip (CONTEXT.md): private, over the Gap's kilometres,
+	 * from the Reading it was measured against to the start of the trip that claimed it. A
+	 * distance, not a counter, so its Reading is counted from that Reading and lands on the claim
+	 * (rule 6).
 	 *
-	 * The Gap is named by the trip that opened it and found again here, not taken from the request.
-	 * The client states what it showed the driver, and a Gap that has moved since - a trip entered,
-	 * voided or edited between the read and the confirmation - is not the one they confirmed.
+	 * The Gap is named by the trip that opened it and found again here, not taken from the
+	 * request: a Gap that moved since the driver saw it is not the one they confirmed.
 	 *
 	 * Adding a trip, so LOG: whoever closes the Gap is who entered it.
 	 *
@@ -288,13 +284,11 @@ class TripService {
 
 	/**
 	 * Rewrites one trip in place, and the Reading with it when the journey moved. Append-only is the
-	 * audit row, not a second trip row (docs/features.md#logbook-mode): under the mode the diff is
-	 * the revision.
+	 * audit row, not a second trip row (docs/features.md#logbook-mode): the diff is the revision.
 	 *
-	 * The request is the whole trip, as `record()` takes it - a field it leaves out is one the
-	 * driver emptied. Keeping what it leaves out, as a vehicle's update does, would leave no way to
-	 * turn a distance trip into a counter trip, and that is how a business trip answers the counters
-	 * it is asked for.
+	 * The request is the whole trip, as `record()` takes it: a field it leaves out is one the
+	 * driver emptied. Keeping it, as a vehicle's update does, would leave no way to turn a distance
+	 * trip into a counter trip.
 	 *
 	 * @param array<string, mixed> $fields
 	 * @param int $expectedUpdatedAt the `updated_at` the client read
@@ -315,9 +309,8 @@ class TripService {
 			$was = clone $trip;
 			$this->apply($trip, $fields);
 
-			// A save that changed nothing is not a revision, for the reason a vehicle's trail only
-			// records a flip - and it writes nothing, because a token moved without a row is what the
-			// export prints as a change nobody recorded. It is still checked, as every save is.
+			// A save that changed nothing is no revision and writes nothing: a token moved without
+			// an audit row is what the export prints as a change nobody recorded. Still checked.
 			$changed = $this->changed($was, $trip);
 			if ($changed === []) {
 				if ($was->getUpdatedAt() !== $expectedUpdatedAt) {
@@ -342,10 +335,9 @@ class TripService {
 	 * It is allowed either way; the trail says which. A void or a restore moves no journey, so it
 	 * passes the trip as both.
 	 *
-	 * The delay runs from the earlier of the two ends, the journey as recorded or as restated: an
-	 * edit that re-dates an old trip to yesterday would otherwise restart the clock it is measured
-	 * by. A day is 86 400 seconds of the server's clock, not the driver's calendar day - a delay
-	 * of days has no use for the hour a timezone moves it by.
+	 * The delay runs from the earlier of the two ends, as recorded or as restated: an edit that
+	 * re-dates an old trip to yesterday would otherwise restart the clock. A day is 86 400 seconds
+	 * of the server's clock, not the driver's calendar day.
 	 */
 	private function late(Vehicle $vehicle, Trip $was, Trip $trip): bool {
 		$rules = $this->jurisdictions->get($vehicle->getJurisdiction())->logbookRules();
@@ -371,9 +363,8 @@ class TripService {
 	public function delete(string $userId, string $vehicleUuid, string $tripUuid, int $expectedUpdatedAt): Trip {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
-		// The trip is looked up inside the transaction, not before it: a replay after a deadlock
-		// has to start from the row as the database has it, and an entity a rolled-back statement
-		// already stamped would be written back a second time with nothing left to change.
+		// Looked up inside the transaction: a replay after a deadlock has to start from the row as
+		// the database has it, not from an entity a rolled-back statement already stamped.
 		return $this->atomicRetry(function () use ($userId, $vehicle, $tripUuid, $expectedUpdatedAt): Trip {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$trip = $this->on($vehicle, $this->trips->findByUuid($tripUuid));
@@ -418,12 +409,10 @@ class TripService {
 	}
 
 	/**
-	 * The trip, where it hangs off the vehicle the route named. A uuid alone would be a second way
-	 * in: one vehicle of their own is all somebody would need to reach a journey in anybody else's
-	 * logbook, and the gate upstream only ever asked about the vehicle.
+	 * The trip, where it hangs off the vehicle the route named. The gate upstream only asked about
+	 * the vehicle, so a uuid alone would reach a journey in anybody else's logbook.
 	 *
-	 * Not found rather than refused, for the reason a restore looks a stranger's uuid up the same
-	 * way every other route does: an answer that told them apart would tell them which uuids exist.
+	 * Not found rather than refused: an answer that told them apart would tell which uuids exist.
 	 *
 	 * @throws DoesNotExistException
 	 */
@@ -436,22 +425,18 @@ class TripService {
 	}
 
 	/**
-	 * The audit row the write leaves behind, under Logbook Mode or about a trip that set off - before
-	 * or after the change - inside a period the mode was on: the trail follows the trip, not the
-	 * switch (docs/features.md#logbook-mode). It carries the token the change left the trip with
-	 * (docs/architecture.md#data-model).
+	 * The audit row the write leaves behind, under Logbook Mode or about a trip that set off -
+	 * before or after the change - inside a period the mode was on: the trail follows the trip, not
+	 * the switch (docs/features.md#logbook-mode). It carries the token the change left the trip
+	 * with (docs/architecture.md#data-model).
 	 *
-	 * Inside the caller's transaction on purpose: a change that landed without its row, or a row
-	 * about a change that rolled back, are both a trail that disagrees with the logbook it
-	 * describes, and nothing later can tell which of the two happened.
+	 * Inside the caller's transaction on purpose: a change without its row, or a row about a
+	 * change that rolled back, is a trail that disagrees with the logbook it describes.
 	 *
-	 * The vehicle is the snapshot the gate handed back, not a second read taken here. A trip, its
-	 * Reading and its audit row are one write and are made under one state of the vehicle; a mode
-	 * flip racing that write is recorded on the vehicle itself, with the instant it took effect,
-	 * which is what says on which side of it a trip falls.
+	 * The vehicle is the snapshot the gate handed back, not a second read. A mode flip racing this
+	 * write is recorded on the vehicle with the instant it took effect, which places the trip.
 	 *
-	 * The author is whoever made the change, never the trip's `created_by`: a trip somebody else
-	 * entered is one this person voided, and the trail is about the change.
+	 * The author is whoever made the change, never the trip's `created_by`.
 	 *
 	 * @param array<string, array{mixed, mixed}> $fields each changed column as `[before, after]`
 	 * @param array<string, mixed> $carried what the change itself carried, such as that it was late
@@ -506,13 +491,12 @@ class TripService {
 	 * What the trip says, each field as the pair `[before, after]` an auditor reads a diff as. A
 	 * creation has nothing before it, so every pair starts at null.
 	 *
-	 * A field the driver left empty is not in the diff: it did not change, and listing it would
-	 * bury the fields that did. The row's own identity, author and dating are left out too; the
-	 * audit row carries all three already (docs/architecture.md#data-model).
+	 * A field the driver left empty is not in the diff: listing it would bury the fields that were
+	 * set. The row's identity, author and dating are left out; the audit row carries them
+	 * (docs/architecture.md#data-model).
 	 *
-	 * The columns are read off the wire form because that is where this app spells them out once.
-	 * `testTheAuditRowNamesEveryColumnATripCarries` is what ties the two together, so a change to
-	 * the one the client reads cannot quietly give the trail a different vocabulary.
+	 * The columns are read off the wire form, where this app spells them out once;
+	 * `testTheAuditRowNamesEveryColumnATripCarries` keeps the trail's vocabulary the client's.
 	 *
 	 * @return array<string, array{null, mixed}>
 	 */
@@ -548,10 +532,9 @@ class TripService {
 		if ($trip->getEndedAt() < $trip->getStartedAt()) {
 			throw new \InvalidArgumentException('ended_at is not before started_at');
 		}
-		// The sheet toggles between the two (docs/ui.md): the counter the trip ended on, or the
-		// kilometres it covered. A trip with neither leaves the counter with nothing to say, and
-		// one with both states the end of the journey twice - preferring either would throw away
-		// a number the other contradicts, which is the opposite of what rule 6 asks.
+		// The sheet toggles between the end counter and the kilometres (docs/ui.md). With neither
+		// the counter learns nothing; with both, preferring one would throw away a number the
+		// other contradicts, against rule 6.
 		if ($trip->getEndOdo() === null && $trip->getDistance() === null) {
 			throw new \InvalidArgumentException('a trip carries end_odo or distance');
 		}

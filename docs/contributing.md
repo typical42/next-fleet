@@ -38,9 +38,7 @@ for the country `Jurisdictions::DEFAULT` names, naming another first. A key nobo
 resolves to `generic` rather than throwing: a vehicle registered under a country a later release
 dropped must still open.
 
-Each seam was filled by the milestone that needed it ([milestones](../plan.md#milestones)) — the
-profile in M1, the logbook ruleset in M2, the VAT rate in M3 — and Germany now fills every one. A
-new country fills only those its rules need. A profile reaches its country's ruleset through
+Germany fills every seam. A new country fills only those its rules need. A profile reaches its country's ruleset through
 `IJurisdiction::logbookRules()`, which answers null where there is none, as every optional seam
 does; the core asks the vehicle's jurisdiction and never the class.
 
@@ -93,7 +91,7 @@ Because we maintain what we merge:
 
 **The UK is the honest test**: miles, litres, mpg, MOT annually after three years, pence per mile.
 It breaks every unit assumption hiding in the code, which is exactly what we want it to do — before
-v1, not at M9. Germany alone proves nothing, whatever the interfaces look like.
+a second country ships, not after. Germany alone proves nothing, whatever the interfaces look like.
 
 But it lives in `tests/Country/`, not in `lib/`
 ([ADR 0002](adr/0002-uk-is-a-test-jurisdiction.md)). Shipping it would put our signed release behind
@@ -106,3 +104,28 @@ Units stop being a "low priority setting". They are a property of the jurisdicti
 display, and the l/100 km ↔ mpg conversion belongs in the profile — not in a checkbox. What
 `IJurisdiction` answers today is what a vehicle is *stored* under; the display units join it in the
 same interface with the first screen that converts, never as a user setting.
+
+## AI assistance
+
+You can use an AI tool for a change. [Nextcloud's AI
+policy](https://github.com/nextcloud/.github/blob/master/AI_POLICY.md) applies to this repository.
+These are its rules:
+
+- **Name the tool in each commit.** Add one trailer for each AI tool and model that helped:
+  `Assisted-by: AGENT_NAME:MODEL_VERSION`, for example `Assisted-by: ClaudeCode:claude-sonnet-4-6`.
+  Git, editors and static analysis tools need no trailer.
+- **Name it in the pull request.** The
+  [pull request template](../.github/pull_request_template.md) asks for it.
+- **You are the author.** You must explain, defend and change each line. "The AI wrote it" is not
+  an answer.
+- **Write in your own words.** Write issues, pull request descriptions and review comments
+  yourself. A tool can translate them or correct the spelling.
+- **Examine security yourself.** Check each dependency, access check and authentication path by
+  hand.
+- **Only a person sends.** An AI tool does not open an issue or a pull request, write a review
+  comment or send a security report. It does not add `Signed-off-by`. Only you can certify the DCO.
+- **Copy nothing incompatible.** Add no third-party code or data that the AGPL does not admit
+  ([licensing and legal](legal.md)).
+- **Comments describe the code.** They do not tell how the code was made. Put that in the commit
+  message.
+- **Test on a live Nextcloud.** Test a new function yourself, at each place a user can reach it.

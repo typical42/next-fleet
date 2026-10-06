@@ -20,7 +20,7 @@ use OCP\Search\SearchResult;
 use OCP\Search\SearchResultEntry;
 
 /**
- * Finds a vehicle, and nothing else (docs/architecture.md, "Unified search").
+ * Finds a vehicle, and nothing else (docs/architecture.md#nextcloud-integration).
  */
 class VehicleSearchProvider implements IProvider {
 	public function __construct(

@@ -7,10 +7,8 @@ import { expect, test } from '@playwright/test'
 
 import { add, api, appPage, audit, categorise, choice, login, open, removeVehicles, toggle } from './app.js'
 
-// Every vehicle this file makes wears this prefix, and every run deletes what it finds under it
-// before starting. It has to be disjoint from every other spec file's prefix: Playwright runs the
-// files at once, and a sweep that matched another file's plates would delete a vehicle out from
-// under a test that is still using it.
+// The plate prefix this file owns, disjoint from every other file's because the files run at once
+// and each sweeps its own (README.md).
 const plates = 'M2-E2E-'
 
 /** What the vehicle starts on, and what the two journeys below leave it at. */
@@ -44,11 +42,8 @@ test('a trip is entered as a counter or as a distance, and the vehicle follows e
 	await entry.getByRole('button', { name: 'Save' }).click()
 	await expect(entry).toBeHidden()
 
-	// The counter the journey ended on is a Reading, so the vehicle moved with it
-	// (docs/architecture.md#odometer-rules) - and the screen says so without a reload, because the
-	// store read the vehicle back rather than counting for itself.
-	// The KPI, not just anywhere on the screen: the timeline below it states the counter the journey
-	// ended on as well, and what moved here is the vehicle's own.
+	// The arrival counter is a Reading, so the vehicle moved with it, without a reload
+	// (docs/architecture.md#odometer-rules). The KPI, because the timeline row states it too.
 	await expect(page.locator('.kpis').getByText('148,402 km')).toBeVisible()
 
 	// The other half of the toggle: the driver who read no counter states the kilometres, and the
@@ -61,8 +56,7 @@ test('a trip is entered as a counter or as a distance, and the vehicle follows e
 	await expect(entry).toBeHidden()
 	await expect(page.locator('.kpis').getByText('148,484 km')).toBeVisible()
 
-	// A reload is what proves the server kept both, and the vehicle it kept them on is the one
-	// whose counter the two journeys moved.
+	// The server kept both journeys on this vehicle's counter.
 	const saved = await api(page, { method: 'GET', path: `/api/vehicles/${vehicle.uuid}` })
 	expect(saved.odo_value).toBe(148484)
 })
@@ -377,17 +371,15 @@ test('the navigation leads back to the overview', async ({ page }) => {
 })
 
 /**
- * Dark mode and 320 px are acceptance criteria for the timeline, not afterthoughts - the list is
- * rows rather than cards so that it survives both (docs/ui.md). One major, for the reason the M1
- * audit gives: the answer is CSS and there is one copy of it.
+ * The timeline is rows rather than cards to survive dark mode and 320 px (docs/ui.md). One major:
+ * the answer is CSS and there is one copy of it.
  */
 test.describe('at 320 x 640, in the dark', { tag: '@nc34' }, () => {
 	test.use({ viewport: { width: 320, height: 640 }, colorScheme: 'dark' })
 
 	test('the timeline passes an axe audit with entries in it', async ({ page }) => {
-		// Not `small`: a plate has to be disjoint from every other file's as a *substring* too, not
-		// just as a prefix. `M2-E2E-small` contains `E2E-small`, and the M1 slice finds the hint's
-		// row for its vehicle with a `hasText` filter - which would then match two rows.
+		// Not `small`: plates must be disjoint as substrings too. `M2-E2E-small` contains
+		// `E2E-small`, which m1-slice.spec.js matches with a `hasText` filter.
 		const plate = `${plates}dark`
 		// Under Logbook Mode, so the audit covers what the mode adds to the list: a month header
 		// stating a Gap and the rows saying what they lack (docs/features.md#logbook-mode).
@@ -397,11 +389,9 @@ test.describe('at 320 x 640, in the dark', { tag: '@nc34' }, () => {
 			path: `/api/vehicles/${vehicle.uuid}/readings`,
 			body: { value: starting, read_at: Math.floor(Date.now() / 1000), read_at_off: 0 },
 		})
-		// Written through the API rather than through the sheet: what is being audited is the list,
-		// and several months of it is what makes a sticky header a sticky header. Both journeys end
-		// above the counter read today, so that reading is flagged and the audit covers the question
-		// the timeline puts as well (docs/architecture.md#odometer-rules). The second sets off above
-		// where the first ended, which is the Gap.
+		// Through the API: the list is under audit, over several months for the sticky header. Both
+		// journeys end above today's counter, so that reading is flagged and its question audited
+		// (docs/architecture.md#odometer-rules). The second starts above the first's end: the Gap.
 		for (const [month, ending, claim] of [[6, 148402, undefined], [7, 148484, 148410]]) {
 			const at = Math.floor(Date.UTC(2026, month, 15, 8, 0) / 1000)
 			await api(page, {

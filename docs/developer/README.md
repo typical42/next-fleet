@@ -129,6 +129,7 @@ Each merge request must:
 - Add each new user interface text to all translation files.
 - Run `composer openapi` after a change to a docblock in `lib/Controller/`, and commit
   `openapi.json`.
+- Name each AI tool that helped ([AI assistance](../contributing.md#ai-assistance)).
 
 Report a security problem privately. [SECURITY.md](../../SECURITY.md) tells you how.
 

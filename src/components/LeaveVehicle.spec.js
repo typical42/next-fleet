@@ -9,7 +9,7 @@ import { flushPromises, mount, shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { leaveVehicle, readHeld } from '../services/api.js'
+import { NotFoundError, leaveVehicle, readHeld } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
 import LeaveVehicle from './LeaveVehicle.vue'
 
@@ -60,7 +60,6 @@ beforeEach(() => {
 })
 
 describe('leaving a vehicle', () => {
-	/** The owner holds the car, not a grant: nothing to leave and nothing to ask the server. */
 	it('offers the owner nothing', async () => {
 		const wrapper = await section({ ...DRIVER, may: ['view', 'log', 'edit', 'delete', 'own'] })
 
@@ -97,7 +96,6 @@ describe('leaving a vehicle', () => {
 		expect(button(wrapper, 'Leave vehicle')).toBeDefined()
 	})
 
-	/** Through a group there is no button: the group is the owner's to change. */
 	it('names the group a grantee reaches the vehicle through, with no button', async () => {
 		vi.mocked(readHeld).mockResolvedValue({ role: null, groups: [CREW] })
 		const wrapper = await section()
@@ -118,11 +116,9 @@ describe('leaving a vehicle', () => {
 
 		expect(wrapper.text()).toContain('R&D')
 		expect(button(wrapper, 'Leave vehicle')).toBeUndefined()
-		// The role changed, and with it what each row of the screen offers.
 		expect(wrapper.emitted('kept')).toHaveLength(1)
 	})
 
-	/** The buttons are gone; focus lands on the words that replaced them rather than on the page. */
 	it('moves focus to the group that still reaches the vehicle after leaving', async () => {
 		vi.mocked(readHeld).mockResolvedValue({ role: 'manager', groups: [CREW] })
 		vi.mocked(leaveVehicle).mockResolvedValue({ role: null, groups: [CREW] })
@@ -138,7 +134,6 @@ describe('leaving a vehicle', () => {
 		wrapper.unmount()
 	})
 
-	/** A keyboard or screen reader user lands on the answer, and back where they asked from. */
 	it('moves focus to the question and back to the button that asked it', async () => {
 		const wrapper = mount(LeaveVehicle, { props: { vehicle: DRIVER }, attachTo: document.body })
 		await flushPromises()
@@ -166,7 +161,21 @@ describe('leaving a vehicle', () => {
 		expect(button(wrapper, 'Leave')).toBeDefined()
 	})
 
-	/** The screen stays mounted when another vehicle is picked, so what is held is read again. */
+	/** Revoked meanwhile: 403 without another way in, 404 with a group or with the vehicle gone. */
+	it.each([
+		['Not yours', new Error('Not yours')],
+		['No such vehicle', new NotFoundError('No such vehicle')],
+	])('says so when there is no grant left to give back (%s)', async (message, error) => {
+		vi.mocked(leaveVehicle).mockRejectedValue(error)
+		const wrapper = await section()
+
+		await button(wrapper, 'Leave vehicle').trigger('click')
+		await button(wrapper, 'Leave').trigger('click')
+		await flushPromises()
+
+		expect(notes(wrapper)).toContain('You have no access of your own to give back any more.')
+	})
+
 	it('reads again for another vehicle, and offers the owner nothing there', async () => {
 		const wrapper = await section()
 		await button(wrapper, 'Leave vehicle').trigger('click')
@@ -205,7 +214,6 @@ describe('leaving a vehicle', () => {
 		])
 	})
 
-	/** Not knowing what is held is no reason to offer a write or to claim a group. */
 	it('shows nothing when what is held could not be read', async () => {
 		vi.mocked(readHeld).mockRejectedValue(new Error('The server answered 503'))
 		const wrapper = await section()

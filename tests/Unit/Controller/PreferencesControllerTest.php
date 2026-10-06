@@ -19,8 +19,8 @@ use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The settings screen's two calls. Every rule is PreferencesService's, so what is tested here is
- * the translation: whose preferences these are, and what a refusal becomes.
+ * The settings screen's two calls. Every rule is PreferencesService's, so this tests whose
+ * preferences these are and what a refusal becomes.
  */
 class PreferencesControllerTest extends TestCase {
 	private PreferencesService&MockObject $service;
@@ -51,7 +51,7 @@ class PreferencesControllerTest extends TestCase {
 		];
 	}
 
-	/** A preference belongs to whoever is logged in, and to nobody else (docs/security.md). */
+	/** A preference belongs to whoever is logged in (docs/security.md). */
 	public function testTheAnswerIsTheSessionUsers(): void {
 		$this->service->expects($this->once())
 			->method('forUser')
@@ -64,10 +64,7 @@ class PreferencesControllerTest extends TestCase {
 		$this->assertSame('de', $response->getData()['preferences']['jurisdiction']);
 	}
 
-	/**
-	 * The whole payload is handed over, routing parameters and all: which of them is a preference
-	 * is the service's question, not the controller's.
-	 */
+	/** Routing parameters and all: which one is a preference is the service's question. */
 	public function testAWriteCarriesWhatTheScreenSent(): void {
 		$this->params = ['jurisdiction' => 'generic', '_route' => 'nextfleet.preferences.update'];
 		$this->service->expects($this->once())
@@ -81,10 +78,7 @@ class PreferencesControllerTest extends TestCase {
 		$this->assertSame('generic', $response->getData()['preferences']['jurisdiction']);
 	}
 
-	/**
-	 * A value the screen never offered is the request's fault, and the answer says which
-	 * preference - a 500 from an uncaught exception would tell the user nothing.
-	 */
+	/** The answer names the preference; a 500 from an uncaught exception would tell nothing. */
 	public function testAPreferenceTheAppDoesNotKeepIsABadRequest(): void {
 		$this->params = ['jurisdiction' => 'zz'];
 		$this->service->method('write')

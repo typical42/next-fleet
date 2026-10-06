@@ -105,6 +105,33 @@ class ClientTest extends TestCase {
 		$this->assertCount(1, self::$server->ocs(self::$anna, 'GET', "/vehicles/{$vehicle['uuid']}/readings")->data());
 	}
 
+	/** @return array<string, array{string}> */
+	public static function doors(): array {
+		return [
+			'OCS' => ['/ocs/v2.php/apps/nextfleet/api/v1/vehicles/'],
+			'internal' => ['/index.php/apps/nextfleet/api/vehicles/'],
+		];
+	}
+
+	/**
+	 * Nextcloud merges a JSON body over the URL's parameters, so a body field named like a
+	 * placeholder would pick the row, or fail the argument's type with a 500 on NC 31.
+	 */
+	#[DataProvider('doors')]
+	public function testABodyFieldNamedLikeAPlaceholderIsA400(string $door): void {
+		$vehicle = $this->vehicle('API 6');
+		$other = $this->vehicle('API 7');
+		$headers = ['OCS-APIRequest: true', 'Accept: application/json', 'Content-Type: application/json'];
+
+		foreach ([[], $other['uuid']] as $uuid) {
+			$body = json_encode(['uuid' => $uuid, 'updated_at' => $other['updated_at'], 'plate' => 'API 8'], JSON_THROW_ON_ERROR);
+			$answer = self::$server->request('PUT', $door . $vehicle['uuid'], self::$anna, $headers, $body);
+
+			$this->assertSame(400, $answer->status, $answer->body);
+		}
+		$this->assertSame('API 7', self::$server->ocs(self::$anna, 'GET', "/vehicles/{$other['uuid']}")->data()['plate']);
+	}
+
 	public function testAStaleEditIsA412WithTheConflictFlag(): void {
 		$vehicle = $this->vehicle('API 3');
 
@@ -131,10 +158,9 @@ class ClientTest extends TestCase {
 	/**
 	 * A client that saves a paper and then deletes it from Files at once: the delete must not meet
 	 * the download's lock. Nextcloud keeps that lock to the request's end, which under Apache comes
-	 * before the last bytes leave, so this guards that order rather than catching a race it has seen.
-	 * `php -S` sends the bytes first, so there the delete races the request's end by a few
-	 * milliseconds: hence twenty rounds. 64 KiB, whole 8 KiB writes, is the size likeliest to slip
-	 * through first.
+	 * before the last bytes leave. `php -S` sends the bytes first, so there the delete races the
+	 * request's end by a few milliseconds: hence twenty rounds. 64 KiB, whole 8 KiB writes, is the
+	 * size likeliest to slip through first.
 	 */
 	public function testADownloadedFileDeletesAtOnce(): void {
 		$vehicle = $this->vehicle('API 9');

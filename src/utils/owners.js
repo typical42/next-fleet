@@ -107,10 +107,9 @@ function owners(entries, bookings) {
 }
 
 /**
- * The rows a paper is likely to belong to: the newest entries of each linkable kind, and the
- * bookings handed over. A receipt is filed soon after the fill-up or the invoice it is for, a photo
- * soon after the handover. A manager may file on any row, so the newest page serves; on a busy
- * pool a driver's own may be further back, so pages are read on until one holds any.
+ * The rows a paper likely belongs to: the newest entries of each linkable kind and the bookings
+ * handed over, since a paper is filed soon after its row. On a busy pool a driver's own entries may
+ * lie behind the newest page, so pages are read on until one holds any.
  *
  * @param {string} uuid - the vehicle
  * @return {Promise<Owner[]>} the options; a refusal rejects

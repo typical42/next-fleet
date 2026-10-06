@@ -96,11 +96,7 @@ class PreferencesTest extends TestCase {
 		$this->assertSame(['de', 'generic'], array_column($response->getData()['jurisdictions'], 'key'));
 	}
 
-	/**
-	 * The point of the whole screen: PreferencesService writes a key VehicleService reads, and
-	 * the two only ever meet in the user's config. A vehicle created before the change keeps what
-	 * it had - a setting is a default for what comes next, never a migration of what exists.
-	 */
+	/** A setting is a default for the next vehicle, never a migration of the ones that exist. */
 	public function testWhatTheScreenSavesIsWhatTheNextVehicleIsWrittenUnder(): void {
 		$before = $this->vehicles->create(self::OWNER, []);
 
@@ -115,11 +111,7 @@ class PreferencesTest extends TestCase {
 		$this->assertSame(Jurisdictions::DEFAULT, $this->vehicles->find(self::OWNER, $before->getUuid())->getJurisdiction());
 	}
 
-	/**
-	 * A dismissed hint is a preference and not browser state (docs/ui.md), so what proves it is a
-	 * second read that never saw the first request: the same answer reaches a reloaded page and a
-	 * different browser, because neither of them is where it is kept.
-	 */
+	/** A dismissed hint is a preference, not browser state (docs/ui.md): a fresh read sees it. */
 	public function testADismissedHintIsStillDismissedForTheNextSession(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, [])->getUuid();
 
@@ -163,9 +155,8 @@ class PreferencesTest extends TestCase {
 	}
 
 	/**
-	 * The route names no user, so a preference is reached through the session and through nothing
-	 * else (docs/security.md). One person changing theirs leaves everybody else's where it was -
-	 * the IDOR sweep walks these two routes but has no second user to check that with.
+	 * The route names no user, so a preference is reached through the session alone
+	 * (docs/security.md). The IDOR sweep walks these routes but has no second user to check this.
 	 */
 	public function testOnePersonsChoiceIsNotAnothers(): void {
 		$this->controller(['jurisdiction' => 'generic'], self::OWNER)->update();
@@ -177,9 +168,8 @@ class PreferencesTest extends TestCase {
 	}
 
 	/**
-	 * Nothing registers these classes (lib/AppInfo/Application.php), so the container has to build
-	 * the whole chain from constructor types alone - and a route that cannot be built is a 500 no
-	 * unit test sees.
+	 * Nothing registers these classes (lib/AppInfo/Application.php), so the container builds the
+	 * chain from constructor types alone; a route it cannot build is a 500 no unit test sees.
 	 */
 	public function testTheControllerIsBuiltFromItsConstructorTypesAlone(): void {
 		$this->assertInstanceOf(

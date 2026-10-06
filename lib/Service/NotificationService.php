@@ -52,12 +52,11 @@ class NotificationService {
 
 	/**
 	 * Evaluates every reminder that can still ring, of every vehicle in service, at now
-	 * (VehicleMapper::findReminded()), persists the state, and tells each recipient about the
-	 * newest point reached, once per point and occurrence. One vehicle at
-	 * a time, each held, so the sheet and a second run wait rather than race. A vehicle that fails
-	 * is logged and the round goes on; its receipts rolled back with it, so the next run retries.
-	 * So is a send that fails, its receipt forgotten. Nothing leaves the sweep, errors included:
-	 * the digest comes after it (ReminderJob).
+	 * (VehicleMapper::findReminded()), persists the state, and tells each recipient the newest
+	 * point reached, once per point and occurrence. One vehicle at a time, each held, so the sheet
+	 * and a second run wait rather than race. A vehicle or a send that fails is logged, its
+	 * receipts rolled back or forgotten so the next run retries, and the round goes on. Nothing
+	 * leaves the sweep, errors included: the digest comes after it (ReminderJob).
 	 */
 	public function sweep(): void {
 		try {
@@ -67,7 +66,6 @@ class NotificationService {
 
 			return;
 		}
-		// The list is read again under each vehicle's hold (sweepVehicle()).
 		foreach ($round as [$vehicle]) {
 			try {
 				// Sent after the commit: a notification out before a rollback would go out again.

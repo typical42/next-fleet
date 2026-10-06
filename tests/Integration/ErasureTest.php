@@ -139,7 +139,7 @@ class ErasureTest extends TestCase {
 		}
 	}
 
-	/** Done when: deleting a Nextcloud user pseudonymises their rows and deletes none. */
+	/** The account's rows stay, all under one pseudonym. */
 	public function testADeletedDriversRowsStayUnderOnePseudonym(): void {
 		$shared = $this->vehicle(self::OWNER, 'B-XY 123');
 		$this->grant($shared, self::DRIVER, 'manager');

@@ -21,8 +21,8 @@ use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The vehicle's one timeline. Every rule is TimelineService's, so what is tested here is the
- * translation between a request and an answer, the way OdometerControllerTest tests the readings'.
+ * The vehicle's one timeline. Every rule is TimelineService's, so this tests request to answer
+ * only, as OdometerControllerTest does.
  */
 class TimelineControllerTest extends TestCase {
 	private const UUID = '0195e2f1-0000-4000-8000-000000000001';
@@ -47,10 +47,7 @@ class TimelineControllerTest extends TestCase {
 		);
 	}
 
-	/**
-	 * The chip and the scroll position are the query string's, and both reach the service as the
-	 * client sent them - which of them mean anything is not the controller's to decide.
-	 */
+	/** Which chip or cursor means anything is the service's to decide, not the controller's. */
 	public function testTheChipAndTheCursorReachTheServiceAsAsked(): void {
 		$this->service->expects($this->once())
 			->method('page')
@@ -63,7 +60,7 @@ class TimelineControllerTest extends TestCase {
 		$this->assertSame(['rows' => [], 'next' => null], $response->getData());
 	}
 
-	/** An unfiltered timeline from the top: neither chip nor cursor is a parameter a client must send. */
+	/** Neither chip nor cursor is a parameter a client must send. */
 	public function testAnUnfilteredTimelineAsksForNeither(): void {
 		$this->service->expects($this->once())
 			->method('page')
@@ -74,10 +71,8 @@ class TimelineControllerTest extends TestCase {
 	}
 
 	/**
-	 * A chip or a cursor that arrives as an array - `?type[]=trip` - is as much a request this
-	 * route never handed out as a forged word, and gets the same 400. The framework casts int,
-	 * float and bool for a controller and nothing else, so a `?string` parameter would have made
-	 * this a 500 and a logged exception instead.
+	 * An array - `?type[]=trip` - gets the same 400 as a forged word. The framework casts only int,
+	 * float and bool, so a `?string` parameter would make this a 500 and a logged exception.
 	 *
 	 * @dataProvider notEvenWords
 	 * @param array<int, string> $sent
@@ -113,7 +108,6 @@ class TimelineControllerTest extends TestCase {
 		$this->assertSame($gaps, $response->getData());
 	}
 
-	/** One Entry, named by its kind and its uuid, is the service's row for it. */
 	public function testOneEntryIsTheServiceRowForIt(): void {
 		$row = ['type' => 'trip', 'occurred_at' => 1, 'occurred_at_off' => 0];
 		$this->service->expects($this->once())
@@ -141,13 +135,7 @@ class TimelineControllerTest extends TestCase {
 		$this->assertSame($status, $this->controller()->gaps(self::UUID)->getStatus());
 	}
 
-	/**
-	 * The three refusals a read can meet, each as the status the screen acts on: a uuid that is
-	 * nobody's, a vehicle that is not this user's, and a chip or a cursor this route never handed
-	 * out.
-	 *
-	 * @dataProvider refusals
-	 */
+	/** @dataProvider refusals */
 	public function testARefusedTimelineAnswersWithItsOwnStatus(\Throwable $thrown, int $status): void {
 		$this->service->method('page')->willThrowException($thrown);
 

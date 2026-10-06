@@ -64,8 +64,7 @@ class SeedCommandTest extends TestCase {
 	private array $planned = [];
 	private int $nextId = 1;
 	/**
-	 * Every cost Entry the command wrote, as the sheet would have posted it: the kind, the plate
-	 * and the fields.
+	 * Every cost Entry the command wrote, as the sheet would have posted it.
 	 *
 	 * @var list<array{kind: string, plate: string, fields: array<string, mixed>}>
 	 */
@@ -174,8 +173,6 @@ class SeedCommandTest extends TestCase {
 	}
 
 	/**
-	 * The cost Entries of one kind, optionally on one vehicle.
-	 *
 	 * @return list<array<string, mixed>>
 	 */
 	private function costsOf(string $kind, ?string $plate = null): array {
@@ -212,11 +209,9 @@ class SeedCommandTest extends TestCase {
 		$time = $this->createMock(ITimeFactory::class);
 		$time->method('getTime')->willReturn(1767225600);
 
-		// The real service and the real registration list, because what this command is worth is
-		// that the fleet it invents passes the validation every other write passes - and takes
-		// the same country defaults.
-		// The seeded fleet is created, never updated, so nothing here reaches the audit trail or
-		// the transaction an update is written in.
+		// The real service and registration list: the invented fleet must pass the validation and
+		// take the country defaults every other write does. It is only created, never updated, so
+		// nothing reaches the audit trail or an update's transaction.
 		$fleet = new VehicleService(
 			$this->mapper,
 			$access,
@@ -421,10 +416,8 @@ class SeedCommandTest extends TestCase {
 	}
 
 	/**
-	 * One vehicle as somebody would have left it after creating it in four fields (docs/ui.md):
-	 * no identity, no age, and no capacity for the energy it takes. That is what the "complete
-	 * this vehicle" hint asks about (src/utils/complete.js), and the demo fleet is where the
-	 * screen and the E2E find one to ask.
+	 * One vehicle as left after the four-field create (docs/ui.md): no identity, no age, no
+	 * capacity. The "complete this vehicle" hint (src/utils/complete.js) and the E2E need one.
 	 */
 	public function testTheFleetHoldsOneVehicleTheHintHasSomethingToAskAbout(): void {
 		$this->tester()->execute(['user' => self::OWNER]);
@@ -444,10 +437,8 @@ class SeedCommandTest extends TestCase {
 	}
 
 	/**
-	 * What the hint would ask this vehicle, by the rule the overview applies (src/utils/complete.js):
-	 * its identity, its age, the capacity of whatever it is filled with, and its currency. Written out here
-	 * because the rule is the frontend's and the fleet is this command's - the point of the test is
-	 * that the two agree.
+	 * What the hint would ask this vehicle, by the overview's rule (src/utils/complete.js). Written
+	 * out here because the rule is the frontend's and the fleet this command's; the two must agree.
 	 *
 	 * @return list<string>
 	 */
@@ -572,10 +563,9 @@ class SeedCommandTest extends TestCase {
 	}
 
 	/**
-	 * The demo fleet is German (plan.md), whoever seeds it: its plates, its VAT rates and the
-	 * HU/AU its reminders name all belong to one country. A profile without an inspection scheme
-	 * offers no `hu_au` at all, so an account that had set another one would break the run
-	 * halfway through.
+	 * The demo fleet is German whoever seeds it: its plates, VAT rates and HU/AU reminders belong
+	 * to one country. A profile without an inspection scheme offers no `hu_au`, so an account set
+	 * to another would break the run halfway.
 	 */
 	public function testTheFleetIsGermanWhateverTheAccountSeedingItHasChosen(): void {
 		$tester = $this->tester('generic');
@@ -631,8 +621,7 @@ class SeedCommandTest extends TestCase {
 	/**
 	 * The pace that estimate needs (docs/architecture.md#reminder-engine, rule 5): two Readings
 	 * somebody took, 30 days apart, inside the 90 days before the day it is read on. Inside the
-	 * last 45 here, so the demo still estimates six weeks after it was seeded - the fleet is
-	 * written once and clicked through for as long as it stands.
+	 * last 45 here, so the demo still estimates six weeks after it was seeded.
 	 */
 	public function testTheVehicleWithTheOilChangeKeepsAPaceForWeeksAfterTheRun(): void {
 		$this->tester()->execute(['user' => self::OWNER]);

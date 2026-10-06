@@ -39,7 +39,7 @@ class FleetMigrator implements IMigrator {
 	 */
 	private const AUTHORED = ['fleet_trips', 'fleet_energy', 'fleet_maintenance', 'fleet_expenses', 'fleet_odo_readings', 'fleet_bookings', 'fleet_documents', 'fleet_reminder_receipts'];
 
-	/** @var array<int, bool> by vehicle id */
+	/** @var array<string, bool> by uid and vehicle id: one instance may export several accounts */
 	private array $sees = [];
 
 	public function __construct(
@@ -149,15 +149,16 @@ class FleetMigrator implements IMigrator {
 		if ($vehicleId === null) {
 			return false;
 		}
-		if (!array_key_exists($vehicleId, $this->sees)) {
+		$key = $uid . "\0" . $vehicleId;
+		if (!array_key_exists($key, $this->sees)) {
 			try {
-				$this->sees[$vehicleId] = $this->access->may($uid, VehicleAccess::VIEW, $this->vehicles->findAnyById($vehicleId));
+				$this->sees[$key] = $this->access->may($uid, VehicleAccess::VIEW, $this->vehicles->findAnyById($vehicleId));
 			} catch (DoesNotExistException) {
-				$this->sees[$vehicleId] = false;
+				$this->sees[$key] = false;
 			}
 		}
 
-		return $this->sees[$vehicleId];
+		return $this->sees[$key];
 	}
 
 	/** @return array<string, mixed> column => value, as the table holds it */

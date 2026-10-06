@@ -182,7 +182,6 @@ describe('the vehicle header', () => {
 		expect(/** @type {any} */ (wrapper.findComponent(NcSelect)).props('modelValue')).toEqual({ id: 'last-year', label: 'Last year' })
 	})
 
-	/** The preferences may arrive after the header has read; what they say wins. */
 	it('reads again when the preferences arrive late', async () => {
 		header()
 		await flushPromises()

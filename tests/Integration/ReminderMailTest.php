@@ -17,6 +17,7 @@ use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Service\MailService;
 use OCA\NextFleet\Service\NotificationService;
+use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\RecipientService;
 use OCA\NextFleet\Service\ReminderService;
 use OCA\NextFleet\Service\UserZone;
@@ -93,7 +94,7 @@ class ReminderMailTest extends TestCase {
 	private function forget(): void {
 		$db = \OCP\Server::get(IDBConnection::class);
 		$people = array_keys(self::LANGUAGES);
-		foreach (['fleet_vehicles' => 'user_id', 'fleet_reminders' => 'created_by', 'fleet_reminder_recipients' => 'user_id', 'fleet_reminder_receipts' => 'user_id'] as $table => $column) {
+		foreach (['fleet_vehicles' => 'user_id', 'fleet_odo_readings' => 'created_by', 'fleet_reminders' => 'created_by', 'fleet_reminder_recipients' => 'user_id', 'fleet_reminder_receipts' => 'user_id'] as $table => $column) {
 			$qb = $db->getQueryBuilder();
 			$qb->delete($table)->where($qb->expr()->in($column, $qb->createNamedParameter($people, $qb::PARAM_STR_ARRAY)));
 			$qb->executeStatement();
@@ -108,7 +109,7 @@ class ReminderMailTest extends TestCase {
 		}
 	}
 
-	/** Done when, second line: the same HU/AU reaches the owner's inbox, once, in German. */
+	/** A HU/AU due in four weeks reaches the owner's inbox once, in German. */
 	public function testTheOwnerGetsOneDigestADayInTheirLanguage(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'reminder_mail' => 'daily']);
 		$this->reminders->create(self::OWNER, $vehicle->getUuid(), ['template_key' => 'hu_au', 'due_date' => '2031-05-31']);
@@ -122,6 +123,18 @@ class ReminderMailTest extends TestCase {
 		$this->assertStringContainsString('B-XY 123', $mails[0]['Text']);
 		$this->assertStringContainsString('Hauptuntersuchung (HU/AU) ist am 31.05.2031 fällig', $mails[0]['Text']);
 		$this->assertStringContainsString('vehicle=' . $vehicle->getUuid(), $mails[0]['Text']);
+	}
+
+	/** A reminder's line in the plain text ends at its words: the list item carries no meta info. */
+	public function testAPlainTextLineEndsAtItsWords(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'reminder_mail' => 'daily']);
+		$this->reminders->create(self::OWNER, $vehicle->getUuid(), ['template_key' => 'hu_au', 'due_date' => '2031-05-31']);
+
+		$this->runAt('2031-05-03 07:00');
+
+		$mails = $this->mails(self::OWNER);
+		$this->assertCount(1, $mails);
+		$this->assertMatchesRegularExpression('/ist am 31\.05\.2031 fällig\r?\n/', $mails[0]['Text']);
 	}
 
 	/** 07:00 is the recipient's: before it nothing goes, in their zone as in the server's. */
@@ -212,6 +225,19 @@ class ReminderMailTest extends TestCase {
 		$this->assertSame([], $this->mails(self::OWNER));
 	}
 
+	/** A tractor counts engine hours, and its mail says so. */
+	public function testALeadByCounterNamesTheVehiclesUnit(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-TR 1', 'odo_unit' => 'h', 'reminder_mail' => 'daily']);
+		\OCP\Server::get(OdometerService::class)->record(self::OWNER, $vehicle->getUuid(), ['read_at' => 1750000000, 'read_at_off' => 0, 'value' => 1450]);
+		$this->reminders->create(self::OWNER, $vehicle->getUuid(), ['title' => 'Hydrauliköl', 'mode' => 'odo', 'due_odo' => 1500, 'lead_odo' => 100]);
+
+		$this->runAt('2031-05-03 07:00');
+
+		$mails = $this->mails(self::OWNER);
+		$this->assertCount(1, $mails);
+		$this->assertStringContainsString('Hydrauliköl ist bei 1500 h fällig', $mails[0]['Text']);
+	}
+
 	/** A disabled account on the list is told nothing. */
 	public function testADisabledAccountIsNotMailed(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'reminder_mail' => 'daily']);
@@ -250,7 +276,7 @@ class ReminderMailTest extends TestCase {
 		$this->assertStringNotContainsString('vehicle=', $mails[0]['Text']);
 	}
 
-	/** Done when, second line: a refusing SMTP server silences neither the app nor tomorrow. */
+	/** A refusing SMTP server silences neither the notification nor tomorrow's mail. */
 	public function testARefusingMailServerLeavesTheNotificationAndTomorrowsMail(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'reminder_mail' => 'daily']);
 		$this->reminders->create(self::OWNER, $vehicle->getUuid(), ['template_key' => 'hu_au', 'due_date' => '2031-05-31']);
@@ -347,6 +373,25 @@ class ReminderMailTest extends TestCase {
 		$mails = $this->mails(self::OWNER);
 		$this->assertCount(1, $mails);
 		$this->assertStringContainsString('B-DD 1', $mails[0]['Text']);
+	}
+
+	/** Checked that day, but the day's digest went already: its news goes with tomorrow's. */
+	public function testAVehicleNewToTheListAfterTheDaysMailWaitsForTomorrow(): void {
+		$first = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'reminder_mail' => 'daily']);
+		$this->reminders->create(self::OWNER, $first->getUuid(), ['template_key' => 'hu_au', 'due_date' => '2031-05-31']);
+		$this->mailAt('2031-05-03 07:00')->digest();
+
+		$due = $this->vehicles->create(self::OWNER, ['plate' => 'B-DD 1', 'reminder_mail' => 'daily']);
+		$this->reminders->create(self::OWNER, $due->getUuid(), ['template_key' => 'hu_au', 'due_date' => '2031-05-31']);
+		$this->mailAt('2031-05-03 08:00')->digest();
+
+		$this->assertCount(1, $this->mails(self::OWNER));
+		$this->mailAt('2031-05-04 07:00')->digest();
+		$texts = array_column($this->mails(self::OWNER), 'Text');
+		$this->assertCount(2, $texts);
+		// Each vehicle's news once: the first day's, and the newcomer's the day after.
+		$this->assertCount(1, array_filter($texts, static fn (string $text): bool => str_contains($text, 'B-DD 1')));
+		$this->assertCount(1, array_filter($texts, static fn (string $text): bool => str_contains($text, 'B-XY 123')));
 	}
 
 	/**

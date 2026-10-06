@@ -16,9 +16,8 @@ use OCP\Migration\IOutput;
 use OCP\Migration\SimpleMigrationStep;
 
 /**
- * What M7 ships: bookings and their handover (docs/architecture.md#data-model), and the
- * `vehicle_id` index on grants M6 left for the next migration. The milestone's only migration,
- * for the reason M2's is.
+ * Bookings and their handover (docs/architecture.md#data-model), and the `vehicle_id` index on
+ * grants.
  */
 class Version000006Date20261002000000 extends SimpleMigrationStep {
 	/**
@@ -75,7 +74,8 @@ class Version000006Date20261002000000 extends SimpleMigrationStep {
 	}
 
 	/**
-	 * The row every table has. Copied, not shared, for the reason M2's copy gives.
+	 * The row every table has. Copied, not shared, for the reason
+	 * Version000002Date20260909000000 gives.
 	 */
 	private function common(Table $table): Table {
 		$table->addColumn('id', Types::BIGINT, ['autoincrement' => true, 'notnull' => true, 'unsigned' => true]);

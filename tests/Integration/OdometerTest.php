@@ -150,8 +150,8 @@ class OdometerTest extends TestCase {
 	}
 
 	/**
-	 * A Reading from before M3 has no `counter` at all, and the km chain is where it lives: a
-	 * distance counts from it and the vehicle caches it, while the hour chain never sees it.
+	 * A Reading written before the `counter` column has none and lives on the km chain: a distance
+	 * counts from it and the vehicle caches it, while the hour chain never sees it.
 	 */
 	public function testAReadingWrittenBeforeTheCounterColumnIsOnTheMainChain(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'second_unit' => 'h']);
@@ -179,10 +179,9 @@ class OdometerTest extends TestCase {
 	}
 
 	/**
-	 * A reading taken in UTC has `read_at_off` 0 and a counter nobody has driven has `value` 0,
-	 * and both are the value the property starts with - which QBMapper reads as "unchanged" and
-	 * leaves out of the INSERT. The NOT NULL column then refuses the row, so the ordinary case
-	 * is the one that 500s. Only the real database says whether it is written.
+	 * `read_at_off` 0 (UTC) and `value` 0 equal the property defaults, which QBMapper reads as
+	 * unchanged and leaves out of the INSERT, where the NOT NULL columns would refuse the row.
+	 * Only the real database shows it is written.
 	 */
 	public function testAReadingOfZeroInUtcIsARowTheDatabaseAccepts(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);

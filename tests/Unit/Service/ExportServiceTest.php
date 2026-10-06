@@ -46,6 +46,19 @@ class ExportServiceTest extends TestCase {
 		]], $logger->lines);
 	}
 
+	/** The route takes any word for the table; one with no file is a 400, and nothing was handed out. */
+	public function testATableWithNoFileIsRefusedAndNotLogged(): void {
+		$logger = new SpyLogger();
+
+		try {
+			$this->service($this->createMock(ExpenseMapper::class), $logger)->csv('alice', self::VEHICLE, 2026, 'readings');
+			$this->fail('exported');
+		} catch (\InvalidArgumentException $e) {
+			$this->assertSame('No such export', $e->getMessage());
+		}
+		$this->assertSame([], $logger->lines);
+	}
+
 	private function service(ExpenseMapper $expenses, SpyLogger $logger): ExportService {
 		$fleet = $this->createMock(VehicleService::class);
 		$fleet->method('reach')->willReturn(Vehicle::fromRow(['id' => 7, 'uuid' => self::VEHICLE, 'plate' => 'B-XY 123', 'currency' => 'EUR']));

@@ -3,7 +3,6 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
-import { FilePickerClosed, getFilePickerBuilder } from '@nextcloud/dialogs'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcDialog from '@nextcloud/vue/components/NcDialog'
 import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
@@ -18,6 +17,7 @@ import { may } from '../utils/access.js'
 import { DOCUMENT_KINDS, documentKindWord } from '../utils/format.js'
 import { ownerSearch, readOwners } from '../utils/owners.js'
 import { savePaper } from '../utils/papers.js'
+import { pickNode } from '../utils/picker.js'
 import { t } from '../utils/l10n.js'
 
 const props = defineProps({
@@ -25,8 +25,7 @@ const props = defineProps({
 	vehicle: { type: Object, required: true },
 })
 
-// The timeline shows the linked ones as paperclips, so the screen hands it this list
-// (src/views/VehicleView.vue) rather than both reading it.
+// The timeline's paperclips need this list; the screen hands it over (src/views/VehicleView.vue).
 const emit = defineEmits(['listed'])
 
 const store = useVehiclesStore()
@@ -47,7 +46,6 @@ const writing = ref(false)
 const files = computed(() => may(props.vehicle, 'log'))
 const keepsVehicles = computed(() => may(props.vehicle, 'edit'))
 
-/** The papers under their kinds, in a fixed order, kinds without any left out. */
 const groups = computed(() => DOCUMENT_KINDS
 	.map((kind) => ({ kind, papers: (documents.value ?? []).filter((one) => one.kind === kind) }))
 	.filter((group) => group.papers.length > 0))
@@ -179,32 +177,18 @@ async function listOwners() {
  */
 async function add() {
 	failure.value = ''
-	let nodes
+	let node
 	try {
-		nodes = await getFilePickerBuilder(t('nextfleet', 'Choose a document'))
-			.setMultiSelect(false)
-			.allowDirectories(false)
-			// The picker brings no button of its own; pickNodes() answers with what this one picked.
-			.setButtonFactory((selected) => [{
-				label: t('nextfleet', 'Choose'),
-				variant: 'primary',
-				disabled: selected.length === 0,
-				callback: () => {},
-			}])
-			.build()
-			.pickNodes()
+		node = await pickNode(t('nextfleet', 'Choose a document'))
 	} catch (error) {
-		if (!(error instanceof FilePickerClosed)) {
-			failure.value = error.message
-		}
+		failure.value = error.message
 		return
 	}
-	const [node] = nodes
-	if (node?.fileid === undefined) {
+	if (node === null) {
 		return
 	}
 
-	picked.value = { fileid: node.fileid, basename: node.basename }
+	picked.value = node
 	kind.value = null
 	belongs.value = null
 	attachFailure.value = ''
@@ -303,9 +287,9 @@ async function attach() {
 				:clearable="false"
 				label="label"
 				@update:model-value="kind = $event?.id ?? null" />
-			<!-- Not filterable: the newest rows are offered until something is typed, and then the whole
-			     history is searched (src/utils/owners.js). Without `edit` a row must be chosen, and the
-			     session's own may lie behind the newest, so the search stays. -->
+			<!-- Not filterable: the newest rows show until something is typed, then the whole
+			     history is searched (src/utils/owners.js). Without `edit` a row is required and
+			     the session's own may be older than the newest, so the search stays. -->
 			<NcNoteCard v-if="!keepsVehicles && owners.length === 0"
 				type="info"
 				:text="t('nextfleet', 'You can attach a paper only to an entry or a booking of your own. None is among the newest; type to search older ones.')" />

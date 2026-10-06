@@ -228,7 +228,6 @@ class ReminderTest extends TestCase {
 		$this->assertSame([$written['uuid']], array_column($this->reminders->list(self::OWNER, $vehicle->getUuid()), 'uuid'));
 	}
 
-	/** A manager writes reminders as the owner does; a driver reads them and writes nothing. */
 	public function testAManagerWritesAndADriverOnlyReads(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
 		$this->grant((int)$vehicle->getId(), self::MANAGER, 'manager');

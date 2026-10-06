@@ -3,7 +3,6 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
-import { FilePickerClosed, getFilePickerBuilder } from '@nextcloud/dialogs'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcDialog from '@nextcloud/vue/components/NcDialog'
 import NcFormBoxSwitch from '@nextcloud/vue/components/NcFormBoxSwitch'
@@ -17,6 +16,7 @@ import { useVehiclesStore } from '../store/index.js'
 import { energyWord, EXPENSE_CATEGORIES, expenseWord, formatCount, MAINTENANCE_TYPES, maintenanceWord } from '../utils/format.js'
 import { FORMATS, formatWord, placedWord, reasonWord, refusalWord, unitsAsked } from '../utils/imports.js'
 import { t } from '../utils/l10n.js'
+import { pickNode } from '../utils/picker.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -28,12 +28,11 @@ const emit = defineEmits(['close', 'imported'])
 const store = useVehiclesStore()
 
 /**
- * The file picked in the person's own Files, or null until the picker answered.
+ * The file picked in the person's own Files; null until the picker answered.
  *
  * @type {import('vue').Ref<{fileid: number, basename: string}|null>}
  */
 const file = ref(null)
-/** The format step, then the preview of what the import would do. */
 const step = ref(/** @type {'format'|'preview'} */ ('format'))
 
 const formats = computed(() => FORMATS.map((one) => ({ id: `${one.importer}/${one.recordType}`, label: formatWord(one), format: one })))
@@ -51,8 +50,8 @@ const volumes = computed(() => [
 	{ id: 'us_gal', label: t('nextfleet', 'US gallons') },
 	{ id: 'uk_gal', label: t('nextfleet', 'UK gallons') },
 ])
-// Preset metric: every vehicle counts in kilometres (docs/contributing.md), and no registered
-// jurisdiction keeps miles or gallons. Only the file can say otherwise, so the user is asked.
+// Preset metric: every vehicle counts in kilometres (docs/contributing.md); only the file can say
+// otherwise, so the user is asked.
 const distance = ref(distances.value[0])
 const volume = ref(volumes.value[0])
 const asks = computed(() => (format.value === null ? [] : unitsAsked(format.value.format, props.vehicle)))
@@ -120,8 +119,7 @@ const leftOut = computed(() => (preview.value?.proposals ?? []).filter((one) => 
 const importable = computed(() => preview.value !== null && preview.value.questions.length === 0 && preview.value.counts.creates > 0)
 
 /**
- * The request a preview and the import are both asked with: the same body, so the import writes
- * what this preview counted.
+ * The body of both the preview and the import, so the import writes what the preview counted.
  *
  * @return {import('../services/api.js').ImportAsked} the body
  */
@@ -251,41 +249,22 @@ async function run() {
 	}
 }
 
-/**
- * Nextcloud's own picker, one CSV file. There is no upload here: the file is the person's own in
- * their Files (docs/architecture.md#import).
- */
+/** No upload: the file is the person's own in their Files (docs/architecture.md#import). */
 onMounted(async () => {
-	let nodes
+	let node
 	try {
-		nodes = await getFilePickerBuilder(t('nextfleet', 'Choose an export file'))
-			.setMultiSelect(false)
-			.allowDirectories(false)
-			.setMimeTypeFilter(['text/csv'])
-			.setButtonFactory((selected) => [{
-				label: t('nextfleet', 'Choose'),
-				variant: 'primary',
-				disabled: selected.length === 0,
-				callback: () => {},
-			}])
-			.build()
-			.pickNodes()
+		node = await pickNode(t('nextfleet', 'Choose an export file'), { mimeTypes: ['text/csv'] })
 	} catch (error) {
 		// A picker that failed rather than closed keeps the sheet up, with nothing but why.
-		if (error instanceof FilePickerClosed) {
-			emit('close')
-		} else {
-			failure.value = error.message
-		}
+		failure.value = error.message
 		return
 	}
-	const [node] = nodes
-	if (node?.fileid === undefined) {
+	if (node === null) {
 		emit('close')
 		return
 	}
 
-	file.value = { fileid: node.fileid, basename: node.basename }
+	file.value = node
 })
 
 /** A sheet whose import is on the way does not close: nobody would hear how it ended. */

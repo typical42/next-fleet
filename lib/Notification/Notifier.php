@@ -137,7 +137,7 @@ class Notifier implements INotifier {
 	 * @throws \OCP\DB\Exception
 	 */
 	private function reminded(IL10N $l, string $user, Vehicle $vehicle, int $reminderId, string $point, array $p): string {
-		$subject = $this->subject($l, $point, $p);
+		$subject = $this->subject($l, $point, $p, $vehicle->getOdoUnit());
 		$vehicleId = (int)$vehicle->getId();
 		if (!isset($this->reminded[$vehicleId])) {
 			$this->reminded[$vehicleId] = [];
@@ -173,9 +173,9 @@ class Notifier implements INotifier {
 	 * @param ReminderNotice $p
 	 * @throws UnknownNotificationException for a point this app does not send
 	 */
-	private function subject(IL10N $l, string $point, array $p): string {
+	private function subject(IL10N $l, string $point, array $p, string $unit): string {
 		try {
-			$line = ReminderWords::line($l, $point, $p);
+			$line = ReminderWords::line($l, $point, $p, $unit);
 		} catch (\UnexpectedValueException) {
 			throw new UnknownNotificationException();
 		}

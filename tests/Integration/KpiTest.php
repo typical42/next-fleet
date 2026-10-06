@@ -237,7 +237,7 @@ class KpiTest extends TestCase {
 		$many = self::queriesOf(fn () => $this->kpis->year(self::OWNER, $long, '2025', ['tz' => 'Europe/Berlin']));
 
 		$this->assertSame($few, $many, '6 000 Readings cost what 6 do');
-		// 27 when written: thirteen edges, three tables, the holding's distance, the consumption.
+		// 27: thirteen edges, three tables, the holding's distance, the consumption.
 		$this->assertLessThanOrEqual(30, $many);
 		$this->assertNotNull($this->kpis->year(self::OWNER, $long, '2025', ['tz' => 'Europe/Berlin'])['year']['cost']['tco']);
 	}

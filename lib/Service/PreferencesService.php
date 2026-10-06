@@ -23,9 +23,8 @@ use OCP\IConfig;
  */
 class PreferencesService {
 	/**
-	 * The keys this app keeps in a user's config. Spelled out because the screen is not their
-	 * only reader - `VehicleService::jurisdictionOf()` reads `jurisdiction` under the same app id
-	 * every time a vehicle is created, which is what makes the setting take effect at all.
+	 * Also read by `VehicleService::jurisdictionOf()` under the same app id whenever a vehicle is
+	 * created, which is what makes the setting take effect.
 	 */
 	private const JURISDICTION = 'jurisdiction';
 
@@ -109,12 +108,10 @@ class PreferencesService {
 				self::INBOX => $this->inboxId($userId),
 			],
 			'jurisdictions' => array_map(
-				// The name is English and reaches no catalogue here; the screen translates it
-				// (docs/ui.md#languages) and falls back to this for a country it has no word for.
-				// Whether a country prints a logbook or a mileage claim travels with it, so the
-				// Reports screen offers each only where its route would not answer 404. Its grid
-				// average travels too, so the settings screen can say what an empty grid factor
-				// means.
+				// The name is English; the screen translates it (docs/ui.md#languages) and falls
+				// back to this. The export flags let the Reports screen offer each only where its
+				// route would not answer 404; the grid average lets the settings screen say what an
+				// empty grid factor means.
 				static fn (IJurisdiction $profile): array => [
 					'key' => $profile->key(),
 					'name' => $profile->displayName(),

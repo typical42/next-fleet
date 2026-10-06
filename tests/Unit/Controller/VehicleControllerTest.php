@@ -25,8 +25,7 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * The controller carries no rules (docs/adr/0009-the-ocs-api-v1-is-the-public-contract.md), so
- * what is worth testing is the translation: who is asking, what the request says, and which status
- * the answer gets.
+ * this tests the translation: who asks, what the request says, which status the answer gets.
  */
 class VehicleControllerTest extends TestCase {
 	private const UUID = '0195e2f1-0000-4000-8000-000000000001';
@@ -61,7 +60,6 @@ class VehicleControllerTest extends TestCase {
 		]);
 	}
 
-	/** The overview asks for the vehicles of whoever is logged in, and nobody else's. */
 	public function testTheListIsTheSessionUsers(): void {
 		$this->service->expects($this->once())
 			->method('list')
@@ -81,10 +79,7 @@ class VehicleControllerTest extends TestCase {
 		$this->assertSame(Http::STATUS_NOT_FOUND, $this->controller()->show(self::UUID)->getStatus());
 	}
 
-	/**
-	 * A create answers 201 with the vehicle, so the client learns the identity the server chose
-	 * and the token its next write has to carry.
-	 */
+	/** The 201 carries the identity the server chose and the token the next write needs. */
 	public function testACreatedVehicleComesBackWithItsIdentity(): void {
 		$this->params = ['plate' => 'B-XY 123'];
 		$this->service->expects($this->once())
@@ -109,7 +104,6 @@ class VehicleControllerTest extends TestCase {
 		$this->assertSame(Http::STATUS_OK, $this->controller()->update(self::UUID)->getStatus());
 	}
 
-	/** A delete takes a token too - it is a write like any other. */
 	public function testADeleteCarriesTheClientsToken(): void {
 		$this->params = ['uuid' => self::UUID, 'updated_at' => '1750000000'];
 		$this->service->expects($this->once())
@@ -120,10 +114,7 @@ class VehicleControllerTest extends TestCase {
 		$this->assertSame(Http::STATUS_OK, $this->controller()->delete(self::UUID)->getStatus());
 	}
 
-	/**
-	 * So does the undo, and the token it carries is the one the delete answered with - there is
-	 * no body on the way back either, so it travels the same way.
-	 */
+	/** The undo has no body either, so its token travels as the delete's does. */
 	public function testARestoreCarriesTheTokenTheDeleteAnsweredWith(): void {
 		$this->params = ['uuid' => self::UUID, 'updated_at' => '1750000000'];
 		$this->service->expects($this->once())
@@ -135,9 +126,7 @@ class VehicleControllerTest extends TestCase {
 	}
 
 	/**
-	 * Without a token there is nothing to check the write against, and a write that skips the
-	 * check is the lost update the whole mechanism exists to prevent. Every write route, read from
-	 * the file, so one added later cannot quietly leave the guard out.
+	 * A write that skips the token check is the lost update the token exists to prevent.
 	 *
 	 * @dataProvider writeRoutes
 	 */
@@ -151,9 +140,8 @@ class VehicleControllerTest extends TestCase {
 	}
 
 	/**
-	 * The stranger case on every route that takes a uuid (docs/security.md). The service decides
-	 * (VehicleAccess); what is tested here is that its refusal reaches the client as one, rather
-	 * than as the 500 an uncaught exception would be.
+	 * The stranger case (docs/security.md). VehicleAccess decides; its refusal must reach the
+	 * client as one, not as the 500 of an uncaught exception.
 	 *
 	 * @dataProvider uuidAddressedRoutes
 	 */
@@ -169,8 +157,8 @@ class VehicleControllerTest extends TestCase {
 	}
 
 	/**
-	 * Every route in `appinfo/routes.php` that names a vehicle, read from the file: one added
-	 * later is one the sweep above has not been through.
+	 * Every route in `appinfo/routes.php` that names a vehicle, read from the file so that one
+	 * added later is swept too.
 	 *
 	 * @return iterable<string, array{string}>
 	 */
@@ -205,8 +193,7 @@ class VehicleControllerTest extends TestCase {
 	}
 
 	/**
-	 * Every route in `appinfo/routes.php` that writes a vehicle it already has, read from the
-	 * file: each one carries a token, so each one can lose the race.
+	 * Every vehicle route but `show`: each carries a token, so each can lose the race.
 	 *
 	 * @return iterable<string, array{string}>
 	 */

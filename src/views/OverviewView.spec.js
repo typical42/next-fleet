@@ -25,8 +25,7 @@ const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', lifecy
 const FRIDAY_SIX_PM = 1790956800
 
 /**
- * The rows rendered with what they hold: the list item's own markup is the library's, so a stand-in
- * shows its name in bold and its slots in place.
+ * Mounts with a stand-in list item that shows its name in bold and its slots in place.
  *
  * @param {any[]} vehicles - the fleet
  * @return {import('@vue/test-utils').VueWrapper} the mounted overview
@@ -79,17 +78,13 @@ afterEach(() => {
 })
 
 describe('the overview', () => {
-	/**
-	 * The hint about vehicles nobody has finished belongs on the overview and nowhere else
-	 * (docs/ui.md): it is the screen that lists them all.
-	 */
+	/** The hint belongs on the overview alone, the screen that lists every vehicle (docs/ui.md). */
 	it('carries the hint over the fleet it lists', () => {
 		const wrapper = shallowMount(OverviewView, { props: { vehicles: [VEHICLE] } })
 
 		expect(hint(wrapper).props('vehicles')).toEqual([VEHICLE])
 	})
 
-	/** Following the hint opens the vehicle, which is this screen's own primary action. */
 	it('opens a vehicle the hint points at', async () => {
 		const wrapper = shallowMount(OverviewView, { props: { vehicles: [VEHICLE] } })
 
@@ -98,10 +93,6 @@ describe('the overview', () => {
 		expect(wrapper.emitted('select')?.[0]).toEqual([VEHICLE.uuid])
 	})
 
-	/**
-	 * A disposed vehicle leaves the fleet but not the app: listed apart, it opens, so a sale
-	 * recorded by mistake can be set back and a sold car's trips still corrected.
-	 */
 	it('lists the disposed vehicles apart and opens them', async () => {
 		vi.mocked(listFleetReminders).mockResolvedValue([])
 		const SOLD = { ...VEHICLE, uuid: 'v-2', plate: 'B-OL 1', lifecycle: 'disposed' }
@@ -118,10 +109,7 @@ describe('the overview', () => {
 		expect(wrapper.emitted('select')).toEqual([['v-2']])
 	})
 
-	/**
-	 * A fleet of sold vehicles still teaches the first new one, and the sold ones still open: the
-	 * overview is the only way back to them.
-	 */
+	/** The overview is the only way back to the sold ones. */
 	it('shows the empty state and the disposed vehicles when no other is left', async () => {
 		vi.mocked(listFleetReminders).mockResolvedValue([])
 		const wrapper = shallowMount(OverviewView, { props: { vehicles: [], disposed: [{ ...VEHICLE, lifecycle: 'disposed' }] } })
@@ -139,10 +127,27 @@ describe('the overview', () => {
 		expect(hint(wrapper).exists()).toBe(false)
 	})
 
-	/**
-	 * `n` is the screen's primary action, and on the overview that is the new vehicle
-	 * (docs/ui.md). Only the screen in view is mounted, so the key needs no arbiter.
-	 */
+	/** The empty state teaches by its one button (docs/ui.md). */
+	it('asks for the first vehicle from the empty state', async () => {
+		const wrapper = shallowMount(OverviewView, {
+			props: { vehicles: [] },
+			global: { renderStubDefaultSlot: true, stubs: { NcEmptyContent: { template: '<div><slot name="action" /></div>' } } },
+		})
+
+		await wrapper.findComponent({ name: 'NcButton' }).vm.$emit('click')
+
+		expect(wrapper.emitted('new')).toHaveLength(1)
+	})
+
+	it('opens a vehicle of the fleet it lists', async () => {
+		const wrapper = rows([VEHICLE])
+		await flushPromises()
+
+		await wrapper.find('.overview__list li').trigger('click')
+
+		expect(wrapper.emitted('select')).toEqual([[VEHICLE.uuid]])
+	})
+
 	it('asks for a new vehicle when n is pressed', () => {
 		const wrapper = shallowMount(OverviewView, { props: { vehicles: [VEHICLE] } })
 
@@ -151,10 +156,7 @@ describe('the overview', () => {
 		expect(wrapper.emitted('new')?.length).toBe(1)
 	})
 
-	/**
-	 * The overview is a to-do list (docs/ui.md): the vehicle whose reminder is overdue comes first,
-	 * and its row says so in a word beside the light, with what is due and when.
-	 */
+	/** A to-do list (docs/ui.md): most urgent first, its state in a word beside the light. */
 	it('lists the fleet most urgent first, each with its light, its state and what comes due next', async () => {
 		vi.mocked(listFleetReminders).mockResolvedValue(/** @type {any} */ ([
 			{ uuid: 'r-1', vehicle: 'v-1', template_key: 'tyre_swap', title: null, mode: 'date', due_date: '2036-04-15', due_odo: null, state: 'planned', estimate: null },
@@ -174,8 +176,7 @@ describe('the overview', () => {
 	})
 
 	/**
-	 * A vehicle reached through a grant sorts among the reader's own and names its owner; their
-	 * own name nobody. The server decides which is which (`owned_by`), never the browser.
+	 * Granted vehicles sort among the reader's own; the server sets `owned_by`, not the browser.
 	 */
 	it('names the owner of a vehicle somebody else owns, and nobody on the reader\'s own', async () => {
 		vi.mocked(listFleetReminders).mockResolvedValue(/** @type {any} */ ([

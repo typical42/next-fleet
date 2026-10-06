@@ -120,7 +120,23 @@ class EnergyTest extends TestCase {
 		$this->energy->record(self::OWNER, $vehicle->getUuid(), $this->fillUp(['second_odo' => 5120]));
 	}
 
-	/** A fill-up with nothing to question states no flag. */
+	/** When, in what offset, what and how much: without one of them there is no fill-up to log. */
+	public function testAFillUpMissingWhatEveryOneCarriesIsRefused(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'energy_types' => ['diesel']]);
+
+		foreach (['filled_at', 'filled_at_off', 'energy', 'amount'] as $column) {
+			try {
+				$this->energy->record(self::OWNER, $vehicle->getUuid(), $this->fillUp([$column => null]));
+				$this->fail($column . ' was not missed');
+			} catch (\InvalidArgumentException $e) {
+				$this->assertSame($column . ' is a field every fill-up carries', $e->getMessage());
+			}
+		}
+		$qb = \OCP\Server::get(IDBConnection::class)->getQueryBuilder();
+		$qb->select($qb->func()->count('*'))->from('fleet_energy')->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter((int)$vehicle->getId(), $qb::PARAM_INT)));
+		$this->assertSame(0, (int)$qb->executeQuery()->fetchOne());
+	}
+
 	public function testAPlausibleFillUpIsNotFlagged(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'energy_types' => ['diesel']]);
 

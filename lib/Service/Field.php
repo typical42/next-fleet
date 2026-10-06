@@ -146,8 +146,7 @@ final class Field {
 
 	/**
 	 * A calendar day, one fact, so it carries no offset and no time of day
-	 * (docs/architecture.md#time). `!` zeroes what the format does not name, which is also what
-	 * keeps the clock out of it.
+	 * (docs/architecture.md#time). `!` zeroes what the format does not name, the clock included.
 	 *
 	 * @throws \InvalidArgumentException
 	 */
@@ -173,6 +172,24 @@ final class Field {
 		}
 
 		return $minutes;
+	}
+
+	/**
+	 * The moment a form's prefill is for: `at`, unix seconds, and `off`, its offset. Both are
+	 * required, since the VAT rate depends on the local day.
+	 *
+	 * @param array<string, mixed> $fields
+	 * @return array{int, int}
+	 * @throws \InvalidArgumentException
+	 */
+	public static function prefillMoment(array $fields): array {
+		$at = self::read('at', 'count', self::MOMENT, $fields['at'] ?? null);
+		$off = self::read('off', 'offset', null, $fields['off'] ?? null);
+		if (!is_int($at) || !is_int($off)) {
+			throw new \InvalidArgumentException('at and off are the moment a prefill is for');
+		}
+
+		return [$at, $off];
 	}
 
 	/**

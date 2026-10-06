@@ -9,13 +9,8 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Controller;
 
 use OCA\NextFleet\Db\OdoReading;
-use OCA\NextFleet\Exception\AccessDeniedException;
-use OCA\NextFleet\Exception\AlreadyCreatedException;
-use OCA\NextFleet\Exception\RefusedException;
-use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\OdometerService;
 use OCP\AppFramework\Controller;
-use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\Attribute\NoAdminRequired;
 use OCP\AppFramework\Http\Attribute\UserRateLimit;
@@ -28,7 +23,7 @@ use OCP\IUserSession;
  * (docs/architecture.md#odometer-rules), including the access check.
  */
 class OdometerController extends Controller {
-	use RequestValues;
+	use EntryAnswers;
 
 	public function __construct(
 		string $appName,
@@ -41,7 +36,7 @@ class OdometerController extends Controller {
 
 	#[NoAdminRequired]
 	public function index(string $uuid): DataResponse {
-		return $this->answer(fn (): array => $this->service->list($this->userId(), $uuid));
+		return $this->answer(fn (): DataResponse => new DataResponse($this->service->list($this->userId(), $uuid)));
 	}
 
 	/**
@@ -52,10 +47,10 @@ class OdometerController extends Controller {
 	#[NoAdminRequired]
 	#[UserRateLimit(limit: 60, period: 60)]
 	public function create(string $uuid): DataResponse {
-		return $this->answer(
-			fn (): OdoReading => $this->service->record($this->userId(), $uuid, $this->request->getParams()),
+		return $this->answer(fn (): DataResponse => new DataResponse(
+			$this->service->record($this->userId(), $uuid, $this->request->getParams()),
 			Http::STATUS_CREATED,
-		);
+		));
 	}
 
 	/**
@@ -99,53 +94,5 @@ class OdometerController extends Controller {
 	#[UserRateLimit(limit: 60, period: 60)]
 	public function reset(string $uuid, string $reading): DataResponse {
 		return $this->checked(fn (int $token): OdoReading => $this->service->reset($this->userId(), $uuid, $reading, $token));
-	}
-
-	/**
-	 * A write checked against the `updated_at` the client read (RequestValues::token()).
-	 *
-	 * @param callable(int):OdoReading $write given the token
-	 */
-	private function checked(callable $write): DataResponse {
-		return $this->answer(fn (): OdoReading => $write($this->token()));
-	}
-
-	/**
-	 * The answers every route here shares.
-	 *
-	 * @param callable():(OdoReading|list<OdoReading>) $work
-	 */
-	private function answer(callable $work, int $status = Http::STATUS_OK): DataResponse {
-		try {
-			return new DataResponse($work(), $status);
-		} catch (AlreadyCreatedException $e) {
-			return new DataResponse($e->answer);
-		} catch (DoesNotExistException) {
-			return new DataResponse(['message' => 'No such vehicle'], Http::STATUS_NOT_FOUND);
-		} catch (AccessDeniedException) {
-			return new DataResponse(['message' => 'Not yours'], Http::STATUS_FORBIDDEN);
-		} catch (StaleUpdateException) {
-			// `conflict` tells this apart from Nextcloud's own failed CSRF check, which is a 412 as
-			// well (docs/architecture.md#concurrency).
-			return new DataResponse(
-				['message' => 'Changed since you read it', 'conflict' => true],
-				Http::STATUS_PRECONDITION_FAILED,
-			);
-		} catch (RefusedException $e) {
-			return new DataResponse(['message' => $e->getMessage(), 'reason' => $e->reason], Http::STATUS_BAD_REQUEST);
-		} catch (\InvalidArgumentException $e) {
-			return new DataResponse(['message' => $e->getMessage()], Http::STATUS_BAD_REQUEST);
-		}
-	}
-
-	private function userId(): string {
-		$user = $this->session->getUser();
-		if ($user === null) {
-			// The routes require a login, so this is a broken container rather than an anonymous
-			// request.
-			throw new \RuntimeException('No user in session');
-		}
-
-		return $user->getUID();
 	}
 }

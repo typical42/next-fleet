@@ -9,8 +9,8 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Jurisdiction;
 
 /**
- * Service intervals by market or manufacturer (docs/contributing.md). Law does not set them, so
- * they are not a jurisdiction's: the inspection a country requires is `IInspectionScheme`.
+ * Service intervals by market or manufacturer. Law does not set them, so they are not a
+ * jurisdiction's: the inspection a country requires is `IInspectionScheme`.
  *
  * Internal seam, not a public API - see docs/contributing.md.
  */

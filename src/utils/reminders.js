@@ -11,8 +11,8 @@ import { t } from './l10n.js'
 /** @typedef {import('../services/api.js').Reminder} Reminder */
 
 /**
- * The states a reminder is still open in, most urgent first. A snooze silences it, so it sinks
- * below one that is merely planned. Done and dismissed are over and not listed.
+ * The open states, most urgent first.
+ * A snooze silences a reminder, so it sinks below a planned one.
  */
 const URGENCY = ['overdue', 'due', 'warned', 'planned', 'snoozed']
 
@@ -158,8 +158,7 @@ export function inspectionOf(reminders) {
 }
 
 /**
- * The kind of work each template is (MAINTENANCE_TYPES, src/utils/format.js). A reminder under the
- * user's own title is no kind the sheet can tell.
+ * The kind of work each template is (MAINTENANCE_TYPES, src/utils/format.js).
  *
  * @type {Record<string, string>}
  */
@@ -245,9 +244,8 @@ export function addMonths(day, months) {
 }
 
 /**
- * An edit is a full replace (docs/architecture.md#reminder-engine), so a change to one field
- * travels with every other one as it stands. Only the fields the mode reads, as the reminder
- * sheet sends them.
+ * An edit is a full replace (docs/architecture.md#reminder-engine), so every field travels as it
+ * stands. Only the fields the mode reads, as the reminder sheet sends them.
  *
  * @param {Reminder} reminder - as the list answered
  * @return {Record<string, unknown>} what an edit that changes nothing sends

@@ -20,7 +20,6 @@ beforeEach(() => {
 })
 
 describe('inbox store', () => {
-	/** A paper attached, detached or restored elsewhere moves the count the navigation shows. */
 	it('reads the count again while an inbox folder is set', async () => {
 		vi.mocked(readInbox).mockResolvedValueOnce({ folder: FOLDER, files: [PHOTO], count: 1 })
 		vi.mocked(readInbox).mockResolvedValueOnce({ folder: FOLDER, files: [], count: 0 })
@@ -42,7 +41,6 @@ describe('inbox store', () => {
 		expect(readInbox).toHaveBeenCalledOnce()
 	})
 
-	/** The count is a hint beside the menu; the write it follows stands, so a failed read is no failure of it. */
 	it('keeps the count it had when the read fails', async () => {
 		vi.mocked(readInbox).mockResolvedValueOnce({ folder: FOLDER, files: [PHOTO], count: 1 })
 		vi.mocked(readInbox).mockRejectedValueOnce(new Error('The server answered 503'))

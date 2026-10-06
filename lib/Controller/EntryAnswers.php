@@ -18,15 +18,15 @@ use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\DataResponse;
 
 /**
- * What the fill-up, maintenance, expense, reminder, booking and document controllers answer alike:
- * the refusals a service throws, as the status each one means, and the token an edit, a delete or
- * an undo is checked against. The trip's controller spells the same out on its own, since its
- * service answers with an entity.
+ * What the internal controllers of a vehicle and its rows answer alike: the refusals a service
+ * throws, as the status each one means, and the token an edit, a delete or an undo is checked
+ * against.
  *
  * Wants `$request` (Controller's) and an `IUserSession $session` on the class that uses it.
  */
 trait EntryAnswers {
 	use RequestValues;
+	use SessionUser;
 
 	/**
 	 * @param \Closure(): DataResponse $call
@@ -45,8 +45,7 @@ trait EntryAnswers {
 			// The booking in the way travels with the refusal, so the sheet names it.
 			return new DataResponse(['message' => $e->getMessage(), 'booking' => $e->booking], Http::STATUS_CONFLICT);
 		} catch (StaleUpdateException) {
-			// `conflict` tells this apart from Nextcloud's own failed CSRF check, which is a 412 as
-			// well (docs/architecture.md#concurrency).
+			// `conflict` sets this apart from a failed CSRF check (docs/architecture.md#concurrency).
 			return new DataResponse(
 				['message' => 'Changed since you read it', 'conflict' => true],
 				Http::STATUS_PRECONDITION_FAILED,
@@ -61,20 +60,9 @@ trait EntryAnswers {
 	/**
 	 * A write checked against the `updated_at` the client read (RequestValues::token()).
 	 *
-	 * @param \Closure(int): array<string, mixed> $write given the token
+	 * @param \Closure(int): (array<string, mixed>|object) $write given the token
 	 */
 	private function checked(\Closure $write): DataResponse {
 		return $this->answer(fn (): DataResponse => new DataResponse($write($this->token())));
-	}
-
-	private function userId(): string {
-		$user = $this->session->getUser();
-		if ($user === null) {
-			// The route requires a login, so this is a broken container rather than an anonymous
-			// request.
-			throw new \RuntimeException('No user in session');
-		}
-
-		return $user->getUID();
 	}
 }

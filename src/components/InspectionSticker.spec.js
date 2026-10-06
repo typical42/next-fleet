@@ -106,7 +106,6 @@ describe('the HU/AU sticker question', () => {
 		expect(useVehiclesStore().reminded).toBe(1)
 	})
 
-	/** The host hides the question only once it has read the list back; a second click would add a second HU/AU. */
 	it('takes no second answer while the first is being shown', async () => {
 		const wrapper = sticker('2024-03-15')
 

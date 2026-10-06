@@ -8,12 +8,12 @@ import { expect } from '@playwright/test'
 
 import { runAccount } from './accounts.js'
 
-/** Where the app answers. Every project in playwright.config.js reaches it on its own port. */
+/** The app's path; each project in playwright.config.js has its own port. */
 export const appPage = '/index.php/apps/nextfleet/'
 
 /**
- * Nextcloud's own personal settings page. The app has no seventh screen: it registers a section on
- * this one and mounts a second bundle into it (lib/Settings/Personal.php, docs/ui.md).
+ * Nextcloud's personal settings page, where the app mounts a second bundle in its own section
+ * (lib/Settings/Personal.php, docs/ui.md).
  */
 export const settingsPage = '/index.php/settings/user/additional'
 
@@ -72,8 +72,7 @@ export function api(page, call) {
 			},
 			body: body === undefined ? undefined : JSON.stringify(body),
 		})
-		// The status, because a refused call otherwise arrives as whatever the caller does to
-		// an error page it took for a fleet.
+		// Otherwise the caller takes an error page for data.
 		if (!response.ok) {
 			throw new Error(`${method} ${path} answered ${response.status}`)
 		}
@@ -248,8 +247,7 @@ export async function opened(sheet) {
 }
 
 /**
- * A vehicle with a counter, written the short way. The screens are what these files test; getting
- * one on screen to test them is not.
+ * Makes a vehicle with a first Reading through the API, for a test that is not about making one.
  *
  * @param {import('@playwright/test').Page} page - a page on a signed-in Nextcloud
  * @param {string} plate - the label to find it by

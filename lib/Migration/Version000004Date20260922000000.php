@@ -19,8 +19,8 @@ use OCP\Migration\IOutput;
 use OCP\Migration\SimpleMigrationStep;
 
 /**
- * What M4 ships: reminders, the receipts of what they sent, and who they send to
- * (docs/architecture.md#data-model). The milestone's only migration, for the reason M2's is.
+ * Reminders, the receipts of what they sent, and who they send to
+ * (docs/architecture.md#data-model).
  */
 class Version000004Date20260922000000 extends SimpleMigrationStep {
 	public function __construct(
@@ -151,9 +151,10 @@ class Version000004Date20260922000000 extends SimpleMigrationStep {
 	}
 
 	/**
-	 * The row every table has. Copied, not shared, for the reason M2's copy gives. A table name
-	 * of 23 characters or more needs its key named: PostgreSQL derives the default from the
-	 * table, and Nextcloud refuses what would come out too long.
+	 * The row every table has. Copied, not shared, for the reason
+	 * Version000002Date20260909000000 gives. A table name of 23 characters or more needs its key
+	 * named: PostgreSQL derives the default from the table, and Nextcloud refuses what would come
+	 * out too long.
 	 */
 	private function common(Table $table, ?string $primaryKey): Table {
 		$table->addColumn('id', Types::BIGINT, ['autoincrement' => true, 'notnull' => true, 'unsigned' => true]);

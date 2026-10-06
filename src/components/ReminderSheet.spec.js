@@ -17,8 +17,7 @@ import { ConflictError, createReminder, deleteEntry, dismissReminder, listRemind
 import { useVehiclesStore } from '../store/index.js'
 import ReminderSheet from './ReminderSheet.vue'
 
-// The network is the api client's seam, and the store is left real: a delete goes through it so
-// the undo toast can offer it back.
+// The store is left real: a delete goes through it so the undo toast can offer it back.
 vi.mock('../services/api.js', async (original) => ({
 	...await original(),
 	createReminder: vi.fn(),
@@ -137,7 +136,6 @@ afterEach(() => {
 })
 
 describe('a new reminder', () => {
-	/** Prefilled is visibly editable (docs/ui.md): the template's recurrence lands in the fields. */
 	it('starts from a template, which fills in what it knows', async () => {
 		const wrapper = await sheet()
 
@@ -151,7 +149,6 @@ describe('a new reminder', () => {
 		expect(field(wrapper, 'Warn before (km)').props('modelValue')).toBe('1000')
 	})
 
-	/** A template's title translates, so the sheet sends its key and never a title beside it. */
 	it('saves a template by its key, with only the fields its mode reads', async () => {
 		const wrapper = await sheet()
 		await pick(wrapper, 'Reminder', 'tyre_swap')
@@ -183,7 +180,6 @@ describe('a new reminder', () => {
 		expect(field(wrapper, 'Warn a month before')).toBeUndefined()
 	})
 
-	/** A failed save is never lost: the sheet stays open with its values and says why. */
 	it('stays open with what it holds when the server refuses', async () => {
 		vi.mocked(createReminder).mockRejectedValue(new Error('due_date is a field every reminder by date carries'))
 		const wrapper = await sheet()
@@ -191,9 +187,26 @@ describe('a new reminder', () => {
 
 		await click(wrapper, 'Add reminder')
 
-		expect(noted(wrapper)).toBe('due_date is a field every reminder by date carries')
+		expect(noted(wrapper)).toBe('A reminder due by date needs a due date.')
 		expect(field(wrapper, 'Title').props('modelValue')).toBe('Wax')
 		expect(wrapper.emitted('saved')).toBeUndefined()
+	})
+
+	it.each([
+		['title is a field every reminder without a template carries', 'A reminder of your own needs a title.'],
+		['title is longer than 255 characters', 'The title is longer than 255 characters.'],
+		['due_odo is a field every reminder by odometer carries', 'A reminder due by the counter needs the reading it is due at.'],
+		['a reminder by either recurs by both or by neither', 'A reminder due by date or counter repeats by both or by neither. Fill in both repeat fields, or leave both empty.'],
+		['a recurrence is more than zero', 'A repeat is more than zero. Leave the field empty for no repeat.'],
+		['recur_months is 1200 at most', 'A reminder repeats every 1,200 months at most.'],
+		['mode is one of date, odo, either', 'mode is one of date, odo, either'],
+	])('puts the refusal "%s" into words, or shows it as sent', async (message, words) => {
+		vi.mocked(createReminder).mockRejectedValue(new Error(message))
+		const wrapper = await sheet()
+
+		await click(wrapper, 'Add reminder')
+
+		expect(noted(wrapper)).toBe(words)
 	})
 
 	it('asks again for a counter it cannot read, and sends nothing', async () => {
@@ -253,6 +266,28 @@ describe('an existing reminder', () => {
 		expect(snoozeReminder).toHaveBeenCalledWith('v-1', OWN, '2026-09-29')
 	})
 
+	/** The server's day decides, and it can be a day ahead of the reader's. */
+	it('says so when a snooze ends on a day gone by', async () => {
+		vi.mocked(snoozeReminder).mockRejectedValue(new Error('until is a day still to come'))
+		const wrapper = await sheet(OWN)
+
+		await field(wrapper, 'Snooze until').vm.$emit('update:modelValue', new Date(2026, 10, 3))
+		await click(wrapper, 'Snooze until then')
+
+		expect(noted(wrapper)).toBe('A snooze ends on a day still to come.')
+	})
+
+	/** Done or skipped elsewhere: the server finds it closed before it asks the token. */
+	it('says so when the occurrence was closed somewhere else', async () => {
+		vi.mocked(dismissReminder).mockRejectedValue(new Error('this occurrence is over'))
+		const wrapper = await sheet(OWN)
+
+		await click(wrapper, 'Skip this time')
+
+		expect(noted(wrapper)).toBe('This reminder was done or skipped somewhere else meanwhile.')
+		expect(wrapper.emitted('saved')).toBeUndefined()
+	})
+
 	it('skips this occurrence', async () => {
 		const wrapper = await sheet(OWN)
 
@@ -262,7 +297,6 @@ describe('an existing reminder', () => {
 		expect(wrapper.emitted('saved')).toHaveLength(1)
 	})
 
-	/** Nothing asks "are you sure?": the undo toast offers it back (docs/ui.md). */
 	it('deletes, and leaves the way back with the store', async () => {
 		const wrapper = await sheet(OWN)
 
@@ -273,10 +307,7 @@ describe('an existing reminder', () => {
 		expect(wrapper.emitted('saved')).toHaveLength(1)
 	})
 
-	/**
-	 * A refused snooze is not a refused save: the note says what snoozing again does, and doing so
-	 * acts on the reminder as it now stands.
-	 */
+	/** A refused snooze is not a refused save, so its note says what snoozing again does. */
 	it('snoozes again under the token the list now holds', async () => {
 		vi.mocked(snoozeReminder).mockRejectedValueOnce(new ConflictError('stale'))
 		vi.mocked(listReminders).mockResolvedValue([{ ...OWN, updated_at: 1700000500 }])
@@ -291,7 +322,6 @@ describe('an existing reminder', () => {
 		expect(wrapper.emitted('saved')).toHaveLength(1)
 	})
 
-	/** A refused write reads the reminder back and writes what is on screen under the new token. */
 	it('saves anyway under the token the list now holds', async () => {
 		vi.mocked(updateEntry).mockRejectedValueOnce(new ConflictError('stale'))
 		vi.mocked(listReminders).mockResolvedValue([{ ...OWN, updated_at: 1700000500 }])
@@ -304,5 +334,36 @@ describe('an existing reminder', () => {
 		expect(listReminders).toHaveBeenCalledWith('v-1')
 		expect(vi.mocked(updateEntry).mock.calls[1][2]).toEqual(expect.objectContaining({ updated_at: 1700000500 }))
 		expect(wrapper.emitted('saved')).toHaveLength(1)
+	})
+})
+
+describe('closing the sheet', () => {
+	it('closes on Esc and on Cancel', async () => {
+		const wrapper = await sheet()
+
+		await wrapper.find('.sheet').trigger('keydown.esc')
+		await click(wrapper, 'Cancel')
+
+		expect(wrapper.emitted('close')).toHaveLength(2)
+	})
+
+	/** Esc in a date field belongs to the picker the browser opened (VehicleSheet.vue says why). */
+	it('stays open on Esc in a date field', async () => {
+		const wrapper = await sheet(OWN)
+
+		await field(wrapper, 'Due date').trigger('keydown.esc')
+		await field(wrapper, 'Snooze until').trigger('keydown.esc')
+
+		expect(wrapper.emitted('close')).toBeUndefined()
+	})
+
+	it('stays open while a save is in flight', async () => {
+		vi.mocked(updateEntry).mockReturnValue(new Promise(() => {}))
+		const wrapper = await sheet(OWN)
+
+		await click(wrapper, 'Save')
+		await wrapper.find('.sheet').trigger('keydown.esc')
+
+		expect(wrapper.emitted('close')).toBeUndefined()
 	})
 })

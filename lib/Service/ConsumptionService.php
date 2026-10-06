@@ -65,9 +65,8 @@ class ConsumptionService {
 
 	/**
 	 * Electricity as drawn from the wall: every charge in `[from, to)` over the distance driven in
-	 * it, charged or not. No charge ever fills a battery "full", so the segment rule rarely fires
-	 * for electricity; this figure always can, and is approximate because it includes charging
-	 * losses and the kilometres a hybrid drove on its other energy.
+	 * it, charged or not. Approximate: it includes charging losses and the kilometres a hybrid drove
+	 * on its other energy.
 	 *
 	 * @return Rolling|null null without a charge or a distance in the period
 	 * @throws \OCP\DB\Exception
@@ -131,8 +130,7 @@ class ConsumptionService {
 	/**
 	 * How far a counter moved between `from` and `to`, segments summed
 	 * (docs/architecture.md#numbers-consumption-cost-emissions, "A period's distance"). Null when
-	 * no two Readings say it moved, or when a segment ran backwards: that hides a question nobody
-	 * answered, and a gap must produce no number rather than a wrong one.
+	 * no two Readings say it moved, or when a segment ran backwards.
 	 *
 	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
 	 * @throws \OCP\DB\Exception
@@ -253,11 +251,9 @@ class ConsumptionService {
 	}
 
 	/**
-	 * One energy's segments. A segment opens at a full fill-up and closes at the next one; whatever
-	 * went in after the opening, partials included, is what the distance used. It yields no number
-	 * when a fill-up in it says one before it went unrecorded, or when either end lacks a Reading
-	 * that was read and not questioned - a gap must produce no number rather than a wrong one. A
-	 * counter replaced in it ends it too (rule 3): what the old one ran before the swap is unknown.
+	 * One energy's segments, full tank to full tank, partials summed in. A missed fill-up, an end
+	 * without an observed and unflagged Reading, or a counter replaced in between (rule 3) yields
+	 * no number: a gap must produce no number rather than a wrong one.
 	 *
 	 * @param list<Energy> $chain in time order
 	 * @param array<int, OdoReading> $counted each fill-up's live main-counter Reading, by its id
@@ -310,7 +306,7 @@ class ConsumptionService {
 		return $amount / ($per === 'h' ? 1000.0 : 10.0) / $distance;
 	}
 
-	/** The Reading when a segment may be measured from it (docs/architecture.md rule 6). */
+	/** The Reading when a segment may be measured from it (docs/architecture.md#odometer-rules, rule 6). */
 	private static function trusted(?OdoReading $reading): ?OdoReading {
 		return $reading !== null && $reading->getOrigin() === OdometerService::OBSERVED && !$reading->getFlagged()
 			? $reading

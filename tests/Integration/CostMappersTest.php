@@ -20,8 +20,8 @@ use OCP\IDBConnection;
 use PHPUnit\Framework\TestCase;
 
 /**
- * M3's rows through their mappers and back: every property lands in a column that exists and
- * comes back as it went in. No service writes these tables yet, so this is the only proof.
+ * Cost rows through their mappers and back: every property lands in a column that exists and
+ * comes back as it went in.
  *
  * It writes to the instance it runs against (docs/development.md#testing).
  */
@@ -175,9 +175,6 @@ class CostMappersTest extends TestCase {
 		}
 	}
 
-	/**
-	 * A Reading written the way M2 writes one - no counter named - is on the main counter.
-	 */
 	public function testAReadingThatNamesNoCounterIsOnTheMainOne(): void {
 		$reading = new OdoReading();
 		$reading->setVehicleId(1);

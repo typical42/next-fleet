@@ -27,8 +27,8 @@ use OCP\IDBConnection;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The two tables M2 adds, against the real database: what a trip is when it comes back out, the
- * order trips come back in, and what the audit trail keeps.
+ * Trips and their audit trail against the real database: what a trip is when it comes back out,
+ * the order trips come back in, and what the audit trail keeps.
  *
  * It writes to the instance it runs against (docs/development.md#testing).
  */
@@ -108,10 +108,8 @@ class TripTest extends TestCase {
 	}
 
 	/**
-	 * Every column survives the round trip, the two that a starting value would otherwise drop
-	 * included: an offset of zero is a trip entered in UTC, and `reconciled` left alone is a trip
-	 * nobody reconciled - both are facts, and a NOT NULL column would refuse the row if the
-	 * entity let them go unwritten.
+	 * An offset of zero (entered in UTC) and `reconciled` left false are facts too: a NOT NULL
+	 * column would refuse the row if the entity let them go unwritten.
 	 */
 	public function testATripEnteredInUtcAndNeverReconciledStillWritesBothColumns(): void {
 		$written = $this->trips->insert($this->trip(1750000000));
@@ -174,9 +172,8 @@ class TripTest extends TestCase {
 	}
 
 	/**
-	 * The task, against the real database: two rows in two tables and a third column moved, all of
-	 * it inside one transaction. Only the instance says whether the NOT NULL columns were written
-	 * and whether the vehicle's cache followed.
+	 * Two rows in two tables and a third column moved, in one transaction. Only the instance says
+	 * whether the NOT NULL columns were written and whether the vehicle's cache followed.
 	 */
 	public function testATripEndingOnACounterWritesItsReadingAndMovesTheVehicle(): void {
 		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 123']);
@@ -253,9 +250,8 @@ class TripTest extends TestCase {
 	}
 
 	/**
-	 * The task against the real database: the trail of one trip, as the JSON column gave it back.
-	 * Only the instance says a nested diff survives `Types::JSON` and that the row committed
-	 * alongside the trip it describes rather than with it.
+	 * The trail of one trip, as the JSON column gave it back. Only the instance says a nested diff
+	 * survives `Types::JSON` and that the row committed alongside the trip it describes.
 	 */
 	public function testATripUnderLogbookModeIsRecordedInTheTrailOfThatTrip(): void {
 		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 126']);
@@ -282,10 +278,6 @@ class TripTest extends TestCase {
 		], $trail[0]->getDiffJson());
 	}
 
-	/**
-	 * Off the mode nothing is recorded, and the trip is written all the same. A vehicle that only
-	 * accepted a trip when somebody was watching would be the wrong half of the feature.
-	 */
 	public function testATripOnAVehicleOutsideTheModeIsWrittenAndLeavesNoTrail(): void {
 		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 127']);
 
@@ -321,9 +313,8 @@ class TripTest extends TestCase {
 	}
 
 	/**
-	 * The task against the real database: the row survives its own delete, it is out of every read
-	 * that asks for the vehicle's trips, and the Reading it left goes with it - so the vehicle
-	 * stands where it stood before the journey nobody claims any more.
+	 * The row survives its own delete, it is out of every read of the vehicle's trips, and the
+	 * Reading it left goes with it, so the vehicle stands where it stood before the journey.
 	 */
 	public function testVoidingATripKeepsTheRowAndTakesItsCounterWithIt(): void {
 		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 128']);
@@ -396,7 +387,6 @@ class TripTest extends TestCase {
 		$this->assertSame(['end_odo' => null, 'ended_at' => 1750203600, 'ended_at_off' => 120], $prefill['last']);
 	}
 
-	/** A vehicle with no trips offers neither. */
 	public function testThePrefillOfAVehicleWithoutTripsOffersNoCategoryAndNoLastTrip(): void {
 		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 133']);
 
@@ -540,9 +530,8 @@ class TripTest extends TestCase {
 	}
 
 	/**
-	 * The task against the real database and the real clock: a trip from 2025 corrected now is long
-	 * past Germany's delay. The edit lands, the counter follows it, and the trail as the JSON column
-	 * gave it back says the edit was late.
+	 * Against the real clock: a trip from 2025 corrected now is long past Germany's delay. The edit
+	 * lands, the counter follows it, and the trail as the JSON column gave it back calls it late.
 	 */
 	public function testALateEditIsWrittenAndItsTrailSaysItWasLate(): void {
 		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 132', 'jurisdiction' => 'de']);
@@ -622,9 +611,9 @@ class TripTest extends TestCase {
 	}
 
 	/**
-	 * The task against the real database: a claim 200 km above the counter is closed by one private
-	 * trip the app marks reconciled. Its counted Reading lands on the claim, so the real queries find
-	 * no Gap left, and the trail as the JSON column gave it back says the kilometres were derived.
+	 * A claim 200 km above the counter is closed by one private trip the app marks reconciled. Its
+	 * counted Reading lands on the claim, so the real queries find no Gap left, and the trail as
+	 * the JSON column gave it back says the kilometres were derived.
 	 */
 	public function testClosingAGapWritesOneReconciledTripAndLeavesNoGap(): void {
 		$vehicle = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 135']);

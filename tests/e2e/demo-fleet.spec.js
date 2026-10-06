@@ -30,11 +30,9 @@ test.afterEach(async ({ page }) => {
 })
 
 test('the demo fleet is on screen with the rows that are awkward on purpose', async ({ page }) => {
-	// The app's own content area: the navigation lists the same vehicles, and Nextcloud's chrome
-	// has landmarks of its own.
+	// The fleet's own list in the app's content area: the navigation, Nextcloud's chrome and the
+	// "complete this vehicle" hint (src/components/CompleteHint.vue) list vehicles too.
 	const overview = page.locator('#nextfleet').getByRole('main')
-	// The fleet's own list: the "complete this vehicle" hint above it lists vehicles too
-	// (src/components/CompleteHint.vue).
 	const row = (/** @type {string} */ plate) => overview.locator('.overview__list')
 		.getByRole('listitem').filter({ hasText: plate })
 
@@ -61,8 +59,8 @@ test('the demo fleet is on screen with the rows that are awkward on purpose', as
 
 test('a flagged reading is the demo fleet, not a broken write', async ({ page }) => {
 	// The cluster was swapped, so the counter starts over: the row below the one before it is kept
-	// and flagged rather than refused (docs/architecture.md#odometer-rules). No screen shows a
-	// flag yet - the timeline that asks about it is M2 - so the vehicle is what answers.
+	// and flagged rather than refused (docs/architecture.md#odometer-rules). The timeline's
+	// question about a flag is m2-slice.spec.js's; here the vehicle answers.
 	const fleet = await api(page, { method: 'GET', path: '/api/vehicles' })
 
 	const hybrid = fleet.find((/** @type {{plate: string}} */ vehicle) => vehicle.plate === `${demo}PH 200`)

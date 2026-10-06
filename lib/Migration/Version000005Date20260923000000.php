@@ -16,8 +16,8 @@ use OCP\Migration\IOutput;
 use OCP\Migration\SimpleMigrationStep;
 
 /**
- * What M5 ships: a vehicle's papers, kept in Nextcloud Files and referenced from here
- * (docs/architecture.md#data-model). The milestone's only migration, for the reason M2's is.
+ * A vehicle's papers, kept in Nextcloud Files and referenced from here
+ * (docs/architecture.md#data-model).
  */
 class Version000005Date20260923000000 extends SimpleMigrationStep {
 	/**
@@ -55,7 +55,8 @@ class Version000005Date20260923000000 extends SimpleMigrationStep {
 	}
 
 	/**
-	 * The row every table has. Copied, not shared, for the reason M2's copy gives.
+	 * The row every table has. Copied, not shared, for the reason
+	 * Version000002Date20260909000000 gives.
 	 */
 	private function common(Table $table): Table {
 		$table->addColumn('id', Types::BIGINT, ['autoincrement' => true, 'notnull' => true, 'unsigned' => true]);

@@ -27,23 +27,6 @@ class ReminderRecipientMapper extends BaseMapper {
 	}
 
 	/**
-	 * Who one vehicle's reminders go to, in the order they were added.
-	 *
-	 * @return list<ReminderRecipient>
-	 * @throws \OCP\DB\Exception
-	 */
-	public function findByVehicle(int $vehicleId): array {
-		$qb = $this->db->getQueryBuilder();
-		$qb->select('*')
-			->from($this->tableName)
-			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
-			->andWhere($qb->expr()->isNull('deleted_at'))
-			->orderBy('id');
-
-		return $this->findEntities($qb);
-	}
-
-	/**
 	 * Every vehicle whose list names somebody, or `$userId` when given. The vehicle's own
 	 * `deleted_at` is not asked: a vehicle in the trash keeps its list for an undo.
 	 *

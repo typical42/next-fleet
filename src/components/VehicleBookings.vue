@@ -117,8 +117,8 @@ function past(booking) {
 }
 
 /**
- * The coming ones first, which are what a driver plans around; groups without any left out. The past
- * ones are the last week's and any return still waiting for its trip, however old.
+ * The coming ones first, which are what a driver plans around. The past ones are the last week's
+ * and any return still waiting for its trip, however old.
  */
 const groups = computed(() => [
 	{ key: 'coming', title: t('nextfleet', 'Coming'), list: (bookings.value ?? []).filter((one) => !past(one)) },

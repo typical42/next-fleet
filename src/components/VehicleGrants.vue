@@ -13,6 +13,7 @@ import { addGrant, changeGrant, listGrants, revokeGrant, searchGrantees } from '
 import { may } from '../utils/access.js'
 import { ROLES, roleWord } from '../utils/format.js'
 import { t } from '../utils/l10n.js'
+import { latestSearch } from '../utils/search.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -33,8 +34,7 @@ const owns = computed(() => may(props.vehicle, 'own'))
  * @type {import('vue').Ref<import('../services/api.js').Grant[]|null>}
  */
 const grants = ref(null)
-/** @type {import('vue').Ref<{ grantee: string, grantee_type: 'user'|'group', display_name: string }[]>} */
-const found = ref([])
+const { found, search } = latestSearch(searchGrantees)
 /** @type {import('vue').Ref<{ id: string }|null>} */
 const picked = ref(null)
 const writing = ref(false)
@@ -55,9 +55,8 @@ const role = ref(roles.value.find((one) => one.id === 'driver'))
 
 /**
  * @param {{ grantee: string, grantee_type: string, display_name: string }} one - a user or a group
- * @return {object} it as the picker shows it. The id carries the type, because a group may share
- *   its name with an account; the grantee rides along as the subname because the picker filters
- *   on what it shows.
+ * @return {object} it as the picker shows it. The id carries the type: a group may share its name
+ *   with an account. The grantee is the subname: the picker filters on what it shows.
  */
 function option(one) {
 	return one.grantee_type === 'group'
@@ -78,21 +77,14 @@ onMounted(async () => {
 	}
 })
 
-/** What was typed last; an answer to anything earlier is dropped, whenever it arrives. */
-let typed = ''
-
-/** @param {string} term - what was typed */
-async function search(term) {
-	typed = term
-	let answer = []
-	try {
-		answer = term.trim() === '' ? [] : await searchGrantees(term)
-	} catch {
-		// No matches: the field stays usable for the next try.
-	}
-	if (term === typed) {
-		found.value = answer
-	}
+/**
+ * GrantService's refusals a person can run into, by its English words; the rest show as sent.
+ *
+ * @type {Record<string, () => string>}
+ */
+const REFUSALS = {
+	'grantee is no user you may grant to': () => t('nextfleet', 'You cannot give this account access.'),
+	'grantee is no group you may grant to': () => t('nextfleet', 'You cannot give this group access.'),
 }
 
 /**
@@ -108,14 +100,14 @@ async function write(work) {
 		grants.value = await work()
 		return true
 	} catch (error) {
-		failure.value = t('nextfleet', 'Access was not changed: {reason}', { reason: error.message })
+		failure.value = REFUSALS[error.message]?.() ?? t('nextfleet', 'Access was not changed: {reason}', { reason: error.message })
 		return false
 	} finally {
 		writing.value = false
 	}
 }
 
-/** Grants the one picked the role chosen, and clears the pick for the next one. */
+/** Grants the pick its role, and clears the pick for the next one. */
 async function give() {
 	if (await write(() => addGrant(props.vehicle.uuid, picked.value.grantee, role.value.id))) {
 		picked.value = null

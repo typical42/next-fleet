@@ -95,6 +95,15 @@ describe('the header tiles', () => {
 		})
 	})
 
+	it('compares the wall-side figure with the period before', () => {
+		const ev = { ...CAR, energy_types: ['electric'] }
+		const before = kpis({ wall_side: { amount: 110000, distance: 500, per: 'km', value: 22 } })
+
+		const tiles = tilesOf(ev, kpis({ wall_side: { amount: 100000, distance: 500, per: 'km', value: 20 } }), before, 'en')
+
+		expect(tile(tiles, 'Electric, at the charger')?.change).toBe('−2.0 kWh/100 km vs. the period before')
+	})
+
 	it('shows the wall-side figure only on a vehicle that charges', () => {
 		const tiles = tilesOf(CAR, kpis({ wall_side: { amount: 1000, distance: 10, per: 'km', value: 10 } }), null, 'en')
 
@@ -166,7 +175,6 @@ describe('the header tiles', () => {
 		])
 	})
 
-	/** The Costs screen states a year's figures, and the counter belongs to no period. */
 	it('states the period\'s figures without the odometer', () => {
 		const tiles = periodTilesOf(CAR, kpis({ consumption: [DIESEL], cost: cost({ tco: 3500 }) }), null, 'en')
 

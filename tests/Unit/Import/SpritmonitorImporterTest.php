@@ -444,4 +444,11 @@ class SpritmonitorImporterTest extends TestCase {
 		$this->expectException(\InvalidArgumentException::class);
 		$this->propose('costs', 'spritmonitor-costs.csv', ['category_map' => ['6' => 'expense.fuel']] + self::DE);
 	}
+
+	/** The request's own field: a client may send anything there. */
+	public function testACategoryMapThatIsNoMapIsRefused(): void {
+		$this->expectException(\InvalidArgumentException::class);
+		$this->expectExceptionMessage('category_map maps each category text to what it becomes');
+		$this->propose('costs', 'spritmonitor-costs.csv', ['category_map' => 'expense.tax'] + self::DE);
+	}
 }

@@ -10,6 +10,7 @@ namespace OCA\NextFleet\Command;
 
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
+use OCP\IUserManager;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
@@ -21,6 +22,7 @@ use Symfony\Component\Console\Output\OutputInterface;
 class VehiclesCommand extends Command {
 	public function __construct(
 		private VehicleMapper $mapper,
+		private IUserManager $users,
 	) {
 		parent::__construct();
 	}
@@ -42,7 +44,10 @@ class VehiclesCommand extends Command {
 			return self::INVALID;
 		}
 		$owner = $input->getOption('user');
-		$vehicles = $this->mapper->findForAdmin($owner === null ? null : (string)$owner, $input->getOption('deleted') === true);
+		// The uid as stored, for the reason SeedCommand gives. A name no account holds, such as an
+		// erased owner's pseudonym (ErasureService), is taken as typed.
+		$owner = $owner === null ? null : $this->users->get((string)$owner)?->getUID() ?? (string)$owner;
+		$vehicles = $this->mapper->findForAdmin($owner, $input->getOption('deleted') === true);
 
 		$format->rows($output, array_map(static fn (Vehicle $vehicle): array => [
 			'uuid' => $vehicle->getUuid(),

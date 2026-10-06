@@ -4,6 +4,7 @@
  */
 
 import NcAppNavigationItem from '@nextcloud/vue/components/NcAppNavigationItem'
+import NcAppNavigationNew from '@nextcloud/vue/components/NcAppNavigationNew'
 import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
 import { flushPromises, shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
@@ -12,6 +13,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import App from './App.vue'
 import UndoToast from './components/UndoToast.vue'
 import VehicleList from './components/VehicleList.vue'
+import VehicleSheet from './components/VehicleSheet.vue'
 import { deleteVehicle, getPreferences, listVehicles, readInbox } from './services/api.js'
 import { useVehiclesStore } from './store/index.js'
 import { usePreferencesStore } from './store/preferences.js'
@@ -21,10 +23,8 @@ import OverviewView from './views/OverviewView.vue'
 import ReportsView from './views/ReportsView.vue'
 import VehicleView from './views/VehicleView.vue'
 
-// The network is the api client's own seam (api.spec.js); the store is left real, because which
-// vehicles the shell can show is the store's own rule. Everything the modules below this one
-// import has to be on the mock - an export a mount reaches for and does not find is an error
-// naming the module, not the missing name.
+// The store stays real: which vehicles the shell can show is its rule. Every export a mount reaches
+// for must be on the mock, or the error names the module, not the missing export.
 vi.mock('./services/api.js', async (original) => ({
 	...await original(),
 	createVehicle: vi.fn(),
@@ -93,17 +93,11 @@ beforeEach(() => {
 	setActivePinia(createPinia())
 	vi.resetAllMocks()
 	vi.mocked(listVehicles).mockResolvedValue([VEHICLE])
-	// The delete advances the token, and the one it answers with is the only one the undo is
-	// checked against (docs/architecture.md#concurrency).
+	// The undo checks the token the delete answers with (docs/architecture.md#concurrency).
 	vi.mocked(deleteVehicle).mockResolvedValue(DELETED)
 })
 
 describe('the app shell', () => {
-	/**
-	 * The hint on the overview asks about vehicles somebody may have answered for already
-	 * (src/components/CompleteHint.vue), and the answer is a preference. The shell is where it is
-	 * read, because a screen that read it for itself would ask again on every navigation.
-	 */
 	it('reads the preferences along with the fleet', async () => {
 		vi.mocked(getPreferences).mockResolvedValue({
 			preferences: { jurisdiction: 'de', dismissed_hints: [VEHICLE.uuid], dismissed_logbook_hints: [], reclaim_vat: false, kpi_period: 'last-12', grid_factor: null, inbox_folder: null },
@@ -115,10 +109,6 @@ describe('the app shell', () => {
 		expect(usePreferencesStore().isDismissed(VEHICLE.uuid)).toBe(true)
 	})
 
-	/**
-	 * Preferences that did not arrive are not a fleet that did not: the fleet is the screen, and a
-	 * hint nobody can be asked about is the cheaper loss.
-	 */
 	it('shows the fleet even when the preferences could not be read', async () => {
 		vi.mocked(getPreferences).mockRejectedValue(new Error('nope'))
 
@@ -150,11 +140,7 @@ describe('the app shell', () => {
 		}
 	})
 
-	/**
-	 * A sold vehicle leaves the overview (docs/ui.md), so the screen of the one just disposed of
-	 * in the edit sheet has no entry in the list any more - and staying on it would strand the
-	 * user on a vehicle nothing can navigate back to.
-	 */
+	/** Staying would strand the user on a vehicle nothing in the navigation leads back to. */
 	it('leaves the screen of a vehicle that has left the fleet', async () => {
 		const wrapper = await shell()
 		expect(wrapper.findComponent(VehicleView).exists()).toBe(true)
@@ -166,10 +152,7 @@ describe('the app shell', () => {
 		expect(wrapper.findComponent(OverviewView).exists()).toBe(true)
 	})
 
-	/**
-	 * Opened on purpose from the overview's disposed list, a disposed vehicle's screen stays: its
-	 * edit sheet is where the sale is set back.
-	 */
+	/** Its screen stays: its edit sheet is where the sale is set back. */
 	it('opens a disposed vehicle from the overview', async () => {
 		const SOLD = { ...VEHICLE, uuid: 'v-2', lifecycle: 'disposed' }
 		vi.mocked(listVehicles).mockResolvedValue([VEHICLE, SOLD])
@@ -190,7 +173,6 @@ describe('the app shell', () => {
 		expect(list.props('vehicles').map((/** @type {{ uuid: string }} */ one) => one.uuid)).toEqual([VEHICLE.uuid])
 	})
 
-	/** Set back to active and then disposed of again, it leaves as any vehicle does. */
 	it('leaves a vehicle set back from the disposed list when it is disposed of again', async () => {
 		const SOLD = { ...VEHICLE, uuid: 'v-2', lifecycle: 'disposed' }
 		vi.mocked(listVehicles).mockResolvedValue([VEHICLE, SOLD])
@@ -209,10 +191,6 @@ describe('the app shell', () => {
 		expect(wrapper.findComponent(OverviewView).exists()).toBe(true)
 	})
 
-	/**
-	 * Reports sit under the vehicles in the navigation (docs/ui.md). The screen is handed the whole
-	 * fleet, sold vehicles too: a logbook outlives the vehicle it was kept for.
-	 */
 	it('opens the reports on the whole fleet', async () => {
 		const SOLD = { ...VEHICLE, uuid: 'v-2', lifecycle: 'disposed' }
 		vi.mocked(listVehicles).mockResolvedValue([VEHICLE, SOLD])
@@ -239,7 +217,6 @@ describe('the app shell', () => {
 		expect(reports(wrapper).props('active')).toBe(false)
 	})
 
-	/** One vehicle's year is that vehicle's, so it opens from its screen and goes back to it. */
 	it('opens the costs of the vehicle shown, and goes back to it', async () => {
 		const wrapper = await shell()
 
@@ -256,7 +233,6 @@ describe('the app shell', () => {
 		expect(wrapper.findComponent(VehicleView).exists()).toBe(true)
 	})
 
-	/** Another vehicle picked from the navigation opens on its own screen, not on its costs. */
 	it('leaves the costs for the vehicle picked in the navigation', async () => {
 		const wrapper = await shell()
 		await wrapper.findComponent(VehicleView).vm.$emit('costs')
@@ -267,10 +243,7 @@ describe('the app shell', () => {
 		expect(wrapper.findComponent(VehicleView).exists()).toBe(true)
 	})
 
-	/**
-	 * The overview is where the app starts, and neither a vehicle nor the reports may be a screen
-	 * only a reload leaves (docs/ui.md).
-	 */
+	/** Neither a vehicle nor the reports may be a screen only a reload leaves. */
 	it('returns to the overview from a vehicle and from the reports', async () => {
 		const wrapper = await shell()
 		expect(entry(wrapper, 'Overview').props('active')).toBe(false)
@@ -292,10 +265,24 @@ describe('the app shell', () => {
 		expect(entry(wrapper, 'Overview').props('active')).toBe(true)
 	})
 
-	/**
-	 * A vehicle that left the fleet takes its screen with it, so the overview is what shows - and
-	 * the entry says so, although nobody asked for it by name.
-	 */
+	/** From the navigation and from the overview's empty state alike; the sheet adds it to the store. */
+	it('opens the create sheet, and the vehicle it made once it is made', async () => {
+		const wrapper = await shell()
+		await entry(wrapper, 'Overview').vm.$emit('click')
+
+		await wrapper.findComponent(NcAppNavigationNew).vm.$emit('click')
+		await wrapper.findComponent(VehicleSheet).vm.$emit('close')
+		expect(wrapper.findComponent(VehicleSheet).exists()).toBe(false)
+
+		await wrapper.findComponent(OverviewView).vm.$emit('new')
+		await wrapper.findComponent(VehicleSheet).vm.$emit('created', VEHICLE)
+
+		expect(wrapper.findComponent(VehicleSheet).exists()).toBe(false)
+		/** @type {any} */
+		const screen = wrapper.findComponent(VehicleView)
+		expect(screen.props('vehicle')).toEqual(VEHICLE)
+	})
+
 	it('marks the overview when a vehicle leaving the fleet falls back to it', async () => {
 		const wrapper = await shell()
 
@@ -305,10 +292,7 @@ describe('the app shell', () => {
 		expect(entry(wrapper, 'Overview').props('active')).toBe(true)
 	})
 
-	/**
-	 * The inbox is a folder the person chose on their settings page (docs/ui.md); without one the
-	 * entry would open on a screen that can only send them there.
-	 */
+	/** Without a folder the entry would open a screen that can only send them to their settings. */
 	it('offers no inbox while no folder is chosen', async () => {
 		vi.mocked(getPreferences).mockResolvedValue(SETTINGS)
 
@@ -318,7 +302,7 @@ describe('the app shell', () => {
 		expect(readInbox).not.toHaveBeenCalled()
 	})
 
-	/** The count is the reason to open it, so the entry carries it, between Overview and Reports. */
+	/** The count is the reason to open it. */
 	it('offers the inbox with the count of files waiting in it', async () => {
 		vi.mocked(getPreferences).mockResolvedValue(INBOXED)
 		vi.mocked(readInbox).mockResolvedValue({ folder: { file_id: 7, path: '/Belege' }, files: [], count: 3 })
@@ -339,7 +323,6 @@ describe('the app shell', () => {
 		expect(wrapper.findAll('.item').map((one) => one.text())).toEqual(['Overview', 'Inbox3', 'Reports', 'Settings'])
 	})
 
-	/** A fleet still on its way is not an empty one: "No vehicles yet" would teach the wrong thing. */
 	it('shows that the fleet is loading, not that it is empty', async () => {
 		/** @type {(fleet: any[]) => void} */
 		let arrive = () => {}
@@ -359,7 +342,6 @@ describe('the app shell', () => {
 		expect(wrapper.findComponent(OverviewView).exists()).toBe(true)
 	})
 
-	/** The app's own settings sit on the personal settings page; the navigation leads there. */
 	it('links to the personal settings from the navigation footer', async () => {
 		const wrapper = await shell()
 
@@ -387,10 +369,7 @@ describe('the app shell', () => {
 	})
 
 	/**
-	 * A delete takes the vehicle's screen with it, for the same reason - and the undo toast is
-	 * what is left offering the way back, so it hangs in the shell rather than under the screen
-	 * that asked for the delete (src/components/UndoToast.vue). What that screen emits on its way
-	 * out reaches nobody: Vue drops an event from a component it has already unmounted.
+	 * The screen that asked cannot offer the undo: Vue drops events from an unmounted component.
 	 */
 	it('keeps the undo toast when a delete takes the screen that asked for it', async () => {
 		const wrapper = await shell()

@@ -19,9 +19,8 @@ import { t } from './l10n.js'
 
 /**
  * The vehicle header, one tile per figure (docs/ui.md). Every figure but the odometer belongs to
- * the period, and is compared with the same figure of the period before it: a number without
- * context means nothing. A figure either period lacks gets no comparison rather than one against
- * zero.
+ * the period and is compared with the period before: a number without context means nothing. A
+ * figure either period lacks gets no comparison rather than one against zero.
  *
  * @param {import('../services/api.js').Vehicle} vehicle - the vehicle as it was read
  * @param {import('../services/api.js').Kpis|null} now - the period's figures, null until read
@@ -42,8 +41,8 @@ export function tilesOf(vehicle, now, before, locale = getCanonicalLocale()) {
 }
 
 /**
- * The header's figures that belong to the period, which is all of them but the odometer. The Costs
- * screen states them for its year.
+ * The header's figures but the odometer, which belongs to no period. The Costs screen states them
+ * for its year.
  *
  * @param {import('../services/api.js').Vehicle} vehicle - the vehicle as it was read
  * @param {import('../services/api.js').Kpis} now - the period's figures
@@ -132,8 +131,8 @@ function costTiles(cost, before, locale) {
 	 */
 	const tile = (label, field, notes) => ({
 		label,
-		// A period that recorded nothing has no sums. It reads as zero, but a swing to or from a
-		// period with no figure says nothing (docs/architecture.md#numbers-consumption-cost-emissions).
+		// No sums read as zero, but a swing to or from a period without a figure says nothing
+		// (docs/architecture.md#numbers-consumption-cost-emissions).
 		figure: write(cost[field] ?? 0),
 		change: comparable && cost[field] !== null ? changeOf(cost[field], before[field], write) : null,
 		notes,

@@ -27,8 +27,8 @@ use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
 /**
- * A vehicle's papers: the translation between a request and an answer, as EnergyControllerTest
- * tests it. The rules are DocumentService's (tests/Integration/DocumentTest.php).
+ * A vehicle's papers, request to answer, as EnergyControllerTest tests it. The rules are
+ * DocumentService's (tests/Integration/DocumentTest.php).
  */
 class DocumentControllerTest extends TestCase {
 	private const UUID = '0195e2f1-0000-4000-8000-000000000001';
@@ -55,7 +55,6 @@ class DocumentControllerTest extends TestCase {
 		return new DocumentController(Application::APP_ID, $request, $this->service, $session);
 	}
 
-	/** Each route answers 200 with the list as it now stands. */
 	public function testEachRouteAnswersWithTheList(): void {
 		$this->params = ['uuid' => self::UUID, 'file_id' => '42', 'kind' => 'manual'];
 		$this->service->expects($this->once())->method('list')->with('alice', self::UUID)->willReturn(self::LISTED);
@@ -121,12 +120,18 @@ class DocumentControllerTest extends TestCase {
 		}
 	}
 
-	/** Found in the database, gone from the storage by the time it is opened: still not a 500. */
+	/**
+	 * Found in the database, gone from the storage by the time it is opened: still not a 500.
+	 * A storage may say so by throwing or by answering false.
+	 */
 	public function testAFileThatCannotBeOpenedIsNotFound(): void {
-		$file = $this->createMock(File::class);
-		$file->method('fopen')->willThrowException(new NotFoundException('gone'));
-		$this->service->method('download')->willReturn($file);
+		$gone = $this->createMock(File::class);
+		$gone->method('fopen')->willThrowException(new NotFoundException('gone'));
+		$refused = $this->createMock(File::class);
+		$refused->method('fopen')->willReturn(false);
+		$this->service->method('download')->willReturnOnConsecutiveCalls($gone, $refused);
 
+		$this->assertSame(Http::STATUS_NOT_FOUND, $this->controller()->download(self::UUID, self::DOCUMENT)->getStatus());
 		$this->assertSame(Http::STATUS_NOT_FOUND, $this->controller()->download(self::UUID, self::DOCUMENT)->getStatus());
 	}
 

@@ -90,8 +90,6 @@ class TwinAnswersTest extends TestCase {
 	}
 
 	/**
-	 * The same request through both doors, with the service doing the same thing behind each.
-	 *
 	 * @param class-string $internal
 	 * @param class-string $service
 	 * @param array<string, mixed> $params
@@ -137,8 +135,7 @@ class TwinAnswersTest extends TestCase {
 	}
 
 	/**
-	 * Each family's own refusal through both doors, and each wrapper of OcsAnswers a twin uses: a
-	 * write without a token still maps the 412 its twin maps.
+	 * Each family's own refusal, through every OcsAnswers wrapper a twin uses.
 	 *
 	 * @dataProvider familyRefusals
 	 * @param class-string $internal

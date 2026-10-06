@@ -12,6 +12,7 @@ use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Db\Reminder;
+use OCA\NextFleet\Db\ReminderMapper;
 use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\OdometerService;
@@ -108,10 +109,7 @@ class MaintenanceTest extends TestCase {
 		$this->maintenance->record(self::OWNER, $vehicle->getUuid(), $this->work(['second_odo' => 5120]));
 	}
 
-	/**
-	 * The title is the one field the sheet requires; everything else may be left out, and a
-	 * record without a cost is still saved.
-	 */
+	/** Everything but the title may be left out, the cost included. */
 	public function testOnlyTheTitleIsRequired(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
 
@@ -123,7 +121,6 @@ class MaintenanceTest extends TestCase {
 		$this->maintenance->record(self::OWNER, $vehicle->getUuid(), $this->work(['title' => ' ']));
 	}
 
-	/** Every field the sheet offers is stored as given. */
 	public function testTheFieldsAreStoredAsGiven(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
 
@@ -181,10 +178,7 @@ class MaintenanceTest extends TestCase {
 		);
 	}
 
-	/**
-	 * An edit rewrites the record in place and its Reading follows it; the counter rules are the
-	 * fill-up's (EnergyTest), so one case proves the record reaches them.
-	 */
+	/** The Reading follows the edit; one case is enough, the counter rules are EnergyTest's. */
 	public function testAnEditMovesTheRecordAndItsReading(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
 		$uuid = $vehicle->getUuid();
@@ -204,7 +198,6 @@ class MaintenanceTest extends TestCase {
 		$this->assertSame(120540, $this->vehicles->find(self::OWNER, $uuid)->getOdoValue());
 	}
 
-	/** A delete takes the record's Reading with it, and undo brings both back. */
 	public function testDeleteTakesTheReadingAlongAndUndoBringsItBack(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
 		$uuid = $vehicle->getUuid();
@@ -255,7 +248,6 @@ class MaintenanceTest extends TestCase {
 		$this->assertSame(Reminder::PLANNED, $next['state']);
 	}
 
-	/** A driver logs the work and it closes the reminder as the owner's record would. */
 	public function testADriversRecordClosesAReminder(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
 		$uuid = $vehicle->getUuid();
@@ -319,6 +311,22 @@ class MaintenanceTest extends TestCase {
 		$this->assertSame(3, $after['occurrence']);
 	}
 
+	/** A reminder deleted since stays as it was deleted: taking the record back revives nothing. */
+	public function testDeletingARecordWhoseReminderIsDeletedChangesNothing(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$uuid = $vehicle->getUuid();
+		$oil = $this->oilChange($uuid);
+		$written = $this->maintenance->record(self::OWNER, $uuid, $this->work(['done_at' => 1780000000, 'odo' => 120450, 'closes' => $oil['uuid']]));
+		$gone = $this->reminders->delete(self::OWNER, $uuid, $oil['uuid'], $this->reminder($uuid, $oil['uuid'])['updated_at']);
+
+		$this->maintenance->delete(self::OWNER, $uuid, $written['uuid'], $written['updated_at']);
+
+		$after = \OCP\Server::get(ReminderMapper::class)->findAnyByUuid($oil['uuid']);
+		$this->assertSame($gone['deleted_at'], $after->getDeletedAt());
+		$this->assertSame($gone['updated_at'], $after->getUpdatedAt());
+		$this->assertSame(2, $after->getOccurrence());
+	}
+
 	/** An edit that moves the work moves the next occurrence with it; one that unlinks takes it back. */
 	public function testAnEditRedoesTheOccurrenceFromWhereTheWorkNowIs(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
@@ -339,7 +347,6 @@ class MaintenanceTest extends TestCase {
 		$this->assertSame(1, $this->reminder($uuid, $oil['uuid'])['occurrence']);
 	}
 
-	/** A reminder that does not recur is done, and a done one is not closed a second time. */
 	public function testAOneOffIsDoneAndClosedOnlyOnce(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
 		$uuid = $vehicle->getUuid();

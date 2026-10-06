@@ -16,7 +16,7 @@ use OCA\NextFleet\Db\Vehicle;
  * When a vehicle's Logbook Mode was on, read off the flips on its trail
  * (docs/features.md#logbook-mode). One reading for the export that states the periods and the trip
  * trail that is kept for every trip set off inside one: two readings could disagree about which
- * trips the logbook vouches for. The plate each period was kept under is read off the same trail.
+ * trips the logbook vouches for.
  */
 class LogbookPeriods {
 	public function __construct(

@@ -102,7 +102,7 @@ class UserExportTest extends TestCase {
 		}
 	}
 
-	/** Done when: the export holds every row naming the account - their grants and list entries too - and nobody else's. */
+	/** Grants and list entries that name the account count too. */
 	public function testTheExportHoldsEveryRowNamingTheAccountAndNoOther(): void {
 		$vehicle = $this->vehicle(self::OWNER, 'B-XY 123');
 		[$grant] = \OCP\Server::get(GrantService::class)->grant(self::OWNER, $vehicle->getUuid(), ['grantee' => self::DRIVER, 'grantee_type' => 'user', 'role' => 'driver']);

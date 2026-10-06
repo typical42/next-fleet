@@ -23,8 +23,8 @@ use OCP\Migration\IOutput;
 use PHPUnit\Framework\TestCase;
 
 /**
- * M4's migration beyond its schema: the vehicles already there get their owner as the one
- * recipient, and M4's rows go through their mappers and back.
+ * The reminder migration beyond its schema: the vehicles already there get their owner as the one
+ * recipient, and the reminder rows go through their mappers and back.
  *
  * It writes to the instance it runs against (docs/development.md#testing).
  */

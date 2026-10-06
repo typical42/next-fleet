@@ -147,6 +147,14 @@ class DueWidgetTest extends TestCase {
 		$this->assertSame([], $this->items(self::OWNER));
 	}
 
+	/** The panel's header: its title, the app's icon, and a link into the app. */
+	public function testTheHeaderLinksIntoTheApp(): void {
+		$this->assertSame('nextfleet', $this->widget->getId());
+		$this->assertSame('Vehicle reminders', $this->widget->getTitle());
+		$this->assertMatchesRegularExpression('#^https?://[^/]+/.*nextfleet/img/app-dark\.svg$#', $this->widget->getIconUrl());
+		$this->assertMatchesRegularExpression('#^https?://[^/]+/(index\.php/)?apps/nextfleet/$#', (string)$this->widget->getUrl());
+	}
+
 	/** Registered with the server: the dashboard's own route serves the widget's items. */
 	public function testTheDashboardServesTheWidget(): void {
 		$password = bin2hex(random_bytes(16));
@@ -179,7 +187,6 @@ class DueWidgetTest extends TestCase {
 		return \OCP\Server::get(ITimeFactory::class)->now()->modify($modifier)->format('Y-m-d');
 	}
 
-	/** One grant, as the sharing UI will write it (M6). */
 	private function grant(Vehicle $vehicle, string $grantee, string $role): void {
 		$grant = new Access();
 		$grant->setVehicleId((int)$vehicle->getId());

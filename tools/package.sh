@@ -34,9 +34,10 @@ cp -R $SHIP "$stage"/
 # The build maps every chunk back to src/. A map serves our source to anyone who asks the server
 # for it, and the bundle runs without it.
 find "$stage" -name '*.map' -delete
+node tools/third-party-notices.mjs . >"$stage/THIRD-PARTY-NOTICES.txt"
 tar --sort=name --owner=0 --group=0 --numeric-owner -czf "$tarball" -C build/stage nextfleet
 
-for needed in appinfo/info.xml js/nextfleet-main.mjs js/nextfleet-settings.mjs; do
+for needed in appinfo/info.xml js/nextfleet-main.mjs js/nextfleet-settings.mjs THIRD-PARTY-NOTICES.txt; do
 	tar -tzf "$tarball" "nextfleet/$needed" >/dev/null
 done
 # No pipe: sh has no pipefail, and a failed listing would pass for an empty one.

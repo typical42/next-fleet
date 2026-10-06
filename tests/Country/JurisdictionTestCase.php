@@ -37,9 +37,9 @@ abstract class JurisdictionTestCase extends TestCase {
 	abstract public static function profile(): IJurisdiction;
 
 	/**
-	 * The kit's premise. A profile that throws "not implemented here" instead of answering
-	 * fails against the interface, before a screen meets it - and so does one that stays
-	 * silent when `IJurisdiction` grows a question.
+	 * A profile that throws "not implemented here" instead of answering fails against the
+	 * interface, before a screen meets it - and so does one that stays silent when
+	 * `IJurisdiction` grows a question.
 	 */
 	public function testItAnswersEveryQuestionTheInterfaceAsks(): void {
 		$profile = static::profile();
@@ -147,11 +147,6 @@ abstract class JurisdictionTestCase extends TestCase {
 	}
 
 	/**
-	 * A jurisdiction either states its rates or has none - the generic profile's answer, under which
-	 * a figure needing a rate is unavailable rather than zero (docs/contributing.md). A VAT rate is
-	 * basis points or null for "not stated", never a fraction (docs/architecture.md#data-model).
-	 */
-	/**
 	 * A jurisdiction either states how every vehicle type is inspected or has no scheme at all -
 	 * the generic profile's answer, under which no vehicle is asked for an inspection date. Asked
 	 * of every type the core writes: a scheme silent about a trailer leaves a trailer undue.
@@ -180,6 +175,11 @@ abstract class JurisdictionTestCase extends TestCase {
 		}
 	}
 
+	/**
+	 * A jurisdiction either states its rates or has none, and then a figure needing a rate is
+	 * unavailable, not zero (docs/contributing.md). A VAT rate is basis points or null for "not
+	 * stated", never a fraction (docs/architecture.md#data-model).
+	 */
 	public function testItsRatesAreSoundOrHonestlyAbsent(): void {
 		$rates = static::profile()->rates();
 		if ($rates === null) {

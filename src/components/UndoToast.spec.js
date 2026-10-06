@@ -155,7 +155,6 @@ describe('the toast after a save', () => {
 })
 
 describe('the undo toast', () => {
-	/** Nothing was deleted, so there is nothing to say and nothing to take back. */
 	it('says nothing until a vehicle is deleted', () => {
 		const wrapper = shallowMount(UndoToast)
 
@@ -163,8 +162,8 @@ describe('the undo toast', () => {
 	})
 
 	/**
-	 * Nothing asks "are you sure?" (docs/ui.md), so what is deleted has to be named afterwards -
-	 * by the name the rest of the app calls it (src/utils/format.js), not by its uuid.
+	 * Nothing asks "are you sure?" (docs/ui.md), so what is deleted is named afterwards, by the
+	 * name the rest of the app uses (src/utils/format.js).
 	 */
 	it('names the vehicle it can take back', async () => {
 		const wrapper = await toast()
@@ -173,11 +172,7 @@ describe('the undo toast', () => {
 		expect(button(wrapper, 'Undo')).toBeDefined()
 	})
 
-	/**
-	 * Undo is checked against the token the delete answered with and no other one
-	 * (docs/architecture.md#concurrency), so the vehicle the toast hands back is the one the delete
-	 * left behind rather than the one the screen had.
-	 */
+	/** Not the token the screen had (docs/architecture.md#concurrency). */
 	it('brings the vehicle back under the token the delete answered with', async () => {
 		const wrapper = await toast()
 
@@ -189,11 +184,6 @@ describe('the undo toast', () => {
 		expect(wrapper.find('.toast').exists()).toBe(false)
 	})
 
-	/**
-	 * Somebody else moved the row on, so the token matches nothing and the vehicle stays deleted.
-	 * Closing on that would claim an undo that did not happen, and offering the click again would
-	 * be offering the same refusal.
-	 */
 	it('says the way back is gone when the undo is refused', async () => {
 		vi.mocked(restoreVehicle).mockRejectedValue(new Error('Changed since you read it'))
 		const wrapper = await toast()
@@ -206,11 +196,6 @@ describe('the undo toast', () => {
 		expect(useVehiclesStore().list).toEqual([])
 	})
 
-	/**
-	 * The refusal was about the row the last delete left behind, and this is a different row: an
-	 * offer that arrives already refused would strand a vehicle that is perfectly restorable, and
-	 * M1 has no trash view to reach it by.
-	 */
 	it('makes a fresh offer for the next vehicle after a refused undo', async () => {
 		vi.mocked(restoreVehicle).mockRejectedValueOnce(new Error('Changed since you read it'))
 		const wrapper = await toast()
@@ -228,10 +213,7 @@ describe('the undo toast', () => {
 		expect(button(wrapper, 'Undo')).toBeDefined()
 	})
 
-	/**
-	 * The second click would be checked against a row that is no longer deleted, so the server
-	 * refuses it (lib/Db/BaseMapper.php) - and an undo that worked would end up saying it did not.
-	 */
+	/** A second, refused restore would make an undo that worked say it did not. */
 	it('asks once while the first undo is still in flight', async () => {
 		vi.mocked(restoreVehicle).mockReturnValue(new Promise(() => {}))
 		const wrapper = await toast()
@@ -242,21 +224,13 @@ describe('the undo toast', () => {
 		expect(restoreVehicle).toHaveBeenCalledTimes(1)
 	})
 
-	/**
-	 * A live region has to be in the page before its content changes, or the change is not
-	 * announced - and with nothing asking "are you sure?", this toast is the only word a screen
-	 * reader gets that the vehicle is gone.
-	 */
 	it('keeps the region it announces itself in', () => {
 		const wrapper = shallowMount(UndoToast)
 
 		expect(wrapper.find('[role="status"]').exists()).toBe(true)
 	})
 
-	/**
-	 * An Entry deleted from its row gets the same way back (docs/ui.md). Its row is gone with it, so
-	 * the toast says what kind of thing went rather than naming it.
-	 */
+	/** Its row is gone with it, so the toast says what kind of thing went rather than naming it. */
 	it('offers an Entry back under the token its delete answered with', async () => {
 		const store = useVehiclesStore()
 		store.upsert(VEHICLE)
@@ -275,10 +249,7 @@ describe('the undo toast', () => {
 		expect(wrapper.find('.toast').exists()).toBe(false)
 	})
 
-	/**
-	 * A reminder is deleted from the banner and taken back the same way. It moves no counter, so
-	 * the vehicle is not read again, and the toast does not call it an entry.
-	 */
+	/** A reminder moves no counter, so the vehicle is not read again. */
 	it('offers a reminder back, and says it is one', async () => {
 		const store = useVehiclesStore()
 		store.upsert(VEHICLE)
@@ -296,10 +267,7 @@ describe('the undo toast', () => {
 		expect(store.restored).toBe(1)
 	})
 
-	/**
-	 * _Remove_ on a paper gets the way back every other delete has. The papers section is not the
-	 * toast's, so the list the restore answered is held for it.
-	 */
+	/** The papers section is not the toast's, so the list the restore answered is held for it. */
 	it('offers a removed paper back, and hands on the list it answered', async () => {
 		vi.mocked(detachDocument).mockResolvedValue([])
 		vi.mocked(restoreDocument).mockResolvedValue([PAPER])
@@ -332,7 +300,6 @@ describe('the undo toast', () => {
 		expect(store.refiled).toBeNull()
 	})
 
-	/** Under Logbook Mode a trip is voided rather than deleted, and the toast says which. */
 	it('says a trip under Logbook Mode was voided', async () => {
 		vi.mocked(getVehicle).mockResolvedValue({ ...VEHICLE, logbook_mode: true })
 		const store = useVehiclesStore()
@@ -353,10 +320,6 @@ describe('the undo toast', () => {
 		expect(store.deleted).not.toBeNull()
 	})
 
-	/**
-	 * The import's result is this toast (docs/ui.md, "Importing"): what was created and what was
-	 * left out, and the one way to take all of it back.
-	 */
 	it('says what an import created and takes all of it back', async () => {
 		const store = useVehiclesStore()
 		vi.mocked(runImport).mockResolvedValue({ counts: { new: 12, duplicate: 3, unreadable: 1, creates: 12 }, created: CREATED })
@@ -400,7 +363,6 @@ describe('the undo toast', () => {
 		expect(button(wrapper, 'Dismiss')).toBeDefined()
 	})
 
-	/** The offer is made once, and dismissing it is the answer that takes nothing back. */
 	it('goes when it is dismissed, and takes nothing back', async () => {
 		const wrapper = await toast()
 

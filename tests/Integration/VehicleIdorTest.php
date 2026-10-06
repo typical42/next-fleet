@@ -246,78 +246,50 @@ class VehicleIdorTest extends TestCase {
 		return $this->door(VehicleController::class, $this->service, $userId, $params);
 	}
 
-	/**
-	 * The same, for the routes that hang off a vehicle.
-	 *
-	 * @param array<string, mixed> $params
-	 */
+	/** @param array<string, mixed> $params */
 	private function odometer(string $userId, array $params): OdometerController|Ocs\OdometerController {
 		/** @var OdometerController|Ocs\OdometerController */
 		return $this->door(OdometerController::class, $this->odometry, $userId, $params);
 	}
 
-	/**
-	 * The same again, for the trips.
-	 *
-	 * @param array<string, mixed> $params
-	 */
+	/** @param array<string, mixed> $params */
 	private function trip(string $userId, array $params): TripController|Ocs\TripController {
 		/** @var TripController|Ocs\TripController */
 		return $this->door(TripController::class, $this->journeys, $userId, $params);
 	}
 
-	/**
-	 * And for the fill-ups.
-	 *
-	 * @param array<string, mixed> $params
-	 */
+	/** @param array<string, mixed> $params */
 	private function energy(string $userId, array $params): EnergyController|Ocs\EnergyController {
 		/** @var EnergyController|Ocs\EnergyController */
 		return $this->door(EnergyController::class, $this->fillUps, $userId, $params);
 	}
 
-	/**
-	 * And for the Maintenance Records.
-	 *
-	 * @param array<string, mixed> $params
-	 */
+	/** @param array<string, mixed> $params */
 	private function maintenance(string $userId, array $params): MaintenanceController|Ocs\MaintenanceController {
 		/** @var MaintenanceController|Ocs\MaintenanceController */
 		return $this->door(MaintenanceController::class, $this->workshop, $userId, $params);
 	}
 
-	/**
-	 * And for the Expenses.
-	 *
-	 * @param array<string, mixed> $params
-	 */
+	/** @param array<string, mixed> $params */
 	private function expense(string $userId, array $params): ExpenseController|Ocs\ExpenseController {
 		/** @var ExpenseController|Ocs\ExpenseController */
 		return $this->door(ExpenseController::class, $this->spending, $userId, $params);
 	}
 
-	/**
-	 * And for the reminders.
-	 *
-	 * @param array<string, mixed> $params
-	 */
+	/** @param array<string, mixed> $params */
 	private function reminder(string $userId, array $params): ReminderController|Ocs\ReminderController {
 		/** @var ReminderController|Ocs\ReminderController */
 		return $this->door(ReminderController::class, $this->reminders, $userId, $params);
 	}
 
-	/**
-	 * And for who the reminders go to.
-	 *
-	 * @param array<string, mixed> $params
-	 */
+	/** @param array<string, mixed> $params */
 	private function recipient(string $userId, array $params): RecipientController|Ocs\RecipientController {
 		/** @var RecipientController|Ocs\RecipientController */
 		return $this->door(RecipientController::class, $this->recipients, $userId, $params);
 	}
 
 	/**
-	 * And for who else may use the vehicle. Not `grant()`: that name writes a row.
+	 * Not `grant()`: that name writes a row.
 	 *
 	 * @param array<string, mixed> $params
 	 */
@@ -326,31 +298,19 @@ class VehicleIdorTest extends TestCase {
 		return $this->door(GrantController::class, $this->access, $userId, $params);
 	}
 
-	/**
-	 * And for the vehicle's papers.
-	 *
-	 * @param array<string, mixed> $params
-	 */
+	/** @param array<string, mixed> $params */
 	private function document(string $userId, array $params): DocumentController|Ocs\DocumentController {
 		/** @var DocumentController|Ocs\DocumentController */
 		return $this->door(DocumentController::class, $this->papers, $userId, $params);
 	}
 
-	/**
-	 * And for an import.
-	 *
-	 * @param array<string, mixed> $params
-	 */
+	/** @param array<string, mixed> $params */
 	private function importRoute(string $userId, array $params): ImportController|Ocs\ImportController {
 		/** @var ImportController|Ocs\ImportController */
 		return $this->door(ImportController::class, $this->imports, $userId, $params);
 	}
 
-	/**
-	 * And for the bookings.
-	 *
-	 * @param array<string, mixed> $params
-	 */
+	/** @param array<string, mixed> $params */
 	private function booking(string $userId, array $params): BookingController|Ocs\BookingController {
 		/** @var BookingController|Ocs\BookingController */
 		return $this->door(BookingController::class, $this->pool, $userId, $params);
@@ -367,38 +327,26 @@ class VehicleIdorTest extends TestCase {
 		return ['starts_at' => $start, 'starts_at_off' => 120, 'ends_at' => $start + 3 * 3600, 'ends_at_off' => 120];
 	}
 
-	/**
-	 * And again, for the one read that shows everything at once.
-	 *
-	 * @param array<string, mixed> $params
-	 */
+	/** @param array<string, mixed> $params */
 	private function timeline(string $userId, array $params): TimelineController|Ocs\TimelineController {
 		/** @var TimelineController|Ocs\TimelineController */
 		return $this->door(TimelineController::class, $this->history, $userId, $params);
 	}
 
-	/**
-	 * And for the header's figures.
-	 *
-	 * @param array<string, mixed> $params
-	 */
+	/** @param array<string, mixed> $params */
 	private function kpis(string $userId, array $params): KpiController|Ocs\KpiController {
 		/** @var KpiController|Ocs\KpiController */
 		return $this->door(KpiController::class, $this->figures, $userId, $params);
 	}
 
-	/**
-	 * And for the printable pages, which show what the timeline shows.
-	 *
-	 * @param array<string, mixed> $params
-	 */
+	/** @param array<string, mixed> $params */
 	private function report(string $userId, array $params): ReportController {
 		return new ReportController(Application::APP_ID, $this->request($params), $this->logbook, $this->claim, $this->csv, $this->session($userId));
 	}
 
 	/**
-	 * The same, for the routes that name no vehicle at all. They are in the sweep because every
-	 * route is: what they must not do is answer for somebody else.
+	 * Names no vehicle, but is in the sweep because every route is: what it must not do is answer
+	 * for somebody else.
 	 *
 	 * @param array<string, mixed> $params
 	 */
@@ -407,11 +355,7 @@ class VehicleIdorTest extends TestCase {
 		return $this->door(PreferencesController::class, $this->settings, $userId, $params);
 	}
 
-	/**
-	 * And for the inbox.
-	 *
-	 * @param array<string, mixed> $params
-	 */
+	/** @param array<string, mixed> $params */
 	private function inboxRoute(string $userId, array $params): InboxController|Ocs\InboxController {
 		/** @var InboxController|Ocs\InboxController */
 		return $this->door(InboxController::class, $this->inbox, $userId, $params);
@@ -1337,7 +1281,7 @@ class VehicleIdorTest extends TestCase {
 		$this->grant(self::VIEWER, 'viewer');
 	}
 
-	/** One grant on the vehicle under test, as the sharing UI will write it (M6). */
+	/** One grant on the vehicle under test, as the sharing UI writes it. */
 	private function grant(string $grantee, string $role): void {
 		$grant = new Access();
 		$grant->setVehicleId((int)$this->vehicle->getId());

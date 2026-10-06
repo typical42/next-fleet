@@ -112,7 +112,8 @@ class CheckService {
 	}
 
 	/**
-	 * Each chain's flags and cache, against what settling it would write (rules 2 and 3).
+	 * Each chain's flags and cache, against what settling it would write (rules 2 and 3,
+	 * docs/architecture.md#odometer-rules).
 	 *
 	 * @return list<Finding>
 	 * @throws \OCP\DB\Exception

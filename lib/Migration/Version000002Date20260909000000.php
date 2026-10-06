@@ -16,9 +16,8 @@ use OCP\Migration\IOutput;
 use OCP\Migration\SimpleMigrationStep;
 
 /**
- * The two tables M2 ships: the trips a vehicle's logbook is made of, and the audit trail that
- * makes them evidence (docs/architecture.md#data-model). It is the milestone's only migration -
- * a second one would leave installs on either end of the supported range with different schemas.
+ * The trips a vehicle's logbook is made of, and the audit trail that makes them evidence
+ * (docs/architecture.md#data-model).
  */
 class Version000002Date20260909000000 extends SimpleMigrationStep {
 	/**
@@ -62,8 +61,7 @@ class Version000002Date20260909000000 extends SimpleMigrationStep {
 		$table->addColumn('purpose', Types::STRING, ['notnull' => false, 'length' => 255]);
 		$table->addColumn('partner', Types::STRING, ['notnull' => false, 'length' => 255]);
 		$table->addColumn('category', Types::STRING, ['notnull' => true, 'length' => 16]);
-		// A Reconciliation Trip, created to close a Gap. Nullable and defaulted for the reason
-		// every boolean here is.
+		// A Reconciliation Trip, created to close a Gap. Nullable and defaulted as `logbook_mode` is.
 		$table->addColumn('reconciled', Types::BOOLEAN, ['notnull' => false, 'default' => false]);
 
 		$table->addUniqueIndex(['uuid'], 'fleet_trip_uuid_uniq');
@@ -93,9 +91,8 @@ class Version000002Date20260909000000 extends SimpleMigrationStep {
 	}
 
 	/**
-	 * The row every table has (docs/architecture.md#data-model). Copied from the first migration
-	 * rather than shared with it: a migration is a record of what one version did, and a helper
-	 * both steps call is a helper that can rewrite history the next time it is edited.
+	 * The row every table has (docs/architecture.md#data-model). Copied, not shared: a migration
+	 * records what one version did, and a shared helper would rewrite it when edited.
 	 */
 	private function common(Table $table): Table {
 		$table->addColumn('id', Types::BIGINT, ['autoincrement' => true, 'notnull' => true, 'unsigned' => true]);

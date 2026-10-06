@@ -62,8 +62,8 @@ function holderWords(one) {
 }
 
 /**
- * The screen stays mounted when another vehicle is picked, so this runs per vehicle, and an answer
- * that arrives after the next pick is dropped rather than shown under the wrong name.
+ * Runs per vehicle, since the screen stays mounted across picks; an answer that arrives after the
+ * next pick is dropped.
  */
 async function read() {
 	const uuid = props.vehicle.uuid
@@ -86,6 +86,17 @@ async function read() {
 watch(() => props.vehicle.uuid, read, { immediate: true })
 
 /**
+ * The refusals of a leave whose grant was revoked meanwhile, by the server's English words: 403
+ * without another way in, 404 with one or once the vehicle is gone. The rest show as sent.
+ *
+ * @type {Record<string, () => string>}
+ */
+const REFUSALS = {
+	'Not yours': () => t('nextfleet', 'You have no access of your own to give back any more.'),
+	'No such vehicle': () => t('nextfleet', 'You have no access of your own to give back any more.'),
+}
+
+/**
  * Without a group still reaching it the vehicle leaves the store, and this screen with it
  * (src/App.vue).
  */
@@ -102,7 +113,7 @@ async function leave() {
 			root.value?.querySelector('.leave__group')?.focus()
 		}
 	} catch (error) {
-		failure.value = t('nextfleet', 'You could not leave: {reason}', { reason: error.message })
+		failure.value = REFUSALS[error.message]?.() ?? t('nextfleet', 'You could not leave: {reason}', { reason: error.message })
 	} finally {
 		leaving.value = false
 	}

@@ -21,8 +21,8 @@ use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The fill-ups hanging off one vehicle. Every rule is EnergyService's, so what is tested here is
- * the translation between a request and an answer, as OdometerControllerTest does.
+ * One vehicle's fill-ups. Every rule is EnergyService's, so this tests request to answer only, as
+ * OdometerControllerTest does.
  */
 class EnergyControllerTest extends TestCase {
 	private const UUID = '0195e2f1-0000-4000-8000-000000000001';
@@ -48,10 +48,7 @@ class EnergyControllerTest extends TestCase {
 		return new EnergyController(Application::APP_ID, $request, $this->service, $session);
 	}
 
-	/**
-	 * A recorded fill-up answers 201 with the row the server wrote, so the sheet learns the unit
-	 * price it derived and the flags it raised - neither is a field a client fills in.
-	 */
+	/** The sheet learns the derived unit price and the raised flags: no client fills those in. */
 	public function testARecordedFillUpComesBackAsTheServerWroteIt(): void {
 		$this->params = ['uuid' => self::UUID, 'energy' => 'diesel', 'amount' => '42000'];
 		$this->service->expects($this->once())
@@ -65,7 +62,6 @@ class EnergyControllerTest extends TestCase {
 		$this->assertSame(['unit_price' => 1750, 'flags' => ['no_price']], $response->getData());
 	}
 
-	/** The prefill answers 200 with what the service states for the moment the sheet asked about. */
 	public function testThePrefillIsWhatTheServiceStates(): void {
 		$this->params = ['uuid' => self::UUID, 'at' => '1750000000', 'off' => '120'];
 		$this->service->expects($this->once())
@@ -79,10 +75,7 @@ class EnergyControllerTest extends TestCase {
 		$this->assertSame(['vat_rate' => 1900, 'stations' => []], $response->getData());
 	}
 
-	/**
-	 * An edit, a delete and its undo each reach the service with the token the client read. The
-	 * token and conflict rules themselves are the trait's (MaintenanceControllerTest).
-	 */
+	/** The token and conflict rules themselves are the trait's (MaintenanceControllerTest). */
 	public function testTheCheckedWritesReachTheService(): void {
 		$this->params = ['updated_at' => '1750000000', 'amount' => '41000'];
 		$this->service->expects($this->once())->method('update')

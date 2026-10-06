@@ -39,7 +39,6 @@ beforeEach(() => {
 })
 
 describe('the history a paper may belong to', () => {
-	/** An invoice filed late belongs to a record behind the newest page. */
 	it('reads every page of each kind, and every booking since the first', async () => {
 		const owners = await readHistory('v-1')
 

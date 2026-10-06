@@ -17,8 +17,8 @@ use Psr\Log\LoggerInterface;
 
 /**
  * One reader's mileage claim on one vehicle for one year: the business trips they entered, each
- * valued at its jurisdiction's rate on the day it set off (docs/architecture.md#the-mileage-claim). What is valued and how is
- * decided here; the country only lays it out (`IClaimRenderer`).
+ * valued at its jurisdiction's rate on the day it set off. What is valued and how is decided
+ * here; the country only lays it out (`IClaimRenderer`, docs/architecture.md#the-mileage-claim).
  */
 class MileageClaimExport {
 	public function __construct(

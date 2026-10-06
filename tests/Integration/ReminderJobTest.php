@@ -101,7 +101,7 @@ class ReminderJobTest extends TestCase {
 		}
 	}
 
-	/** Done when, first line: 28 days ahead of a HU/AU, told once, in the recipient's language. */
+	/** 28 days ahead of a HU/AU, told once, in the recipient's language. */
 	public function testTheOwnerIsToldOnceAboutAHuAuDueInFourWeeksInTheirLanguage(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
 		$this->reminders->create(self::OWNER, $vehicle->getUuid(), ['template_key' => 'hu_au', 'due_date' => '2031-05-31']);
@@ -558,16 +558,21 @@ class ReminderJobTest extends TestCase {
 		$this->fail('reminder ' . $uuid . ' is not on the vehicle');
 	}
 
-	/** How many notifications the store holds for this reminder, to one user or to anyone. */
+	/**
+	 * How many notifications the store holds for this reminder, to one user or to anyone of this
+	 * suite. Not to anyone at all: the schema test hands reminder ids out again, and the instance's
+	 * other accounts keep the notices of reminders a suite deleted under them.
+	 */
 	private function sent(Reminder $reminder, ?string $uid = null): int {
 		$manager = \OCP\Server::get(\OCP\Notification\IManager::class);
-		$notification = $manager->createNotification();
-		$notification->setApp(Application::APP_ID)->setObject(NotificationService::OBJECT, (string)$reminder->getId());
-		if ($uid !== null) {
-			$notification->setUser($uid);
+		$count = 0;
+		foreach ($uid === null ? [...array_keys(self::LANGUAGES), self::GONE] : [$uid] as $one) {
+			$notification = $manager->createNotification();
+			$notification->setApp(Application::APP_ID)->setObject(NotificationService::OBJECT, (string)$reminder->getId())->setUser($one);
+			$count += $manager->getCount($notification);
 		}
 
-		return $manager->getCount($notification);
+		return $count;
 	}
 
 	/**

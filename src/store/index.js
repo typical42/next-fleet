@@ -13,59 +13,52 @@ import { useInboxStore } from './inbox.js'
 /** @typedef {import('../services/api.js').Reading} Reading */
 
 /**
- * A sold vehicle leaves the overview and a laid-up one sinks below the vehicles somebody still
- * drives (docs/ui.md). The overview orders the rest by urgency (`fleetByUrgency`,
- * src/utils/reminders.js); the navigation keeps the server's order, and Array#sort keeps it.
+ * A sold vehicle leaves the overview and a laid-up one sinks below the driven ones (docs/ui.md).
+ * Array#sort is stable, so the navigation keeps the server's order within a rank; the overview
+ * reorders by urgency (`fleetByUrgency`, src/utils/reminders.js).
  */
 /** @type {Record<string, number>} */
 const RANK = { active: 0, laid_up: 1 }
 
-/**
- * Vehicles held by uuid, because a plate is a label a user may change at any
- * time — a second write under the same uuid is the same vehicle.
- */
+/** Vehicles held by uuid: a plate is a label the user may change. */
 export const useVehiclesStore = defineStore('vehicles', () => {
 	/** @type {import('vue').Ref<Map<string, Vehicle>>} */
 	const byUuid = ref(new Map())
 
 	/**
-	 * The vehicle the last delete answered with — the way back into the fleet, and the only place
-	 * the token that takes it is held. State rather than a return value: the screen that asks for
-	 * a delete is unmounted by it, and a Vue component that is gone emits nothing.
+	 * The way back for a vehicle: the last delete's answer, the only holder of the token the undo
+	 * takes. State rather than a return value, because the delete unmounts the screen that asked.
 	 *
 	 * @type {import('vue').Ref<Vehicle|null>}
 	 */
 	const deleted = ref(null)
 
 	/**
-	 * The Entry the last delete answered with, and where it hangs - the way back for an Entry, held
-	 * for the reason `deleted` is: the sheet that asked for the delete has closed.
+	 * The way back for an Entry: the last delete's answer and its vehicle. State, as `deleted` is.
 	 *
 	 * @type {import('vue').Ref<{vehicle: string, type: import('../services/api.js').Written, entry: {uuid: string, updated_at: number}}|null>}
 	 */
 	const struck = ref(null)
 
 	/**
-	 * What the last import created - the way back for an import (docs/architecture.md#import),
-	 * held for the reason `deleted` is: the sheet that asked for it has closed. The list is the
-	 * import's identity; the undo names it and nothing else.
+	 * The way back for an import: what it created, which is all the undo names
+	 * (docs/architecture.md#import). State, as `deleted` is.
 	 *
 	 * @type {import('vue').Ref<{vehicle: string, counts: import('../services/api.js').ImportCounts, created: {type: string, uuid: string}[]}|null>}
 	 */
 	const imported = ref(null)
 
 	/**
-	 * The paper the last *Remove* took off, and its vehicle - the way back for a paper, held for the
-	 * reason `deleted` is. No token: nothing edits a document (docs/architecture.md#documents).
+	 * The way back for a paper: the last one taken off, and its vehicle. No token: nothing edits a
+	 * document (docs/architecture.md#documents).
 	 *
 	 * @type {import('vue').Ref<{vehicle: string, document: string}|null>}
 	 */
 	const detached = ref(null)
 
 	/**
-	 * The last save from the entry sheet, for the toast's "Saved.". An edit carries the way back:
-	 * the token it answered with and the fields it replaced, held for the reason `deleted` is. A new
-	 * Entry carries neither - its row on the timeline is where it is taken back.
+	 * The entry sheet's last save, for the toast's "Saved.". An edit carries the way back: its new
+	 * token and the fields it replaced. A new Entry carries neither; the timeline deletes it.
 	 *
 	 * @type {import('vue').Ref<{vehicle: string, type: import('../services/api.js').Written, entry: {uuid: string, updated_at: number}|null, before: object|null}|null>}
 	 */
@@ -80,15 +73,14 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	const refiled = ref(null)
 
 	/**
-	 * How many undos have brought Entries back, written an edit back or taken an import's away. The toast that makes the undo lives in the app
-	 * shell and knows no timeline; a timeline watches this and reads itself again.
+	 * Counts undos that changed a timeline. The toast that makes them lives in the app shell and
+	 * knows no timeline; a timeline watches this and reads itself again.
 	 */
 	const restored = ref(0)
 
 	/**
-	 * How many writes moved a reminder behind the due banner's back: an HU/AU the vehicle sheet
-	 * added through `remind()`, and every write to a Maintenance Record, which may close one or take
-	 * that back. The banner watches this and reads itself again.
+	 * Counts writes that moved a reminder behind the due banner's back: `remind()`, and every write
+	 * to a Maintenance Record, which may close one. The banner watches this and reads itself again.
 	 */
 	const reminded = ref(0)
 
@@ -131,9 +123,8 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	}
 
 	/**
-	 * Write a vehicle back and hold what the server saved, token included. A refusal is not
-	 * caught here: the sheet that asked for the save is what stays open and offers the retry
-	 * (docs/ui.md), and it cannot if the store answers for it.
+	 * Write a vehicle back and hold what the server saved, token included. A refusal is not caught:
+	 * the sheet must stay open and offer the retry (docs/ui.md).
 	 *
 	 * @param {Vehicle} vehicle - the vehicle as edited, carrying the `updated_at` it was read with
 	 * @return {Promise<Vehicle>} the vehicle as the server now holds it
@@ -146,14 +137,9 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	}
 
 	/**
-	 * Delete a vehicle. It leaves the fleet rather than staying as a flagged row: `visible` hides
-	 * the disposed ones and nothing else, so a row left here would still be listed and still be
-	 * openable. A refusal is not caught, as with `save()`.
-	 *
-	 * What the delete answered with is kept, because the token on it is the only one the undo is
-	 * accepted with (docs/architecture.md#concurrency) and the screen that asked for the delete
-	 * leaves with the vehicle - it cannot hold anything. One vehicle at a time: a second delete
-	 * takes the offer of the first, which the toast has by then made and had answered.
+	 * Delete a vehicle and drop it from the fleet: `visible` hides only disposed ones, so a kept
+	 * row would still be listed. The answer is held as `deleted`, one offer at a time with the
+	 * others (docs/architecture.md#concurrency). A refusal is not caught, as with `save()`.
 	 *
 	 * @param {Vehicle} vehicle - the vehicle as it was read, carrying the `updated_at` it was read with
 	 * @return {Promise<void>} when it is out of the fleet and the way back is held
@@ -168,11 +154,10 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	}
 
 	/**
-	 * Give back the session's own grant on a vehicle. With no group still reaching it, it leaves
-	 * the fleet as a deleted one does, but with no way back: only the owner grants again. With one,
-	 * it stays, and is read again for what that group allows. That read may fail on its own, for
-	 * the reason counted() gives; the vehicle then shows what it allowed before until the next load,
-	 * and the server refuses the rest. A refused leave is not caught, as with `save()`.
+	 * Give back the session's own grant. With no group still reaching the vehicle it leaves the
+	 * fleet, with no way back: only the owner grants again. Otherwise it is read again for what the
+	 * group allows; a failed read leaves it stale, as in refresh(), and the server refuses the
+	 * rest. A refused leave is not caught, as with `save()`.
 	 *
 	 * @param {string} uuid - the vehicle
 	 * @return {Promise<import('../services/api.js').Held>} what the session still holds on it
@@ -253,15 +238,10 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	}
 
 	/**
-	 * Undo the last delete, checked against the token that delete answered with — no newer one
-	 * exists and no older one is accepted (docs/architecture.md#concurrency). A refusal leaves the
-	 * offer standing: it is the only way back there is, and the row is still deleted.
-	 *
-	 * Nothing deleted is nothing to undo, and no request: the toast is the only caller and it is
-	 * only up while there is an offer, so this is the state after a page load, not a failure.
-	 *
-	 * An import is undone as the list it answered, all of it or nothing; an edit by writing back what
-	 * it replaced.
+	 * Take back the standing offer: a delete on the token it answered with, an import as the list
+	 * it created, an edit by writing back what it replaced (docs/architecture.md#concurrency). A
+	 * refusal leaves the offer standing; it is the only way back. With no offer, as after a page
+	 * load, it asks for nothing.
 	 *
 	 * @return {Promise<void>} when the vehicle, the Entry, the paper or the edited Entry is back, or the import's entries gone
 	 */
@@ -409,8 +389,7 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	}
 
 	/**
-	 * Record one fill-up. The counters it carries are Readings of their own
-	 * (docs/architecture.md#odometer-rules), so the vehicle is read back like after a trip.
+	 * Record one fill-up. Its counters are Readings too (docs/architecture.md#odometer-rules).
 	 *
 	 * @param {string} uuid - the vehicle that took it
 	 * @param {object} entry - what the sheet holds (src/services/api.js)
@@ -460,16 +439,13 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	}
 
 	/**
-	 * One write that moves a vehicle's counter, and the read of the vehicle that follows it:
-	 * `odo_value` is a cache the server restates from the whole chain, and counting it here would
-	 * be a second implementation of the odometer rules — a wrong one as soon as a row lands out of
-	 * order.
+	 * One write that moves a vehicle's counter, then a re-read of the vehicle: `odo_value` is the
+	 * server's cache over the whole chain, and counting it here would duplicate the odometer rules
+	 * (docs/architecture.md#odometer-rules).
 	 *
-	 * The re-read may fail on its own, and by then the write has landed. Raising that would offer
-	 * the sheet a retry which writes the entry a second time, and nothing refuses a duplicate —
-	 * two equal readings are not a contradiction. So the counter stays stale until the next load,
-	 * which is the cheaper wrong. A refused write is another matter: it never reached the vehicle,
-	 * and the sheet is what has to say so (docs/ui.md).
+	 * A failed re-read is swallowed: the write has landed, and a retry would write it twice, which
+	 * nothing refuses. A stale counter until the next load is the cheaper wrong. A refused write is
+	 * thrown, since the sheet must say so (docs/ui.md).
 	 *
 	 * @template T
 	 * @param {string} uuid - the vehicle the counter belongs to

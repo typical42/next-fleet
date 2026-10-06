@@ -23,6 +23,8 @@ use OCP\IUserSession;
  * either, because a user's own setting has no second writer to lose a race against.
  */
 class PreferencesController extends Controller {
+	use SessionUser;
+
 	public function __construct(
 		string $appName,
 		IRequest $request,
@@ -45,16 +47,5 @@ class PreferencesController extends Controller {
 		} catch (\InvalidArgumentException $e) {
 			return new DataResponse(['message' => $e->getMessage()], Http::STATUS_BAD_REQUEST);
 		}
-	}
-
-	private function userId(): string {
-		$user = $this->session->getUser();
-		if ($user === null) {
-			// The routes require a login, so this is a broken container rather than an anonymous
-			// request.
-			throw new \RuntimeException('No user in session');
-		}
-
-		return $user->getUID();
 	}
 }

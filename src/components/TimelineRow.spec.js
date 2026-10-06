@@ -11,10 +11,8 @@ import TimelineRow from './TimelineRow.vue'
 
 vi.mock('../utils/papers.js', () => ({ savePaper: vi.fn(async () => '') }))
 
-// The locale decides the separators and the date order, and it is the reader's rather than the
-// language's (docs/ui.md#languages) - so it is pinned here, or every assertion below would depend
-// on the machine the suite runs on.
-// `t` stays the real one: with no catalogue loaded it answers in English, placeholders filled.
+// The locale decides separators and date order (docs/ui.md#languages); pinned, or every assertion
+// would depend on the machine. `t` stays real: with no catalogue it answers in English.
 vi.mock('@nextcloud/l10n', async (importOriginal) => ({
 	...(/** @type {object} */ (await importOriginal())),
 	getCanonicalLocale: () => 'en-GB',
@@ -146,9 +144,8 @@ describe('a cost row', () => {
 
 describe('a timeline row', () => {
 	/**
-	 * The day, the route and what the journey covered - that is the line in the sketch
-	 * (docs/ui.md). The date is the one the offset puts it on, because a Fahrtenbuch is judged on
-	 * local calendar dates (docs/architecture.md#time).
+	 * The date is the one the offset puts it on: a Fahrtenbuch is judged on local calendar dates
+	 * (docs/architecture.md#time).
 	 */
 	it('says where a journey went and what it left on the counter', () => {
 		const wrapper = row(journey({ from_label: 'München', to_label: 'Augsburg', end_odo: 148402 }))
@@ -161,11 +158,7 @@ describe('a timeline row', () => {
 		expect(wrapper.text()).toContain('Business')
 	})
 
-	/**
-	 * The kilometres and the counter are two facts and are never computed into one another
-	 * (docs/architecture.md#odometer-rules), so the row states the one the driver gave. The Reading
-	 * the server counted from it is on the row as well and is not a second figure to show.
-	 */
+	/** The Reading the server counted from the kilometres is not a second figure to show. */
 	it('says the kilometres when that is what the driver gave', () => {
 		const wrapper = row(journey(
 			{ from_label: 'München', to_label: 'Augsburg', distance: 82 },
@@ -201,11 +194,7 @@ describe('a timeline row', () => {
 			.toContain('5,004 h')
 	})
 
-	/**
-	 * A flagged Reading is a question the timeline is where people answer (docs/ui.md), so the row
-	 * it sits on has to carry it - and carry it as a word, because status is never colour alone.
-	 * A trip's question is its Reading's: the journey and the counter it moved are one row.
-	 */
+	/** A trip's question is its Reading's: the journey and the counter it moved are one row. */
 	it('carries the question a flagged reading asks, whichever row it sits on', () => {
 		expect(row(counter({ value: 148320, flagged: true })).text()).toContain('In question')
 		expect(row(journey({ distance: 82 }, { value: 148402, origin: 'derived', flagged: true })).text())
@@ -214,8 +203,7 @@ describe('a timeline row', () => {
 	})
 
 	/**
-	 * Rule 3's question, with its two answers on the row: a replaced counter is answered here, a
-	 * typo is fixed in the sheet the Entry was entered in (docs/architecture.md#odometer-rules).
+	 * Rule 3 (docs/architecture.md#odometer-rules): a typo is fixed in the sheet, so it opens it.
 	 */
 	it('asks whether a lower reading is a counter replaced or a typo', async () => {
 		const entry = counter({ value: 30, flagged: true, updated_at: 1788391900 })
@@ -275,10 +263,7 @@ describe('a timeline row', () => {
 			.not.toContain('Incomplete')
 	})
 
-	/**
-	 * A Gap is closed one at a time (CONTEXT.md), so the offer sits on the trip whose claim opened it
-	 * rather than on the month's total. The row only offers; the confirmation is the timeline's.
-	 */
+	/** The row only offers; the confirmation is the timeline's. */
 	it('offers to close the Gap before the trip that opened it', async () => {
 		const gap = { trip: 't-1', distance: 1250, from_at: 1788220000, from_at_off: 120, to_at: 1788391800, to_at_off: 120 }
 		const wrapper = mount(TimelineRow, {
@@ -291,7 +276,7 @@ describe('a timeline row', () => {
 		expect(wrapper.emitted('closeGap')).toEqual([[gap]])
 	})
 
-	/** The trip that closed a Gap is the app's arithmetic, and the row says so rather than pass it off as a journey. */
+	/** The trip that closed a Gap is the app's arithmetic, not a journey, and the row says so. */
 	it('says a trip was written to close a Gap', () => {
 		expect(row(journey({ distance: 1250, category: 'private', reconciled: true })).text()).toContain('Reconciled')
 		expect(row(journey({ distance: 82, reconciled: false })).text()).not.toContain('Reconciled')
@@ -305,10 +290,6 @@ describe('a timeline row', () => {
 		expect(text).not.toContain('Reconciliation overtaken')
 	})
 
-	/**
-	 * A trip entered later records kilometres the reconciliation stood for, so the two count them
-	 * twice. Voiding the reconciliation is the fix, offered on the row; overtaken says the overlap.
-	 */
 	it('offers to void a reconciliation a later trip overtook', async () => {
 		const entry = { ...journey({ distance: 1250, category: 'private', reconciled: true }), flags: ['overlap', 'overtaken'] }
 		const wrapper = row(entry)
@@ -333,10 +314,6 @@ describe('a timeline row', () => {
 		expect(wrapper.text()).not.toContain('unaccounted')
 	})
 
-	/**
-	 * Every row opens its Entry for editing (docs/ui.md). The row's name is the button, so a
-	 * keyboard and a screen reader reach it by what the row is called; the whole row is its target.
-	 */
 	it.each([
 		['trip', journey({ distance: 82, from_label: 'Munich', to_label: 'Augsburg' }), 'Munich → Augsburg'],
 		['odometer', counter({ value: 148320 }), 'Counter reading'],
@@ -352,10 +329,7 @@ describe('a timeline row', () => {
 		expect(wrapper.emitted('open')).toEqual([[entry]])
 	})
 
-	/**
-	 * The sheet is where an Entry is edited, voided or deleted, so a row the reader may not change
-	 * opens nothing (docs/ui.md). It still says everything it says to anyone.
-	 */
+	/** It still says everything it says to anyone. */
 	it('opens nothing the reader may not change', async () => {
 		const wrapper = row({ ...journey({ distance: 82, from_label: 'Munich', to_label: 'Augsburg' }), may: [] })
 
@@ -365,13 +339,11 @@ describe('a timeline row', () => {
 		expect(wrapper.emitted('open')).toBeUndefined()
 	})
 
-	/** On a vehicle others use, the server names who entered each row (TimelineService::withEnteredBy()). */
 	it('says who entered it when the server names them', () => {
 		expect(row({ ...counter({ value: 120500 }), entered_by: 'Ben Fahrer' }).text()).toContain('Entered by Ben Fahrer')
 		expect(row(cost('maintenance', { title: 'Wipers', cost: null }, { readings: [], entered_by: 'erased:k3x9' })).text()).toContain('Entered by erased:k3x9')
 	})
 
-	/** A vehicle nobody else uses looks as it did before access existed. */
 	it('names nobody when the server names nobody', () => {
 		expect(row({ ...counter({ value: 120500 }), entered_by: null }).text()).not.toContain('Entered by')
 	})

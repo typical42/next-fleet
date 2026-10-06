@@ -52,8 +52,8 @@ const GAPS = [
 ]
 
 /**
- * The timeline, mounted and done with its first read. shallowMount, so the rows are counted rather
- * than re-read: what one of them says is TimelineRow's own question (TimelineRow.spec.js).
+ * The timeline, mounted and done with its first read. Shallow: what a row says is
+ * TimelineRow.spec.js's question.
  *
  * @param {object} [vehicle] - the vehicle it is opened on
  * @return {Promise<import('@vue/test-utils').VueWrapper>} the mounted timeline
@@ -123,10 +123,6 @@ describe('a row opened for editing', () => {
 		expect(wrapper.emitted('open')).toEqual([[SEPTEMBER[1]]])
 	})
 
-	/**
-	 * An undo is made from the toast in the app shell, which knows nothing of this list - so the
-	 * list reads itself again when the store says an Entry came back.
-	 */
 	it('reads itself again when an Entry is brought back', async () => {
 		await timeline()
 		expect(readTimeline).toHaveBeenCalledTimes(1)
@@ -139,10 +135,7 @@ describe('a row opened for editing', () => {
 })
 
 describe('the papers', () => {
-	/**
-	 * A document linked to an entry is carried on that entry's row, and only there. Documents are
-	 * not rows of their own: a registration has no date to sort by.
-	 */
+	/** Documents are not rows of their own: a registration has no date to sort by. */
 	it('hands each row the documents linked to its entry', async () => {
 		const fill = { type: 'energy', occurred_at: 1788300000, occurred_at_off: 120, energy: { uuid: 'e-1', energy: 'diesel', amount: 40000 } }
 		vi.mocked(readTimeline).mockResolvedValue(/** @type {any} */ ({ rows: [SEPTEMBER[0], fill], next: null }))
@@ -162,10 +155,7 @@ describe('the papers', () => {
 describe('the month header under Logbook Mode', () => {
 	const LOGBOOK = { ...VEHICLE, logbook_mode: true }
 
-	/**
-	 * What the logbook asks is said only under the mode (docs/features.md#logbook-mode), and a
-	 * month's header states all of that month's Gaps at once, however far down the rows are read.
-	 */
+	/** A month's header states all its Gaps at once, however far down the rows are read. */
 	it('states the unaccounted kilometres of the month the Gaps were opened in', async () => {
 		const wrapper = await timeline(LOGBOOK)
 
@@ -183,10 +173,6 @@ describe('the month header under Logbook Mode', () => {
 		expect(months(wrapper).join(' ')).not.toContain('unaccounted')
 	})
 
-	/**
-	 * A header that said nothing because the Gaps never arrived would read as a gapless month. So a
-	 * refused read of them is a refused list, and the retry asks for both again.
-	 */
 	it('refuses the list rather than state a month without its Gaps, and retries both', async () => {
 		vi.mocked(readGaps).mockRejectedValueOnce(new Error('The server answered 500'))
 		const wrapper = await timeline(LOGBOOK)
@@ -200,7 +186,6 @@ describe('the month header under Logbook Mode', () => {
 		expect(months(wrapper)[0]).toContain('1,290 km unaccounted for')
 	})
 
-	/** Switching the mode on is when the question starts to be asked, on the screen already open. */
 	it('reads the Gaps when the mode is switched on under it', async () => {
 		const wrapper = await timeline()
 
@@ -235,7 +220,6 @@ describe('closing a Gap', () => {
 		await flushPromises()
 	}
 
-	/** Each trip is handed the Gap its own claim opened, and nothing else is handed one. */
 	it('hands each trip the Gap its claim opened', async () => {
 		const wrapper = await timeline(LOGBOOK)
 
@@ -243,10 +227,6 @@ describe('closing a Gap', () => {
 		expect(gaps).toEqual([GAPS[1], null, GAPS[0]])
 	})
 
-	/**
-	 * One Gap, confirmed on its own terms: the kilometres and the two moments that bracket them, so
-	 * the driver agrees to exactly what the server will write (docs/features.md#logbook-mode).
-	 */
 	it('asks first, naming the kilometres and the two moments', async () => {
 		const wrapper = await timeline(LOGBOOK)
 
@@ -270,7 +250,6 @@ describe('closing a Gap', () => {
 		expect(closeGap).not.toHaveBeenCalled()
 	})
 
-	/** The row it wrote and the header it emptied are both on screen once it is closed. */
 	it('closes the confirmed Gap and reads the timeline again', async () => {
 		vi.mocked(closeGap).mockResolvedValue(/** @type {any} */ ({ uuid: 't-9', reconciled: true }))
 		const wrapper = await timeline(LOGBOOK)
@@ -285,7 +264,6 @@ describe('closing a Gap', () => {
 		expect(wrapper.find('.dialog').exists()).toBe(false)
 	})
 
-	/** A refusal keeps the question open and says why, and the confirmation is the retry. */
 	it('keeps the question open when the server refuses', async () => {
 		vi.mocked(closeGap).mockRejectedValueOnce(new Error('The server answered 500'))
 		const wrapper = await timeline(LOGBOOK)
@@ -298,10 +276,6 @@ describe('closing a Gap', () => {
 		expect(button(wrapper, 'Try again').props('disabled')).toBe(false)
 	})
 
-	/**
-	 * A Gap that moved since it was read is not the one on screen, so confirming it again cannot
-	 * help. The list behind the question is read again, and the question offers no second try.
-	 */
 	it('offers no second try at a Gap that has moved, and reads the list again', async () => {
 		vi.mocked(closeGap).mockRejectedValueOnce(new ConflictError('Changed since you read it'))
 		const wrapper = await timeline(LOGBOOK)
@@ -323,7 +297,7 @@ describe('voiding an overtaken reconciliation', () => {
 		await flushPromises()
 	}
 
-	/** The void holds its way back like any other (src/components/UndoToast.vue), and the list is read again. */
+	/** The void holds its way back like any other (src/components/UndoToast.vue). */
 	it('voids the trip, offers the undo and reads the list again', async () => {
 		vi.mocked(deleteEntry).mockResolvedValue(/** @type {any} */ ({ uuid: 't-1', updated_at: 1788400000 }))
 		vi.mocked(getVehicle).mockResolvedValue(/** @type {any} */ (VEHICLE))
@@ -356,7 +330,6 @@ describe('answering a reading in question', () => {
 		await flushPromises()
 	}
 
-	/** The answer moves flags, distances and Gaps around it, so the list is read again. */
 	it('answers that the counter was replaced and reads the list again', async () => {
 		vi.mocked(resetReading).mockResolvedValue(/** @type {any} */ ({ ...LOWER, kind: 'reset', flagged: false }))
 		const wrapper = await timeline()
@@ -389,7 +362,6 @@ describe('answering a reading in question', () => {
 })
 
 describe('the timeline', () => {
-	/** The newest rows of every kind, which is what the screen opens on (docs/ui.md). */
 	it('reads the newest rows of every kind when it opens', async () => {
 		const wrapper = await timeline()
 
@@ -398,10 +370,7 @@ describe('the timeline', () => {
 	})
 
 	/**
-	 * The month is a sticky header, so it is stated once above the rows that belong to it
-	 * (docs/ui.md) - and which month a row belongs to is the offset's answer, not the reader's
-	 * clock's (docs/architecture.md#time). The words themselves are the locale's
-	 * (src/utils/format.js).
+	 * A row's month is the offset's answer, not the reader's clock's (docs/architecture.md#time).
 	 */
 	it('states each month once, above the rows under it', async () => {
 		const wrapper = await timeline()
@@ -414,11 +383,6 @@ describe('the timeline', () => {
 			.toEqual([2, 1])
 	})
 
-	/**
-	 * A chip is a different question, so it is asked from the top: continuing under a cursor the
-	 * previous chip handed out would start the narrower list halfway down
-	 * (docs/architecture.md#the-timeline).
-	 */
 	it('asks again from the top when a chip narrows it', async () => {
 		const wrapper = await timeline()
 		expect(wrapper.findAllComponents(NcRadioGroupButton).map((one) => String(one.props('label'))))
@@ -431,10 +395,6 @@ describe('the timeline', () => {
 		expect(wrapper.findAllComponents(TimelineRow)).toHaveLength(1)
 	})
 
-	/**
-	 * The chip says Expenses, not Costs: the header's *Costs* button opens the whole bill, energy and
-	 * maintenance included, and two words for two things keep them apart (docs/ui.md).
-	 */
 	it('asks for the expenses under Expenses, and lists the cost kinds each as a row', async () => {
 		const wrapper = await timeline()
 		const COSTS = [
@@ -452,10 +412,7 @@ describe('the timeline', () => {
 			.toEqual(['expense', 'energy', 'maintenance'])
 	})
 
-	/**
-	 * Fifty rows, then more on scroll (docs/ui.md). The cursor is the server's own word handed back
-	 * and the rows that come with it go under the ones already there, newest first throughout.
-	 */
+	/** Fifty rows, then more on scroll (docs/ui.md), newest first throughout. */
 	it('continues under the cursor the last page answered with', async () => {
 		vi.mocked(readTimeline).mockResolvedValue(/** @type {any} */ ({ rows: SEPTEMBER, next: '1788217200:odometer:7' }))
 		const wrapper = await timeline()
@@ -469,20 +426,13 @@ describe('the timeline', () => {
 		expect(months(wrapper)).toHaveLength(2)
 	})
 
-	/**
-	 * A page that answers with no cursor is the last one, so nobody fetches an empty page to find
-	 * that out (docs/architecture.md#the-timeline).
-	 */
+	/** No cursor is the last page; no empty page is fetched (docs/architecture.md#the-timeline). */
 	it('stops offering more when the last page is in', async () => {
 		const wrapper = await timeline()
 
 		expect(wrapper.findAllComponents(NcButton)).toHaveLength(0)
 	})
 
-	/**
-	 * A failed read is not a lost list: the rows already on screen stay, and the way on becomes the
-	 * retry - the same answer a failed save gets (docs/ui.md).
-	 */
 	it('keeps what it has when a page comes back refused, and offers the retry', async () => {
 		vi.mocked(readTimeline).mockResolvedValue(/** @type {any} */ ({ rows: SEPTEMBER, next: '1788217200:odometer:7' }))
 		const wrapper = await timeline()
@@ -496,7 +446,7 @@ describe('the timeline', () => {
 		expect(more(wrapper).text()).toBe('Try again')
 	})
 
-	/** Empty states do the teaching (docs/ui.md), and a vehicle nobody has driven yet has one. */
+	/** Empty states do the teaching (docs/ui.md). */
 	it('teaches rather than saying nothing', async () => {
 		vi.mocked(readTimeline).mockResolvedValue(/** @type {any} */ ({ rows: [], next: null }))
 		const wrapper = await timeline()
@@ -505,7 +455,6 @@ describe('the timeline', () => {
 		expect(months(wrapper)).toHaveLength(0)
 	})
 
-	/** The two ways to a first row are the two buttons in the empty state, each for who may take it. */
 	it.each([
 		[['view', 'log', 'edit'], ['New entry', 'Import from a file…']],
 		[['view', 'log'], ['New entry']],
@@ -526,11 +475,6 @@ describe('the timeline', () => {
 		}
 	})
 
-	/**
-	 * "More on scroll" is the sentinel below the last row coming into view. The button beside it is
-	 * the way on without an observer and the retry when a page failed; the scroll is what a driver
-	 * actually does.
-	 */
 	it('asks for the next page when the bottom is scrolled into view', async () => {
 		/** @type {((entries: {isIntersecting: boolean}[]) => void)[]} */
 		const seen = []
@@ -549,8 +493,7 @@ describe('the timeline', () => {
 		const wrapper = await timeline()
 		vi.mocked(readTimeline).mockResolvedValue(/** @type {any} */ ({ rows: AUGUST, next: null }))
 
-		// The observer the sentinel is under: the component builds one per sentinel, and the newest
-		// is the one watching the bottom as the list now stands.
+		// One observer per sentinel; the newest watches the bottom as the list now stands.
 		const scrolledTo = /** @type {(entries: {isIntersecting: boolean}[]) => void} */ (seen.at(-1))
 		scrolledTo([{ isIntersecting: true }])
 		await flushPromises()
@@ -560,11 +503,7 @@ describe('the timeline', () => {
 		vi.unstubAllGlobals()
 	})
 
-	/**
-	 * The shell keeps one vehicle screen and swaps the vehicle under it (src/App.vue), so this
-	 * component outlives the vehicle it was opened on. A list that stayed would show one vehicle's
-	 * journeys under another's name, and the next page would ask for them under the new uuid.
-	 */
+	/** A list that stayed would show one vehicle's journeys under another's name. */
 	it('starts again when the screen is moved to another vehicle', async () => {
 		vi.mocked(readTimeline).mockResolvedValue(/** @type {any} */ ({ rows: SEPTEMBER, next: '1788217200:odometer:7' }))
 		const wrapper = await timeline()
@@ -577,11 +516,7 @@ describe('the timeline', () => {
 		expect(wrapper.findAllComponents(TimelineRow)).toHaveLength(1)
 	})
 
-	/**
-	 * The retry is the one click that has to work after a refusal: the scroll stops asking on its
-	 * own - it would ask on every pixel and get the same answer - and a list with no way on is a
-	 * list that ends at the failure.
-	 */
+	/** The scroll stops asking after a refusal, so the retry is the only way on. */
 	it('takes the retry after a refusal and carries on', async () => {
 		vi.mocked(readTimeline).mockResolvedValue(/** @type {any} */ ({ rows: SEPTEMBER, next: '1788217200:odometer:7' }))
 		const wrapper = await timeline()
@@ -597,10 +532,6 @@ describe('the timeline', () => {
 		expect(wrapper.findComponent(NcNoteCard).exists()).toBe(false)
 	})
 
-	/**
-	 * A chip taken while the previous page is still in the air is still the question that was asked
-	 * last, so the answer to the older one is dropped rather than rendered under the new chip.
-	 */
 	it('drops the answer to a question the reader has moved on from', async () => {
 		/** @type {(page: any) => void} */
 		let answerFirst = () => {}
@@ -621,11 +552,7 @@ describe('the timeline', () => {
 		expect(wrapper.findAllComponents(TimelineRow)).toHaveLength(1)
 	})
 
-	/**
-	 * The screen reads the timeline back after the entry sheet writes to it: the row that was just
-	 * entered is the one the driver is looking for, and it belongs at the top rather than after a
-	 * reload of the page (src/views/VehicleView.vue).
-	 */
+	/** Called by the screen after the entry sheet writes (src/views/VehicleView.vue). */
 	it('reads the whole list again when the screen says something was written', async () => {
 		vi.mocked(readTimeline).mockResolvedValue(/** @type {any} */ ({ rows: SEPTEMBER, next: '1788217200:odometer:7' }))
 		const wrapper = await timeline()
@@ -694,11 +621,6 @@ describe('a long history', () => {
 		return wrapper
 	}
 
-	/**
-	 * Years of entries scrolled through would put thousands of rows on screen. Four pages are, and
-	 * the oldest goes as the next comes; what is shown keeps the order it reads in, so a keyboard
-	 * still walks it top to bottom.
-	 */
 	it('keeps at most four pages on screen, the newest read last', async () => {
 		const wrapper = await scrolled(6)
 
@@ -768,7 +690,6 @@ describe('a long history', () => {
 		expect(more(wrapper).text()).toBe('Try again')
 	})
 
-	/** A row is read, never changed in place: Vue need not watch every field of thousands. */
 	it('hands the rows over unwatched', async () => {
 		const wrapper = await scrolled(2)
 

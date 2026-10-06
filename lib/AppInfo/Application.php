@@ -14,6 +14,7 @@ use OCA\NextFleet\Jurisdiction\IServiceTemplates;
 use OCA\NextFleet\Listener\GroupDeletedListener;
 use OCA\NextFleet\Listener\GroupMemberRemovedListener;
 use OCA\NextFleet\Listener\UserDeletedListener;
+use OCA\NextFleet\Middleware\PlaceholderMiddleware;
 use OCA\NextFleet\Notification\Notifier;
 use OCA\NextFleet\Search\VehicleSearchProvider;
 use OCA\NextFleet\UserMigration\FleetMigrator;
@@ -35,7 +36,7 @@ class Application extends App implements IBootstrap {
 
 	/**
 	 * Controllers, services and mappers are autowired from their constructor types; only an
-	 * interface needs telling which class it is. The reminder job is registered in info.xml.
+	 * interface needs telling which class it is. The timed jobs are registered in info.xml.
 	 */
 	public function register(IRegistrationContext $context): void {
 		$context->registerServiceAlias(IServiceTemplates::class, ServiceTemplates::class);
@@ -47,6 +48,7 @@ class Application extends App implements IBootstrap {
 		$context->registerSearchProvider(VehicleSearchProvider::class);
 		$context->registerDashboardWidget(DueWidget::class);
 		$context->registerUserMigrator(FleetMigrator::class);
+		$context->registerMiddleware(PlaceholderMiddleware::class);
 	}
 
 	public function boot(IBootContext $context): void {

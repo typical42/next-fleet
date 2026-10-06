@@ -25,9 +25,8 @@ export function periodWord(period) {
 
 /**
  * A period as the header reads it: `[from, to)` in unix seconds between the browser's local
- * midnights, since a year starts where the person is. `before` is the period the figures are
- * compared with, of the same length and directly before it: a year back for the yearly ones, a
- * month back for a month.
+ * midnights, since a year starts where the person is. `before`, the period compared with, is the
+ * same span one step back: a year for the yearly ones, a month for a month.
  *
  * @param {string} period - one of PERIODS
  * @param {Date} now - the moment the header is read

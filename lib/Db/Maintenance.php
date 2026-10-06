@@ -73,11 +73,7 @@ class Maintenance extends BaseEntity implements \JsonSerializable {
 		$this->addType('reminderId', Types::BIGINT);
 	}
 
-	/**
-	 * The wire form is the column names, as it is for every entity.
-	 *
-	 * @return NextFleetMaintenanceEntry
-	 */
+	/** @return NextFleetMaintenanceEntry */
 	public function jsonSerialize(): array {
 		return [
 			'uuid' => $this->uuid,

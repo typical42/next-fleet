@@ -55,10 +55,7 @@ class CostService {
 		$records = $this->maintenance->findBetween($vehicleId, $from, $to);
 		$expenses = $this->expenses->findBetween($vehicleId, $from, $to);
 		$distances = $this->consumption->distances($vehicle, $periods);
-		// Cost per 100 km plus what the vehicle loses in value, spread over every kilometre it has
-		// run since it was first read, not over the period: depreciation belongs to the whole
-		// holding, so its distance is read once for every period. Purchase and residual count as
-		// entered, since neither carries a VAT rate.
+		// Depreciation belongs to the whole holding, so its distance is read once for every period.
 		$held = false;
 		$tco = function (float $value, string $per) use ($vehicle, &$held): ?float {
 			$purchase = $vehicle->getPurchasePrice();

@@ -76,7 +76,7 @@ function button(screen, name) {
 }
 
 /**
- * Opens a timeline row's sheet and answers whether it offers the delete.
+ * Opens a timeline row's sheet and expects it to offer the delete.
  *
  * @param {import('@playwright/test').Page} screen - a page on the vehicle screen
  * @param {string} name - the row's name

@@ -3,7 +3,6 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
-import { FilePickerClosed, getFilePickerBuilder } from '@nextcloud/dialogs'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcCheckboxRadioSwitch from '@nextcloud/vue/components/NcCheckboxRadioSwitch'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
@@ -15,6 +14,7 @@ import { computed, onMounted, ref } from 'vue'
 import { getPreferences, readInbox, savePreferences } from '../services/api.js'
 import { jurisdictionWord, parseWhole } from '../utils/format.js'
 import { t } from '../utils/l10n.js'
+import { pickNode } from '../utils/picker.js'
 
 /** The registered countries, as the server named them. @type {import('vue').Ref<{ key: string, name: string }[]>} */
 const offered = ref([])
@@ -29,15 +29,12 @@ const options = computed(() => offered.value.map(({ key, name }) => ({
 	label: jurisdictionWord(key, name),
 })))
 
-// A stored country the list no longer offers selects nothing, which is the honest answer: the
-// dropdown cannot show what it is not offering, and the vehicle would still be written under it.
+// A stored country no longer offered selects nothing: the default would hide what the next vehicle
+// is still written under.
 const selected = computed(() => options.value.find((option) => option.id === chosen.value) ?? null)
 
 const grid = ref('')
-/**
- * The figure the server holds, which the field goes back to on a refusal. Not reactive: nothing
- * is drawn from it.
- */
+/** The server's figure, restored on a refusal. Not reactive: nothing is drawn from it. */
 const stored = { gridFactor: /** @type {number|null} */ (null) }
 const gridUnreadable = ref(false)
 
@@ -68,7 +65,11 @@ function showGrid() {
 
 /** The inbox folder's file id, as the preference holds it. @type {import('vue').Ref<number|null>} */
 const inboxFolder = ref(null)
-/** Its path in Files, or null where it is gone. The preference holds only the id; the inbox names it. @type {import('vue').Ref<string|null>} */
+/**
+ * Its path in Files, as the inbox reads it, or null where it is gone.
+ *
+ * @type {import('vue').Ref<string|null>}
+ */
 const inboxPath = ref(null)
 /** Why its path could not be read, or empty. The folder is saved all the same. */
 const inboxUnnamed = ref('')
@@ -126,9 +127,8 @@ onMounted(async () => {
 })
 
 /**
- * A personal setting saves as it is changed - a settings page has no Save button. A refusal puts
- * the stored value back: a dropdown showing a country the server never accepted would claim the
- * next vehicle is written under it.
+ * Saves as it is changed: a settings page has no Save button. A refusal puts the stored value
+ * back, so the dropdown never shows a country the server did not accept.
  *
  * @param {{ id: string }|null} option - what the dropdown now holds
  */
@@ -152,8 +152,8 @@ async function choose(option) {
 }
 
 /**
- * Saves as it is changed, and a refusal puts the stored answer back, as for the country: a switch
- * showing net would claim figures the header does not show.
+ * As for the country: a switch showing net after a refusal would claim figures the header does
+ * not show.
  *
  * @param {boolean} reclaims - what the switch now holds
  */
@@ -173,9 +173,8 @@ async function reclaim(reclaims) {
 }
 
 /**
- * Saves when the field is left rather than on every keystroke. An empty field clears the figure;
- * one it cannot read saves nothing, since a typo is not a cleared setting. A refusal puts the
- * stored figure back, as for the country.
+ * Saves when the field is left. An empty field clears the figure; one it cannot read saves
+ * nothing, since a typo is not a cleared setting. A refusal restores the stored figure.
  */
 async function saveGrid() {
 	const typed = grid.value.trim()
@@ -205,29 +204,14 @@ async function saveGrid() {
  */
 async function chooseInbox() {
 	failure.value = ''
-	let nodes
+	let node
 	try {
-		nodes = await getFilePickerBuilder(t('nextfleet', 'Choose the inbox folder'))
-			.setMultiSelect(false)
-			.allowDirectories(true)
-			.setMimeTypeFilter(['httpd/unix-directory'])
-			// The picker brings no button of its own; pickNodes() answers with what this one picked.
-			.setButtonFactory((selected) => [{
-				label: t('nextfleet', 'Choose'),
-				variant: 'primary',
-				disabled: selected.length === 0,
-				callback: () => {},
-			}])
-			.build()
-			.pickNodes()
+		node = await pickNode(t('nextfleet', 'Choose the inbox folder'), { folder: true })
 	} catch (error) {
-		if (!(error instanceof FilePickerClosed)) {
-			failure.value = error.message
-		}
+		failure.value = error.message
 		return
 	}
-	const [node] = nodes
-	if (node?.fileid === undefined) {
+	if (node === null) {
 		return
 	}
 

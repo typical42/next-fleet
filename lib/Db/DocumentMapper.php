@@ -22,23 +22,6 @@ class DocumentMapper extends BaseMapper {
 	}
 
 	/**
-	 * One vehicle's papers, in the order they were attached.
-	 *
-	 * @return list<Document>
-	 * @throws \OCP\DB\Exception
-	 */
-	public function findByVehicle(int $vehicleId): array {
-		$qb = $this->db->getQueryBuilder();
-		$qb->select('*')
-			->from($this->tableName)
-			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
-			->andWhere($qb->expr()->isNull('deleted_at'))
-			->orderBy('id');
-
-		return $this->findEntities($qb);
-	}
-
-	/**
 	 * The file ids live papers reference on the vehicles one user reaches: the ones they own, and
 	 * the granted ones VehicleAccess has resolved to ids. Not narrowed to a folder's files, since
 	 * a fleet's papers are fewer than a folder's photos and an IN () that long breaks on Oracle.

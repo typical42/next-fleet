@@ -18,17 +18,14 @@ use ReflectionMethod;
 
 /**
  * What the framework checks before a controller runs is stated on the method, so a method added
- * without it is open in a way nobody chose (docs/security.md#authorization). Every action is for
- * any user, none for a visitor, and only a navigation - the page and the downloads - goes without
- * a CSRF token.
+ * without it is open in a way nobody chose (docs/security.md#authorization).
  */
 class ControllerAttributesTest extends TestCase {
 	/** The page itself, and the downloads a browser opens by navigating, which carries no token. */
 	private const NAVIGATED = ['page#index', ...OcsRoutesTest::DOWNLOADS];
 
 	/**
-	 * Every action of every controller, by the route name it answers for: `Ocs\Vehicle#index` for
-	 * an OCS one.
+	 * Every controller action by its route name: `Ocs\Vehicle#index` for an OCS one.
 	 *
 	 * @return \Generator<string, array{string, ReflectionMethod}>
 	 */

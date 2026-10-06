@@ -17,10 +17,9 @@ use PHPUnit\Runner\Extension\ParameterCollection;
 use PHPUnit\TextUI\Configuration\Configuration;
 
 /**
- * Suites remove their vehicles with a hard delete, which no code path does, and a new vehicle
- * puts its owner on its reminder list. Nineteen suites left that row behind, so
- * `occ nextfleet:check` on a dev server reported orphans the app never made. After each test
- * class this removes the recipients whose vehicle is gone - rows nothing can reach.
+ * Suites hard-delete their vehicles, which no code path does, and leave the owner's row on the
+ * reminder list behind: orphans `occ nextfleet:check` would report though the app never made them.
+ * After each test class this removes the recipients whose vehicle is gone.
  */
 final class ForgetOrphanedRecipients implements Extension {
 	public function bootstrap(Configuration $configuration, Facade $facade, ParameterCollection $parameters): void {

@@ -40,8 +40,7 @@ class PreferencesServiceTest extends TestCase {
 	private array $stored = [];
 
 	/**
-	 * A config that really remembers, because half of what this service does is read back what it
-	 * wrote a moment earlier - a double that always answered the default would agree with a write
+	 * A config that remembers: a double that always answered the default would agree with a write
 	 * that went nowhere.
 	 */
 	protected function setUp(): void {
@@ -62,10 +61,7 @@ class PreferencesServiceTest extends TestCase {
 		);
 	}
 
-	/**
-	 * The real registration list, as VehicleServiceTest uses it: what the screen may offer is a
-	 * question only the list can answer, and a stubbed one would prove nothing.
-	 */
+	/** The real registration list: only it can say what the screen may offer. */
 	private function service(): PreferencesService {
 		return new PreferencesService($this->config, RegisteredProfiles::jurisdictions(), $this->createMock(OwnFiles::class));
 	}
@@ -151,9 +147,8 @@ class PreferencesServiceTest extends TestCase {
 	}
 
 	/**
-	 * A country that left a later release is reported as it stands rather than corrected to the
-	 * default: what the screen shows has to be what the next vehicle is really written under
-	 * (lib/Service/VehicleService.php), and the dropdown offering no match is the honest answer.
+	 * A country a later release dropped is reported as stored, not corrected to the default: the
+	 * screen shows what the next vehicle is really written under (lib/Service/VehicleService.php).
 	 */
 	public function testItReadsAStoredJurisdictionTheListNoLongerOffers(): void {
 		$this->stored['jurisdiction'] = 'zz';
@@ -161,7 +156,7 @@ class PreferencesServiceTest extends TestCase {
 		$this->assertSame('zz', $this->service()->forUser(self::USER)['preferences']['jurisdiction']);
 	}
 
-	/** Nothing dismissed is the state everybody starts in, and it is a list rather than nothing. */
+	/** Nothing dismissed is an empty list, not null. */
 	public function testItReadsNoDismissedHintUntilSomebodyDismissesOne(): void {
 		$this->assertSame([], $this->service()->forUser(self::USER)['preferences']['dismissed_hints']);
 	}
@@ -173,11 +168,7 @@ class PreferencesServiceTest extends TestCase {
 		$this->assertSame('generic', $saved['preferences']['jurisdiction']);
 	}
 
-	/**
-	 * The screen offers the list and nothing else, so a value from anywhere else is a bad request
-	 * - and storing it would leave every vehicle created afterwards under the generic profile
-	 * with nobody having asked for that.
-	 */
+	/** Stored, an unregistered key would put every later vehicle under the generic profile. */
 	public function testItRefusesAJurisdictionNobodyRegistered(): void {
 		try {
 			$this->service()->write(self::USER, ['jurisdiction' => 'zz']);
@@ -187,10 +178,7 @@ class PreferencesServiceTest extends TestCase {
 		}
 	}
 
-	/**
-	 * The screen sends the whole list it holds, so a dismissal is a write of everything dismissed
-	 * so far - which is also what makes the answer worth reading back.
-	 */
+	/** The screen sends the whole list it holds: a dismissal writes everything dismissed so far. */
 	public function testItWritesTheHintsTheScreenHasDismissed(): void {
 		$saved = $this->service()->write(self::USER, ['dismissed_hints' => [self::VEHICLE, self::OTHER]]);
 
@@ -199,9 +187,8 @@ class PreferencesServiceTest extends TestCase {
 	}
 
 	/**
-	 * A hint is dismissed for one vehicle, so the list holds vehicle uuids and nothing else. The
-	 * client has no other kind of dismissal to send, and a preference is not a store for whatever
-	 * arrives.
+	 * A hint is dismissed per vehicle, so the list holds vehicle uuids and nothing else: a
+	 * preference is no store for whatever arrives.
 	 *
 	 * @dataProvider notAListOfVehicles
 	 */
@@ -360,8 +347,8 @@ class PreferencesServiceTest extends TestCase {
 	}
 
 	/**
-	 * Nextcloud merges its own routing parameters into every request, so the payload always
-	 * carries fields this app knows nothing about. They are not a bad request; they are noise.
+	 * Nextcloud merges its own routing parameters into every request: fields this app does not
+	 * know are noise, not a bad request.
 	 */
 	public function testItIgnoresWhatIsNotAPreference(): void {
 		$this->service()->write(self::USER, ['_route' => 'nextfleet.preferences.update', 'plate' => 'B-XY 123']);

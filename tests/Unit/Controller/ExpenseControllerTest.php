@@ -21,8 +21,7 @@ use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The Expenses hanging off one vehicle: the translation between a request and an answer, as
- * EnergyControllerTest tests it.
+ * One vehicle's Expenses, request to answer, as EnergyControllerTest tests it.
  */
 class ExpenseControllerTest extends TestCase {
 	private const UUID = '0195e2f1-0000-4000-8000-000000000001';
@@ -48,7 +47,6 @@ class ExpenseControllerTest extends TestCase {
 		return new ExpenseController(Application::APP_ID, $request, $this->service, $session);
 	}
 
-	/** A recorded expense answers 201 with the row the server wrote. */
 	public function testAnExpenseComesBackAsTheServerWroteIt(): void {
 		$this->params = ['uuid' => self::UUID, 'amount' => '64000'];
 		$this->service->expects($this->once())
@@ -62,7 +60,6 @@ class ExpenseControllerTest extends TestCase {
 		$this->assertSame(['amount' => 64000, 'category' => null], $response->getData());
 	}
 
-	/** The prefill answers 200 with what the service states for the moment the sheet asked about. */
 	public function testThePrefillIsWhatTheServiceStates(): void {
 		$this->params = ['uuid' => self::UUID, 'at' => '1750000000', 'off' => '120'];
 		$this->service->expects($this->once())
@@ -76,10 +73,7 @@ class ExpenseControllerTest extends TestCase {
 		$this->assertSame(['vat_rate' => 1900], $response->getData());
 	}
 
-	/**
-	 * An edit, a delete and its undo each reach the service with the token the client read. The
-	 * token and conflict rules themselves are the trait's (MaintenanceControllerTest).
-	 */
+	/** The token and conflict rules themselves are the trait's (MaintenanceControllerTest). */
 	public function testTheCheckedWritesReachTheService(): void {
 		$this->params = ['updated_at' => '1750000000', 'amount' => '1250'];
 		$this->service->expects($this->once())->method('update')

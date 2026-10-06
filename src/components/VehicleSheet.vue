@@ -20,15 +20,14 @@ import { ConflictError, RefusedError, getPreferences, getVehicle, listReminders,
 import { useVehiclesStore } from '../store/index.js'
 import { usePreferencesStore } from '../store/preferences.js'
 import { may } from '../utils/access.js'
-import { decimalComplaint, energyWord, formatDay, formatDecimal, jurisdictionWord, lifecycleWord, parseDay, parseDecimal, parseWhole } from '../utils/format.js'
+import { decimalComplaint, energyWord, formatCount, formatDay, formatDecimal, jurisdictionWord, lifecycleWord, parseDay, parseDecimal, parseWhole } from '../utils/format.js'
 import { INSPECTION, inspectionOf, rewrite } from '../utils/reminders.js'
 import { t } from '../utils/l10n.js'
 import { newUuid } from '../utils/uuid.js'
 
 const props = defineProps({
 	/**
-	 * The vehicle to edit. Absent, the sheet creates one and asks for the four fields ui.md
-	 * names; present, it edits every column a request may write.
+	 * The vehicle to edit; without one the sheet creates a vehicle.
 	 *
 	 * @type {import('vue').PropType<import('../services/api.js').Vehicle|null>}
 	 */
@@ -42,10 +41,9 @@ const preferences = usePreferencesStore()
 
 const editing = computed(() => props.vehicle !== null)
 
-// One ref per writable column (lib/Service/VehicleService.php WRITABLE), each prefilled from the
-// vehicle and visibly editable (docs/ui.md). The numbers stay strings on the way through: the
-// server judges them, and a sheet that refuses a field first would block on validation. The four
-// decimals are the exception - litres, kWh and euros go out as the integer their column keeps.
+// One ref per writable column (lib/Service/VehicleService.php WRITABLE). Numbers stay strings for
+// the server to judge, so the sheet never blocks on validation - except the four decimals, which
+// go out as the integer their column keeps.
 const plate = ref(text(props.vehicle?.plate))
 const manufacturer = ref(text(props.vehicle?.manufacturer))
 const model = ref(text(props.vehicle?.model))
@@ -67,19 +65,16 @@ const recipientsRead = ref(0)
 const saving = ref(false)
 const failure = ref('')
 /**
- * The vehicle this sheet writes against - the prop until a refused write reads a newer one. The
- * token travels from here rather than from the prop, which never moves: a retry that kept sending
- * the token the sheet was opened with would be refused for the same reason forever.
+ * The vehicle this sheet writes against: the prop until a refused write reads a newer one. The
+ * prop never moves, so a retry sending its token would be refused forever.
  *
  * @type {import('vue').Ref<import('../services/api.js').Vehicle|null>}
  */
 const held = ref(props.vehicle)
 /**
- * The write that was refused because the row moved on (docs/architecture.md#concurrency), or null.
- * Latched rather than derived from `failure`, because it says what the *next* attempt has to do:
- * read the vehicle back first. It clears when that read has happened, and is set again if the
- * write then loses a second race. Which write it was decides only what the message says - both
- * buttons take the same way out.
+ * The write refused because the row moved on (docs/architecture.md#concurrency), or null. Latched
+ * rather than derived from `failure`: it tells the next attempt to read the vehicle back first.
+ * Which write it was decides only the message.
  *
  * @type {import('vue').Ref<'save'|'delete'|null>}
  */
@@ -99,8 +94,7 @@ const clientUuids = { vehicle: newUuid(), reading: newUuid() }
 /** The countries the server registers, read once the sheet is up. @type {import('vue').Ref<{ key: string, name: string }[]>} */
 const countries = ref([])
 
-// A code in the database and a word on screen (docs/ui.md#languages), looked up on render because
-// the catalogue is registered by the page and not by this module.
+// Translated on render, like lifecycleWord() (docs/ui.md#languages).
 const types = computed(() => [
 	{ id: 'car', label: t('nextfleet', 'Car') },
 	{ id: 'motorcycle', label: t('nextfleet', 'Motorcycle') },
@@ -139,31 +133,25 @@ const energyTypes = ref((props.vehicle?.energy_types ?? [])
 const odoUnit = ref(chosen(units.value, props.vehicle?.odo_unit ?? 'km'))
 const lifecycle = ref(chosen(lifecycles.value, props.vehicle?.lifecycle ?? 'active'))
 const jurisdiction = ref(text(props.vehicle?.jurisdiction))
-// Engine hours beside the kilometres, a second counter of its own (docs/architecture.md#odometer-rules).
+// Engine hours as a second counter beside the kilometres (docs/architecture.md#odometer-rules).
 const countsHours = ref(props.vehicle?.second_unit === 'h')
-// A second counter only ever sits beside kilometres, so the switch goes with them.
 const offersHours = computed(() => odoUnit.value?.id === 'km')
-// A column nobody ever wrote is null rather than false, which is the same answer to the question
-// this switch asks (docs/architecture.md#data-model).
+// A column nobody wrote is null, which means off (docs/architecture.md#data-model).
 const logbookMode = ref(props.vehicle?.logbook_mode === true)
 
 /**
- * Whether switching the mode off has been answered for. The gesture is not intercepted - the
- * switch says what the driver last asked for, and the question stands between that and the save,
- * which is the moment anything is written anyway.
+ * Whether switching the mode off has been confirmed. The switch itself is not intercepted: the
+ * question stands before the save, the moment anything is written.
  */
 const confirmedOff = ref(false)
 
-// Switching a vehicle out of the mode ends the period its trips are read under
-// (docs/features.md#logbook-mode), so it is asked about; switching it on takes nothing away and is
-// one gesture. Derived from the vehicle rather than latched, so putting the switch back answers
-// the question by itself - and from the vehicle the next write is checked against rather than the
-// one the sheet opened with, because somebody else switching the mode on while this sheet sat open
-// turns a plain save into a switching-off that nobody here has decided on.
+// Switching the mode off ends the period its trips are read under (docs/features.md#logbook-mode),
+// so it is asked about; switching on takes nothing away. Derived, so putting the switch back
+// answers it. Checked against `held`, not the prop: somebody else switching the mode on meanwhile
+// turns a plain save into a switch-off.
 const askingOff = computed(() => held.value?.logbook_mode === true && !logbookMode.value && !confirmedOff.value)
 
-// One answer per question: switching back on and off again is a second switching off, and a
-// confirmation that outlived the first would let it through unasked.
+// A confirmation does not outlive the switch going back on: a second switch-off is asked again.
 watch(logbookMode, (on) => {
 	if (on) {
 		confirmedOff.value = false
@@ -171,9 +159,8 @@ watch(logbookMode, (on) => {
 })
 
 /**
- * The type, and the unit it suggests: a tractor or a generator counts hours, anything else
- * kilometres. Only on a vehicle nothing has been counted on yet - a Reading's number means what its
- * unit meant when it was read. The unit stays a field of its own the person can still change.
+ * The type, and the unit it suggests: hours for a tractor or a generator, kilometres otherwise.
+ * Only while nothing is counted - a Reading's number means what its unit meant when it was read.
  *
  * @param {{ id: string, label: string }|null} option - the type chosen
  */
@@ -189,8 +176,7 @@ function chooseType(option) {
 
 /**
  * What the fields hold, raw: the import takes this sheet's place (src/views/VehicleView.vue), so it
- * waits until nothing typed here would be lost. Raw rather than fields(), which refuses a decimal
- * nobody can read - and a half-typed one is exactly a change to keep.
+ * waits until nothing typed would be lost. Not fields(), which throws on a half-typed decimal.
  *
  * @return {string} the fields, comparable
  */
@@ -206,8 +192,7 @@ function typed() {
 const untyped = typed()
 const pristine = computed(() => typed() === untyped)
 
-// The disposal day is a fact about a disposed vehicle and about no other, so it appears with that
-// lifecycle and is written away again with any other one - see fields().
+// The disposal day belongs to a disposed vehicle only; fields() clears it for any other.
 const disposing = computed(() => lifecycle.value?.id === 'disposed')
 
 const country = computed(() => jurisdictions.value.find((one) => one.id === jurisdiction.value) ?? null)
@@ -245,9 +230,8 @@ const interval = ref(null)
 // A reminder by counter alone has no interval in months to show.
 const showsInterval = computed(() => inspected.value !== null && inspected.value.mode !== 'odo')
 
-// A button says what the click does, not what went wrong: while the token is stale this click
-// overwrites somebody's change - whichever write was refused, and whether or not the last attempt
-// failed for a second reason on top.
+// Says what the click does: while the token is stale it overwrites somebody's change, whatever else
+// failed on top.
 const action = computed(() => {
 	if (refused.value !== null) {
 		return t('nextfleet', 'Save anyway')
@@ -260,20 +244,17 @@ const action = computed(() => {
 	return editing.value ? t('nextfleet', 'Save') : t('nextfleet', 'Add vehicle')
 })
 
-// The message and its colour are one decision, so they are computed together: an error is
-// something the user has to answer for, a warning is something that cost them nothing.
+// An error is something the user has to answer for; a warning cost them nothing.
 const note = computed(() => {
-	// Which of the two writes failed decides what a create sheet has to say, because only one of
-	// them can be repeated: the vehicle is already there.
+	// Only the second write of a create can be repeated: the vehicle is already there.
 	if (failure.value) {
 		return created.value
 			? { type: 'warning', text: t('nextfleet', 'The vehicle was added, but its counter reading was not: {reason}', { reason: failure.value }) }
 			: { type: 'error', text: failure.value }
 	}
 
-	// The server's own words are English and name a column; this says what happened to the person
-	// who typed, and what the click they are about to repeat now does - which is not the same
-	// sentence for a save as for a delete.
+	// The server's English names a column; this says what happened and what repeating the click now
+	// does, which differs for a save and a delete.
 	if (refused.value === 'save') {
 		return { type: 'warning', text: t('nextfleet', 'This vehicle was changed somewhere else while you had it open. Saving again writes your values over that change.') }
 	}
@@ -286,9 +267,9 @@ const note = computed(() => {
 })
 
 /**
- * The registration list an edit picks a country from. It is read from the settings route, which
- * already carries it, and the vehicle's own key is added to whatever comes back: a country a later release stopped offering is still the one
- * this vehicle is kept under, and the dropdown may not quietly hide it.
+ * The countries an edit picks from, read from the settings route. The vehicle's own key is added: a
+ * country a later release dropped is still the one it is kept under, and what the dropdown says is
+ * what the next save writes.
  */
 onMounted(async () => {
 	if (!editing.value) {
@@ -299,8 +280,7 @@ onMounted(async () => {
 	try {
 		countries.value = (await getPreferences()).jurisdictions
 	} catch {
-		// The list is a convenience; a sheet that cannot offer the others still edits this
-		// vehicle, and the country it already has is below.
+		// A convenience; the vehicle's own country is added below.
 	}
 
 	const own = jurisdiction.value
@@ -362,8 +342,8 @@ async function writeInterval() {
 
 /**
  * Every writable column, as the API spells it. Sent whole rather than as a diff: `apply()` writes
- * what the payload names, so a field the user emptied has to travel as an empty one to be cleared.
- * `retention_months` is not asked: nothing purges yet (docs/legal.md). It travels as it was read.
+ * what the payload names, so an emptied field travels empty to be cleared. `retention_months` is
+ * not asked, since nothing purges yet (docs/legal.md); it travels as it was read.
  *
  * @return {Record<string, unknown>} the vehicle's new state
  */
@@ -397,6 +377,29 @@ function fields() {
 }
 
 /**
+ * @param {string} field - the field's label
+ * @param {number} max - VehicleService::WRITABLE's length
+ * @return {string} the refusal of a text too long for its column
+ */
+function tooLong(field, max) {
+	return t('nextfleet', 'The field {field} takes {max} characters at most.', { field, max: formatCount(max) })
+}
+
+/**
+ * VehicleService's refusals a person can run into, by its English words; the rest show as sent.
+ *
+ * @type {Record<string, () => string>}
+ */
+const REFUSALS = {
+	'plate is longer than 32 characters': () => tooLong(t('nextfleet', 'Registration plate'), 32),
+	'manufacturer is longer than 64 characters': () => tooLong(t('nextfleet', 'Manufacturer'), 64),
+	'model is longer than 64 characters': () => tooLong(t('nextfleet', 'Model'), 64),
+	'vin is longer than 32 characters': () => tooLong(t('nextfleet', 'VIN'), 32),
+	'color is longer than 32 characters': () => tooLong(t('nextfleet', 'Colour'), 32),
+	'notes is longer than 10000 characters': () => tooLong(t('nextfleet', 'Notes'), 10000),
+}
+
+/**
  * One attempt at a write this sheet asks for. A failure leaves the sheet open with every value
  * intact and offers the retry - the open sheet is the queue (docs/ui.md).
  *
@@ -414,7 +417,7 @@ async function attempt(work, kind) {
 		} else if (error instanceof RefusedError && error.reason === 'currency_in_use') {
 			failure.value = t('nextfleet', 'The currency cannot change any more: costs are already recorded in it for this vehicle.')
 		} else {
-			failure.value = error.message
+			failure.value = REFUSALS[error.message]?.() ?? error.message
 		}
 	} finally {
 		saving.value = false
@@ -422,9 +425,7 @@ async function attempt(work, kind) {
 }
 
 /**
- * The write the sheet is for: the edit, or the create it was opened without a vehicle for. An
- * unanswered question holds it, the way a save in flight holds the way out - the greyed button
- * says so, and this is the rule the button only shows.
+ * The edit or the create. An unanswered question holds it; the greyed button only shows this rule.
  */
 function save() {
 	if (askingOff.value) {
@@ -447,10 +448,8 @@ function remove() {
  */
 async function current() {
 	if (refused.value !== null) {
-		// Read for this sheet alone rather than through the store: what comes back may be a
-		// vehicle the overview no longer lists - somebody else may have disposed of it - and
-		// putting that in the store would take this screen away from under the open sheet
-		// (src/App.vue). The write right after it is what the store hears about.
+		// Not through the store: the answer may be a vehicle the overview no longer lists, and
+		// storing it would take this screen away under the open sheet (src/App.vue).
 		held.value = await getVehicle(held.value.uuid)
 		refused.value = null
 	}
@@ -459,12 +458,8 @@ async function current() {
 }
 
 /**
- * The edit: one write, checked against the `updated_at` the vehicle was read with. What is on
- * screen wins, only the version it is written against changes.
- *
- * The question is asked again once the vehicle is in hand, because reading it back is the first
- * moment this sheet can know that saving would now switch the mode off - the vehicle it opened
- * with was not under the mode, and the one it is about to write over is.
+ * The edit: one write, checked against `updated_at`. What is on screen wins. The question is asked
+ * again after current(): a vehicle read back may now be under the mode.
  */
 async function write() {
 	// Read first: a field nobody can read stops the save before the interval is written.
@@ -477,18 +472,16 @@ async function write() {
 	await writeInterval()
 	const saved = await store.save({ ...vehicle, ...changed })
 	if ((vehicle.logbook_mode === true) !== (saved.logbook_mode === true)) {
-		// A flip answers the overview's logbook question too (src/components/CompleteHint.vue), so
-		// a vehicle switched on here and off again is not asked a second time. Silent: the save
-		// went through, and an unstored answer costs one more question.
+		// A flip answers the overview's logbook question too (src/components/CompleteHint.vue).
+		// Silent: an unstored answer costs one more question.
 		preferences.dismissLogbook(saved.uuid).catch(() => {})
 	}
 	emit('saved', saved)
 }
 
 /**
- * The delete. It emits nothing and closes nothing: the vehicle leaves the fleet, which takes this
- * sheet and the screen under it with it (src/App.vue). What is left of the vehicle is the way back
- * the store holds, and the toast that offers it (src/components/UndoToast.vue).
+ * The delete. It emits nothing: the vehicle leaving the fleet unmounts this sheet (src/App.vue),
+ * and the way back is the store's undo (src/components/UndoToast.vue).
  */
 async function erase() {
 	await store.remove(await current())
@@ -496,8 +489,8 @@ async function erase() {
 
 /** The create: four fields, then the counter as a first Reading. */
 async function add() {
-	// The counter is optional and it is judged before anything is written: a field nobody can
-	// read is a question for the driver, not a vehicle created with the answer thrown away.
+	// Judged before anything is written: an unreadable counter is a question for the driver, not a
+	// vehicle created without it.
 	const number = counter.value.trim() === '' ? null : parseWhole(counter.value)
 	if (counter.value.trim() !== '' && number === null) {
 		throw new Error(t('nextfleet', 'That is not a counter reading.'))
@@ -528,11 +521,9 @@ async function add() {
 }
 
 /**
- * The Escape a native date picker is dismissed with. The browser draws that picker over the input
- * and closes it on the key, but the keydown reaches the input all the same - so without the `.stop`
- * this handler is here to carry, backing out of a calendar would close the sheet over nineteen
- * filled-in fields. An open NcSelect stops the key the same way; the difference is that nothing
- * says whether a native picker is open, so the field keeps the key whether one is or not.
+ * Carries the `.stop` for the Escape that dismisses a native date picker: Chromium also delivers
+ * the keydown to the input, which would close the sheet. Nothing says whether a picker is open, so
+ * the field always keeps the key.
  */
 function keepPicker() {}
 
@@ -561,8 +552,8 @@ function decimalText(value, places) {
 }
 
 /**
- * A decimal as somebody typed it, as the integer its column keeps. The server would refuse `55,5`
- * as not whole, in words about millilitres the field no longer shows, so the sheet asks itself.
+ * A decimal as typed, as the integer its column keeps. Checked here: the server would refuse `55,5`
+ * in words about millilitres the field does not show.
  *
  * @param {import('vue').Ref<string>} input - the field
  * @param {number} places - how many decimals the column keeps
@@ -618,11 +609,9 @@ function chosen(options, id) {
 		:open="true"
 		:size="editing ? 'normal' : 'small'"
 		@update:open="requestClose">
-		<!-- NcDialog closes itself on Escape, but through a useHotKey, which passes over every
-		     keystroke aimed at a text field - and this sheet opens with the caret in one. So the
-		     key is caught where the dialog cannot see it and stopped there, which keeps the
-		     mid-save guard on the one way out. An open NcSelect stops it first, so its dropdown
-		     still closes on its own. -->
+		<!-- NcDialog's Escape is a useHotKey, which skips keystrokes in text fields, and the sheet
+		     opens with the caret in one. Caught here, it keeps the mid-save guard; an open
+		     NcSelect stops it first. -->
 		<div class="sheet"
 			:class="{ 'sheet--roomy': editing }"
 			@keydown.esc.stop="requestClose">
@@ -817,8 +806,6 @@ function chosen(options, id) {
 			<NcButton :disabled="saving" @click="requestClose">
 				{{ t('nextfleet', 'Cancel') }}
 			</NcButton>
-			<!-- The one question this sheet asks stands in the way of the write and of nothing
-			     else, because the write is the moment anything happens. -->
 			<NcButton variant="primary" :disabled="saving || askingOff" @click="save">
 				{{ action }}
 			</NcButton>

@@ -131,7 +131,6 @@ beforeEach(() => {
 })
 
 describe('the import sheet', () => {
-	/** The file is picked, never uploaded (docs/architecture.md#import); no file, no sheet. */
 	it('closes without a word when the picker is closed', async () => {
 		picked = Promise.reject(new FilePickerClosed())
 
@@ -162,7 +161,6 @@ describe('the import sheet', () => {
 		})
 	})
 
-	/** The preview names every column it placed and every one it did not, and counts in words. */
 	it('shows the columns, the counts, and each sample row left out with its reason', async () => {
 		const wrapper = await sheet()
 
@@ -178,7 +176,6 @@ describe('the import sheet', () => {
 		expect(text).not.toContain('Row 2:')
 	})
 
-	/** A long preview scrolls inside the sheet with no field in it, so a keyboard needs a stop. */
 	it('lets a keyboard reach the preview to scroll it', async () => {
 		const wrapper = await sheet()
 		expect(wrapper.find('[role="region"]').exists()).toBe(false)
@@ -203,11 +200,9 @@ describe('the import sheet', () => {
 
 		expect(previewImport).toHaveBeenLastCalledWith('v-1', expect.objectContaining({ date_order: 'mdy' }))
 		expect(button(wrapper, 'Import').props('disabled')).toBe(false)
-		// Answered, the question stays a field, so the answer can still be changed.
 		expect(select(wrapper, 'Order of the dates')).toBeDefined()
 	})
 
-	/** A costs file's category texts are the user's to map, each to a category, a type or a skip. */
 	it('asks what each category text of a costs file means', async () => {
 		vi.mocked(previewImport).mockResolvedValue(preview({
 			categories: ['Versicherung', 'Inspektion'],
@@ -225,7 +220,6 @@ describe('the import sheet', () => {
 		}))
 	})
 
-	/** A code the format gives a meaning shows it chosen; changing it sends the user's answer. */
 	it('shows what a category code becomes by default and lets it be changed', async () => {
 		vi.mocked(previewImport).mockResolvedValue(preview({
 			categories: ['6', '9'],
@@ -254,7 +248,6 @@ describe('the import sheet', () => {
 		expect(previewImport).toHaveBeenLastCalledWith('v-1', expect.objectContaining({ include_duplicates: true }))
 	})
 
-	/** The import is checked against the file the preview read; its undo is the toast's. */
 	it('imports against the preview\'s etag and hands the way back to the store', async () => {
 		const created = [{ type: 'energy', uuid: 'e-1' }, { type: 'energy', uuid: 'e-2' }]
 		vi.mocked(runImport).mockResolvedValue({ counts: preview().counts, created })
@@ -269,7 +262,6 @@ describe('the import sheet', () => {
 		expect(wrapper.emitted('imported')).toHaveLength(1)
 	})
 
-	/** A 409 is a file that changed since: it is previewed again, and the sheet says why. */
 	it('previews again when the file changed since the preview', async () => {
 		vi.mocked(runImport).mockRejectedValueOnce(new ChangedError('The file changed since the preview'))
 		const wrapper = await sheet()
@@ -289,7 +281,6 @@ describe('the import sheet', () => {
 		expect(runImport).toHaveBeenLastCalledWith('v-1', expect.objectContaining({ etag: 'etag-2' }))
 	})
 
-	/** A changed file that is now refused says why, not that it was previewed again. */
 	it('says only why a changed file is no longer read', async () => {
 		vi.mocked(runImport).mockRejectedValueOnce(new ChangedError('The file changed since the preview'))
 		const wrapper = await sheet()
@@ -302,7 +293,6 @@ describe('the import sheet', () => {
 		expect(wrapper.findAllComponents(NcNoteCard).map((one) => one.props('text'))).toEqual(['The file is not text.'])
 	})
 
-	/** A picker that fails, rather than being closed, says so instead of vanishing. */
 	it('says why the picker failed', async () => {
 		picked = Promise.reject(new Error('Files is not reachable'))
 
@@ -314,7 +304,6 @@ describe('the import sheet', () => {
 		expect(wrapper.emitted('close')).toHaveLength(1)
 	})
 
-	/** A file the reader refuses is named with its reason, never a bare status. */
 	it('says why a file is not read at all', async () => {
 		vi.mocked(previewImport).mockRejectedValueOnce(new ImportRefusedError('Not a file an import reads: binary', 'binary', 3))
 		const wrapper = await sheet()
@@ -324,7 +313,6 @@ describe('the import sheet', () => {
 		expect(wrapper.findAllComponents(NcNoteCard).map((one) => one.props('text'))).toContain('The file is not text.')
 	})
 
-	/** A fuel file for a vehicle with no energy is refused in the entry sheet's words. */
 	it('says where to choose the energy a fuel file needs', async () => {
 		vi.mocked(previewImport).mockRejectedValueOnce(new RefusedError('the server, in English', 'no_energy'))
 		const wrapper = await sheet()
@@ -335,7 +323,6 @@ describe('the import sheet', () => {
 			.toContain('Choose the energy this vehicle takes under Edit vehicle first.')
 	})
 
-	/** A file shared with the person is refused like a missing one, as a paper's is. */
 	it('says a file shared with the person is not theirs to import', async () => {
 		vi.mocked(previewImport).mockRejectedValueOnce(new NotFoundError('No such vehicle'))
 		const wrapper = await sheet()

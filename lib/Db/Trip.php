@@ -116,8 +116,7 @@ class Trip extends BaseEntity implements \JsonSerializable {
 	}
 
 	/**
-	 * The wire form is the column names, as it is for a vehicle and a reading. `reconciled` goes
-	 * out as a real boolean: the timeline marks a Reconciliation Trip as one.
+	 * `reconciled` goes out as a real boolean: the timeline marks a Reconciliation Trip by it.
 	 *
 	 * @return NextFleetTrip
 	 */

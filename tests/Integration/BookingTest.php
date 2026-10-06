@@ -772,7 +772,7 @@ class BookingTest extends TestCase {
 	}
 
 	/**
-	 * Puts a booking in a state no route of this task reaches yet.
+	 * Sets a booking's state directly, without a handover.
 	 *
 	 * @return int its new token
 	 */

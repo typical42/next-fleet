@@ -30,8 +30,7 @@ class MainTemplateTest extends TestCase {
 
 	/**
 	 * src/main.js looks the element up by id and does nothing when it is absent, so a
-	 * template that names it differently is a blank page with a clean console — which is
-	 * exactly what the M0 gate would otherwise read as a pass.
+	 * template that names it differently is a blank page with a clean console.
 	 */
 	public function testTheTemplateRendersTheElementTheBundleMountsInto(): void {
 		$main = (string)file_get_contents(self::ROOT . '/src/main.js');

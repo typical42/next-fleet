@@ -312,7 +312,6 @@ class VehicleTest extends TestCase {
 		$this->assertNull($read->getCurrency());
 	}
 
-	/** The overview is one user's fleet, and a row belonging to someone else is not in it. */
 	public function testTheListHoldsOneUsersVehicles(): void {
 		$mine = $this->service->create(self::OWNER, ['plate' => 'B-XY 123']);
 		$this->service->create(self::STRANGER, ['plate' => 'HH-ZZ 9']);

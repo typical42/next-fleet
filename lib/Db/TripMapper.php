@@ -22,29 +22,11 @@ class TripMapper extends BaseMapper {
 	}
 
 	/**
-	 * A trip by id, voided or not, for a caller that starts from a row pointing at it - an audit
-	 * row names its trip by id.
-	 *
-	 * @throws \OCP\AppFramework\Db\DoesNotExistException
-	 * @throws \OCP\AppFramework\Db\MultipleObjectsReturnedException
-	 * @throws \OCP\DB\Exception
-	 */
-	public function findAnyById(int $id): Trip {
-		$qb = $this->db->getQueryBuilder();
-		$qb->select('*')
-			->from($this->tableName)
-			->where($qb->expr()->eq('id', $qb->createNamedParameter($id, IQueryBuilder::PARAM_INT)));
-
-		return $this->findEntity($qb);
-	}
-
-	/**
 	 * One vehicle's trips in the order they happened, never the order they were entered, with
 	 * `id` breaking a tie - the rule the readings follow
 	 * (docs/architecture.md#odometer-rules), and what the index is on.
 	 *
-	 * A voided trip is not in it. It is soft-deleted like anything else, and the Fahrtenbuch
-	 * export, which has to list it as voided, asks its own question.
+	 * A voided trip is soft-deleted, so not in it: the export reads findAnyStartedBetween().
 	 *
 	 * @return list<Trip>
 	 * @throws \OCP\DB\Exception

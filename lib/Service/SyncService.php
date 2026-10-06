@@ -157,10 +157,10 @@ class SyncService {
 	}
 
 	/**
-	 * Up to `$limit + 1` rows after the cursor in (`updated_at`, table, `id`) order, so one more
-	 * says whether there is a next page. A merge: each table is read its share of `$limit` at a
-	 * time and read again where its rows run out, so a page builds about twice its rows at most,
-	 * however the changes fall across the tables (one row per table at least, for a tiny limit).
+	 * Up to `$limit + 1` rows after the cursor in (`updated_at`, table, `id`) order; the extra one
+	 * says there is a next page. A merge: each table is read its share of `$limit` at a time and
+	 * again where its rows run out, so a page builds about twice its rows at most, however the
+	 * changes fall (one row per table at least, for a tiny limit).
 	 *
 	 * @param array<int, Vehicle> $byId every reachable vehicle
 	 * @param list<int> $run the vehicles this run covers
@@ -279,7 +279,6 @@ class SyncService {
 			'documents' => $this->papers->wired($userId, $vehicle, self::only(Document::class, $rows)),
 			'bookings' => $this->pool->wired($userId, $vehicle, self::only(Booking::class, $rows)),
 			'grants' => $this->access->wired(self::only(Access::class, $rows)),
-			// The rest answer their entity as it serialises itself.
 			default => array_map(static fn (\JsonSerializable $row): array => (array)$row->jsonSerialize(), self::only(\JsonSerializable::class, $rows)),
 		};
 	}

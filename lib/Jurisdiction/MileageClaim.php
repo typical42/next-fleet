@@ -12,9 +12,9 @@ use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\Vehicle;
 
 /**
- * The business trips one reader entered on one vehicle in one calendar year, each valued at the rate on its day, as the
- * core read them and before any country lays them out (`IClaimRenderer`). Every figure in it is
- * the core's; a renderer decides only how it reads.
+ * The business trips one reader entered on one vehicle in one calendar year, each valued at the
+ * rate on its day, as the core read them and before any country lays them out (`IClaimRenderer`).
+ * Every figure in it is the core's; a renderer decides only how it reads.
  */
 final class MileageClaim {
 	/**
@@ -22,7 +22,7 @@ final class MileageClaim {
 	 * is null where the table does not cover the trip's day, and `amount` in cents is null when
 	 * either is. `missing` names the fields the ruleset requires and the trip leaves unstated, and
 	 * `reconciled` marks a Reconciliation Trip; either keeps the line out of the sums, amount or
-	 * not. Both are optional for a renderer written before them, and absent means neither.
+	 * not. Either may be absent, which means neither.
 	 * `$total` and `$kilometres` count only the lines that remain with an amount, and are null when
 	 * none does: "not stated", never a claim of nothing.
 	 *

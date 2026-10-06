@@ -10,13 +10,18 @@ namespace OCA\NextFleet\Tests\Integration;
 
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\Vehicle;
+use OCA\NextFleet\Service\BookingService;
+use OCA\NextFleet\Service\DocumentService;
+use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\ExpenseService;
 use OCA\NextFleet\Service\GrantService;
+use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\ReminderService;
 use OCA\NextFleet\Service\SyncService;
 use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleService;
+use OCP\Files\IRootFolder;
 use OCP\IDBConnection;
 use OCP\IGroupManager;
 use OCP\IUserManager;
@@ -96,7 +101,6 @@ class SyncTest extends TestCase {
 		$this->vehicleIds = [];
 	}
 
-	/** Done when: a first sync hands over every reachable vehicle and every live row of it. */
 	public function testAFirstSyncHandsOverEveryReachableVehicleAndItsLiveRows(): void {
 		$vehicle = $this->vehicle();
 		$trip = $this->trip($vehicle);
@@ -135,6 +139,27 @@ class SyncTest extends TestCase {
 		$this->assertSame($listed[0]['state'], $synced['state']);
 	}
 
+	/** The tables whose wire form looks further than the row: what a record closes, who booked, the file. */
+	public function testEveryTableComesInTheFormItsWriteAnswers(): void {
+		$vehicle = $this->vehicle();
+		$uuid = $vehicle->getUuid();
+		$fillUp = \OCP\Server::get(EnergyService::class)->record(self::OWNER, $uuid, ['filled_at' => 1750000000, 'filled_at_off' => 120, 'energy' => 'diesel', 'amount' => 42000, 'total' => 7350, 'full_tank' => true]);
+		$oil = \OCP\Server::get(ReminderService::class)->create(self::OWNER, $uuid, ['template_key' => 'oil_change', 'due_date' => '2027-03-31', 'due_odo' => 135000]);
+		$work = \OCP\Server::get(MaintenanceService::class)->record(self::OWNER, $uuid, ['done_at' => 1750000000, 'done_at_off' => 120, 'odo' => 120450, 'title' => 'Oil change', 'cost' => 18990, 'closes' => $oil['uuid']]);
+		$tomorrow = (intdiv(time(), 3600) + 24) * 3600;
+		$booking = \OCP\Server::get(BookingService::class)->book(self::OWNER, $uuid, ['starts_at' => $tomorrow, 'starts_at_off' => 120, 'ends_at' => $tomorrow + 3600, 'ends_at_off' => 120]);
+		$file = \OCP\Server::get(IRootFolder::class)->getUserFolder(self::OWNER)->newFile('sync-' . bin2hex(random_bytes(4)) . '.pdf', '%PDF-1.4 test');
+		[$paper] = \OCP\Server::get(DocumentService::class)->attach(self::OWNER, $uuid, ['file_id' => $file->getId(), 'kind' => 'registration']);
+
+		$answer = $this->sync(self::OWNER);
+
+		$this->assertSame($fillUp, $this->item($answer, 'energy', $fillUp['uuid'])['row']);
+		$this->assertSame($oil['uuid'], $work['closes']);
+		$this->assertSame($work, $this->item($answer, 'maintenance', $work['uuid'])['row']);
+		$this->assertSame($booking, $this->item($answer, 'bookings', $booking['uuid'])['row']);
+		$this->assertSame($paper, $this->item($answer, 'documents', $paper['uuid'])['row']);
+	}
+
 	public function testAnEditReachesTheNextSync(): void {
 		$vehicle = $this->vehicle();
 		$expense = $this->expense($vehicle, 6400);
@@ -162,7 +187,6 @@ class SyncTest extends TestCase {
 		], $this->item($this->sync(self::OWNER, $cursor), 'expenses', $expense));
 	}
 
-	/** Done when: a restore reaches the client like any other change. */
 	public function testARestoreReachesTheNextSyncAsTheLiveRow(): void {
 		$vehicle = $this->vehicle();
 		$expense = $this->expense($vehicle, 6400);
@@ -229,7 +253,7 @@ class SyncTest extends TestCase {
 		$this->assertSame([], $answer['changes']['expenses']);
 	}
 
-	/** Done when: a revoke lists the vehicle the caller can no longer reach, and nothing of it. */
+	/** Listed as unreachable, and nothing of it comes along. */
 	public function testARevokedDriverIsToldTheVehicleIsUnreachable(): void {
 		$vehicle = $this->vehicle();
 		$this->expense($vehicle, 6400);
@@ -360,7 +384,7 @@ class SyncTest extends TestCase {
 		$this->assertNotNull($this->item($this->sync(self::OWNER, $cursor), 'grants', $grant)['deleted_at']);
 	}
 
-	/** Done when: pseudonymised rows keep their `updated_at`, so an erasure resets every client. */
+	/** Pseudonymised rows keep their `updated_at`, so an erasure resets every client. */
 	public function testAnErasureResetsEveryCursorHandedOutBeforeIt(): void {
 		$vehicle = $this->vehicle();
 		$expense = $this->expense($vehicle, 6400);
@@ -421,8 +445,6 @@ class SyncTest extends TestCase {
 	}
 
 	/**
-	 * One item of an answer's changes, by table and uuid.
-	 *
 	 * @param array<string, mixed> $answer
 	 * @return array<string, mixed>
 	 */

@@ -73,7 +73,7 @@ const titles = computed(() => answer.value && table.value
 	? answer.value.months.map(({ cost }, i) => `${table.value.columns[i]}: ${cost.total === null ? t('nextfleet', 'No entries') : formatMoney(cost.total, cost.currency)}`)
 	: [])
 
-/** Bumped by every read, so an answer to a year nobody is looking at any more is dropped. */
+/** Bumped by every read, so an answer for a year no longer on screen is dropped. */
 let asked = 0
 
 onMounted(reload)
@@ -151,8 +151,8 @@ async function reload() {
 						{{ bandWord(band) }}
 					</li>
 				</ul>
-				<!-- The table below carries every figure, so the drawing is left out of the
-				     accessibility tree rather than read out as twelve unlabelled shapes. -->
+				<!-- The table carries every figure, so the drawing stays out of the
+				     accessibility tree. -->
 				<svg class="costs__bars"
 					viewBox="0 0 120 100"
 					preserveAspectRatio="none"

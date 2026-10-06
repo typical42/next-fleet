@@ -34,10 +34,9 @@ defineEmits(['costs'])
 
 const store = useVehiclesStore()
 const logs = computed(() => may(props.vehicle, 'log'))
-// Overdue is read off the clock whenever the vehicle is read again, as after any booking write.
+// Overdue is read off the clock only when the vehicle is read again.
 const holder = computed(() => holderWords(props.vehicle))
-// Read once: the sticker asks for one sheet on arrival, not for one whenever the flag is set. A
-// viewer who scanned it lands on the screen without one.
+// Read once: the sticker asks for one sheet on arrival. A viewer who scanned it gets none.
 const entering = ref(props.enter && logs.value)
 const editing = ref(false)
 const importing = ref(false)
@@ -66,17 +65,15 @@ const logging = ref(null)
  */
 const papers = ref([])
 
-// The timeline holds its own pages and its own chip, the header its own period, and neither is
-// this screen's business - what is, is that a write happened and both are now a row behind.
+// Each section keeps its own state; the screen only tells them a write happened.
 const timeline = ref(null)
 const kpis = ref(null)
 const bookings = ref(null)
 const documents = ref(null)
 
 /**
- * Reads back what a write can change: the list and the figures always, the bookings unless it was
- * an expense. A booking's row names its trip and whether its counter fell below the one at
- * check-out, so every write that moves the counter can change it; an expense moves none.
+ * Reads back what a write can change. A booking's row names its trip and whether its counter fell
+ * below the one at check-out, so only an expense, which moves no counter, leaves the bookings be.
  *
  * @param {unknown} [entry] - what the sheet wrote; not read here
  * @param {string} [kind] - which kind it wrote; none for an import, which moves the counter
@@ -102,10 +99,9 @@ watch(() => props.vehicle.uuid, () => {
 	logging.value = null
 })
 
-// `n` is the primary action of the screen in view (docs/ui.md), and the shell mounts one screen
-// at a time - so the key belongs to the screen rather than to an arbiter above it. useHotKey
-// already passes over a keystroke typed into a field or aimed at an open sheet, and drops the
-// listener when the screen goes.
+// `n` starts the screen's primary action (docs/ui.md#details-that-decide-whether-it-feels-easy).
+// The shell mounts one screen at a time, so the key belongs here. useHotKey skips a keystroke
+// typed into a field or an open sheet.
 useHotKey('n', () => {
 	if (logs.value) {
 		entering.value = true
@@ -115,7 +111,7 @@ useHotKey('n', () => {
 
 <template>
 	<div class="vehicle">
-		<!-- One primary button per screen, and on this screen it is the entry (docs/ui.md). -->
+		<!-- One primary button per screen; here it is the entry (docs/ui.md). -->
 		<div class="vehicle__header">
 			<div>
 				<h2>{{ nameOf(vehicle) }}</h2>
@@ -163,8 +159,7 @@ useHotKey('n', () => {
 		<!-- Above the timeline, which scrolls on without end. -->
 		<VehicleDocuments ref="documents" :vehicle="vehicle" @listed="papers = $event" />
 
-		<!-- One timeline of everything that happened to this vehicle, which is the question people
-		     actually ask (docs/ui.md). -->
+		<!-- One timeline of everything that happened to this vehicle (docs/ui.md). -->
 		<Timeline ref="timeline"
 			:vehicle="vehicle"
 			:papers="papers"
@@ -191,15 +186,14 @@ useHotKey('n', () => {
 			:entry="opened"
 			@close="opened = null"
 			@saved="written" />
-		<!-- A save is done with, so the sheet goes: what it wrote is in the store this screen
-		     reads, and a sheet still open would be a second copy of the same vehicle. -->
+		<!-- A save closes the sheet: the screen reads the saved vehicle from the store. -->
 		<VehicleSheet v-if="editing"
 			:vehicle="vehicle"
 			@close="editing = false"
 			@import="editing = false; importing = true"
 			@saved="editing = false" />
-		<!-- In the vehicle sheet's place rather than over it: one dialog, one way out. Its result
-		     and its undo are the toast's (src/components/UndoToast.vue). -->
+		<!-- Replaces the vehicle sheet: one dialog, one way out.
+		     Result and undo go to the toast. -->
 		<ImportSheet v-if="importing"
 			:vehicle="vehicle"
 			@close="importing = false"

@@ -17,8 +17,8 @@ return [
 		['name' => 'vehicle#show', 'url' => '/api/vehicles/{uuid}', 'verb' => 'GET'],
 		['name' => 'vehicle#update', 'url' => '/api/vehicles/{uuid}', 'verb' => 'PUT'],
 		['name' => 'vehicle#delete', 'url' => '/api/vehicles/{uuid}', 'verb' => 'DELETE'],
-		// Undo, which is the only way back out of the trash in v1 (docs/ui.md). Its own verb and
-		// path because it is not a write to the vehicle - it is a write to whether there is one.
+		// Undo, the only way out of the trash in v1 (docs/ui.md). Its own verb and path: it writes
+		// whether there is a vehicle, not the vehicle.
 		['name' => 'vehicle#restore', 'url' => '/api/vehicles/{uuid}/restore', 'verb' => 'POST'],
 
 		// A Reading belongs to a vehicle and is reached through it, so one access check covers
@@ -40,9 +40,8 @@ return [
 		// What the sheet completes route, purpose and partner from (docs/ui.md).
 		['name' => 'trip#prefill', 'url' => '/api/vehicles/{uuid}/trips/prefill', 'verb' => 'GET'],
 		['name' => 'trip#update', 'url' => '/api/vehicles/{uuid}/trips/{trip}', 'verb' => 'PUT'],
-		// A delete voids under Logbook Mode (docs/features.md#logbook-mode), and undo is its own
-		// verb and path for the reason a vehicle's is: it is not a write to the trip, it is a
-		// write to whether there is one.
+		// A delete voids under Logbook Mode (docs/features.md#logbook-mode); undo has its own verb
+		// and path for the reason a vehicle's has.
 		['name' => 'trip#delete', 'url' => '/api/vehicles/{uuid}/trips/{trip}', 'verb' => 'DELETE'],
 		['name' => 'trip#restore', 'url' => '/api/vehicles/{uuid}/trips/{trip}/restore', 'verb' => 'POST'],
 

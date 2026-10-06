@@ -83,17 +83,9 @@ class LogbookExport {
 	}
 
 	/**
-	 * The trips that set off in the year where they set off (docs/architecture.md#time), voided ones
-	 * included. A trip set off under the mode carries the fields its ruleset requires and it leaves
-	 * unstated; any other carries none, because what the logbook asks is said only under the mode
-	 * (docs/features.md#logbook-mode).
-	 *
-	 * Each also carries its late changes - edits, voids and restores. One inside the lock delay is
-	 * still the entry being made; one after it changed a record, and a change the auditor cannot see
-	 * is not documented.
-	 *
-	 * And, under the mode, when it was changed by something that left no row - defence in depth
-	 * (docs/architecture.md#the-fahrtenbuch-export).
+	 * The trips that set off in the year by their local date, voided ones included, with their late
+	 * changes. One set off under the mode carries the fields its ruleset finds missing, and when
+	 * it was changed by something that left no row (docs/architecture.md#the-fahrtenbuch-export).
 	 *
 	 * @param list<array{from: int, to: ?int, plates: list<array{plate: ?string, from: int}>}> $periods
 	 * @return list<array{trip: Trip, missing: list<string>, late: list<LateChange>, unlogged: ?int}>
@@ -135,16 +127,10 @@ class LogbookExport {
 	 * What the trips' trails say: the late rows by trip id, oldest first, and the token the newest
 	 * row left each trip with - null for a row older than that key.
 	 *
-	 * Each late row carries the offsets in force before it, because a time it replaced reads right
-	 * only with those, and a later edit may have moved them. They are read back from the trip as it
-	 * is now, newest row first, through every row on the trail and not only the late ones - and so
-	 * is `ended_at`.
-	 *
-	 * Late is decided here, against the export's own rules, not read off the row: a stored flag
-	 * answered the rules of its day, and an `ended_at` set far ahead stopped the clock it was
-	 * measured by. The lock delay runs from the earliest the trail had said the journey ended by the
-	 * time of the change, or from when the trip was entered if that is earlier
-	 * (docs/architecture.md#the-fahrtenbuch-export). A day is 86 400 seconds, as TripService counts.
+	 * Each late row carries the offsets in force before it, read back from the trip as it is now
+	 * through every row on the trail, newest first - and so is `ended_at`. Late is decided here
+	 * (docs/architecture.md#the-fahrtenbuch-export), not read off the row's stored flag, which
+	 * answered the rules of its day. A day is 86 400 seconds, as TripService counts.
 	 *
 	 * @param list<Trip> $trips
 	 * @param ?int $delayDays the ruleset's lock delay, or null where it has none and nothing is late

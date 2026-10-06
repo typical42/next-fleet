@@ -23,7 +23,7 @@ class OnceTest extends TestCase {
 	private const UUID = '0195e2f1-1111-4000-8000-000000000001';
 	private const VEHICLE = 7;
 
-	/** @var list<Expense> what the table holds, by uuid */
+	/** @var list<Expense> what the table holds */
 	private array $rows = [];
 
 	private function create(array $fields): Once {
@@ -139,7 +139,7 @@ class OnceTest extends TestCase {
 		$this->fail('no answer');
 	}
 
-	/** Another unique index refused, or the create sent no uuid: not this class's to answer. */
+	/** Another unique index refused: not this class's to answer. */
 	public function testAnotherDuplicateKeyIsThrownOn(): void {
 		$duplicate = $this->duplicateKey();
 
@@ -147,6 +147,36 @@ class OnceTest extends TestCase {
 			$this->create(['client_uuid' => self::UUID])->run(static fn (): never => throw $duplicate);
 		} catch (Exception $e) {
 			$this->assertSame($duplicate, $e);
+
+			return;
+		}
+		$this->fail('swallowed');
+	}
+
+	/** @return array<string, array{array<string, string>, int}> */
+	public static function notARetry(): array {
+		return [
+			'a duplicate key without a uuid' => [[], Exception::REASON_UNIQUE_CONSTRAINT_VIOLATION],
+			'a deadlock' => [['client_uuid' => self::UUID], Exception::REASON_DEADLOCK],
+		];
+	}
+
+	/**
+	 * Not a twin's doing: thrown on, even with a row under the uuid by then.
+	 *
+	 * @dataProvider notARetry
+	 */
+	public function testAnErrorNoTwinCausedIsThrownOn(array $fields, int $reason): void {
+		$error = $this->createMock(Exception::class);
+		$error->method('getReason')->willReturn($reason);
+
+		try {
+			$this->create($fields)->run(function () use ($error): never {
+				$this->rows = [$this->row(self::VEHICLE)];
+				throw $error;
+			});
+		} catch (Exception $e) {
+			$this->assertSame($error, $e);
 
 			return;
 		}

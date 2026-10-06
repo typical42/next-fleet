@@ -18,9 +18,8 @@ use OCP\IUserManager;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The mileage claim against the real database and the real German profile, trips written the way
- * the app writes them. What the unit test takes on trust is what this checks: that the year's
- * query, the voiding and the rate table meet on one page.
+ * The mileage claim against the real database and the real German profile: the year's query, the
+ * voiding and the rate table meet on one page.
  *
  * It writes to the instance it runs against (docs/development.md#testing).
  */
@@ -100,9 +99,8 @@ class MileageClaimTest extends TestCase {
 	}
 
 	/**
-	 * The PRD's sentence against the instance: the year's business trips at 30 ct, the commute and
-	 * the voided trip left off, the sum beneath and the statute cited. 2024, so the rate is the
-	 * one of the trips' year and not today's.
+	 * The year's business trips at 30 ct, the commute and the voided trip left off, the sum beneath
+	 * and the statute cited. 2024, so the rate is that of the trips' year, not today's.
 	 */
 	public function testAGermanCarsBusinessTripsAreValuedAtTheStatutoryRate(): void {
 		$uuid = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 131', 'jurisdiction' => 'de', 'vehicle_type' => 'car'])->getUuid();
@@ -133,9 +131,8 @@ class MileageClaimTest extends TestCase {
 	}
 
 	/**
-	 * A business trip that leaves out what the German ruleset requires is printed and left out of
-	 * the sum, whether or not the vehicle keeps a Fahrtenbuch: the Finanzamt asks the same of a
-	 * claim.
+	 * A business trip missing what the German ruleset requires is not summed, Fahrtenbuch or not:
+	 * the Finanzamt asks the same of a claim.
 	 */
 	public function testAnIncompleteTripIsListedButNotSummed(): void {
 		$uuid = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 132', 'jurisdiction' => 'de', 'vehicle_type' => 'car'])->getUuid();

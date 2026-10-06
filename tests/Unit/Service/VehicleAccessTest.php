@@ -19,8 +19,8 @@ use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The one place that decides who reaches a vehicle
- * (docs/adr/0001-own-access-table.md): its owner, or a grant whose role covers the operation.
+ * The one place that decides who reaches a vehicle (docs/adr/0001-own-access-table.md): its
+ * owner, or a grant whose role covers the operation.
  */
 class VehicleAccessTest extends TestCase {
 	private const VEHICLE_ID = 7;

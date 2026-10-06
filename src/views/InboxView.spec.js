@@ -16,8 +16,7 @@ import { attachDocument, readInbox, thumbnailUrl } from '../services/api.js'
 import { useInboxStore } from '../store/inbox.js'
 import InboxView from './InboxView.vue'
 
-// The network is the api client's own seam (api.spec.js); the store is left real, because the
-// navigation's count is read off it.
+// The store stays real: the navigation's count is read off it.
 vi.mock('../services/api.js', async (original) => ({
 	...await original(),
 	attachDocument: vi.fn(),
@@ -63,7 +62,6 @@ beforeEach(() => {
 })
 
 describe('the inbox screen', () => {
-	/** Read again on opening: files arrive by auto-upload while the app is open elsewhere. */
 	it('shows each waiting file as a thumbnail, newest first', async () => {
 		const wrapper = await screen()
 
@@ -92,7 +90,7 @@ describe('the inbox screen', () => {
 		expect(empty.props('description')).toContain('/Belege R&D')
 	})
 
-	/** A folder deleted in Files, or one never chosen: the settings page is where it is chosen. */
+	/** A folder deleted in Files, or one never chosen. */
 	it('sends the person to their settings when there is no inbox folder', async () => {
 		vi.mocked(readInbox).mockResolvedValue({ folder: null, files: [], count: 0 })
 
@@ -122,7 +120,6 @@ describe('the inbox screen', () => {
 		expect(tiles(wrapper)).toEqual(['IMG_0815.jpg', 'Werkstatt.pdf'])
 	})
 
-	/** The first tap opens the sheet on that file, offering the fleet. */
 	it('opens the sheet on the file tapped', async () => {
 		const wrapper = await screen()
 
@@ -152,7 +149,6 @@ describe('the inbox screen', () => {
 		expect(sheet.props('preferred')).toBe('v-2')
 	})
 
-	/** The server sends the newest hundred; once those are attached, the older ones come next. */
 	it('reads the inbox again when the shown files are gone and more wait', async () => {
 		vi.mocked(readInbox).mockResolvedValueOnce({ folder: FOLDER, files: [PHOTO], count: 2 })
 		vi.mocked(readInbox).mockResolvedValueOnce({ folder: FOLDER, files: [BILL], count: 1 })
@@ -201,7 +197,6 @@ describe('the inbox screen', () => {
 			expect(useInboxStore().lastVehicle).toBe('v-2')
 		})
 
-		/** The entry is written and stays; the file waits, to be attached to it by hand. */
 		it('keeps the entry and says so when the file cannot be filed on it', async () => {
 			vi.mocked(attachDocument).mockRejectedValue(new Error('The file\'s storage is full'))
 			const wrapper = await logging()

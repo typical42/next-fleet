@@ -12,9 +12,8 @@ use PHPUnit\Framework\TestCase;
 use Symfony\Component\Yaml\Yaml;
 
 /**
- * `actionlint` says the workflow is valid YAML that GitHub will run. It cannot say the
- * matrix is the one docs/development.md#testing asks for - and that matrix is the whole
- * point of the file, so it is checked here.
+ * `actionlint` says GitHub will run the workflow, not that its matrix is the one
+ * docs/development.md#testing asks for. The matrix is the point of the file.
  */
 class CiWorkflowTest extends TestCase {
 	private const FILE = __DIR__ . '/../../.github/workflows/ci.yml';
@@ -105,7 +104,6 @@ class CiWorkflowTest extends TestCase {
 		$this->assertSame(['contents' => 'read'], (array)(self::$workflow['permissions'] ?? []));
 	}
 
-	/** The three moments the matrix is cut for, and nothing else. */
 	public function testTheWorkflowRunsOnPullRequestsOnMainAndWeekly(): void {
 		$triggers = $this->triggers();
 
@@ -130,7 +128,6 @@ class CiWorkflowTest extends TestCase {
 		);
 	}
 
-	/** "Merge to main: add PostgreSQL, on NC 34." */
 	public function testMergingToMainAddsPostgresqlOnNextcloud34(): void {
 		$added = $this->added($this->combinations('pull_request'), $this->combinations('push'));
 
@@ -138,9 +135,8 @@ class CiWorkflowTest extends TestCase {
 	}
 
 	/**
-	 * "Weekly: the fuller matrix, allowed to fail loudly without blocking anyone." Fuller
-	 * means it drops nothing, and loudly means it stays red: `continue-on-error` concludes
-	 * the job green, so a weekly break would be reported to nobody.
+	 * Loudly means it stays red: `continue-on-error` concludes the job green, so a weekly break
+	 * would be reported to nobody.
 	 */
 	public function testTheWeeklyRunIsFullerThanMainAndFailsLoudly(): void {
 		$this->assertSame([], $this->added($this->combinations('schedule'), $this->combinations('push')));
@@ -176,10 +172,8 @@ class CiWorkflowTest extends TestCase {
 	}
 
 	/**
-	 * The server job is the only one with a database, so every server suite belongs to it:
-	 * without the integration suite the migration is never measured against a real schema, and
-	 * postgres and sqlite are never exercised at all; without the API suite nothing signs in
-	 * with an app password the way a client does.
+	 * The server job is the only one with a database. Without the integration suite no migration
+	 * meets a real schema; without the API suite nothing signs in with an app password.
 	 */
 	public function testTheServerJobRunsEveryTestSuite(): void {
 		$script = $this->script('server');
@@ -232,8 +226,7 @@ class CiWorkflowTest extends TestCase {
 
 	/**
 	 * openapi.json is the contract a client is built against (docs/api.md). Generated from the
-	 * code, it drifts the moment somebody forgets to regenerate it, so CI regenerates it and fails
-	 * on any difference from the committed one.
+	 * code, it drifts the moment somebody forgets to regenerate it.
 	 */
 	public function testTheStaticJobFailsOnAStaleOpenApiDocument(): void {
 		$script = $this->script('static');
@@ -297,9 +290,8 @@ class CiWorkflowTest extends TestCase {
 	}
 
 	/**
-	 * The upgrade check is the one test of what users keep across a release. Run only by hand at
-	 * release time, a change that breaks it would be found then; weekly, it is found that week, on
-	 * both databases the script knows.
+	 * The upgrade check is the one test of what users keep across a release. Weekly, a change that
+	 * breaks it is found that week rather than at release time.
 	 */
 	public function testTheWeeklyRunChecksTheUpgradeOnMariadbAndPostgresql(): void {
 		$job = $this->job('upgrade');
@@ -335,6 +327,20 @@ class CiWorkflowTest extends TestCase {
 		$this->assertSame(['the runner\'s', 'America/Los_Angeles'], $zones);
 	}
 
+	/**
+	 * Only after a build can LicensingTest read which packages the bundle carries. It skips
+	 * without one, and here that skip must fail: no `.license` file means the check saw nothing.
+	 */
+	public function testTheFrontendJobChecksTheBundlesLicencesAfterTheBuild(): void {
+		$script = $this->script('frontend');
+
+		$build = strpos($script, 'npm run build');
+		$check = strpos($script, 'vendor/bin/phpunit --fail-on-skipped --filter LicensingTest');
+		$this->assertIsInt($build, 'the frontend job builds no bundle');
+		$this->assertIsInt($check, 'the frontend job never checks the bundle\'s licences');
+		$this->assertLessThan($check, $build, 'the licences are checked before the build');
+	}
+
 	private function script(string $job): string {
 		$script = '';
 		foreach ((array)$this->job($job)['steps'] as $step) {
@@ -345,10 +351,8 @@ class CiWorkflowTest extends TestCase {
 	}
 
 	/**
-	 * The E2E job is the only one that runs a browser, and it is the only one where the two
-	 * things it depends on are invisible when they go missing: without a bundle the Vue root
-	 * stays empty, and without `--wait` "the stack is up" means apache answered rather than
-	 * Nextcloud installed (tests/Unit/ComposeStackTest.php).
+	 * Both go missing unseen: without a bundle the Vue root stays empty, and without `--wait`
+	 * "the stack is up" means apache answered, not that Nextcloud installed (ComposeStackTest).
 	 */
 	public function testTheEndToEndJobBuildsTheBundleAndWaitsForTheStack(): void {
 		$script = [];

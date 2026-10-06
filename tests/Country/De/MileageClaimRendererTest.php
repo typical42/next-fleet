@@ -117,7 +117,6 @@ class MileageClaimRendererTest extends TestCase {
 		$this->assertStringContainsString('VW Caddy', self::text($page, '//header'));
 	}
 
-	/** The sum row states the kilometres and the amount it adds up. */
 	public function testTheSumIsTheTotalOfWhatWasValued(): void {
 		$page = $this->render([$this->line(1234, 300, 37020), $this->line(10, 305, 305)], 37325, 1244);
 
@@ -164,7 +163,6 @@ class MileageClaimRendererTest extends TestCase {
 		$this->assertStringNotContainsString('ohne Betrag', $body);
 	}
 
-	/** Brackets are explained only where some amount is in them. */
 	public function testNoBracketsNoteWithoutABracketedAmount(): void {
 		$incomplete = $this->line(null, 300, null, ['partner' => null]) + ['missing' => ['partner'], 'reconciled' => false];
 		$page = $this->render([$incomplete], null, null);

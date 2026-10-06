@@ -22,8 +22,7 @@ use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The Maintenance Records hanging off one vehicle: the translation between a request and an
- * answer, as EnergyControllerTest tests it.
+ * One vehicle's Maintenance Records, request to answer, as EnergyControllerTest tests it.
  */
 class MaintenanceControllerTest extends TestCase {
 	private const UUID = '0195e2f1-0000-4000-8000-000000000001';
@@ -49,7 +48,6 @@ class MaintenanceControllerTest extends TestCase {
 		return new MaintenanceController(Application::APP_ID, $request, $this->service, $session);
 	}
 
-	/** A recorded record answers 201 with the row the server wrote. */
 	public function testARecordComesBackAsTheServerWroteIt(): void {
 		$this->params = ['uuid' => self::UUID, 'title' => 'Oil change'];
 		$this->service->expects($this->once())
@@ -63,7 +61,6 @@ class MaintenanceControllerTest extends TestCase {
 		$this->assertSame(['title' => 'Oil change', 'cost' => null], $response->getData());
 	}
 
-	/** The prefill answers 200 with what the service states for the moment the sheet asked about. */
 	public function testThePrefillIsWhatTheServiceStates(): void {
 		$this->params = ['uuid' => self::UUID, 'at' => '1750000000', 'off' => '120'];
 		$this->service->expects($this->once())
@@ -77,7 +74,6 @@ class MaintenanceControllerTest extends TestCase {
 		$this->assertSame(['vat_rate' => 1900, 'vendors' => ['ATU Nord']], $response->getData());
 	}
 
-	/** An edit hands the service the token the client read, and answers with the row as it stands. */
 	public function testAnEditIsCheckedAgainstTheTokenTheClientRead(): void {
 		$this->params = ['uuid' => self::UUID, 'record' => self::RECORD, 'updated_at' => '1750000000', 'title' => 'Wipers'];
 		$this->service->expects($this->once())
@@ -91,7 +87,6 @@ class MaintenanceControllerTest extends TestCase {
 		$this->assertSame(['title' => 'Wipers'], $response->getData());
 	}
 
-	/** A delete and its undo each carry the token too, and answer with the row they left. */
 	public function testADeleteAndItsUndoAreCheckedToo(): void {
 		$this->params = ['updated_at' => '1750000000'];
 		$this->service->expects($this->once())->method('delete')

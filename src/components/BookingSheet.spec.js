@@ -106,10 +106,7 @@ afterEach(() => {
 })
 
 describe('booking a vehicle', () => {
-	/**
-	 * Nobody books the minute they are in: the next full hour, for two hours (docs/ui.md). 14:00 in
-	 * Berlin is that hour in any zone a whole number of hours from UTC.
-	 */
+	/** 14:00 in Berlin is the next full hour in any zone a whole number of hours from UTC. */
 	it('starts at the next full hour and ends two hours later', () => {
 		const wrapper = sheet()
 
@@ -136,7 +133,9 @@ describe('booking a vehicle', () => {
 		expect(wrapper.emitted('saved')).toEqual([[MINE]])
 	})
 
-	/** A double-booked car is what a pool exists to prevent; the sheet says whose it is and keeps the form. */
+	/**
+	 * A double-booked car is what a pool exists to prevent; the sheet names whose, keeps the form.
+	 */
 	it('names the booking in the way and keeps what was typed', async () => {
 		vi.mocked(createBooking).mockRejectedValue(new BookingConflictError('the vehicle is booked then', {
 			uuid: 'b-2',
@@ -158,7 +157,6 @@ describe('booking a vehicle', () => {
 		expect(wrapper.emitted('saved')).toBeUndefined()
 	})
 
-	/** A car still out is with its booker until they bring it back, whatever its booking said. */
 	it('says who has the car when the one in the way is out', async () => {
 		vi.mocked(createBooking).mockRejectedValue(new BookingConflictError('the vehicle is booked then', {
 			uuid: 'b-2',
@@ -177,7 +175,6 @@ describe('booking a vehicle', () => {
 		expect(wrapper.getComponent(NcNoteCard).props('text')).toBe('With Anna until Fri 02/10, 18:00')
 	})
 
-	/** Overdue, "until" a time gone by would be wrong: it says the car is still out, and since when it was due. */
 	it('says the car is still with them when the one in the way is overdue', async () => {
 		vi.mocked(createBooking).mockRejectedValue(new BookingConflictError('the vehicle is still out then', {
 			uuid: 'b-2',
@@ -308,5 +305,36 @@ describe('changing a booking', () => {
 
 		expect(wrapper.getComponent(NcNoteCard).props('text')).toBe('A booking lasts 90 days at most.')
 		expect(changeBooking).toHaveBeenCalledTimes(1)
+	})
+})
+
+describe('closing the sheet', () => {
+	it('closes on Esc and on Cancel', async () => {
+		const wrapper = sheet()
+
+		await wrapper.find('.sheet').trigger('keydown.esc')
+		await press(wrapper, 'Cancel')
+
+		expect(wrapper.emitted('close')).toHaveLength(2)
+	})
+
+	/** Esc in a date field belongs to the picker the browser opened (VehicleSheet.vue says why). */
+	it('stays open on Esc in a date field', async () => {
+		const wrapper = sheet()
+
+		await picker(wrapper, 'Start').trigger('keydown.esc')
+		await picker(wrapper, 'End').trigger('keydown.esc')
+
+		expect(wrapper.emitted('close')).toBeUndefined()
+	})
+
+	it('stays open while a save is in flight', async () => {
+		vi.mocked(createBooking).mockReturnValue(new Promise(() => {}))
+		const wrapper = sheet()
+
+		await press(wrapper, 'Book')
+		await wrapper.find('.sheet').trigger('keydown.esc')
+
+		expect(wrapper.emitted('close')).toBeUndefined()
 	})
 })

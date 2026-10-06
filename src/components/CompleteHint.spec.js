@@ -14,8 +14,7 @@ import { useVehiclesStore } from '../store/index.js'
 import { usePreferencesStore } from '../store/preferences.js'
 import CompleteHint from './CompleteHint.vue'
 
-// The network is the api client's own seam (api.spec.js); the store is left real, because what a
-// dismissal is worth is that it goes to the preferences and not to this browser.
+// The store stays real: a dismissal is worth something only if it reaches the preferences.
 vi.mock('../services/api.js', async (original) => ({
 	...await original(),
 	getPreferences: vi.fn(),
@@ -104,24 +103,19 @@ beforeEach(() => {
 })
 
 describe('the complete-this-vehicle hint', () => {
-	/** A fleet with nothing left to answer is a fleet the hint stays out of the way of. */
 	it('says nothing about a vehicle that has it all', async () => {
 		const wrapper = await hint([DONE])
 
 		expect(wrapper.findComponent(NcNoteCard).exists()).toBe(false)
 	})
 
-	/** The answer is in the edit sheet, so a vehicle the reader may not edit is not asked about. */
 	it('says nothing about a vehicle the reader may not edit', async () => {
 		const wrapper = await hint([{ ...NEW, may: ['view', 'log'] }])
 
 		expect(wrapper.findComponent(NcNoteCard).exists()).toBe(false)
 	})
 
-	/**
-	 * The hint names the vehicle and what is still missing, in the words the edit sheet asks for
-	 * them by - following it is meant to read as one instruction.
-	 */
+	/** In the edit sheet's own words, so following the hint reads as one instruction. */
 	it('names the vehicle and the fields nobody has filled in', async () => {
 		const wrapper = await hint([NEW, DONE])
 
@@ -133,10 +127,6 @@ describe('the complete-this-vehicle hint', () => {
 		expect(wrapper.text()).not.toContain('NF-DE 100')
 	})
 
-	/**
-	 * Until the preferences have arrived nothing is known to be dismissed, and showing a hint
-	 * somebody answered last week is exactly what dismissing it was supposed to prevent.
-	 */
 	it('waits for the preferences before asking anything', async () => {
 		const wrapper = await hint([NEW], false)
 
@@ -152,7 +142,6 @@ describe('the complete-this-vehicle hint', () => {
 		expect(wrapper.findComponent(NcNoteCard).exists()).toBe(false)
 	})
 
-	/** The way to answer the question is to open the vehicle, where the edit sheet is. */
 	it('opens the vehicle it is asking about', async () => {
 		const wrapper = await hint([NEW])
 
@@ -161,11 +150,6 @@ describe('the complete-this-vehicle hint', () => {
 		expect(wrapper.emitted('select')?.[0]).toEqual([NEW.uuid])
 	})
 
-	/**
-	 * Every row's button says "Dismiss", so the vehicle it dismisses has to be in its name -
-	 * otherwise a fleet with four unfinished vehicles offers four identical buttons to anybody who
-	 * hears them rather than sees the row they sit in.
-	 */
 	it('says which vehicle each dismissal is for', async () => {
 		const wrapper = await hint([NEW])
 
@@ -184,10 +168,6 @@ describe('the complete-this-vehicle hint', () => {
 		expect(wrapper.text()).not.toContain('NF-NE 600')
 	})
 
-	/**
-	 * A dismissal that did not reach the server is not a dismissal: the hint would be back on the
-	 * next load, so the card stays and says why rather than closing on a promise it cannot keep.
-	 */
 	it('keeps asking when the dismissal was refused, and says why', async () => {
 		vi.mocked(savePreferences).mockRejectedValue(new Error('The server answered 503'))
 		const wrapper = await hint([NEW])
@@ -202,10 +182,6 @@ describe('the complete-this-vehicle hint', () => {
 	})
 })
 
-/**
- * Logbook Mode stays off by default; a German vehicle is asked about it once, because the
- * Finanzamt is who the logbook is kept for (PRD M12, Johannes's call).
- */
 describe('the logbook question', () => {
 	const QUESTION = 'Keep a logbook for the tax office with this vehicle?'
 
@@ -258,14 +234,12 @@ describe('the logbook question', () => {
 		await button(wrapper, 'Switch Logbook mode on').trigger('click')
 		await flushPromises()
 
-		// The token it was read with, and nothing else: an edit sheet open elsewhere keeps its fields.
 		expect(updateVehicle).toHaveBeenCalledWith({ uuid: GERMAN.uuid, updated_at: GERMAN.updated_at, logbook_mode: true })
 		expect(savePreferences).toHaveBeenCalledWith({ dismissed_logbook_hints: [GERMAN.uuid] })
 		expect(useVehiclesStore().list).toEqual([switched])
 		expect(asking(wrapper)).toBeUndefined()
 	})
 
-	/** A second tap while the first is on its way would lose the race to it and report a conflict. */
 	it('takes one answer at a time', async () => {
 		vi.mocked(updateVehicle).mockReturnValue(new Promise(() => {}))
 		const wrapper = await hint([GERMAN])

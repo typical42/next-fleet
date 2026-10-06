@@ -20,9 +20,8 @@ class InfoXmlTest extends TestCase {
 	private const ROOT = __DIR__ . '/../../..';
 
 	/**
-	 * The app store rejects an app whose info.xml does not validate, and so does
-	 * `occ app:enable`. tests/schema/info.xsd is the store's own schema, vendored so
-	 * this runs offline.
+	 * The app store and `occ app:enable` reject an info.xml that does not validate.
+	 * tests/schema/info.xsd is the store's own schema, vendored so this runs offline.
 	 */
 	public function testValidatesAgainstTheAppStoreSchema(): void {
 		$doc = new DOMDocument();
@@ -40,20 +39,14 @@ class InfoXmlTest extends TestCase {
 		$this->assertTrue($valid, implode("\n", $messages));
 	}
 
-	/**
-	 * The schema accepts any non-empty string, so it cannot tell a description from a
-	 * placeholder. The app store reviewer can.
-	 */
+	/** The schema takes any non-empty string; only the store's reviewer spots a placeholder. */
 	public function testCarriesNoPlaceholders(): void {
 		$xml = (string)file_get_contents(self::ROOT . '/appinfo/info.xml');
 
 		$this->assertStringNotContainsString('TODO', $xml);
 	}
 
-	/**
-	 * docs/legal.md: the licence has to read the same everywhere, and the store's
-	 * `agpl` shorthand is deprecated.
-	 */
+	/** docs/legal.md: the licence reads the same everywhere; the store's `agpl` is deprecated. */
 	public function testLicenceMatchesTheRestOfTheRepository(): void {
 		$info = simplexml_load_file(self::ROOT . '/appinfo/info.xml');
 		$this->assertNotFalse($info);
@@ -64,10 +57,9 @@ class InfoXmlTest extends TestCase {
 	}
 
 	/**
-	 * `occ upgrade` reads the version from info.xml alone, the bundle and its licence notices
-	 * from package.json, and the store shows the CHANGELOG section of the same name. A release
-	 * with one of them behind ships a changelog for a version nobody installs. Until the release
-	 * the section says `not released` where the date will go.
+	 * `occ upgrade` reads the version from info.xml, the bundle from package.json, and the store
+	 * shows the CHANGELOG section of that name; one behind ships a changelog for a version nobody
+	 * installs. Until the release the section says `not released` where the date will go.
 	 */
 	public function testTheVersionIsTheSameEverywhere(): void {
 		$info = simplexml_load_file(self::ROOT . '/appinfo/info.xml');
@@ -87,9 +79,8 @@ class InfoXmlTest extends TestCase {
 	}
 
 	/**
-	 * The store shows the coming version's section and no other unreleased one, so a second
-	 * `not released` section is news nobody reads. 0.2.0 and 0.3.0 never went out: 0.3.1, the
-	 * first release, says everything the app does (docs/development.md#release).
+	 * The store shows only the coming version's section, so a second `not released` one is news
+	 * nobody reads (docs/development.md#release).
 	 */
 	public function testOnlyTheComingVersionIsUnreleased(): void {
 		$info = simplexml_load_file(self::ROOT . '/appinfo/info.xml');
@@ -163,9 +154,8 @@ class InfoXmlTest extends TestCase {
 	}
 
 	/**
-	 * `occ` learns a command from this file and from nowhere else, so a command class that is
-	 * not listed here is a command nobody can run - and the class is loadable, so nothing tells
-	 * anyone it exists.
+	 * `occ` learns a command from this file alone, so an unlisted command class is one nobody can
+	 * run, and since it loads fine nothing says so.
 	 */
 	public function testEveryConsoleCommandIsRegistered(): void {
 		$info = simplexml_load_file(self::ROOT . '/appinfo/info.xml');
@@ -173,8 +163,6 @@ class InfoXmlTest extends TestCase {
 
 		$registered = array_map('strval', $info->xpath('/info/commands/command') ?: []);
 
-		// Order is the file's own business - what matters is that the two lists hold the same
-		// classes.
 		$this->assertEqualsCanonicalizing($this->commandClasses(), $registered);
 	}
 
@@ -195,9 +183,8 @@ class InfoXmlTest extends TestCase {
 	}
 
 	/**
-	 * The same trap one directory over: Nextcloud learns a settings form from this file alone, so
-	 * an ISettings class that is not listed here never reaches a user's settings page - and it is
-	 * loadable and green under its own unit test, so nothing says it is unreachable.
+	 * The same trap for settings: an unlisted ISettings class never reaches a settings page, and
+	 * its own green unit test does not say so.
 	 */
 	public function testEveryPersonalSettingIsRegistered(): void {
 		$info = simplexml_load_file(self::ROOT . '/appinfo/info.xml');

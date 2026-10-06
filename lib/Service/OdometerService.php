@@ -229,10 +229,9 @@ class OdometerService {
 
 	/**
 	 * The answer "the counter was replaced" to a Reading the chain questions (rule 3): it becomes a
-	 * `reset`, stands, and starts a new segment. Any Entry's Reading, since the question is asked
-	 * on that Entry's row; answering it takes what changing that Entry takes. Only one somebody
-	 * read: a derived Reading in question is the app's arithmetic, contradicted, and no counter
-	 * was swapped under it. The other answer, a typo, is an edit of the Entry.
+	 * `reset`, stands, and starts a new segment. Any Entry's Reading, by whoever may change that
+	 * Entry. Only one somebody read: a derived Reading in question is the app's arithmetic,
+	 * contradicted, and no counter was swapped under it.
 	 *
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not edit the Entry
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException if no live Reading on this vehicle has the uuid
@@ -294,10 +293,10 @@ class OdometerService {
 	}
 
 	/**
-	 * The one Reading a Trip writes, at the moment it ended, on the main chain (rules 4 and 5). `start_odo` is a claim about
-	 * the counter and never a Reading - comparing the two is what gap detection is made of.
+	 * The one Reading a Trip writes, at the moment it ended, on the main chain (rules 4 and 5).
+	 * `start_odo` is a claim about the counter and never a Reading.
 	 *
-	 * The vehicle is passed in rather than looked up: the caller has already reached it through
+	 * The vehicle is passed in, not looked up: the caller reached it through
 	 * `VehicleService::reach`, and a second gate here would be a second place to forget one.
 	 *
 	 * @throws \InvalidArgumentException if the trip ended on neither a counter nor a distance
@@ -322,14 +321,9 @@ class OdometerService {
 	/**
 	 * The Readings of a fill-up or a maintenance record, brought in line with it as it now stands:
 	 * one Observed Reading per counter it states, none without, and none while it is deleted
-	 * (rule 5). No trip wrote them, so they account for no kilometre. Called after every write to
-	 * the Entry - its creation, an edit, a delete and its undo.
-	 *
-	 * A Reading keeps its row through all of it, as a trip's does: an edit moves it, a counter
-	 * emptied soft-deletes it, and a counter stated again brings the same row back. Only an Entry
-	 * that never had one on that counter gets a new row. So an undo restores exactly what the
-	 * Entry stated when it was deleted - a counter an earlier edit emptied stays gone, because the
-	 * Entry no longer states it.
+	 * (rule 5). Called after every write to the Entry - its creation, an edit, a delete and its
+	 * undo. A Reading keeps its row through all of it; only a counter the Entry never stated gets
+	 * a new one.
 	 *
 	 * The caller has reached and held the vehicle, as for fromTrip().
 	 *
@@ -435,13 +429,12 @@ class OdometerService {
 	}
 
 	/**
-	 * An edited trip's Reading, restated from the trip - and only as far as the edit reached. Its
-	 * date follows the journey's end; its number is counted again only when what it was counted
-	 * from changed. A counted value is never recomputed on its own (rule 6): recounting it because
-	 * a purpose or an end time was fixed would move it off an Entry typed in since.
+	 * An edited trip's Reading, restated only as far as the edit reached (rules 5 and 6). Its date
+	 * follows the journey's end; its number is counted again only when what it was counted from
+	 * changed, since a recount would move it off an Entry typed in since.
 	 *
-	 * The Reading keeps its row, as the trip keeps its own; the checked write is against the
-	 * Reading as read here, for the reason followTrip() gives.
+	 * The Reading keeps its row; the checked write is against the Reading as read here, for the
+	 * reason followTrip() gives.
 	 *
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the Reading is not as it was read
 	 * @throws \OCP\DB\Exception
@@ -494,9 +487,8 @@ class OdometerService {
 	}
 
 	/**
-	 * The insert every Reading goes through, and the restating that follows it. What differs
-	 * between an Odometer Entry and an Entry with content of its own is only where the numbers
-	 * came from, which is the caller's to say.
+	 * The insert every Reading goes through, and the restating that follows it. Where the numbers
+	 * came from is the caller's to say.
 	 *
 	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
 	 * @param Once<OdoReading>|null $once an Odometer Entry's client uuid
@@ -540,15 +532,12 @@ class OdometerService {
 	}
 
 	/**
-	 * The Reading a trip left on the counter follows that trip into the trash and back out of it.
-	 * The journey and the number it left behind are one fact (rule 5), so a Reading standing on a
-	 * voided trip would hold the vehicle's kilometres at a journey nobody claims any more - and on
-	 * a row the timeline no longer shows, which leaves nothing on screen to explain the figure.
+	 * The Reading a trip left on the counter follows that trip into the trash and back out of it
+	 * (rule 5), deleted exactly when its trip is.
 	 *
-	 * Which way it goes is the trip's to say: the Reading is stamped exactly as its trip is. The
-	 * checked write is against the Reading as this method just read it, because nothing else
-	 * writes a Reading's `deleted_at` - the concurrency token a client holds is the trip's, and
-	 * the caller has already spent it on the trip itself.
+	 * The checked write is against the Reading as just read, because nothing else writes a
+	 * Reading's `deleted_at`: the token a client holds is the trip's, and the caller has already
+	 * spent it on the trip itself.
 	 *
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the Reading is not as it was read
 	 * @throws \OCP\DB\Exception
@@ -604,26 +593,19 @@ class OdometerService {
 	/**
 	 * Reads one counter's whole chain back, decides every flag from scratch and caches the newest
 	 * value on the vehicle: `odo_value` for the main chain, `second_value` for the hours. Only the
-	 * chain the write touched - the other holds no Reading that could flag against it (rule 4). Nothing is ever incremented in place, so two drivers logging
-	 * at once cannot corrupt a running total (rule 2).
-	 *
-	 * Recomputing is not enough on its own: a writer that read the chain before another's Reading
-	 * committed would cache the older number, and could cache it last. So every write that ends
-	 * here runs in one transaction that took VehicleMapper::hold() before it read or wrote
-	 * anything, and a second writer on the vehicle settles on the first one's chain.
+	 * chain the write touched - the other holds no Reading that could flag against it (rule 4).
+	 * The caller holds VehicleMapper::hold() from before it read or wrote anything (rule 2).
 	 *
 	 * The whole chain, not a window around the row that changed: a bounded pass has to know how
-	 * far a contradiction can reach backwards, and getting that wrong is silent. That is also why
-	 * a Reading leaving the chain settles it the same way one arriving does - a flag a row put on
-	 * its neighbours goes with it. One indexed query per entry is what a vehicle's lifetime of
-	 * readings costs.
+	 * far a contradiction can reach backwards, and getting that wrong is silent. So a Reading
+	 * leaving the chain settles it as one arriving does - a flag it put on its neighbours goes
+	 * with it.
 	 *
 	 * Inside a batch() it only notes the chain, which the batch settles at its end.
 	 *
-	 * What is settled is the flags and the cache, never a value: a derived row whose base has just
-	 * been voided keeps the number it was counted with, because rule 6 corrects no derived value
-	 * and a recomputed one would be a counter nobody ever read. The kilometres that journey
-	 * covered are a fact of their own.
+	 * The flags and the cache are settled, never a value: a derived row whose base was voided
+	 * keeps the number it was counted with, since rule 6 corrects no derived value and a
+	 * recomputed one would be a counter nobody ever read.
 	 *
 	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
 	 * @return list<OdoReading> the chain the caller's write left behind
@@ -757,8 +739,8 @@ class OdometerService {
 
 	/**
 	 * Rule 6's arithmetic, in the one place that does it: the newest reading on the same counter at
-	 * or before the moment the distance started running, plus the distance. An Odometer Entry counts from the
-	 * moment it was read at, a Trip from the moment it set off - the caller says which.
+	 * or before the moment the distance started running, plus the distance. An Odometer Entry
+	 * counts from the moment it was read at, a Trip from the moment it set off.
 	 *
 	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
 	 * @param ?int $own the Reading being restated, if any: an edited trip moved past its old end

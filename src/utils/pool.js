@@ -93,9 +93,8 @@ export function spanFault(start, end, was = null) {
 }
 
 /**
- * A booking refusal in the reader's words. BookingService answers in English that names columns;
- * the refusals a person can run into are matched by those words. The caller shows anything else as
- * it came, which beats nothing.
+ * A booking refusal in the reader's words. BookingService answers in English that names columns,
+ * so the refusals a person can run into are matched by those words; the caller shows the rest.
  *
  * @param {string} message - the server's words
  * @return {string|null} a sentence, or null for a refusal this bundle does not know

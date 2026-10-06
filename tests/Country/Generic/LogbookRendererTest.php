@@ -89,7 +89,8 @@ class LogbookRendererTest extends TestCase {
 	}
 
 	/**
-	 * Date, route, purpose, counter, distance and category, and nothing a country would add. The date and time are the wall clock where the trip set off.
+	 * Date, route, purpose, counter, distance and category, and nothing a country would add. The
+	 * date and time are the wall clock where the trip set off.
 	 */
 	public function testATripReadsAsOneLine(): void {
 		$this->assertSame([[
@@ -147,7 +148,6 @@ class LogbookRendererTest extends TestCase {
 		$this->assertSame('Distance derived from the odometer, not read off it', $rows[0]['Note']);
 	}
 
-	/** A journey ending on a later day says which. */
 	public function testAnOvernightTripSaysWhenItEnded(): void {
 		$rows = $this->rows($this->render([$this->trip(['ended_at' => self::MONDAY + 86400])]));
 
@@ -190,7 +190,6 @@ class LogbookRendererTest extends TestCase {
 		$this->assertSame(['Business' => '450', 'Private' => '0', 'Commute' => 'Not stated'], $this->split($page));
 	}
 
-	/** A vehicle counting hours has its trips counted in hours, and says so. */
 	public function testAVehicleCountingHoursSaysHours(): void {
 		$vehicle = Vehicle::fromRow(['id' => 7, 'plate' => 'W-12345X', 'odo_unit' => 'h', 'jurisdiction' => 'generic']);
 		$html = (new Generic\LogbookRenderer(new Untranslated()))->render(new LogbookReport($vehicle, 2026, [

@@ -21,7 +21,6 @@ afterEach(() => {
 })
 
 describe('savePaper', () => {
-	/** A blob URL keeps the blob's type: an HTML file opened from it would run in the app's origin. */
 	it('hands the browser bytes of no type it would render', async () => {
 		vi.mocked(fetchDocument).mockResolvedValue(new Blob(['<script>alert(1)</script>'], { type: 'text/html' }))
 		/** @type {Blob[]} */

@@ -36,9 +36,7 @@ vi.mock('@nextcloud/dialogs', () => ({
 }))
 
 const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', odo_unit: 'km', may: ['view', 'log', 'edit', 'delete', 'own'] }
-/** A driver files papers on their own entries and bookings; the vehicle's own take `edit`. */
 const DRIVEN = { ...VEHICLE, may: ['view', 'log'] }
-/** A viewer reads the papers and keeps none. */
 const VIEWED = { ...VEHICLE, may: ['view'] }
 
 /** @type {import('../services/api.js').Document} */
@@ -163,7 +161,6 @@ describe('the documents section', () => {
 		expect(wrapper.text()).toContain('Belongs to a maintenance record')
 	})
 
-	/** The timeline carries the paperclips, so it needs the same list (src/views/VehicleView.vue). */
 	it('hands the list up each time it changes', async () => {
 		const wrapper = await section()
 		await button(wrapper, 'Remove fahrzeugschein.pdf').vm.$emit('click')
@@ -235,7 +232,6 @@ describe('the documents section', () => {
 		expect(listDocuments).toHaveBeenLastCalledWith('v-2')
 	})
 
-	/** The screen asks once the role changed, since each paper's `may` follows it (src/views/VehicleView.vue). */
 	it('reads the list again when the screen asks', async () => {
 		const wrapper = await section()
 
@@ -272,7 +268,6 @@ describe('the documents section', () => {
 })
 
 describe('adding a document', () => {
-	/** One file at a time from Files; nothing is uploaded here (docs/architecture.md#documents). */
 	it('attaches the picked file as the kind chosen, to the vehicle itself', async () => {
 		const wrapper = await section()
 		await pick(wrapper, 42)
@@ -301,7 +296,7 @@ describe('adding a document', () => {
 		expect(useInboxStore().count).toBe(2)
 	})
 
-	/** The picker brings no button of its own, and one with nothing selected would pick nothing. */
+	/** A button with nothing selected would pick nothing. */
 	it('gives the picker one button, offered once a file is selected', async () => {
 		const wrapper = await section()
 		await pick(wrapper, 42)
@@ -333,7 +328,6 @@ describe('adding a document', () => {
 		expect(attachDocument).toHaveBeenCalledWith('v-1', { file_id: 42, kind: 'receipt', linked_type: 'maintenance', linked_uuid: 'm-1' })
 	})
 
-	/** Done when: handover photos attach to the booking. */
 	it('offers a handed-over booking as what a photo belongs to', async () => {
 		vi.mocked(listBookings).mockResolvedValue([TAKEN, { ...TAKEN, uuid: 'b-2', state: 'booked', may: ['edit', 'cancel'] }])
 		const wrapper = await section()
@@ -351,10 +345,7 @@ describe('adding a document', () => {
 		expect(attachDocument).toHaveBeenCalledWith('v-1', { file_id: 42, kind: 'photo', linked_type: 'booking', linked_uuid: 'b-1' })
 	})
 
-	/**
-	 * Done when: a driver attaches a receipt to an entry they entered. Only the rows the server
-	 * says are theirs to change, and one of them is required: the vehicle's own papers take `edit`.
-	 */
+	/** Only rows the server says are theirs, and one is required: the vehicle's own take `edit`. */
 	it('offers a driver only their own entries and bookings, and attaches nothing to the vehicle itself', async () => {
 		vi.mocked(readTimeline).mockImplementation(async (uuid, { type }) => ({
 			rows: type === 'maintenance' ? [{ ...WORK, may: [] }] : type === 'energy' ? [FILL] : [],
@@ -464,10 +455,6 @@ describe('adding a document', () => {
 		expect(wrapper.findComponent(NcNoteCard).exists()).toBe(false)
 	})
 
-	/**
-	 * The server refuses a file shared with the person as it refuses one that is not there, and says
-	 * why only in its own words; the section says what it means.
-	 */
 	it('keeps the question open and says why when the file is refused', async () => {
 		vi.mocked(attachDocument).mockRejectedValue(new NotFoundError('No such vehicle'))
 		const wrapper = await section()
@@ -562,7 +549,6 @@ describe('removing a document', () => {
 		expect(wrapper.findAll('.documents a')).toHaveLength(2)
 	})
 
-	/** The toast in the app shell makes the undo; the section shows what it brought back. */
 	it('offers the way back, and shows the list the undo answered', async () => {
 		vi.mocked(restoreDocument).mockResolvedValue([REGISTRATION, INVOICE, GONE])
 		const wrapper = await section()

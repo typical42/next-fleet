@@ -14,7 +14,7 @@ import { computed, onMounted, ref } from 'vue'
 
 import { ConflictError, createReminder, dismissReminder, listReminders, reminderTemplates, snoozeReminder } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
-import { formatDay, parseDay, parseWhole } from '../utils/format.js'
+import { formatCount, formatDay, parseDay, parseWhole } from '../utils/format.js'
 import { addDays, addMonths, templateWord } from '../utils/reminders.js'
 import { t } from '../utils/l10n.js'
 
@@ -47,8 +47,7 @@ const modes = computed(() => [
 	{ id: 'either', label: t('nextfleet', 'Date or counter, whichever comes first') },
 ])
 
-// The numbers stay strings on the way through, as in the vehicle sheet: what is typed is what is
-// shown, and it is read once, on save.
+// Numbers stay strings, as in the vehicle sheet: what is typed is shown, and read once, on save.
 const title = ref(props.reminder?.title ?? '')
 const mode = ref(modes.value.find((one) => one.id === (props.reminder?.mode ?? 'date')) ?? null)
 const dueDate = ref(parseDay(props.reminder?.due_date))
@@ -182,6 +181,23 @@ function fields() {
 }
 
 /**
+ * ReminderService's refusals a person can run into, by its English words; the rest show as sent.
+ *
+ * @type {Record<string, () => string>}
+ */
+const REFUSALS = {
+	'title is a field every reminder without a template carries': () => t('nextfleet', 'A reminder of your own needs a title.'),
+	'title is longer than 255 characters': () => t('nextfleet', 'The title is longer than 255 characters.'),
+	'due_date is a field every reminder by date carries': () => t('nextfleet', 'A reminder due by date needs a due date.'),
+	'due_odo is a field every reminder by odometer carries': () => t('nextfleet', 'A reminder due by the counter needs the reading it is due at.'),
+	'a reminder by either recurs by both or by neither': () => t('nextfleet', 'A reminder due by date or counter repeats by both or by neither. Fill in both repeat fields, or leave both empty.'),
+	'a recurrence is more than zero': () => t('nextfleet', 'A repeat is more than zero. Leave the field empty for no repeat.'),
+	'recur_months is 1200 at most': () => t('nextfleet', 'A reminder repeats every {max} months at most.', { max: formatCount(1200) }),
+	'until is a day still to come': () => t('nextfleet', 'A snooze ends on a day still to come.'),
+	'this occurrence is over': () => t('nextfleet', 'This reminder was done or skipped somewhere else meanwhile.'),
+}
+
+/**
  * One attempt at a write. A failure leaves the sheet open with every value intact (docs/ui.md);
  * a success closes it through the banner, which reads the list again.
  *
@@ -199,7 +215,7 @@ async function attempt(work, kind) {
 		if (error instanceof ConflictError) {
 			refused.value = kind
 		} else {
-			failure.value = error.message
+			failure.value = REFUSALS[error.message]?.() ?? error.message
 		}
 	} finally {
 		saving.value = false
@@ -225,7 +241,7 @@ async function current() {
 	return held.value
 }
 
-/** The write the sheet is for: the create it was opened without a reminder for, or the edit. */
+/** The create when the sheet opened without a reminder, else the edit. */
 function save() {
 	return attempt(async (reminder) => {
 		const written = fields()

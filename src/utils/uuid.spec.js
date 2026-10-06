@@ -22,7 +22,6 @@ describe('newUuid', () => {
 		expect(newUuid()).not.toBe(one)
 	})
 
-	/** Plain http is no secure context, and there the browser offers no randomUUID(). */
 	it('is one without randomUUID() too', () => {
 		vi.stubGlobal('crypto', { getRandomValues: (/** @type {Uint8Array} */ bytes) => bytes.fill(0xff) })
 

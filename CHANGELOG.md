@@ -308,3 +308,11 @@ reminders, and access for the people who drive them, book them and hand them ove
   [administration guide](https://github.com/typical42/next-fleet/blob/main/docs/admin/README.md) and a
   [developer guide](https://github.com/typical42/next-fleet/blob/main/docs/developer/README.md), written in Simplified
   Technical English. `appinfo/info.xml` links all three for the app store.
+- The README says how the app was made: an AI tool, Claude Code, wrote most of it, and the
+  maintainer reviewed and tested it and answers for every line. A change to the app follows
+  Nextcloud's AI policy: each commit an AI tool helped with names it in an `Assisted-by` trailer,
+  and the pull request says so
+  ([contributing](https://github.com/typical42/next-fleet/blob/main/docs/contributing.md#ai-assistance)).
+- `npm run release -- prepare <date>` and `npm run release -- build --key <path> --cert <path>` do
+  the release steps up to the upload. Each stops where the maintainer commits or uploads
+  ([release](https://github.com/typical42/next-fleet/blob/main/docs/development.md#release)).

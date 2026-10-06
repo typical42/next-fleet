@@ -56,8 +56,7 @@ use Psr\Log\LoggerInterface;
 /**
  * Every write holds the vehicle first, inside its transaction, and only then reads what decides
  * it: the row it changes, the span it claims, the grantee that must still exist. A read before
- * the hold is a race two requests can both win (docs/architecture.md#concurrency). Each test
- * records the calls the mocks see, as TripServiceTest does, and reads the first transaction.
+ * the hold is a race two requests can both win (docs/architecture.md#concurrency).
  */
 class HoldOrderTest extends TestCase {
 	private const OWNER = 'alice';

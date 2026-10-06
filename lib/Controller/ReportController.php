@@ -31,6 +31,8 @@ use OCP\IUserSession;
  * beside them. What is in them is the services'; this serves them.
  */
 class ReportController extends Controller {
+	use SessionUser;
+
 	public function __construct(
 		string $appName,
 		IRequest $request,
@@ -129,16 +131,5 @@ class ReportController extends Controller {
 	 */
 	private function parseYear(string $value): ?int {
 		return preg_match('/^\d{4}$/', $value) === 1 ? (int)$value : null;
-	}
-
-	private function userId(): string {
-		$user = $this->session->getUser();
-		if ($user === null) {
-			// The route requires a login, so this is a broken container rather than an anonymous
-			// request.
-			throw new \RuntimeException('No user in session');
-		}
-
-		return $user->getUID();
 	}
 }

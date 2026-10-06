@@ -11,20 +11,16 @@
 
 name: nextfleet
 
-# Docker creates the bind mount's parent, /var/www/html/custom_apps, as root, and the image
-# only takes ownership of that directory while it is still empty — which the mount stops it
-# from ever being. NC 31 then refuses to install: "Cannot write into apps directory". The
-# image's hook scripts run as www-data and cannot chown, so it happens here, before the
-# image's own entrypoint.
+# The bind mount leaves custom_apps owned by root and NC 31 refuses to install; the image's
+# hooks run as www-data and cannot chown (docs/development.md#local-dev-environment).
 x-custom-apps-owner: &fix-custom-apps-owner
   entrypoint:
     - /bin/sh
     - -c
     - chown www-data:www-data /var/www/html/custom_apps && exec /entrypoint.sh apache2-foreground
 
-# Apache answers long before Nextcloud is installed, and it answers even when the install
-# failed outright — which is how the chown above presented. status.php is the only thing that
-# says so, and `docker compose up --wait` is what reads it (docs/development.md#testing).
+# Apache answers even when the install failed; only status.php says whether Nextcloud is
+# installed, and `docker compose up --wait` reads it (docs/development.md#testing).
 x-nextcloud-health: &nextcloud-health
   healthcheck:
     test: ["CMD-SHELL", "curl -fsS http://localhost/status.php | grep -q '\"installed\":true'"]
@@ -79,15 +75,14 @@ services:
       MYSQL_DATABASE: nextcloud
     volumes:
       - app_html:/var/www/html
-      # The whole trick: edit in WSL, reload the browser.
+      # Edit in WSL, reload the browser.
       - ..:/var/www/html/custom_apps/nextfleet
     depends_on:
       db:
         condition: service_healthy
 
-  # Not an extra: the M0 gate is checked by loading both ports, and after M0 this is the
-  # fastest way to catch a component that exists in 34 and not in 31. Its own database
-  # and its own html volume - two majors cannot share one install.
+  # The oldest supported major, to catch a component that exists in 34 and not in 31. Its own
+  # database and html volume: two majors cannot share one install.
   app31:
     image: nextcloud:31-apache
     <<: [*fix-custom-apps-owner, *nextcloud-health]
@@ -104,9 +99,7 @@ services:
       db:
         condition: service_healthy
 
-  # Runs cron.php every five minutes, so reminders actually fire instead of waiting for
-  # a page load. Shares app's install; testing the job by waiting is not testing, so see
-  # background-job:execute in docs/development.md.
+  # Runs cron.php every five minutes on app's install, so reminders fire without a page load.
   cron:
     image: nextcloud:34-apache
     restart: unless-stopped
@@ -118,7 +111,7 @@ services:
       db:
         condition: service_healthy
 
-  # The same for app31: each install needs its own runner (docs/development.md).
+  # Each install needs its own runner (docs/development.md#local-dev-environment).
   cron31:
     image: nextcloud:31-apache
     restart: unless-stopped

@@ -20,15 +20,14 @@ const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
 	vehicle: { type: Object, required: true },
 	/**
-	 * The Gap this trip's claim opened, if any. The timeline hands it over only under Logbook Mode,
-	 * the only place a Gap is said (docs/features.md#logbook-mode).
+	 * The Gap this trip's claim opened, if any; handed over only under Logbook Mode
+	 * (docs/features.md#logbook-mode).
 	 *
 	 * @type {import('vue').PropType<import('../services/api.js').Gap|null>}
 	 */
 	gap: { type: Object, default: null },
 	/**
-	 * The documents linked to this entry. They are added in the vehicle's documents section, never
-	 * here; the row only opens them.
+	 * The documents linked to this entry. The row only opens them; the documents section adds them.
 	 *
 	 * @type {import('vue').PropType<import('../services/api.js').Document[]>}
 	 */
@@ -40,8 +39,8 @@ const props = defineProps({
 defineEmits(['closeGap', 'open', 'reset', 'void'])
 
 /**
- * The sheet the row opens is where an Entry is edited, voided or deleted, so a row the reader may not
- * change opens nothing (TimelineService::withMay()).
+ * The sheet is where an Entry is edited, voided or deleted, so a row the reader may not change
+ * opens nothing (TimelineService::withMay()).
  */
 const opens = computed(() => may(props.entry, 'edit'))
 
@@ -71,24 +70,22 @@ const FLAG_WORDS = {
 }
 
 /**
- * A Reconciliation Trip a later trip overlaps counts that trip's kilometres twice. Said with its fix,
- * so the overlap is not said again beside it.
+ * A Reconciliation Trip a later trip overlaps counts its kilometres twice. Said with its fix, so
+ * the overlap is not said again beside it.
  */
 const overtaken = computed(() => (props.entry.flags ?? []).includes('overtaken'))
 
-// A trip is placed where it set off and a Reading where it was read (lib/Service/TimelineService.php),
-// and the day is the one the offset it was entered at puts it on - not the one the reader's own
-// clock is on (docs/architecture.md#time).
+// A trip is placed where it set off, a Reading where it was read (lib/Service/TimelineService.php),
+// on the day its own offset gives, not the reader's clock (docs/architecture.md#time).
 const day = computed(() => shortDate(props.entry.occurred_at, props.entry.occurred_at_off))
 
 const name = computed(() => entryName(props.entry))
 
 /**
- * The one figure the row states, and it is one the person gave. A trip's is the kilometres or the
- * counter it ended on, never both, because the two are never computed into one another
- * (docs/architecture.md#odometer-rules); the Reading a distance was counted into is the server's
- * arithmetic. A fill-up's is the amount, the one field it always has; maintenance and an expense
- * state what they cost.
+ * The one figure the row states, always one the person gave. A trip's is its kilometres or its end
+ * counter, never both: the two are never computed into one another
+ * (docs/architecture.md#odometer-rules). A fill-up's is the amount, the one field it always has;
+ * maintenance and an expense state their cost.
  */
 const figure = computed(() => {
 	if (energy.value !== undefined) {
@@ -105,8 +102,8 @@ const figure = computed(() => {
 		? odometer.value?.value
 		: trip.value.distance ?? trip.value.end_odo
 
-	// An hour Reading is on a chain of its own, in that chain's unit (rule 4). A trip never is. Hours
-	// are the only second unit there is, and switching them off keeps their Readings.
+	// An hour Reading is on its own chain, in that chain's unit (rule 4); a trip never is.
+	// Hours are the only second unit, and switching them off keeps their Readings.
 	const unit = odometer.value?.counter === 'second' ? 'h' : props.vehicle.odo_unit
 
 	return value === null || value === undefined
@@ -115,8 +112,8 @@ const figure = computed(() => {
 })
 
 /**
- * What the row says beside its figure: what a journey was driven for, which is the question a
- * Fahrtenbuch asks first; where a fill-up was bought; what kind of work was done and by whom.
+ * What the row says beside its figure: a journey's purpose, which a Fahrtenbuch asks first; where
+ * a fill-up was bought; what work was done and by whom.
  */
 const tail = computed(() => {
 	if (trip.value !== undefined) {
@@ -126,8 +123,8 @@ const tail = computed(() => {
 		return [
 			props.entry.consumption ? formatConsumption(props.entry.consumption, energy.value.energy) : '',
 			energy.value.station,
-			// Neither is a flag: both are true things the driver said. They are what makes a
-			// fill-up close no consumption segment, so the row says them.
+			// Not flags but what the driver said; they are why a fill-up closes no consumption
+			// segment, so the row says them.
 			energy.value.full_tank === false ? t('nextfleet', 'Partial') : '',
 			energy.value.missed_previous === true ? t('nextfleet', 'Previous fill-up not recorded') : '',
 		].filter(Boolean)
@@ -145,10 +142,8 @@ const flagWords = computed(() => (props.entry.flags ?? [])
 	.map((flag) => FLAG_WORDS[flag] ?? flag))
 
 /**
- * A Reading that contradicts the chain before it is flagged rather than corrected
- * (docs/architecture.md#odometer-rules), and the timeline is where that question gets put
- * (docs/ui.md). An Entry's question is the Readings it left on the counter, because the Entry and
- * those Readings are one row.
+ * A contradicting Reading is flagged, not corrected (docs/architecture.md#odometer-rules), and the
+ * timeline puts the question. An Entry and the Readings it left on the counter are one row.
  */
 const ownReadings = computed(() => {
 	const own = odometer.value ?? props.entry.reading
@@ -169,8 +164,8 @@ const missingWords = computed(() => (props.vehicle.logbook_mode === true ? field
 
 <template>
 	<li class="row" :class="{ 'row--opens': opens }">
-		<!-- The whole moment, so what a machine reads off the markup is the moment the text beside
-		     it states - offset and all (src/utils/format.js). -->
+		<!-- The whole moment, offset and all, so the markup states what the text does
+		     (src/utils/format.js). -->
 		<time class="row__day" :datetime="isoInstant(entry.occurred_at, entry.occurred_at_off)">{{ day }}</time>
 		<!-- The name is the button, so it is what a keyboard and a screen reader reach the row by;
 		     its hit area is stretched over the whole row. -->
@@ -188,7 +183,6 @@ const missingWords = computed(() => (props.vehicle.logbook_mode === true ? field
 			<span v-for="flag in flagWords" :key="flag" class="row__flag">{{ flag }}</span>
 			<!-- Closed a Gap: the counter's arithmetic, not a journey somebody recorded (CONTEXT.md). -->
 			<span v-if="trip?.reconciled === true">{{ t('nextfleet', 'Reconciled') }}</span>
-			<!-- A word, not a colour: status is never colour alone (docs/ui.md). -->
 			<span v-if="inQuestion" class="row__flag">{{ t('nextfleet', 'In question') }}</span>
 			<template v-if="missingWords">
 				<span class="row__flag">{{ t('nextfleet', 'Incomplete') }}</span>

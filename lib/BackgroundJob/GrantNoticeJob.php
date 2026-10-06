@@ -16,9 +16,8 @@ use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\BackgroundJob\QueuedJob;
 
 /**
- * Tells the members of a group of its new grant (GrantNotices::tell()): a group of thousands is
- * cron's to tell, not the owner's request. A grant revoked or a vehicle deleted before it runs
- * tells nobody.
+ * Tells the members of a group of its new grant; GrantNotices::tell() says why it is queued. A
+ * grant revoked or a vehicle deleted before it runs tells nobody.
  */
 class GrantNoticeJob extends QueuedJob {
 	public function __construct(

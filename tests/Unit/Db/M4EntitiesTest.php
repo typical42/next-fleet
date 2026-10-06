@@ -16,7 +16,8 @@ use OCA\NextFleet\Db\Vehicle;
 use PHPUnit\Framework\TestCase;
 
 /**
- * What M4's columns mean when they come back from the database, before any service reads them.
+ * What the reminder columns mean when they come back from the database, before any service
+ * reads them.
  */
 class M4EntitiesTest extends TestCase {
 	public function testANewReminderWarnsAMonthBeforeAndOnTheDueDate(): void {

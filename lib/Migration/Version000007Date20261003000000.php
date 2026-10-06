@@ -14,8 +14,8 @@ use OCP\Migration\IOutput;
 use OCP\Migration\SimpleMigrationStep;
 
 /**
- * What M12 ships: indexes only, for reads that scanned a vehicle's whole history
- * (docs/architecture.md#data-model). The milestone's only migration, for the reason M2's is.
+ * Indexes only, for reads that would scan a vehicle's whole history
+ * (docs/architecture.md#data-model).
  */
 class Version000007Date20261003000000 extends SimpleMigrationStep {
 	/** Index name => [table, columns]. Names spelled out, so a grep finds where each comes from. */

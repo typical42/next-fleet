@@ -152,8 +152,8 @@ class RecomputeCommandTest extends TestCase {
 	}
 
 	/** On stderr, so stdout stays one JSON document or nothing. */
-	public function testNeitherOrBothScopesOrAnUnknownVehicleIsBadInput(): void {
-		foreach ([[], ['--all' => true, '--vehicle' => 'x'], ['--vehicle' => 'no-such-uuid']] as $scope) {
+	public function testNeitherOrBothScopesAnUnknownVehicleOrOutputIsBadInput(): void {
+		foreach ([[], ['--all' => true, '--vehicle' => 'x'], ['--vehicle' => 'no-such-uuid'], ['--all' => true, '--output' => 'xml']] as $scope) {
 			$this->assertSame(2, $this->command->execute($scope + ['--output' => 'json'], ['capture_stderr_separately' => true]), json_encode($scope) ?: '');
 			$this->assertSame('', $this->command->getDisplay());
 			$this->assertNotSame('', $this->command->getErrorOutput());

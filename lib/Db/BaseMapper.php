@@ -213,9 +213,8 @@ abstract class BaseMapper extends QBMapper {
 	}
 
 	/**
-	 * The same row whatever state it is in. A restore is the one caller that wants it: the row it
-	 * is after is precisely the one findByUuid() passes over, and a restore of a row somebody
-	 * already brought back has to say "not as you read it" rather than "no such thing".
+	 * The row in any state, for a restore: it is after the row findByUuid() passes over, and a row
+	 * somebody already brought back has to answer "not as you read it" rather than "no such thing".
 	 *
 	 * @return T
 	 * @throws DoesNotExistException
@@ -229,7 +228,7 @@ abstract class BaseMapper extends QBMapper {
 	/**
 	 * findByUuid(), and only where the row hangs off the vehicle the route named. A uuid alone
 	 * would be a second way in: one vehicle of their own is all somebody would need to reach a row
-	 * on anybody else's. For the tables with a `vehicle_id`, which is every one but the vehicles'.
+	 * on anybody else's. For every table but the vehicles'.
 	 *
 	 * @return T
 	 * @throws DoesNotExistException
@@ -257,6 +256,40 @@ abstract class BaseMapper extends QBMapper {
 		$qb->andWhere($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)));
 
 		return $this->findEntity($qb);
+	}
+
+	/**
+	 * The row in any state, by the id a job or another row holds rather than a route.
+	 *
+	 * @return T
+	 * @throws DoesNotExistException
+	 * @throws MultipleObjectsReturnedException
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findAnyById(int $id): BaseEntity {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->tableName)
+			->where($qb->expr()->eq('id', $qb->createNamedParameter($id, IQueryBuilder::PARAM_INT)));
+
+		return $this->findEntity($qb);
+	}
+
+	/**
+	 * One vehicle's live rows, in the order they were made. For every table but the vehicles'.
+	 *
+	 * @return list<T>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findByVehicle(int $vehicleId): array {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->tableName)
+			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->isNull('deleted_at'))
+			->orderBy('id');
+
+		return $this->findEntities($qb);
 	}
 
 	/**
@@ -590,9 +623,8 @@ abstract class BaseMapper extends QBMapper {
 	 * Undo: the stamp taken off again, on the row the client read and only while it is still
 	 * stamped. A statement that matched a live row would undo a delete nobody did.
 	 *
-	 * The token moves as on any write: a client that asks what changed since by `updated_at`
-	 * would never see a restore that left it where the delete did. The entity carries the new
-	 * one, and the restore's answer hands it on.
+	 * The token moves as on any write, or a sync by `updated_at` would never see the restore. The
+	 * entity carries the new one.
 	 *
 	 * @param T $entity
 	 * @param int $expectedUpdatedAt the `updated_at` the delete answered with

@@ -21,8 +21,8 @@ use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The six rules of docs/architecture.md#odometer-rules, one test each: what a Reading is worth
- * against the ones around it, and what the vehicle then shows.
+ * The six rules of docs/architecture.md#odometer-rules: what a Reading is worth against the ones
+ * around it, and what the vehicle then shows.
  */
 class OdometerServiceTest extends TestCase {
 	private const VEHICLE = '0195e2f1-0000-4000-8000-000000000001';
@@ -53,12 +53,10 @@ class OdometerServiceTest extends TestCase {
 		$this->secondUnit = null;
 		$this->calls = [];
 
-		// A store rather than an expectation: every rule here is about a reading read back
-		// against its neighbours, which a per-call mock cannot say anything about.
+		// A store, not an expectation: every rule reads a Reading back against its neighbours.
 		$this->readings = $this->createMock(OdoReadingMapper::class);
 		$this->readings->method('insert')->willReturnCallback(function (OdoReading $reading): OdoReading {
-			// The identity and the dating are the base mapper's (BaseMapperTest), and a store
-			// that handed out neither could not tell two readings apart.
+			// Ids as the base mapper gives them (BaseMapperTest), or two readings look alike.
 			$reading->setId($this->nextId);
 			$reading->setUuid('0195e2f1-0000-4000-8000-00000000000' . $this->nextId++);
 			$this->rows[] = $reading;
@@ -113,8 +111,8 @@ class OdometerServiceTest extends TestCase {
 			$this->calls[] = 'commit';
 		});
 
-		// Who reaches which vehicle is VehicleAccessTest's; here the gate stands for the answer,
-		// so what these tests state is which operation the odometer asks it for.
+		// Who reaches which vehicle is VehicleAccessTest's; these tests state which operation the
+		// odometer asks the gate for.
 		$this->fleet = $this->createMock(VehicleService::class);
 		$this->fleet->method('reach')->willReturnCallback(
 			function (string $userId, string $operation): Vehicle {
@@ -400,9 +398,8 @@ class OdometerServiceTest extends TestCase {
 	}
 
 	/**
-	 * The database would refuse each of these too, but as a 500 that names no field. Refusing
-	 * them here is what makes the answer a 400 the sheet can point at - which is not the same as
-	 * blocking on an implausible number, and rule 3 is why (docs/ui.md).
+	 * The database would refuse these too, but as a 500 that names no field; here they are a 400
+	 * the sheet can point at. An implausible number is still taken (rule 3, docs/ui.md).
 	 *
 	 * @param array<string, mixed> $fields
 	 * @dataProvider misshapenReadings

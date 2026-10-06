@@ -7,8 +7,7 @@ import { expect, test } from '@playwright/test'
 
 import { add, api, appPage, audit, choice, login, open, opened, removeVehicles, row, settingsPage, tile } from './app.js'
 
-// Every vehicle this file makes wears this prefix, and every run deletes what it finds under it
-// before starting.
+// The plate prefix this file owns (README.md).
 const plates = 'E2E-'
 
 // What the create sheet fills in, and what the vehicle screen must then say back. The grouping is
@@ -32,8 +31,7 @@ function overview(page) {
 test.beforeEach(async ({ page }) => {
 	await login(page)
 	await removeVehicles(page, plates)
-	// The preferences are this user's own and three of these tests read them back, so they are put
-	// where the run expects them for the same reason the vehicles are: up front, and by name.
+	// Three tests read the preferences back, so they are reset up front like the vehicles.
 	await api(page, {
 		method: 'PUT',
 		path: '/api/preferences',
@@ -74,18 +72,15 @@ test('a vehicle and a reading of its counter both reach the list', async ({ page
 	await entry.getByRole('textbox', { name: 'Counter reading' }).fill(recorded)
 	await entry.getByRole('button', { name: 'Try again' }).click()
 	await expect(entry).toBeHidden()
-	// The KPI, not just anywhere on the screen: the timeline below it states the same number on the
-	// row it wrote, and the vehicle's own counter is what this line is about.
+	// The KPI, because the timeline row below states the same number.
 	await expect(page.locator('.kpis').getByText(counter)).toBeVisible()
 
-	// A reload is what proves the server kept both: the overview is read back from it, and it is
-	// the only screen that shows a vehicle's name and its counter in one line.
+	// A reload proves the server kept both; only the overview shows name and counter in one line.
 	await page.goto(appPage)
 	await expect(row(page, plate)).toContainText('Toyota Hilux')
 	await expect(row(page, plate)).toContainText(counter)
 
-	// No screen shows the drivetrain, so the vehicle itself is the only proof that the word the
-	// sheet offered was sent back as the code the column holds.
+	// No screen shows the drivetrain, so the API proves the sheet's word was sent as the code.
 	const fleet = await api(page, { method: 'GET', path: '/api/vehicles' })
 	expect(fleet.find((/** @type {{plate: string}} */ vehicle) => vehicle.plate === plate)?.engine)
 		.toBe('diesel')
@@ -152,8 +147,7 @@ test('a vehicle is edited from its own screen, and disposing of it takes it off 
 	await sheet.getByRole('textbox', { name: 'VIN' }).fill('W0L000051T2123456')
 	await sheet.getByLabel('First registration').fill('2019-03-07')
 
-	// The country belongs to the vehicle rather than to whoever is editing it, and this is where it
-	// is changed until the sidebar exists (docs/ui.md).
+	// The country belongs to the vehicle, not to whoever edits it (docs/ui.md).
 	await sheet.getByRole('combobox', { name: 'Country' }).click()
 	await option(page, 'Generic').click()
 
@@ -194,11 +188,10 @@ test('Esc in a date field is the picker\'s, and everywhere else the sheet\'s', a
 	const sheet = page.getByRole('dialog', { name: 'Edit vehicle' })
 	await sheet.getByRole('textbox', { name: 'VIN' }).fill('W0L000051T2123456')
 
-	// The browser draws the date picker over the input and closes it on Escape, but the keydown
-	// reaches the input all the same - and the sheet's own handler is one bubble above it. Vitest
-	// cannot open a native picker, and it cannot see this listener travel through two layers of
-	// `$attrs` onto the input either; this is where that is proved. No wait is needed: a closing
-	// sheet is gone before `press()` returns (docs/development.md#local-dev-environment).
+	// The native picker closes on Escape, yet the keydown still reaches the input, one bubble below
+	// the sheet's handler. Vitest can neither open the picker nor follow the listener through two
+	// layers of `$attrs`. No wait: a closing sheet is gone before `press()` returns
+	// (docs/development.md#local-dev-environment).
 	await sheet.getByLabel('First registration').press('Escape')
 	await expect(sheet).toBeVisible()
 	await expect(sheet.getByRole('textbox', { name: 'VIN' })).toHaveValue('W0L000051T2123456')
@@ -351,9 +344,8 @@ test('the screens pass an axe audit', async ({ page }) => {
 	await audit(page, 'the entry sheet', ['#nextfleet', '[role="dialog"]'])
 })
 
-// One major, because the answer being audited is CSS and there is one copy of it: a second run of
-// this would double the slowest suite in the repo to re-measure the same stylesheet. The projects
-// that are not nc34 filter the tag out (playwright.config.js).
+// One major: the answer is CSS, one copy of it, and a second run would double the slowest suite.
+// Projects other than nc34 filter the tag out (playwright.config.js).
 test.describe('at 320 x 640, in the dark', { tag: '@nc34' }, () => {
 	test.use({ viewport: { width: 320, height: 640 }, colorScheme: 'dark' })
 

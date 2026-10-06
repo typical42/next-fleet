@@ -22,10 +22,9 @@ import ReminderRecipients from './ReminderRecipients.vue'
 import VehicleGrants from './VehicleGrants.vue'
 import VehicleSheet from './VehicleSheet.vue'
 
-// The network is the api client's own seam (api.spec.js), and the store is left real: this sheet
-// is the first caller store.save() has, so the wiring through it is part of what is under test.
-// ConflictError is the module's own class rather than a stand-in, because the sheet tells a
-// refused write from every other failure by its type.
+// The network is the api client's seam (api.spec.js); the store stays real, since the wiring
+// through store.save() is under test. ConflictError is the real class: the sheet tells a refused
+// write by its type.
 vi.mock('../services/api.js', async (original) => ({
 	...await original(),
 	createVehicle: vi.fn(),
@@ -78,9 +77,8 @@ const MANAGED = { ...VEHICLE, may: ['view', 'log', 'edit', 'delete'] }
 async function sheet(vehicle = null) {
 	const wrapper = shallowMount(VehicleSheet, {
 		props: vehicle === null ? {} : { vehicle },
-		// shallowMount renders no stub's slots, and every field of this sheet sits inside the
-		// dialog - so that one component is rendered and the rest stay stubs. The buttons say
-		// what they do in their own slot, so the stubs render theirs.
+		// shallowMount renders no stub's slots, and every field sits inside the dialog, so that one
+		// is rendered. The buttons' labels are their slots, so the stubs render theirs.
 		global: {
 			renderStubDefaultSlot: true,
 			stubs: { NcDialog: { template: '<div><div class="body"><slot /></div><div class="actions"><slot name="actions" /></div></div>' } },
@@ -150,8 +148,7 @@ function emitted(wrapper, name) {
 }
 
 /**
- * A day field. It speaks Date rather than the API's `YYYY-MM-DD`, which is why format.js has the
- * two helpers that convert without losing a day to a timezone.
+ * A day field. It speaks Date rather than the API's `YYYY-MM-DD`.
  *
  * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted sheet
  * @param {string} label - the label beside the picker
@@ -192,7 +189,6 @@ beforeEach(() => {
 })
 
 describe('the vehicle sheet, importing', () => {
-	/** Importing is `edit` (docs/architecture.md#import); the screen opens the import itself. */
 	it('asks for an import from a file', async () => {
 		const wrapper = await sheet(MANAGED)
 
@@ -201,7 +197,6 @@ describe('the vehicle sheet, importing', () => {
 		expect(wrapper.emitted('import')).toHaveLength(1)
 	})
 
-	/** The import takes this sheet's place, so what is typed here would be lost: save it first. */
 	it('holds the import while the sheet has changes', async () => {
 		const wrapper = await sheet(MANAGED)
 
@@ -214,7 +209,6 @@ describe('the vehicle sheet, importing', () => {
 		expect(button(wrapper, 'Import from a file…').props('disabled')).toBe(false)
 	})
 
-	/** A disposed vehicle takes no import, and a vehicle not yet created has nothing to take it. */
 	it('offers no import to a disposed vehicle, nor while creating one', async () => {
 		expect(button(await sheet({ ...VEHICLE, lifecycle: 'disposed' }), 'Import from a file…')).toBeUndefined()
 		expect(button(await sheet(), 'Import from a file…')).toBeUndefined()
@@ -222,12 +216,7 @@ describe('the vehicle sheet, importing', () => {
 })
 
 describe('the vehicle sheet, editing', () => {
-	/**
-	 * `Esc` closes the sheet and NcDialog already gives it (docs/ui.md), so nothing here listens
-	 * for the key. What is pinned is the one wire it travels along: the dialog reports itself
-	 * closed and the sheet leaves. A sheet that bound `:open` and no listener would swallow the
-	 * key silently and never reopen.
-	 */
+	/** A sheet that bound `:open` without a listener would swallow NcDialog's `Esc` silently. */
 	it('closes when the dialog reports itself closed', async () => {
 		const wrapper = await sheet(VEHICLE)
 
@@ -236,11 +225,6 @@ describe('the vehicle sheet, editing', () => {
 		expect(wrapper.emitted('close')?.length).toBe(1)
 	})
 
-	/**
-	 * The other half of the key, and the half NcDialog does not give: its own Escape handler is a
-	 * useHotKey, and useHotKey passes over every keystroke aimed at a text field. The sheet opens
-	 * with the caret in one, so Escape at the moment somebody would press it reaches nobody.
-	 */
 	it('closes when Esc is pressed in a field', async () => {
 		const wrapper = await sheet(VEHICLE)
 
@@ -249,12 +233,6 @@ describe('the vehicle sheet, editing', () => {
 		expect(wrapper.emitted('close')?.length).toBe(1)
 	})
 
-	/**
-	 * Escape in a date field belongs to the picker the browser opened over it, not to the sheet.
-	 * Chromium dismisses that picker on the key and delivers the keydown to the input all the same,
-	 * so a sheet that took it would close over nineteen filled-in fields the moment somebody backed
-	 * out of a calendar. The picker stops it where an open NcSelect stops it.
-	 */
 	it('stays open when Esc is pressed in a date field', async () => {
 		const wrapper = await sheet({ ...VEHICLE, lifecycle: 'disposed', disposed_at: '2025-06-30' })
 
@@ -264,11 +242,7 @@ describe('the vehicle sheet, editing', () => {
 		expect(wrapper.emitted('close')).toBeUndefined()
 	})
 
-	/**
-	 * Mid-save the sheet has values nobody has an answer for yet, so nothing on it takes another
-	 * one - the date pickers with the fields beside them. A picker left open over a write in
-	 * flight would collect a day the save it belongs to had already gone without.
-	 */
+	/** A picker left open over a write in flight would collect a day the save went without. */
 	it('takes no more input while a save is in flight', async () => {
 		/** @type {(vehicle: any) => void} */
 		let settle = () => {}
@@ -289,7 +263,7 @@ describe('the vehicle sheet, editing', () => {
 		await flushPromises()
 	})
 
-	/** Everything prefilled and visibly editable (docs/ui.md) - including what the create sheet never asked. */
+	/** Everything prefilled, including what the create sheet never asked (docs/ui.md). */
 	it('shows the vehicle it was given', async () => {
 		const wrapper = await sheet(VEHICLE)
 
@@ -305,15 +279,6 @@ describe('the vehicle sheet, editing', () => {
 		expect(dropdown(wrapper, 'Lifecycle').props('modelValue').id).toBe('active')
 	})
 
-	/**
-	 * Sent whole rather than as a diff, because `apply()` writes what the payload names: a field
-	 * the user emptied has to travel as an empty one to be cleared. The token travels with it -
-	 * this is the write docs/architecture.md#concurrency checks.
-	 */
-	/**
-	 * Nothing purges yet, so the sheet does not ask for a period it would promise to purge after
-	 * (docs/legal.md). A period already stored goes back as it was read.
-	 */
 	it('does not offer the retention period and keeps the stored one', async () => {
 		const wrapper = await sheet(VEHICLE)
 
@@ -359,10 +324,7 @@ describe('the vehicle sheet, editing', () => {
 		expect(emitted(wrapper, 'saved').updated_at).toBe(1700000900)
 	})
 
-	/**
-	 * The recipients are written on each pick; the cadence is a column of the vehicle, so it is
-	 * saved with it. A vehicle read before the column existed says nothing and keeps the default.
-	 */
+	/** The recipients are written on each pick; the cadence is a vehicle column, saved with it. */
 	it('saves the reminder mail cadence the recipients section hands it', async () => {
 		const wrapper = await sheet({ ...VEHICLE, reminder_mail: 'daily' })
 		const section = /** @type {any} */ (wrapper.findComponent(ReminderRecipients))
@@ -376,7 +338,7 @@ describe('the vehicle sheet, editing', () => {
 		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ reminder_mail: 'monthly' }))
 	})
 
-	/** The list takes `edit` (docs/ui.md); the section shows by `may`, not by a refused read. */
+	/** The section shows by `may`, not by a refused read. */
 	it('has no recipients section for someone who may not edit the vehicle', async () => {
 		const wrapper = await sheet({ ...VEHICLE, may: ['view', 'log'] })
 
@@ -390,10 +352,7 @@ describe('the vehicle sheet, editing', () => {
 		expect(wrapper.findComponent(VehicleGrants).exists()).toBe(false)
 	})
 
-	/**
-	 * Revoking takes whoever no longer sees the vehicle off its recipients, server side, so the
-	 * recipients section reads its list again. The cadence is the sheet's and survives that.
-	 */
+	/** A revoke prunes the recipients server side; the cadence is the sheet's and survives. */
 	it('reads the recipients again once a grant was revoked', async () => {
 		const wrapper = await sheet(VEHICLE)
 		const before = wrapper.findComponent(ReminderRecipients).vm
@@ -408,7 +367,6 @@ describe('the vehicle sheet, editing', () => {
 		expect(after.props('cadence')).toBe('monthly')
 	})
 
-	/** The first grant changes `ever_granted`, which the vehicle screen shows Bookings by. */
 	it('reads the vehicle back once its first grant went through', async () => {
 		vi.mocked(getVehicle).mockResolvedValue(/** @type {any} */ ({ ...VEHICLE, ever_granted: true }))
 		const wrapper = await sheet({ ...VEHICLE, ever_granted: false })
@@ -440,7 +398,6 @@ describe('the vehicle sheet, editing', () => {
 		expect(dropdown(wrapper, 'Counter unit').props('modelValue').id).toBe('h')
 	})
 
-	/** A truck's kilometres and its engine hours are two counters (docs/architecture.md). */
 	it('counts engine hours beside the kilometres when asked to', async () => {
 		const wrapper = await sheet(VEHICLE)
 
@@ -452,7 +409,6 @@ describe('the vehicle sheet, editing', () => {
 		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ second_unit: 'h' }))
 	})
 
-	/** Switching off hides the field and keeps the hour Readings: only the column is cleared. */
 	it('stops counting engine hours when switched off', async () => {
 		const wrapper = await sheet({ ...VEHICLE, second_unit: 'h' })
 
@@ -464,7 +420,6 @@ describe('the vehicle sheet, editing', () => {
 		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ second_unit: '' }))
 	})
 
-	/** Hours are a second counter beside kilometres only. */
 	it('offers no second counter when the main one counts hours', async () => {
 		const wrapper = await sheet({ ...VEHICLE, odo_unit: 'h', second_unit: 'h' })
 
@@ -475,11 +430,7 @@ describe('the vehicle sheet, editing', () => {
 		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ second_unit: '' }))
 	})
 
-	/**
-	 * The switch that puts a vehicle under its jurisdiction's logbook rules
-	 * (docs/features.md#logbook-mode), beside the lifecycle and the country it belongs with.
-	 * Switching on asks nothing: it takes something on rather than away.
-	 */
+	/** Switching on asks nothing: it takes something on rather than away. */
 	it('switches the mode on with one gesture', async () => {
 		const wrapper = await sheet(VEHICLE)
 		expect(toggle(wrapper, 'Logbook mode').props('modelValue')).toBe(false)
@@ -491,11 +442,7 @@ describe('the vehicle sheet, editing', () => {
 		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ logbook_mode: true }))
 	})
 
-	/**
-	 * A flip here answers the overview's logbook question too (src/components/CompleteHint.vue):
-	 * switched on and off again, the vehicle is not asked a second time. A save that leaves the
-	 * mode alone answers nothing.
-	 */
+	/** A save that leaves the mode alone answers nothing. */
 	it('counts a flip of the mode as the answer to the logbook question', async () => {
 		vi.mocked(updateVehicle).mockImplementation(async (vehicle) => /** @type {any} */ (vehicle))
 		vi.mocked(savePreferences).mockResolvedValue(/** @type {any} */ ({ preferences: { dismissed_hints: [], dismissed_logbook_hints: [VEHICLE.uuid] }, jurisdictions: [] }))
@@ -520,19 +467,12 @@ describe('the vehicle sheet, editing', () => {
 		expect(toggle(wrapper, 'Logbook mode').props('description')).toContain('Not reviewed by a lawyer.')
 	})
 
-	/** A vehicle already under the mode opens with the switch saying so. */
 	it('shows the mode the vehicle is already kept under', async () => {
 		const wrapper = await sheet({ ...VEHICLE, logbook_mode: true })
 
 		expect(toggle(wrapper, 'Logbook mode').props('modelValue')).toBe(true)
 	})
 
-	/**
-	 * Switching off is allowed and asks first: it ends the period an auditor reads the vehicle's
-	 * trips under, and that is not something to do by brushing a switch. The question stands in
-	 * the way of the save rather than of the switch, because nothing is written until then
-	 * anyway.
-	 */
 	it('asks before it switches the mode off', async () => {
 		const wrapper = await sheet({ ...VEHICLE, logbook_mode: true })
 
@@ -549,7 +489,6 @@ describe('the vehicle sheet, editing', () => {
 		expect(updateVehicle).not.toHaveBeenCalled()
 	})
 
-	/** Answered, the question goes and the save writes what the switch says. */
 	it('switches the mode off once that is confirmed', async () => {
 		const wrapper = await sheet({ ...VEHICLE, logbook_mode: true })
 
@@ -563,10 +502,6 @@ describe('the vehicle sheet, editing', () => {
 		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ logbook_mode: false }))
 	})
 
-	/**
-	 * The other answer, and the way back the question offers: the switch goes back on, the
-	 * question goes with it, and the save writes the mode the vehicle came in under.
-	 */
 	it('keeps the mode on when the question is answered the other way', async () => {
 		const wrapper = await sheet({ ...VEHICLE, logbook_mode: true })
 
@@ -582,10 +517,6 @@ describe('the vehicle sheet, editing', () => {
 		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ logbook_mode: true }))
 	})
 
-	/**
-	 * One answer per question. Switching back on and off again is a second switching off, and a
-	 * confirmation that outlived the first one would let the second through unasked.
-	 */
 	it('asks again when the mode is switched off a second time', async () => {
 		const wrapper = await sheet({ ...VEHICLE, logbook_mode: true })
 
@@ -598,12 +529,6 @@ describe('the vehicle sheet, editing', () => {
 		expect(saveButton(wrapper).props('disabled')).toBe(true)
 	})
 
-	/**
-	 * The question is about the vehicle the next write is checked against, not about the one the
-	 * sheet was opened with. Somebody else switching the mode on while this sheet sat open makes
-	 * _Save anyway_ a switching-off, and it has to be asked about like any other - the switch
-	 * never said "on", so nobody on this screen has decided anything yet.
-	 */
 	it('asks when saving through a conflict would switch the mode off', async () => {
 		vi.mocked(updateVehicle).mockRejectedValueOnce(new ConflictError('Changed since you read it'))
 		vi.mocked(getVehicle).mockResolvedValue(
@@ -629,7 +554,6 @@ describe('the vehicle sheet, editing', () => {
 		}))
 	})
 
-	/** A disposal day is a fact about a disposed vehicle and about no other one. */
 	it('asks for the disposal day only once the vehicle is disposed of', async () => {
 		const wrapper = await sheet(VEHICLE)
 		expect(day(wrapper, 'Disposed on')).toBeUndefined()
@@ -639,10 +563,7 @@ describe('the vehicle sheet, editing', () => {
 		expect(day(wrapper, 'Disposed on')).toBeDefined()
 	})
 
-	/**
-	 * A vehicle that came back into service still carrying the day it was sold on would be a
-	 * contradiction the reports would have to guess at.
-	 */
+	/** A vehicle back in service still carrying its sale day would leave the reports guessing. */
 	it('clears the disposal day when the vehicle is not disposed of', async () => {
 		const wrapper = await sheet({ ...VEHICLE, lifecycle: 'disposed', disposed_at: '2025-06-30' })
 		expect(formatDay(day(wrapper, 'Disposed on').props('modelValue'))).toBe('2025-06-30')
@@ -655,9 +576,7 @@ describe('the vehicle sheet, editing', () => {
 	})
 
 	/**
-	 * The country is changed here until the sidebar exists (docs/ui.md), and the list is the one
-	 * lib/Jurisdiction/ registers - so a country added there reaches this dropdown without the
-	 * frontend being touched.
+	 * The list is the one lib/Jurisdiction/ registers, so a new country needs no frontend change.
 	 */
 	it('offers the countries the server registered, in a word the bundle translates', async () => {
 		const wrapper = await sheet(VEHICLE)
@@ -667,10 +586,6 @@ describe('the vehicle sheet, editing', () => {
 		expect(dropdown(wrapper, 'Country').props('modelValue').id).toBe('de')
 	})
 
-	/**
-	 * A vehicle whose country left a later release must still open, and the dropdown may not
-	 * quietly show another one: what it says is what the next save writes.
-	 */
 	it('keeps offering the country the vehicle is already kept under', async () => {
 		const wrapper = await sheet({ ...VEHICLE, jurisdiction: 'zz' })
 
@@ -679,7 +594,6 @@ describe('the vehicle sheet, editing', () => {
 		expect(dropdown(wrapper, 'Country').props('modelValue').id).toBe('zz')
 	})
 
-	/** The list is a convenience; a sheet that cannot read it still edits the vehicle in hand. */
 	it('edits a vehicle even when the registration list cannot be read', async () => {
 		vi.mocked(getPreferences).mockRejectedValue(new Error('The server answered 500'))
 
@@ -692,10 +606,6 @@ describe('the vehicle sheet, editing', () => {
 		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ jurisdiction: 'de' }))
 	})
 
-	/**
-	 * The sheet never blocks on validation and a failed save is never lost (docs/ui.md): the
-	 * server judges the field, the sheet stays open saying so, and nothing typed is discarded.
-	 */
 	it('stays open with every value intact when the write is refused', async () => {
 		vi.mocked(updateVehicle).mockRejectedValue(new Error('vin is at most 17 characters'))
 		const wrapper = await sheet(VEHICLE)
@@ -708,12 +618,27 @@ describe('the vehicle sheet, editing', () => {
 		expect(field(wrapper, 'VIN').props('modelValue')).toBe('WVWZZZ1KZAW0000012')
 		expect(wrapper.emitted('saved')).toBeUndefined()
 		expect(wrapper.emitted('close')).toBeUndefined()
-		// A field the server judged is not a token that moved: reading the vehicle back would
-		// answer the same values and the retry would be refused for the same reason.
+		// A judged field is not a moved token: reading back would not change the answer.
 		expect(getVehicle).not.toHaveBeenCalled()
 	})
 
-	/** A currency the costs are already in is refused by the server and said in the sheet's words. */
+	it.each([
+		['plate is longer than 32 characters', 'The field Registration plate takes 32 characters at most.'],
+		['manufacturer is longer than 64 characters', 'The field Manufacturer takes 64 characters at most.'],
+		['model is longer than 64 characters', 'The field Model takes 64 characters at most.'],
+		['vin is longer than 32 characters', 'The field VIN takes 32 characters at most.'],
+		['color is longer than 32 characters', 'The field Colour takes 32 characters at most.'],
+		['notes is longer than 10000 characters', 'The field Notes takes 10,000 characters at most.'],
+	])('puts the refusal "%s" into words', async (message, words) => {
+		vi.mocked(updateVehicle).mockRejectedValue(new Error(message))
+		const wrapper = await sheet(VEHICLE)
+
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe(words)
+	})
+
 	it('says why the currency cannot change once costs are recorded', async () => {
 		vi.mocked(updateVehicle).mockRejectedValue(new RefusedError('currency stays once the vehicle has costs recorded in it', 'currency_in_use'))
 		const wrapper = await sheet(VEHICLE)
@@ -741,7 +666,6 @@ describe('the vehicle sheet, editing', () => {
 		}))
 	})
 
-	/** A number nobody can read is asked about before anything is written, the typing kept. */
 	it('refuses a decimal it cannot read without writing', async () => {
 		const wrapper = await sheet(VEHICLE)
 
@@ -755,7 +679,6 @@ describe('the vehicle sheet, editing', () => {
 		expect(wrapper.emitted('saved')).toBeUndefined()
 	})
 
-	/** The server keeps only a three-letter code; a sign is asked about in words before it is sent. */
 	it('refuses a currency that is no code without writing', async () => {
 		const wrapper = await sheet(VEHICLE)
 
@@ -788,11 +711,7 @@ describe('the vehicle sheet, editing', () => {
 		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ currency: 'CHF' }))
 	})
 
-	/**
-	 * A refused write is the one failure that is not about what was typed: the values are fine
-	 * and the token is not (docs/architecture.md#concurrency). So the sheet says which of the two
-	 * happened, and the button says what saving again would do.
-	 */
+	/** Not about what was typed: the token is stale (docs/architecture.md#concurrency). */
 	it('names the conflict when the vehicle moved on since it was read', async () => {
 		vi.mocked(updateVehicle).mockRejectedValue(new ConflictError('Changed since you read it'))
 		const wrapper = await sheet(VEHICLE)
@@ -811,11 +730,7 @@ describe('the vehicle sheet, editing', () => {
 		expect(wrapper.emitted('close')).toBeUndefined()
 	})
 
-	/**
-	 * The one button the conflict offers: it reads the vehicle back and writes what is on screen
-	 * onto the token that came with it. Nothing is retyped, and the values the other writer left
-	 * behind do not creep into the fields - `color` is `red` in that answer and stays `green`.
-	 */
+	/** The other writer's values stay out: `color` is `red` in that answer and stays `green`. */
 	it('saves through the conflict under the token it re-read', async () => {
 		vi.mocked(updateVehicle).mockRejectedValueOnce(new ConflictError('Changed since you read it'))
 		// The typedef declares the columns a client reads by name, not all twenty (src/services/api.js).
@@ -838,9 +753,7 @@ describe('the vehicle sheet, editing', () => {
 	})
 
 	/**
-	 * The re-read can fail on its own, and the token is stale either way when it does. So the
-	 * message is the new failure, in the colour a failure gets, and the button still says what
-	 * the next click would do rather than dropping back to a plain retry.
+	 * A failed re-read leaves the token stale: the message is the failure, the button unchanged.
 	 */
 	it('stays on the conflict when the vehicle cannot be read back', async () => {
 		vi.mocked(updateVehicle).mockRejectedValue(new ConflictError('Changed since you read it'))
@@ -858,11 +771,6 @@ describe('the vehicle sheet, editing', () => {
 		expect(updateVehicle).toHaveBeenCalledTimes(1)
 	})
 
-	/**
-	 * Nothing asks "are you sure?" (docs/ui.md): the vehicle is deleted under the token on screen,
-	 * and the way back is what the store keeps of it - this sheet emits nothing, because the
-	 * vehicle leaving the fleet unmounts it (src/components/UndoToast.vue).
-	 */
 	it('deletes the vehicle and leaves the way back with the store', async () => {
 		const store = useVehiclesStore()
 		store.upsert(/** @type {any} */ (VEHICLE))
@@ -877,7 +785,6 @@ describe('the vehicle sheet, editing', () => {
 		expect(wrapper.emitted('saved')).toBeUndefined()
 	})
 
-	/** Away from *Cancel*, so a thumb aiming at one does not land on the other. */
 	it('puts the delete at the end of the sheet, not among its actions', async () => {
 		const wrapper = await sheet(VEHICLE)
 
@@ -894,10 +801,7 @@ describe('the vehicle sheet, editing', () => {
 		expect(wrapper.findComponent(ReminderRecipients).exists()).toBe(true)
 	})
 
-	/**
-	 * The delete is checked against the same token a save is, so it loses the same race - and it
-	 * takes the same way out: read the vehicle back, then delete the one that is actually there.
-	 */
+	/** A delete loses the same race a save does, and takes the same way out. */
 	it('deletes through a conflict under the token it re-read', async () => {
 		vi.mocked(deleteVehicle).mockRejectedValueOnce(new ConflictError('Changed since you read it'))
 		vi.mocked(getVehicle).mockResolvedValue(/** @type {any} */ ({ ...VEHICLE, updated_at: 1700009999 }))
@@ -905,8 +809,7 @@ describe('the vehicle sheet, editing', () => {
 
 		await button(wrapper, 'Delete vehicle').vm.$emit('click')
 		await flushPromises()
-		// The message names what the user asked for. Saying "saving again" here would point at
-		// the one button that does something else with the click it describes.
+		// "Saving again" here would point at the button that does something else.
 		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe(
 			'This vehicle was changed somewhere else while you had it open. Deleting again removes it as it now stands.',
 		)
@@ -922,10 +825,6 @@ describe('the vehicle sheet, editing', () => {
 })
 
 describe('the vehicle sheet, creating', () => {
-	/**
-	 * Four fields, not twelve: the rest arrives through the edit sheet (docs/ui.md). The type and
-	 * the unit come prefilled, because the counter reading beside them means nothing without them.
-	 */
 	it('asks for four fields and the counter, and nothing else', async () => {
 		const wrapper = await sheet()
 
@@ -945,7 +844,6 @@ describe('the vehicle sheet, creating', () => {
 			.toContain('truck')
 	})
 
-	/** Every type the server takes is offered, in its words; a motorcycle counts kilometres. */
 	it('offers a motorcycle, which counts kilometres', async () => {
 		const wrapper = await sheet()
 
@@ -954,7 +852,6 @@ describe('the vehicle sheet, creating', () => {
 		expect(dropdown(wrapper, 'Counter unit').props('modelValue').id).toBe('km')
 	})
 
-	/** A tractor or a generator counts hours; the person may still say otherwise. */
 	it('counts hours once a tractor or a generator is chosen, and still lets the unit change', async () => {
 		const wrapper = await sheet()
 
@@ -1001,7 +898,7 @@ describe('the vehicle sheet, creating', () => {
 		expect(emitted(wrapper, 'created').uuid).toBe('v-new')
 	})
 
-	/** A retry names the vehicle and the Reading the first try would have written (docs/api.md#retried-creates). */
+	/** A retry names the rows the first try would have written (docs/api.md#retried-creates). */
 	it('sends the same client uuids on a retry', async () => {
 		vi.mocked(createVehicle).mockRejectedValueOnce(new Error('No connection'))
 		const wrapper = await sheet()
@@ -1021,7 +918,6 @@ describe('the vehicle sheet, creating', () => {
 		expect(reading).not.toBe(first.client_uuid)
 	})
 
-	/** A field nobody can read is a question for the driver, not a vehicle created without it. */
 	it('writes nothing when the counter is not a counter', async () => {
 		const wrapper = await sheet()
 
@@ -1031,6 +927,17 @@ describe('the vehicle sheet, creating', () => {
 
 		expect(createVehicle).not.toHaveBeenCalled()
 		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('That is not a counter reading.')
+	})
+
+	it('puts a refused plate into words', async () => {
+		vi.mocked(createVehicle).mockRejectedValue(new Error('plate is longer than 32 characters'))
+		const wrapper = await sheet()
+
+		await field(wrapper, 'Registration plate').vm.$emit('update:modelValue', 'M-EV 7'.repeat(6))
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('The field Registration plate takes 32 characters at most.')
 	})
 })
 
@@ -1073,7 +980,7 @@ describe('the vehicle sheet, the HU/AU', () => {
 		expect(button(wrapper, 'Add HU/AU reminder')).toBeUndefined()
 	})
 
-	/** The interval is the reminder's recurrence; an edit is a full replace, so the rest travels with it. */
+	/** A full replace: the rest of the reminder travels with the interval. */
 	it('writes a changed interval to the reminder along with the vehicle', async () => {
 		const wrapper = await sheet(VEHICLE)
 		const interval = dropdown(wrapper, 'Inspection interval')

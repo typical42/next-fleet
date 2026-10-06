@@ -99,10 +99,9 @@ class OcsRoutesTest extends TestCase {
 	}
 
 	/**
-	 * The twin is dispatchable, an OCSController, open to every user, and takes the parameters its
-	 * internal twin takes - the same service call cannot be made with fewer. What it adds after them
-	 * are the body fields it names for the OpenAPI document. Each is optional: whether a field is
-	 * required is the service's rule, answered with its 400, never the framework's.
+	 * It takes its twin's parameters - the same service call cannot be made with fewer - then the
+	 * body fields it names for the OpenAPI document. Each is optional: whether a field is required
+	 * is the service's rule, answered with its 400, never the framework's.
 	 */
 	public function testEveryOcsRouteNamesAnOcsControllerMethodShapedLikeItsTwin(): void {
 		foreach (self::twinned() as $route) {

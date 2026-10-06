@@ -50,9 +50,9 @@ async function account(page, browser, uid) {
 }
 
 /**
- * PRD M7's story on one car two accounts share: the driver books it and nobody books over them, takes
- * it while the owner sees who has it, gives it back and logs the trip the handover prefilled, and
- * files a photographed receipt on a fill-up of theirs in two taps.
+ * One car two accounts share: the driver books it and nobody books over them, takes it while the
+ * owner sees who has it, gives it back and logs the trip the handover prefilled, and files a
+ * photographed receipt on a fill-up of theirs in two taps.
  */
 test('a driver books the car, takes it, returns it, logs the trip and files a receipt', async ({ page, browser }, testInfo) => {
 	// Two new accounts, whose first sign-in took 30 s each on an idle stack.
@@ -152,8 +152,7 @@ test('a driver books the car, takes it, returns it, logs the trip and files a re
 })
 
 /**
- * PRD M7, "Log it from the receipt": a receipt for a fill-up nobody entered yet becomes that
- * fill-up, dated when the phone saved it, and is filed on it.
+ * A receipt for a fill-up nobody entered yet becomes that fill-up, dated when the phone saved it.
  */
 test('a receipt in the inbox is logged as a new fill-up and filed on it', async ({ page, browser }, testInfo) => {
 	// A new account, whose first sign-in took 30 s on an idle stack.

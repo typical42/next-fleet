@@ -60,7 +60,6 @@ describe('the recipients and the mail cadence', () => {
 		expect(/** @type {any} */ (wrapper.findComponent(NcSelect)).props('modelValue').id).toBe('weekly')
 	})
 
-	/** Drivers and viewers are refused the list, and see neither control. */
 	it('shows nothing to somebody the list is refused to', async () => {
 		vi.mocked(listRecipients).mockRejectedValue(new Error('Not yours'))
 
@@ -85,9 +84,24 @@ describe('the recipients and the mail cadence', () => {
 		await flushPromises()
 
 		expect(searchUsers).toHaveBeenCalledWith('da')
-		// The account rides along as the subname: the picker filters on what it shows, and a
-		// display name need not contain what was typed.
 		expect(picker(wrapper).props('options')).toEqual([{ id: 'dave', displayName: 'Dave', subname: 'dave', user: 'dave' }])
+	})
+
+	it('keeps the matches for what was typed last, whichever answer comes last', async () => {
+		/** @type {(found: any[]) => void} */
+		let answerFirst = () => {}
+		vi.mocked(searchUsers)
+			.mockReturnValueOnce(new Promise((resolve) => { answerFirst = resolve }))
+			.mockResolvedValueOnce([DAVE])
+		const wrapper = await section()
+
+		await picker(wrapper).vm.$emit('search', 'd')
+		await picker(wrapper).vm.$emit('search', 'dave')
+		await flushPromises()
+		answerFirst([{ user_id: 'dan', display_name: 'Dan' }])
+		await flushPromises()
+
+		expect(picker(wrapper).props('options').map((/** @type {any} */ one) => one.id)).toEqual(['dave'])
 	})
 
 	/** Each pick is written at once, and the list shown is the one the server answered with. */
@@ -107,7 +121,8 @@ describe('the recipients and the mail cadence', () => {
 		expect(picker(wrapper).props('modelValue').map((/** @type {any} */ one) => one.id)).toEqual(['dave'])
 	})
 
-	it('says so when a change is refused and keeps the list as it was', async () => {
+	/** Gone since core's search found it, or somebody the caller may not share with. */
+	it('says so in words when an account is refused and keeps the list as it was', async () => {
 		vi.mocked(addRecipient).mockRejectedValue(new Error('user_id is not an account on this instance'))
 		const wrapper = await section()
 		const [alice] = picker(wrapper).props('modelValue')
@@ -115,7 +130,17 @@ describe('the recipients and the mail cadence', () => {
 		await picker(wrapper).vm.$emit('update:modelValue', [alice, { id: 'ghost', displayName: 'Ghost', user: 'ghost' }])
 		await flushPromises()
 
-		expect(wrapper.findComponent(NcNoteCard).props('text')).toContain('not an account')
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('You cannot add this account to the list.')
 		expect(picker(wrapper).props('modelValue').map((/** @type {any} */ one) => one.id)).toEqual(['alice'])
+	})
+
+	it('shows a refusal it has no words for as the server sent it', async () => {
+		vi.mocked(removeRecipient).mockRejectedValue(new Error('Not yours'))
+		const wrapper = await section()
+
+		await picker(wrapper).vm.$emit('update:modelValue', [])
+		await flushPromises()
+
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('The list was not changed: Not yours')
 	})
 })

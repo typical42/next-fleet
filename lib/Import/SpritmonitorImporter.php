@@ -162,7 +162,7 @@ final class SpritmonitorImporter implements IImporter {
 		$rows = $rows instanceof \Traversable ? iterator_to_array($rows) : $rows;
 		$column = static fn (string $value): array => Cells::column($rows, $positions[$value] ?? null);
 
-		// The export writes the day first and a decimal comma; a column's own evidence still wins.
+		// The format's defaults (see the class); a column's own evidence wins.
 		$order = Answers::dateOrder($answers, $column('Datum')) ?? 'dmy';
 		$marks = [
 			'Km-Stand' => Values::decimalMark($column('Km-Stand')) ?? ',',

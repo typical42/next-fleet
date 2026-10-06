@@ -22,8 +22,7 @@ import VehicleSticker from '../components/VehicleSticker.vue'
 import { getVehicle, readKpis, readTimeline } from '../services/api.js'
 import VehicleView from './VehicleView.vue'
 
-// The timeline is mounted for real below, so its one call out is stubbed here. What it does with
-// the answer is its own question (src/components/Timeline.spec.js).
+// The timeline and the header mount for real, so their calls out are stubbed.
 vi.mock('../services/api.js', async (original) => ({
 	...await original(),
 	readTimeline: vi.fn(),
@@ -36,7 +35,6 @@ const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', lifecy
 
 const reload = vi.fn()
 const relist = vi.fn()
-/** The Bookings section, standing in with the one thing the screen calls on it. */
 const Bookings = defineComponent({
 	name: 'VehicleBookings',
 	props: { vehicle: { type: Object, required: true }, papers: { type: Array, default: () => [] } },
@@ -47,7 +45,6 @@ const Bookings = defineComponent({
 	},
 })
 
-/** The documents section, standing in with the one thing the screen calls on it. */
 const Documents = defineComponent({
 	name: 'VehicleDocuments',
 	props: { vehicle: { type: Object, required: true } },
@@ -63,10 +60,8 @@ const Documents = defineComponent({
  * @return {import('@vue/test-utils').VueWrapper} the screen, mounted on one vehicle
  */
 function screen(more = {}) {
-	// A stub renders no slot of its own, and a button says what it is in its slot - so the two
-	// buttons of this screen would be indistinguishable without this. The timeline and the header
-	// are left unstubbed: what this screen has to get right is that they read again after a write,
-	// and a stub has no reading to do.
+	// Stubbed buttons render their slot, so they can be told apart by text. The timeline and the
+	// header stay real: they must read again after a write.
 	return shallowMount(VehicleView, {
 		props: { vehicle: VEHICLE, ...more },
 		global: { renderStubDefaultSlot: true, stubs: { Timeline: false, KpiHeader: false, VehicleBookings: Bookings, VehicleDocuments: Documents } },
@@ -109,22 +104,16 @@ function press(at, key) {
 }
 
 describe('the vehicle screen', () => {
-	/**
-	 * One primary button per screen, and on this one it is the entry - editing a vehicle is
-	 * something people do twice a year (docs/ui.md).
-	 */
 	it('offers the entry first and the edit beside it', () => {
 		const wrapper = screen()
 
-		// First in the markup as well as first in emphasis: reading, tab and wrapping order are
-		// the same order.
+		// First in the markup too: reading, tab and wrapping order are the same order.
 		expect(wrapper.findAllComponents(NcButton).map((one) => one.text()))
 			.toEqual(['New entry', 'Costs', 'Edit vehicle'])
 		expect(button(wrapper, 'New entry').props('variant')).toBe('primary')
 		expect(button(wrapper, 'Edit vehicle').props('variant')).not.toBe('primary')
 	})
 
-	/** The shell swaps the screen (src/App.vue); this one only asks for it. */
 	it('asks for the vehicle\'s costs', async () => {
 		const wrapper = screen()
 
@@ -144,10 +133,6 @@ describe('the vehicle screen', () => {
 		expect(wrapper.findComponent(EntrySheet).exists()).toBe(false)
 	})
 
-	/**
-	 * `n` is the primary action of the screen in view (docs/ui.md), and on this screen that is
-	 * the entry - not the edit, which people need twice a year.
-	 */
 	it('opens the entry sheet when n is pressed', async () => {
 		const wrapper = screen()
 
@@ -162,8 +147,7 @@ describe('the vehicle screen', () => {
 		expect(/** @type {any} */ (screen().findComponent(VehicleSticker)).props('vehicle')).toEqual(VEHICLE)
 	})
 
-	/** The QR sticker's link lands here (docs/ui.md, "The QR shortcut"). */
-	/** What it says, and whether it says anything, is its own question (LeaveVehicle.spec.js). */
+	/** What it says is pinned in LeaveVehicle.spec.js. */
 	it('offers leaving the vehicle it is on', () => {
 		expect(/** @type {any} */ (screen().findComponent(LeaveVehicle)).props('vehicle')).toEqual(VEHICLE)
 	})
@@ -173,10 +157,6 @@ describe('the vehicle screen', () => {
 		expect(screen().findComponent(EntrySheet).exists()).toBe(false)
 	})
 
-	/**
-	 * A letter is also a letter somebody is typing. The sheet this screen opens is full of
-	 * fields, and `n` in one of them is an `n`, not a shortcut.
-	 */
 	it('leaves n alone when it is typed into a field', async () => {
 		const wrapper = screen()
 		const field = document.createElement('input')
@@ -189,10 +169,6 @@ describe('the vehicle screen', () => {
 		field.remove()
 	})
 
-	/**
-	 * One timeline per vehicle, and it is this screen's middle (docs/ui.md) - the vehicle it is
-	 * showing, not the one that happens to be first in the fleet.
-	 */
 	it('shows the timeline of the vehicle it is on', async () => {
 		const wrapper = screen()
 		await flushPromises()
@@ -201,10 +177,7 @@ describe('the vehicle screen', () => {
 		expect(readTimeline).toHaveBeenCalledWith('v-1', { type: '', cursor: null })
 	})
 
-	/**
-	 * The row that was just entered is the one the driver is looking for, so the list is read back
-	 * rather than left a page behind. A sheet that was cancelled wrote nothing and costs no read.
-	 */
+	/** The row just entered is the one the driver looks for; a cancelled sheet wrote nothing. */
 	it('reads the timeline back once an entry is written, and not when one is cancelled', async () => {
 		const wrapper = screen()
 		await flushPromises()
@@ -223,7 +196,6 @@ describe('the vehicle screen', () => {
 		expect(readTimeline).toHaveBeenCalledTimes(2)
 	})
 
-	/** A tapped row opens the entry sheet on that Entry, and its save reads the list back too. */
 	it('opens the entry sheet on a row the timeline hands up', async () => {
 		const row = { type: 'odometer', occurred_at: 1788217200, occurred_at_off: 120, odometer: { uuid: 'r-1', value: 148320 } }
 		const wrapper = screen()
@@ -239,7 +211,6 @@ describe('the vehicle screen', () => {
 		expect(wrapper.findComponent(EntrySheet).exists()).toBe(false)
 	})
 
-	/** The empty timeline's two buttons open the two sheets that write a first row. */
 	it('opens the entry sheet or the import from the empty timeline', async () => {
 		const wrapper = screen()
 		await flushPromises()
@@ -252,7 +223,6 @@ describe('the vehicle screen', () => {
 		expect(wrapper.findComponent(ImportSheet).exists()).toBe(true)
 	})
 
-	/** The header states the figures of the vehicle on screen, and a write moves them. */
 	it('reads the header figures back once an entry is written', async () => {
 		const wrapper = screen()
 		await flushPromises()
@@ -267,10 +237,6 @@ describe('the vehicle screen', () => {
 		expect(readKpis).toHaveBeenCalledTimes(4)
 	})
 
-	/**
-	 * A booking's row says whether its counter fell below the one at check-out, so any write that
-	 * moves the counter can change it - and an expense, which moves none, reads it back for nothing.
-	 */
 	it('reads the bookings back after a write that moves the counter, and not after an expense', async () => {
 		const wrapper = screen()
 		await flushPromises()
@@ -290,13 +256,11 @@ describe('the vehicle screen', () => {
 		expect(reload).toHaveBeenCalledTimes(2)
 	})
 
-	/** A booking keeps others off the car; on one nobody else has or had access to, there are none. */
 	it('shows Bookings only on a vehicle somebody else has or had access to', () => {
 		expect(screen().findComponent(Bookings).exists()).toBe(true)
 		expect(screen({ vehicle: { ...VEHICLE, ever_granted: false } }).findComponent(Bookings).exists()).toBe(false)
 	})
 
-	/** A save is done with, so the sheet goes; the screen already reads the store for the rest. */
 	it('closes the sheet once the vehicle is saved', async () => {
 		const wrapper = screen()
 
@@ -306,10 +270,7 @@ describe('the vehicle screen', () => {
 		expect(sheet(wrapper).exists()).toBe(false)
 	})
 
-	/**
-	 * The import starts in the vehicle sheet and takes its place: two dialogs stacked would be
-	 * two ways out (docs/ui.md, "Importing"). Its entries land in the timeline and the header.
-	 */
+	/** One dialog at a time (docs/ui.md#importing). */
 	it('swaps the vehicle sheet for the import, and reads back what it wrote', async () => {
 		const wrapper = screen()
 		await flushPromises()
@@ -338,8 +299,7 @@ describe('the vehicle screen', () => {
 	})
 
 	/**
-	 * A viewer adds nothing, so neither the button, the key nor the sticker's link opens the entry
-	 * sheet, and no sticker is offered that would lead somebody to one.
+	 * A viewer adds nothing: neither the button, the key nor the sticker's link opens the sheet.
 	 */
 	it('offers a viewer neither the entry, the sticker nor the edit', async () => {
 		const viewer = { vehicle: { ...VEHICLE, may: ['view'] } }
@@ -353,10 +313,7 @@ describe('the vehicle screen', () => {
 		expect(screen({ ...viewer, enter: true }).findComponent(EntrySheet).exists()).toBe(false)
 	})
 
-	/**
-	 * The section reads the papers once; the timeline carries the linked ones as paperclips, and the
-	 * bookings their handover photos.
-	 */
+	/** Read once; the timeline shows linked ones as paperclips, the bookings handover photos. */
 	it('hands the timeline and the bookings the papers the documents section listed', async () => {
 		const wrapper = screen()
 		const papers = [{ uuid: 'd-1', kind: 'receipt', linked_type: 'energy', linked_uuid: 'e-1' }]
@@ -390,7 +347,6 @@ describe('who has the car', () => {
 		vi.useRealTimers()
 	})
 
-	/** The header says what the overview row says, and the reader's own next booking. */
 	it('says who has the car until when, and the reader\'s own next booking', () => {
 		vi.useFakeTimers({ toFake: ['Date'] })
 		vi.setSystemTime(new Date('2026-10-02T12:00:00Z'))
@@ -407,7 +363,6 @@ describe('who has the car', () => {
 		expect(wrapper.find('.vehicle__next').text()).toBe('Your booking: Sat, 10/03, 6:00 – 8:00 PM')
 	})
 
-	/** Overdue in words, as on the overview. */
 	it('says a car still out past its end is overdue', () => {
 		vi.useFakeTimers({ toFake: ['Date'] })
 		vi.setSystemTime(new Date('2026-10-03T08:00:00Z'))
@@ -424,7 +379,7 @@ describe('who has the car', () => {
 		expect(wrapper.find('.vehicle__next').exists()).toBe(false)
 	})
 
-	/** Leaving a direct grant while a group still reaches the car changes the role, and each row's actions. */
+	/** Leaving a direct grant while a group still reaches the car changes the role. */
 	it('reads the timeline, the bookings and the documents back once a leave kept the vehicle', async () => {
 		const wrapper = screen()
 		await flushPromises()
@@ -482,7 +437,6 @@ describe('a booking becomes a trip', () => {
 		expect(reload).toHaveBeenCalledTimes(1)
 	})
 
-	/** The shell swaps the vehicle under the screen; a sheet on the last one's booking would log onto this one. */
 	it('closes the booking\'s trip sheet when the vehicle changes', async () => {
 		const wrapper = screen()
 

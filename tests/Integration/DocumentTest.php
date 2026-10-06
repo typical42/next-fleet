@@ -47,9 +47,8 @@ use OCP\Share\IShare;
 use PHPUnit\Framework\TestCase;
 
 /**
- * A vehicle's papers: attached from Files by `file_id`, listed and detached
- * (docs/architecture.md#documents). The accounts are real, because a document is a
- * file somebody's Files holds.
+ * A vehicle's papers: attached from Files by `file_id`, listed and detached. The accounts are real:
+ * a document is a file in someone's Files (docs/architecture.md#documents).
  *
  * It writes to the instance it runs against (docs/development.md#testing).
  */
@@ -342,7 +341,6 @@ class DocumentTest extends TestCase {
 		$this->documents->attach(self::OWNER, $vehicle->getUuid(), $fields);
 	}
 
-	/** Done when: a workshop invoice is reachable from its maintenance record. */
 	public function testAnInvoiceIsLinkedToItsMaintenanceRecord(): void {
 		$vehicle = $this->vehicle(self::OWNER);
 		$record = $this->maintenance($vehicle);
@@ -402,7 +400,7 @@ class DocumentTest extends TestCase {
 		$this->assertCount(1, $this->documents->list(self::OWNER, $vehicle->getUuid()));
 	}
 
-	/** Done when: a driver attaches a receipt to an entry they entered, and may take it off again. */
+	/** A driver attaches a receipt to an entry they entered, and may take it off again. */
 	public function testADriverKeepsTheReceiptOfTheirOwnFillUp(): void {
 		$vehicle = $this->vehicle(self::OWNER);
 		$this->grant($vehicle, self::DRIVER, 'driver');
@@ -468,7 +466,7 @@ class DocumentTest extends TestCase {
 		$this->assertSame([$onMine], array_column($this->documents->detach(self::DRIVER, $vehicle->getUuid(), $onTheirs), 'uuid'));
 	}
 
-	/** Done when: handover photos attach to the booking, under the booking's rule. */
+	/** Under the booking's rule: the booker's own booking takes a photo, somebody else's none. */
 	public function testAHandoverPhotoBelongsToTheBooking(): void {
 		$vehicle = $this->vehicle(self::OWNER);
 		$this->grant($vehicle, self::DRIVER, 'driver');
@@ -535,8 +533,8 @@ class DocumentTest extends TestCase {
 	}
 
 	/**
-	 * Done when: a paper is there for everyone with access to the vehicle, whoever owns the file.
-	 * The driver has no Files of their own, so nothing but the vehicle's grant can be serving it.
+	 * A paper is there for everyone with access to the vehicle, whoever owns the file. The driver
+	 * cannot read the owner's Files, so nothing but the vehicle's grant can be serving it.
 	 */
 	public function testADriverDownloadsAPaperFromTheOwnersFiles(): void {
 		$vehicle = $this->vehicle(self::OWNER);

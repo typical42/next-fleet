@@ -186,7 +186,7 @@ class SearchTest extends TestCase {
 		$this->assertSame(['B-XY 456'], array_column($this->search(self::OWNER, 'golf'), 'title'));
 	}
 
-	/** One grant, as the sharing UI will write it (M6). */
+	/** One grant, as the sharing UI writes it. */
 	private function grant(Vehicle $vehicle, string $grantee, string $role): void {
 		$grant = new Access();
 		$grant->setVehicleId((int)$vehicle->getId());

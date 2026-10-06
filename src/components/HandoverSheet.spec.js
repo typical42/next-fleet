@@ -99,7 +99,6 @@ afterEach(() => {
 })
 
 describe('taking the car', () => {
-	/** The vehicle's own counter is the best guess; the driver corrects it from the dashboard. */
 	it('prefills the counter from the vehicle and checks out with what was stated', async () => {
 		const out = { ...MINE, state: /** @type {const} */ ('out') }
 		vi.mocked(checkOut).mockResolvedValue(out)
@@ -115,7 +114,6 @@ describe('taking the car', () => {
 		expect(wrapper.emitted('saved')).toEqual([[out]])
 	})
 
-	/** Back from a trip nobody logged yet, the car is further than the vehicle's counter says. */
 	it('prefills the larger of the vehicle\'s counter and the one the car last came back at', () => {
 		expect(field(sheet(MINE, 52140), 'Counter reading (km)').props('modelValue')).toBe('52140')
 		expect(field(sheet(MINE, 51000), 'Counter reading (km)').props('modelValue')).toBe('52000')
@@ -188,7 +186,6 @@ describe('taking the car', () => {
 describe('giving the car back', () => {
 	const OUT = { ...MINE, state: /** @type {const} */ ('out'), out_odo: 52140, may: ['check_in'] }
 
-	/** The counter is what the dashboard reads now; a prefilled one would be saved unread. */
 	it('asks for the counter afresh, names the one it was taken at, and checks in with the note', async () => {
 		const answer = /** @type {any} */ ({ ...OUT, state: 'returned', trip_draft: {} })
 		vi.mocked(checkIn).mockResolvedValue(answer)
@@ -232,7 +229,6 @@ describe('taking it now', () => {
 		expect(wrapper.emitted('saved')).toEqual([[{ ...BOOKED_NOW, state: /** @type {const} */ ('out') }]])
 	})
 
-	/** The booking stands once it is made; trying again takes the car under it rather than booking twice. */
 	it('takes the car under the booking it already made when the check-out is tried again', async () => {
 		vi.mocked(createBooking).mockResolvedValue(BOOKED_NOW)
 		vi.mocked(checkOut).mockRejectedValueOnce(new Error('The server answered 500')).mockResolvedValueOnce({ ...BOOKED_NOW, state: /** @type {const} */ ('out') })
@@ -274,5 +270,35 @@ describe('taking it now', () => {
 
 		expect(wrapper.getComponent(NcNoteCard).props('text')).toBe('A booking ends in the future. A drive that is over is logged as a trip.')
 		expect(createBooking).not.toHaveBeenCalled()
+	})
+})
+
+describe('closing the sheet', () => {
+	it('closes on Esc and on Cancel', async () => {
+		const wrapper = sheet()
+
+		await wrapper.find('.sheet').trigger('keydown.esc')
+		await button(wrapper, 'Cancel').vm.$emit('click')
+
+		expect(wrapper.emitted('close')).toHaveLength(2)
+	})
+
+	/** Esc in the date field belongs to the picker the browser opened (VehicleSheet.vue says why). */
+	it('stays open on Esc in the date field', async () => {
+		const wrapper = sheet(null)
+
+		await wrapper.getComponent(NcDateTimePickerNative).trigger('keydown.esc')
+
+		expect(wrapper.emitted('close')).toBeUndefined()
+	})
+
+	it('stays open while a save is in flight', async () => {
+		vi.mocked(checkOut).mockReturnValue(new Promise(() => {}))
+		const wrapper = sheet()
+
+		await button(wrapper, 'Take the car').vm.$emit('click')
+		await wrapper.find('.sheet').trigger('keydown.esc')
+
+		expect(wrapper.emitted('close')).toBeUndefined()
 	})
 })

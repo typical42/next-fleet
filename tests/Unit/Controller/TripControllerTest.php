@@ -24,8 +24,8 @@ use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The trips hanging off one vehicle. Every rule is TripService's, so what is tested here is the
- * translation between a request and an answer, the way OdometerControllerTest tests the odometer's.
+ * One vehicle's trips. Every rule is TripService's, so this tests request to answer only, as
+ * OdometerControllerTest does.
  */
 class TripControllerTest extends TestCase {
 	private const UUID = '0195e2f1-0000-4000-8000-000000000001';
@@ -65,10 +65,7 @@ class TripControllerTest extends TestCase {
 		]);
 	}
 
-	/**
-	 * A recorded trip answers 201 with the row the server wrote, so the sheet learns what it was
-	 * given - `reconciled` among it, which is not a field a client fills in.
-	 */
+	/** The sheet learns `reconciled` from the 201: no client fills it in. */
 	public function testARecordedTripComesBackAsTheServerWroteIt(): void {
 		$this->params = ['uuid' => self::UUID, 'end_odo' => '148320', 'category' => Trip::BUSINESS];
 		$this->service->expects($this->once())
@@ -84,9 +81,6 @@ class TripControllerTest extends TestCase {
 	}
 
 	/**
-	 * The three refusals a trip can meet, each as the status the sheet acts on: a uuid that is
-	 * nobody's, a vehicle that is not this user's, and a field the columns cannot hold.
-	 *
 	 * @dataProvider refusals
 	 */
 	public function testARefusedTripAnswersWithItsOwnStatus(\Throwable $thrown, int $status): void {
@@ -119,7 +113,6 @@ class TripControllerTest extends TestCase {
 		$this->assertSame(['message' => 'end_odo is below start_odo', 'reason' => 'end_below_start'], $response->getData());
 	}
 
-	/** The prefill answers 200 with the words the service found, and is refused like a write. */
 	public function testThePrefillIsWhatTheServiceStates(): void {
 		$words = ['places' => ['Office'], 'purposes' => ['Client visit'], 'partners' => []];
 		$this->service->expects($this->once())
@@ -143,10 +136,8 @@ class TripControllerTest extends TestCase {
 	}
 
 	/**
-	 * A void answers with the row it left behind, so the toast that offers the undo holds the
-	 * token the next write is checked against (docs/architecture.md#concurrency). A DELETE carries
-	 * no body, so the token arrives in the query string and reaches the controller as a parameter
-	 * like any other.
+	 * The undo toast holds the token from the row the void left (docs/architecture.md#concurrency).
+	 * A DELETE has no body, so the token comes in the query string, a parameter like any other.
 	 */
 	public function testAVoidedTripComesBackWithTheTokenTheUndoNeeds(): void {
 		$this->params = ['uuid' => self::UUID, 'trip' => self::TRIP, 'updated_at' => '1750000009'];
@@ -161,7 +152,6 @@ class TripControllerTest extends TestCase {
 		$this->assertSame(1750000010, $response->getData()->jsonSerialize()['deleted_at']);
 	}
 
-	/** Undo, the same way round. */
 	public function testAnUndoneTripComesBackLive(): void {
 		$this->params = ['uuid' => self::UUID, 'trip' => self::TRIP, 'updated_at' => '1750000010'];
 		$this->service->expects($this->once())
@@ -175,10 +165,6 @@ class TripControllerTest extends TestCase {
 		$this->assertNull($response->getData()->jsonSerialize()['deleted_at']);
 	}
 
-	/**
-	 * An edit hands the service the whole request as the trip's fields and the token it carries as
-	 * the check, and answers with the row as it now stands - the next token among it.
-	 */
 	public function testAnEditedTripComesBackAsTheServerWroteIt(): void {
 		$this->params = ['uuid' => self::UUID, 'trip' => self::TRIP, 'updated_at' => '1750000009', 'end_odo' => '148320'];
 		$this->service->expects($this->once())
@@ -193,8 +179,7 @@ class TripControllerTest extends TestCase {
 	}
 
 	/**
-	 * A write that arrives without the token cannot be checked at all, so it is refused before it
-	 * reaches the service - the answer a vehicle's own delete gives.
+	 * Without a token there is nothing to check the write against, so it is not attempted.
 	 *
 	 * @dataProvider checkedWrites
 	 */
@@ -208,8 +193,7 @@ class TripControllerTest extends TestCase {
 	}
 
 	/**
-	 * The row moved on between the read and the write, which is a 412 carrying `conflict` - what
-	 * tells it apart from Nextcloud's own failed CSRF check, a 412 as well.
+	 * `conflict` tells this 412 apart from Nextcloud's own failed CSRF check, a 412 as well.
 	 *
 	 * @dataProvider checkedWrites
 	 */
@@ -224,8 +208,7 @@ class TripControllerTest extends TestCase {
 	}
 
 	/**
-	 * Every write to a trip that exists is checked against the token the client read, so all three
-	 * answer a missing or a stale one alike.
+	 * Every write to an existing trip is checked against the token, so all three answer alike.
 	 *
 	 * @return iterable<string, array{string}>
 	 */
@@ -235,10 +218,7 @@ class TripControllerTest extends TestCase {
 		yield 'restore' => ['restore'];
 	}
 
-	/**
-	 * Closing a Gap creates a trip, so it answers 201 with the trip it created. What the driver
-	 * confirmed travels as three numbers and reaches the service as three integers.
-	 */
+	/** Closing a Gap creates a trip, hence 201. The three confirmed numbers arrive as integers. */
 	public function testAClosedGapComesBackAsTheTripThatClosedIt(): void {
 		$this->params = ['uuid' => self::UUID, 'trip' => self::TRIP, 'distance' => '200', 'from_at' => '1749990000', 'to_at' => 1750000000];
 		$this->service->expects($this->once())
@@ -253,8 +233,7 @@ class TripControllerTest extends TestCase {
 	}
 
 	/**
-	 * A confirmation without all three is not a confirmation of anything, and is refused before it
-	 * reaches the service.
+	 * A confirmation without all three numbers confirms nothing.
 	 *
 	 * @dataProvider unconfirmed
 	 * @param array<string, mixed> $confirmed

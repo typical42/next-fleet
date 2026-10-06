@@ -8,12 +8,11 @@ import { t } from './l10n.js'
 
 /**
  * One kind of export file: an importer and one of its record types (lib/Import/IImporter.php).
- * `counter` says whether the file has a counter column, which is when the server asks its unit.
  *
  * @typedef {object} Format
  * @property {string} importer - the importer's key
  * @property {string} recordType - one of its record types
- * @property {boolean} counter - whether the file carries a counter
+ * @property {boolean} counter - whether the file carries a counter, whose unit the server then asks
  */
 
 /**
@@ -64,8 +63,7 @@ export function formatWord(format) {
 
 /**
  * Why one row is not created, in words. The server sends a word and the header it blames
- * (lib/Import/Cells.php, lib/Import/Duplicates.php); a word this bundle does not know
- * yet is shown as it came, which beats nothing.
+ * (lib/Import/Cells.php, lib/Import/Duplicates.php); an unknown word is shown as it came.
  *
  * @param {string} reason - the reason word, or `duplicate`
  * @param {string|null} column - the header blamed, null when none is

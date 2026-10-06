@@ -78,20 +78,6 @@ class AccessMapper extends BaseMapper {
 	}
 
 	/**
-	 * Every live grant on one vehicle, in the order they were given: the owner's list of who
-	 * else may use it.
-	 *
-	 * @return list<Access>
-	 * @throws \OCP\DB\Exception
-	 */
-	public function findByVehicle(int $vehicleId): array {
-		$qb = $this->onVehicle($vehicleId);
-		$qb->andWhere($qb->expr()->isNull('deleted_at'));
-
-		return $this->findEntities($qb);
-	}
-
-	/**
 	 * findByVehicle() with the revoked grants among them: who had access when.
 	 *
 	 * @return list<Access>
@@ -201,9 +187,9 @@ class AccessMapper extends BaseMapper {
 
 	/**
 	 * Every vehicle one user reaches through a grant in one of the given roles, with the roles
-	 * they hold on it, so the overview can widen from what they own to what they may see and say
-	 * what they may do there. Ids, not vehicles: the rows live in the other table. Which roles
-	 * count is VehicleAccess's to say - the column takes any word.
+	 * they hold on it: what the overview shows beyond their own vehicles, and what they may do
+	 * there. Ids, not vehicles: the rows live in the other table. Which roles count is
+	 * VehicleAccess's to say - the column takes any word.
 	 *
 	 * @param list<string> $groupIds
 	 * @param list<string> $roles

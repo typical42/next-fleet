@@ -13,7 +13,7 @@ use OCA\NextFleet\Exception\ImportRefusedException;
 /**
  * One record of a CsvReader, scanned as its lines arrive. The scan keeps where it stopped — in a
  * quote, or before an escape that waits for its byte — so each byte is read once, however many
- * lines a cell spans. Rescanning the whole record per line made one 64 KiB cell take seconds.
+ * lines a cell spans. Rescanning the whole record per line would make one 64 KiB cell take seconds.
  *
  * A quote opens a cell only at its start; anywhere else it is a character, as is anything between
  * a closing quote and the next separator.

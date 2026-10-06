@@ -39,10 +39,7 @@ const inbox = useInboxStore()
  */
 const landing = new URLSearchParams(window.location.search)
 const selected = ref(landing.get('vehicle') ?? '')
-/**
- * Whether the vehicle's screen opens with the entry sheet up, which is what the QR sticker's link
- * asks (docs/ui.md). Taken off the address at once, so a reload later does not open a second sheet.
- */
+/** Whether the vehicle's screen opens with the entry sheet up (docs/ui.md#the-qr-shortcut). */
 const arrivedToEnter = ref(landing.get('entry') === 'new')
 if (arrivedToEnter.value) {
 	landing.delete('entry')
@@ -64,14 +61,12 @@ const settingsUrl = generateUrl('/settings/user/additional')
 
 /** Whether the selected vehicle was opened from the overview's list of disposed ones. */
 const openedDisposed = ref(false)
-// Looked up in the fleet the navigation lists: a vehicle disposed of in the edit sheet leaves that
-// list (docs/ui.md), and its screen goes with it. One opened from the disposed list stays open, or
-// a sale recorded by mistake could never be set back.
+// A vehicle disposed of in the edit sheet leaves the navigation, and its screen goes with it. One
+// opened from the disposed list stays open, or a sale recorded by mistake could never be set back.
 const vehicle = computed(() => store.visible.find((one) => one.uuid === selected.value)
 	?? (openedDisposed.value ? store.list.find((one) => one.uuid === selected.value) : undefined))
 const disposed = computed(() => store.list.filter((one) => one.lifecycle === 'disposed'))
-// Set back to active, the vehicle is an ordinary one again: disposed of a second time, its screen
-// goes as any other's does.
+// Set back to active, it is an ordinary vehicle again whose screen goes when disposed of.
 watch(() => store.visible.some((one) => one.uuid === selected.value), (listed) => {
 	if (listed) {
 		openedDisposed.value = false
@@ -95,10 +90,8 @@ async function load() {
 		loading.value = false
 	}
 
-	// Read here rather than by the screen that asks about them, which would ask again on every
-	// navigation. Its own attempt, and a silent one: preferences that did not arrive cost a hint
-	// (src/components/CompleteHint.vue), and reporting that where the fleet reports its failures
-	// would put a red card over a screen that is working.
+	// Read here, not by the screen that asks, which would ask on every navigation. Silent: missing
+	// preferences cost a hint (CompleteHint.vue), a red card would cover a working screen.
 	try {
 		await preferences.load()
 	} catch {
@@ -210,8 +203,8 @@ function sort() {
 				@select="show" />
 		</NcAppContent>
 		<VehicleSheet v-if="creating" @close="creating = false" @created="open" />
-		<!-- Outside the screens on purpose: a delete takes the screen that asked for it with the
-		     vehicle, and the way back has to outlive both. It shows itself when there is one. -->
+		<!-- Outside the screens: a delete takes the screen that asked for it with the vehicle, and
+		     the way back has to outlive both. -->
 		<UndoToast />
 	</NcContent>
 </template>

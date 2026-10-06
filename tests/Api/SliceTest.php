@@ -12,8 +12,8 @@ use PHPUnit\Framework\Attributes\Depends;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The M8 slice: an owner and a driver, each a client of their own, kept in step by sync alone.
- * Each step leans on the one before, as the two clients would.
+ * An owner and a driver, each a client of their own, kept in step by sync alone. Each step leans
+ * on the one before, as the two clients would.
  *
  * Every step runs inside sync's settle window, so a sync carries every row of the run whatever
  * its token says; what proves a write reached the client is the state and token the item carries.

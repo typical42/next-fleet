@@ -64,9 +64,8 @@ import { t } from '../utils/l10n.js'
  */
 
 /**
- * One journey (CONTEXT.md). The counter it ended on and the kilometres it covered are two facts
- * and never computed into one another, so exactly one of them is filled in
- * (docs/architecture.md#odometer-rules).
+ * One journey (CONTEXT.md). It carries `end_odo` or `distance`, never both, and neither is computed
+ * from the other (docs/architecture.md#odometer-rules).
  *
  * @typedef {object} Trip
  * @property {string} uuid - identity
@@ -120,9 +119,8 @@ import { t } from '../utils/l10n.js'
  */
 
 /**
- * One thing that happened to a vehicle, whatever table it was written in
- * (docs/architecture.md#the-timeline). The Entry itself sits under its own kind's key, and an Entry
- * that wrote Readings carries them — the Entry and the counter it moved are one row on screen
+ * One timeline row, whatever table it came from (docs/architecture.md#the-timeline). The Entry sits
+ * under its kind's key and carries the Readings it wrote: Entry and counter are one row on screen
  * (docs/architecture.md#odometer-rules, rule 5).
  *
  * @typedef {object} Entry
@@ -464,9 +462,8 @@ import { t } from '../utils/l10n.js'
  */
 
 /**
- * The row moved on since it was read, so the write was refused instead of overwriting it
- * (docs/architecture.md#concurrency). Its own class because the sheet answers it differently
- * from every other failure: the values are fine, the version is not.
+ * The row moved on since it was read (docs/architecture.md#concurrency). Its own class because the
+ * sheet answers it differently: the values are fine, the version is not.
  */
 export class ConflictError extends Error {}
 
@@ -562,8 +559,7 @@ export async function listVehicles() {
 }
 
 /**
- * One vehicle as the server now holds it. Read after a Reading was written: `odo_value` is a cache
- * the server recomputes and no client can count for itself (docs/architecture.md#odometer-rules).
+ * One vehicle as the server now holds it.
  *
  * @param {string} uuid - the vehicle's identity
  * @return {Promise<Vehicle>} the vehicle, with its current token
@@ -603,24 +599,21 @@ export async function updateVehicle(vehicle) {
 }
 
 /**
- * Delete a vehicle. Soft, so it is undone rather than confirmed (docs/ui.md): the answer is the
- * vehicle as the delete left it, and the token on it is the one `restoreVehicle` is checked
- * against — no other one is accepted.
+ * Delete a vehicle. Soft, so it is undone rather than confirmed (docs/ui.md); the answer's token is
+ * the only one `restoreVehicle` accepts.
  *
  * @param {Vehicle} vehicle - the vehicle as it was read, `uuid` and `updated_at` included
  * @return {Promise<Vehicle>} the vehicle as the delete left it
  * @throws {ConflictError} when it moved on since it was read
  */
 export async function deleteVehicle(vehicle) {
-	// A DELETE has no body, so the token travels in the query string; the controller reads both
-	// out of the request parameters (docs/architecture.md#concurrency).
+	// No body on a DELETE, so the token travels in the query (docs/architecture.md#concurrency).
 	return request('DELETE', `/api/vehicles/${vehicle.uuid}?updated_at=${vehicle.updated_at}`)
 }
 
 /**
- * Undo a delete. It is checked against the token the delete answered with, so the toast hands back
- * exactly the vehicle it was given and nothing newer. The answer carries a new token; the next edit
- * needs it.
+ * Undo a delete, checked against the token the delete answered with. The answer carries the token
+ * the next edit needs.
  *
  * @param {Vehicle} vehicle - the vehicle as the delete answered with it
  * @return {Promise<Vehicle>} the vehicle, back in the fleet, under its new token
@@ -658,9 +651,7 @@ export async function resetReading(uuid, reading) {
 }
 
 /**
- * Record one trip. Like a Reading it hangs off its vehicle and carries no token — a trip is
- * written, and under Logbook Mode revised through the audit trail rather than overwritten
- * (docs/architecture.md#concurrency).
+ * Record one trip. No token, as with a Reading (docs/architecture.md#concurrency).
  *
  * @param {string} uuid - the vehicle that drove it
  * @param {object} trip - what the sheet holds: the two instants with their offsets, the category,
@@ -695,7 +686,7 @@ export async function tripPrefill(uuid) {
 
 /**
  * Record one fill-up or charging session, and a Reading per counter it carries
- * (docs/architecture.md#odometer-rules). Written only, like a trip, so it carries no token.
+ * (docs/architecture.md#odometer-rules). No token, as with a trip.
  *
  * @param {string} uuid - the vehicle that took it
  * @param {object} fill - what the sheet holds: the moment with its offset, the energy and amount,
@@ -789,7 +780,6 @@ export async function expensePrefill(uuid, at, off, category = null) {
  * @typedef {Entry['type']|'reminder'} Written
  */
 
-/** Where each of them is written, below its vehicle. */
 const COLLECTIONS = { trip: 'trips', odometer: 'readings', energy: 'energy', maintenance: 'maintenance', expense: 'expenses', reminder: 'reminders' }
 
 /**
@@ -880,7 +870,7 @@ export async function reminderTemplates(uuid) {
 }
 
 /**
- * Add a reminder. It carries no token: nothing was read that it could lose a race against.
+ * Add a reminder. No token, as with a Reading.
  *
  * @param {string} uuid - the vehicle it hangs off
  * @param {object} fields - what the sheet holds: a template key or a title, the mode and what it reads
@@ -990,9 +980,8 @@ const USERS = '0'
 const GROUPS = '1'
 
 /**
- * Accounts matching what was typed, for the recipient picker. Core's own search rather than one of
- * ours: it already applies the instance's rules on who may find whom, which the sharing dialog
- * uses too.
+ * Accounts matching what was typed, for the recipient picker. Core's search, because it applies
+ * the instance's rules on who may find whom.
  *
  * @param {string} term - what was typed
  * @return {Promise<Recipient[]>} at most ten accounts
@@ -1094,9 +1083,8 @@ async function autocomplete(term, types) {
 }
 
 /**
- * One page of one vehicle's timeline, newest first (docs/architecture.md#the-timeline). The merge
- * is the server's, so a client asks for a page and scrolls; it never holds two tables to work out
- * which rows come first.
+ * One page of one vehicle's timeline, newest first; the server merges the tables
+ * (docs/architecture.md#the-timeline).
  *
  * @param {string} uuid - the vehicle whose timeline to read
  * @param {object} at - where in it to read
@@ -1112,8 +1100,7 @@ export async function readTimeline(uuid, { type, cursor }) {
 		}
 	}
 
-	// A filter that narrows nothing is the absent parameter: an empty one is a word the timeline
-	// never handed out, and it is refused rather than read as "everything".
+	// An empty filter is left out: the server refuses it rather than read it as "everything".
 	const asked = query.toString()
 
 	return request('GET', `/api/vehicles/${uuid}/timeline${asked === '' ? '' : `?${asked}`}`)
@@ -1482,8 +1469,7 @@ async function request(method, path, body) {
 				'Content-Type': 'application/json',
 				requesttoken: getRequestToken() ?? '',
 			},
-			// A read has no body at all. `JSON.stringify(undefined)` is `undefined`, but spelling it
-			// out keeps a future `null` from travelling as the string "null".
+			// A read sends no body at all.
 			body: body === undefined ? undefined : JSON.stringify(body),
 		})
 	} catch (error) {
@@ -1545,8 +1531,7 @@ async function parse(response) {
 	try {
 		return await response.json()
 	} catch {
-		// A refusal from the server itself — a session that expired into a login page — is not
-		// JSON. It is still a failure, and the status is what tells the story.
+		// A login page after an expired session is not JSON; the status still tells the failure.
 		return null
 	}
 }

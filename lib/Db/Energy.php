@@ -107,11 +107,7 @@ class Energy extends BaseEntity implements \JsonSerializable {
 		$this->setter('isDc', [$isDc]);
 	}
 
-	/**
-	 * The wire form is the column names, as it is for every entity.
-	 *
-	 * @return NextFleetEnergyEntry
-	 */
+	/** @return NextFleetEnergyEntry */
 	public function jsonSerialize(): array {
 		return [
 			'uuid' => $this->uuid,

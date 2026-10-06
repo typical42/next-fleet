@@ -10,6 +10,7 @@ import { computed, onMounted, ref } from 'vue'
 
 import { addRecipient, listRecipients, removeRecipient, searchUsers } from '../services/api.js'
 import { t } from '../utils/l10n.js'
+import { latestSearch } from '../utils/search.js'
 
 const props = defineProps({
 	/** The vehicle's uuid. */
@@ -25,22 +26,21 @@ const props = defineProps({
 const cadence = defineModel('cadence', { type: String, default: 'weekly' })
 
 /**
- * The list as the server last answered, or null while it is unread or was refused. The sheet
- * mounts this only for `edit` (src/components/VehicleSheet.vue); a refusal still shows neither
- * control rather than an empty list.
+ * The list as the server last answered, or null while unread or refused. The vehicle sheet mounts
+ * this only for `edit`; a refusal still shows neither control rather than an empty list.
  *
  * @type {import('vue').Ref<import('../services/api.js').Recipient[]|null>}
  */
 const recipients = ref(null)
-/** @type {import('vue').Ref<import('../services/api.js').Recipient[]>} */
-const found = ref([])
+const { found, search } = latestSearch(searchUsers)
 const writing = ref(false)
 const failure = ref('')
 
 /**
  * @param {import('../services/api.js').Recipient} one - an account
  * @return {{ id: string, displayName: string, subname: string, user: string }} it as the picker
- *   shows it; the picker filters again on the names it shows, so the account is one of them
+ *   shows it; the account is the subname, as the picker filters on what it shows and a display
+ *   name need not contain what was typed
  */
 function option(one) {
 	return { id: one.user_id, displayName: one.display_name, subname: one.user_id, user: one.user_id }
@@ -65,13 +65,13 @@ onMounted(async () => {
 	}
 })
 
-/** @param {string} term - what was typed */
-async function search(term) {
-	try {
-		found.value = term.trim() === '' ? [] : await searchUsers(term)
-	} catch {
-		found.value = []
-	}
+/**
+ * RecipientService's refusals a person can run into, by its English words; the rest show as sent.
+ *
+ * @type {Record<string, () => string>}
+ */
+const REFUSALS = {
+	'user_id is not an account on this instance': () => t('nextfleet', 'You cannot add this account to the list.'),
 }
 
 /**
@@ -95,7 +95,7 @@ async function pick(selection) {
 			recipients.value = await removeRecipient(props.vehicle, removed)
 		}
 	} catch (error) {
-		failure.value = t('nextfleet', 'The list was not changed: {reason}', { reason: error.message })
+		failure.value = REFUSALS[error.message]?.() ?? t('nextfleet', 'The list was not changed: {reason}', { reason: error.message })
 	} finally {
 		writing.value = false
 	}

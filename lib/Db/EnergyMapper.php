@@ -23,8 +23,7 @@ class EnergyMapper extends BaseMapper {
 
 	/**
 	 * One vehicle's fill-ups that name a station, the latest first - the history the sheet's
-	 * station field completes from (docs/ui.md). Bounded, because a suggestion list is read from
-	 * the recent past and a vehicle's whole life is not needed to find it.
+	 * station field completes from (docs/ui.md). Bounded: suggestions come from the recent past.
 	 *
 	 * @return list<Energy>
 	 * @throws \OCP\DB\Exception

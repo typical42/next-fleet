@@ -34,8 +34,7 @@ const emit = defineEmits(['new', 'select'])
 const reminders = ref([])
 const failure = ref('')
 
-// Overdue is read off the clock when the list is worked out; the screen is mounted again on
-// every visit, as the reminders are read.
+// Overdue is read off the clock when the list is worked out, so once per visit like the reminders.
 const ordered = computed(() => fleetByUrgency(props.vehicles, reminders.value)
 	.map((row) => ({ ...row, holder: holderWords(row.vehicle) })))
 
@@ -49,16 +48,14 @@ onMounted(async () => {
 	}
 })
 
-// `n` is the primary action of the screen in view (docs/ui.md), and the shell mounts one screen
-// at a time - so the key belongs to the screen rather than to an arbiter above it. useHotKey
-// already passes over a keystroke typed into a field or aimed at an open sheet, and drops the
-// listener when the screen goes.
+// `n` starts the screen's primary action (docs/ui.md#details-that-decide-whether-it-feels-easy).
+// The shell mounts one screen at a time, so the key belongs here. useHotKey skips a keystroke
+// typed into a field or an open sheet.
 useHotKey('n', () => emit('new'))
 </script>
 
 <template>
-	<!-- The empty state does the teaching: not "no vehicles" but the button that makes the
-	     first one (docs/ui.md). -->
+	<!-- The empty state teaches: the button that makes the first vehicle (docs/ui.md). -->
 	<NcEmptyContent v-if="vehicles.length === 0"
 		:name="t('nextfleet', 'No vehicles yet')"
 		:description="t('nextfleet', 'Everything else hangs off a vehicle, so that is where a logbook starts.')">
@@ -73,11 +70,10 @@ useHotKey('n', () => emit('new'))
 		<!-- Creating a vehicle asks for four fields; the rest is asked for here, once there is a
 		     fleet to ask it about (docs/ui.md). -->
 		<CompleteHint :vehicles="vehicles" @select="$emit('select', $event)" />
-		<!-- Named, because it is not the only list on this screen any more: the hint above lists
-		     vehicles too, and a row here means "a vehicle in the fleet" (tests/e2e/). -->
 		<p v-if="failure" class="overview__failure">
 			{{ t('nextfleet', 'The reminders could not be read: {reason}', { reason: failure }) }}
 		</p>
+		<!-- Named apart from the hint's list: a row here is a fleet vehicle (tests/e2e/). -->
 		<ul class="overview__list">
 			<NcListItem v-for="{ vehicle, next, holder } in ordered"
 				:key="vehicle.uuid"
@@ -89,8 +85,8 @@ useHotKey('n', () => emit('new'))
 					<span class="overview__light" :class="`overview__light--${light(next)}`">
 						{{ next ? stateWord(next.state) : t('nextfleet', 'Nothing due') }}
 					</span>
-					<!-- First after the light: who has the car now is what somebody about to take
-					     it opens the app for. -->
+					<!-- First after the light: who has the car is what somebody about to take it
+					     opens the app for. -->
 					<span v-if="holder"
 						class="overview__holder"
 						:class="{ 'overview__holder--overdue': holder.overdue }">
@@ -184,8 +180,8 @@ useHotKey('n', () => emit('new'))
 	margin-inline-start: calc(var(--default-grid-baseline) * 2);
 }
 
-/* NcListItem keeps the subname to one line and cuts it with an ellipsis; at 320 px that cut what
-   comes due. Here it wraps, a part at a time, and the row grows to the lines it needs. */
+/* NcListItem cuts the subname to one line, which at 320 px hides what comes due. Here it wraps a
+   part at a time, and the row grows to fit. */
 .overview__list :deep(.list-item__anchor) {
 	height: auto;
 	min-height: var(--list-item-height);

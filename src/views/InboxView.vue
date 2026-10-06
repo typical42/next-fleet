@@ -35,7 +35,7 @@ const failure = ref('')
 const open = ref(null)
 
 /**
- * A new cost the file is logged as, while the entry sheet is open on it: the sheet asked for it.
+ * A new cost the file is logged as, while the entry sheet is open on it.
  *
  * @type {import('vue').Ref<{file: import('../services/api.js').Waiting, vehicle: string, type: 'energy'|'maintenance'|'expense', kind: string}|null>}
  */

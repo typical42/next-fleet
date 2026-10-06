@@ -22,8 +22,7 @@ use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The reminders hanging off one vehicle: the translation between a request and an answer, as
- * MaintenanceControllerTest tests it.
+ * One vehicle's reminders, request to answer, as MaintenanceControllerTest tests it.
  */
 class ReminderControllerTest extends TestCase {
 	private const UUID = '0195e2f1-0000-4000-8000-000000000001';
@@ -49,7 +48,6 @@ class ReminderControllerTest extends TestCase {
 		return new ReminderController(Application::APP_ID, $request, $this->service, $session);
 	}
 
-	/** The list answers 200 with what the service returns for the session user. */
 	public function testTheListIsTheVehiclesReminders(): void {
 		$this->service->expects($this->once())
 			->method('list')
@@ -62,7 +60,6 @@ class ReminderControllerTest extends TestCase {
 		$this->assertSame([['template_key' => 'hu_au']], $response->getData());
 	}
 
-	/** The fleet's list answers 200 with every reminder the session user may see. */
 	public function testTheFleetListIsTheSessionUsers(): void {
 		$this->service->expects($this->once())
 			->method('fleet')
@@ -75,7 +72,6 @@ class ReminderControllerTest extends TestCase {
 		$this->assertSame([['vehicle' => self::UUID]], $response->getData());
 	}
 
-	/** The templates answer 200 with what the service offers the session user on this vehicle. */
 	public function testTheTemplatesAreTheVehiclesOwn(): void {
 		$this->service->expects($this->once())
 			->method('templates')
@@ -88,7 +84,6 @@ class ReminderControllerTest extends TestCase {
 		$this->assertSame([['key' => 'hu_au']], $response->getData());
 	}
 
-	/** A new reminder answers 201 with the row the server wrote. */
 	public function testAReminderComesBackAsTheServerWroteIt(): void {
 		$this->params = ['uuid' => self::UUID, 'template_key' => 'hu_au', 'due_date' => '2027-05-31'];
 		$this->service->expects($this->once())
@@ -102,7 +97,6 @@ class ReminderControllerTest extends TestCase {
 		$this->assertSame(['template_key' => 'hu_au'], $response->getData());
 	}
 
-	/** An edit, a delete and an undo each hand the service the token the client read. */
 	public function testTheWritesAreCheckedAgainstTheToken(): void {
 		$this->params = ['updated_at' => '1750000000', 'mode' => 'date'];
 		$this->service->expects($this->once())->method('update')
@@ -117,7 +111,6 @@ class ReminderControllerTest extends TestCase {
 		$this->assertSame(['deleted_at' => null], $this->controller()->restore(self::UUID, self::REMINDER)->getData());
 	}
 
-	/** A snooze hands on its day, a dismissal nothing but the token. */
 	public function testSnoozeAndDismissAreCheckedAgainstTheToken(): void {
 		$this->params = ['updated_at' => '1750000000', 'until' => '2036-05-01'];
 		$this->service->expects($this->once())->method('snooze')

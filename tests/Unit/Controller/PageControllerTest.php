@@ -21,10 +21,7 @@ class PageControllerTest extends TestCase {
 		return new PageController(Application::APP_ID, $this->createMock(IRequest::class));
 	}
 
-	/**
-	 * The app id and the template name are how Nextcloud finds templates/main.php. Either
-	 * one wrong is a 500 with no other symptom.
-	 */
+	/** Nextcloud finds templates/main.php by both; one wrong is a 500 with no other symptom. */
 	public function testIndexRendersTheAppsOwnTemplate(): void {
 		$response = $this->controller()->index();
 
@@ -32,10 +29,7 @@ class PageControllerTest extends TestCase {
 		$this->assertSame('main', $response->getTemplateName());
 	}
 
-	/**
-	 * The page belongs to every logged-in user, not to admins. Without the attribute the
-	 * app framework rejects everyone else with a 403.
-	 */
+	/** Without the attribute the framework answers every user but an admin with a 403. */
 	public function testIndexIsOpenToOrdinaryUsers(): void {
 		$attributes = (new ReflectionMethod(PageController::class, 'index'))->getAttributes();
 		$names = array_map(static fn ($attribute) => $attribute->getName(), $attributes);
@@ -43,10 +37,7 @@ class PageControllerTest extends TestCase {
 		$this->assertContains(NoAdminRequired::class, $names);
 	}
 
-	/**
-	 * A bookmark or a link into the app is a plain GET with no token. Demanding one turns
-	 * every entry into the app into a 412.
-	 */
+	/** A bookmark or a link is a plain GET with no token; demanding one makes every entry a 412. */
 	public function testIndexDoesNotDemandACsrfToken(): void {
 		$attributes = (new ReflectionMethod(PageController::class, 'index'))->getAttributes();
 		$names = array_map(static fn ($attribute) => $attribute->getName(), $attributes);

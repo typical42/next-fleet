@@ -26,9 +26,8 @@ use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The printable logbook and mileage claim, and the CSV files. What is in them is the services';
- * what is tested here is that a page reaches the browser as a page and can reach nothing further
- * from there, and that a file is a download.
+ * The printable logbook and mileage claim, and the CSV files. Their content is the services'; here
+ * a page reaches the browser as a page that can reach nothing further, and a file is a download.
  */
 class ReportControllerTest extends TestCase {
 	private const UUID = '0195e2f1-0000-4000-8000-000000000001';
@@ -71,7 +70,6 @@ class ReportControllerTest extends TestCase {
 		yield 'the mileage claim' => ['mileage'];
 	}
 
-	/** The service behind a page. */
 	private function printer(string $page): MockObject {
 		return $page === 'logbook' ? $this->export : $this->claim;
 	}

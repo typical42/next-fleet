@@ -93,8 +93,8 @@ class OdoReading extends BaseEntity implements \JsonSerializable {
 	}
 
 	/**
-	 * Null is `main`: the column arrived with M3, and every Reading written before it is on the
-	 * only counter there was.
+	 * Null is `main`: a Reading written before Version000003Date20260919000000 added the column
+	 * is on the only counter there was.
 	 */
 	public function getCounter(): string {
 		return $this->counter ?? self::MAIN;
@@ -135,7 +135,6 @@ class OdoReading extends BaseEntity implements \JsonSerializable {
 	}
 
 	/**
-	 * The wire form is the column names, as it is for a vehicle, and `source_uuid` beside them.
 	 * `flagged` goes out as a real boolean: the timeline asks the follow-up question off it
 	 * (docs/ui.md).
 	 *

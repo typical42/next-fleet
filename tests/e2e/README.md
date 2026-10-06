@@ -10,11 +10,12 @@ for the two commands and for what to run where Chromium's system libraries are m
 
 `accounts.js` makes the run's own account, which every spec signs in as
 ([development](../../docs/development.md#testing)). `demo-fleet.spec.js` reads the fleet
-`occ nextfleet:seed admin` writes, so seed both instances first. The other specs make their own vehicles under a plate prefix each of them
-owns — `E2E-` for `m1-slice.spec.js`, `M2-E2E-` for `m2-slice.spec.js`, and so on, `ROLES-` for
-`roles.spec.js`, which signs in as each role on a vehicle — and delete what they find
-under it before they start. The prefixes are disjoint on purpose: the files run at once. The demo
-fleet's `NF-` survives all of them, so they share an instance.
+`occ nextfleet:seed admin` writes, so seed both instances first. The other specs make their own
+vehicles under a plate prefix each of them owns — `E2E-` for `m1-slice.spec.js`, `M2-E2E-` for
+`m2-slice.spec.js`, and so on, `ROLES-` for `roles.spec.js`, which signs in as each role on a
+vehicle — and delete what they find under it before they start. The prefixes are disjoint on
+purpose: the files run at once. The demo fleet's `NF-` survives all of them, so they share an
+instance.
 
 `app.js` holds what more than one file needs: signing in, the app's API from inside the page, and
 the few locators every file reaches for. `server.js` and `job.php` run the reminder job at a moved

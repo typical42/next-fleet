@@ -44,10 +44,9 @@ class MailService {
 
 	/**
 	 * The user value naming the local day a recipient's digest was last checked for, and the
-	 * vehicles it covered (checkedMark()). Once a day is checked, news found later that day on those
-	 * vehicles goes with the next mail: the job need not evaluate every vehicle of every recipient
-	 * each hour to find a day with nothing new. A vehicle that joins the list was never checked,
-	 * so it is that day.
+	 * vehicles it covered (checkedMark()), so later runs that day skip them rather than evaluate
+	 * every vehicle again. News found after it goes with the next mail; a vehicle that joins the
+	 * list is checked that day (docs/architecture.md#reminder-engine).
 	 */
 	public const CHECKED = 'digest_checked';
 
@@ -275,12 +274,13 @@ class MailService {
 				$template->addBodyText($plate);
 			}
 			foreach ($points as [$reminder, $point]) {
+				// `false` as the plain meta info, or the plain text gets " ()" after each line.
 				$template->addBodyListItem(ReminderWords::line($l, $point, [
 					'template_key' => $reminder->getTemplateKey(),
 					'title' => $reminder->getTitle(),
 					'due_date' => $reminder->getDueDate()?->format('Y-m-d'),
 					'due_odo' => $reminder->getDueOdo(),
-				]));
+				], $vehicle->getOdoUnit()), '', '', '', false);
 			}
 		}
 		$template->addFooter('', $language);

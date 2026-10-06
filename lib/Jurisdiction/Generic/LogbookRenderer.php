@@ -12,6 +12,7 @@ use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Jurisdiction\IReportRenderer;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCA\NextFleet\Jurisdiction\LogbookReport;
+use OCA\NextFleet\Jurisdiction\PrintedPage;
 use OCP\IL10N;
 
 /**
@@ -22,28 +23,6 @@ use OCP\IL10N;
  * language (docs/ui.md#languages).
  */
 class LogbookRenderer implements IReportRenderer {
-	/**
-	 * The Fahrtenbuch's sheet, and for its reasons: ten columns do not fit upright, and the page
-	 * loads nothing (docs/security.md#hostile-content).
-	 */
-	private const STYLE = <<<'CSS'
-		@page { size: A4 landscape; margin: 12mm; }
-		body { font: 9pt/1.35 system-ui, sans-serif; color: #000; background: #fff; margin: 0 auto; max-width: 297mm; padding: 8mm; }
-		h1 { font-size: 16pt; margin: 0 0 2mm; }
-		h2 { font-size: 11pt; margin: 5mm 0 1mm; }
-		dl { display: grid; grid-template-columns: max-content 1fr; gap: 0 4mm; margin: 0; }
-		dd { margin: 0; }
-		table { width: 100%; border-collapse: collapse; margin-top: 4mm; }
-		thead { display: table-header-group; }
-		tr { break-inside: avoid; }
-		th, td { border: 0.5pt solid #555; padding: 1mm 1.5mm; text-align: left; vertical-align: top; }
-		th { background: #eee; }
-		.number { text-align: right; white-space: nowrap; }
-		.voided td:not(.note) { text-decoration: line-through; color: #555; }
-		footer { margin-top: 6mm; font-size: 8pt; }
-		@media print { body { padding: 0; max-width: none; } }
-		CSS;
-
 	public function __construct(
 		private IL10N $l,
 	) {
@@ -54,20 +33,20 @@ class LogbookRenderer implements IReportRenderer {
 		$name = trim(($vehicle->getManufacturer() ?? '') . ' ' . ($vehicle->getModel() ?? ''));
 
 		return '<!DOCTYPE html>'
-			. '<html lang="' . $this->text($this->l->getLanguageCode()) . '"><head><meta charset="utf-8">'
+			. '<html lang="' . PrintedPage::text($this->l->getLanguageCode()) . '"><head><meta charset="utf-8">'
 			. '<meta name="viewport" content="width=device-width, initial-scale=1">'
 			// TRANSLATORS: the printed logbook's title: %1$s is the plate, %2$s the year
-			. '<title>' . $this->text($this->l->t('Logbook %1$s %2$s', [(string)$vehicle->getPlate(), (string)$report->year])) . '</title>'
-			. '<style>' . self::STYLE . '</style></head><body>'
-			. '<header><h1>' . $this->text($this->l->t('Logbook %1$s', [(string)$report->year])) . '</h1><dl>'
-			. '<dt>' . $this->text($this->l->t('Plate')) . '</dt><dd>' . $this->text($vehicle->getPlate()) . '</dd>'
-			. ($name === '' ? '' : '<dt>' . $this->text($this->l->t('Vehicle')) . '</dt><dd>' . $this->text($name) . '</dd>')
+			. '<title>' . PrintedPage::text($this->l->t('Logbook %1$s %2$s', [(string)$vehicle->getPlate(), (string)$report->year])) . '</title>'
+			. '<style>' . PrintedPage::LOGBOOK_STYLE . '</style></head><body>'
+			. '<header><h1>' . PrintedPage::text($this->l->t('Logbook %1$s', [(string)$report->year])) . '</h1><dl>'
+			. '<dt>' . PrintedPage::text($this->l->t('Plate')) . '</dt><dd>' . PrintedPage::text($vehicle->getPlate()) . '</dd>'
+			. ($name === '' ? '' : '<dt>' . PrintedPage::text($this->l->t('Vehicle')) . '</dt><dd>' . PrintedPage::text($name) . '</dd>')
 			. '</dl></header>'
 			. $this->split($report)
 			. $this->table($report)
-			// docs/legal.md: said wherever the app speaks, and a printed logbook is where it matters.
-			. '<footer><p>' . $this->text($this->l->t('Made with NextFleet. An aid for keeping a logbook, not a certification.'))
-			. ' ' . $this->text($this->l->t('Not reviewed by a lawyer.')) . '</p></footer>'
+			// docs/legal.md, as on the Fahrtenbuch.
+			. '<footer><p>' . PrintedPage::text($this->l->t('Made with NextFleet. An aid for keeping a logbook, not a certification.'))
+			. ' ' . PrintedPage::text($this->l->t('Not reviewed by a lawyer.')) . '</p></footer>'
 			. '</body></html>';
 	}
 
@@ -94,18 +73,17 @@ class LogbookRenderer implements IReportRenderer {
 			}
 		}
 
-		$html = '<section id="split"><h2>' . $this->text($this->unit($report) === 'h'
+		$html = '<section id="split"><h2>' . PrintedPage::text($this->unit($report) === 'h'
 			? $this->l->t('Hours by category')
 			: $this->l->t('Kilometres by category')) . '</h2><dl>';
 		foreach ($sums as $category => $sum) {
-			// No trip is a true zero; trips with no distance stated are not.
 			$sum ??= $trips[$category] === 0 ? 0 : null;
-			$html .= '<dt>' . $this->text($this->category($category)) . '</dt><dd>'
-				. ($sum === null ? $this->text($this->l->t('Not stated')) : $this->count($sum)) . '</dd>';
+			$html .= '<dt>' . PrintedPage::text($this->category($category)) . '</dt><dd>'
+				. ($sum === null ? PrintedPage::text($this->l->t('Not stated')) : $this->count($sum)) . '</dd>';
 		}
 		$html .= '</dl>';
 		if ($unstated > 0) {
-			$html .= '<p>' . $this->text($this->l->t('Trips with no distance stated, not counted above: %1$s', [(string)$unstated])) . '</p>';
+			$html .= '<p>' . PrintedPage::text($this->l->t('Trips with no distance stated, not counted above: %1$s', [(string)$unstated])) . '</p>';
 		}
 
 		return $html . '</section>';
@@ -129,13 +107,13 @@ class LogbookRenderer implements IReportRenderer {
 			$this->l->t('Note')];
 		$html = '<table><thead><tr>';
 		foreach ($columns as $column) {
-			$html .= '<th scope="col">' . $this->text($column) . '</th>';
+			$html .= '<th scope="col">' . PrintedPage::text($column) . '</th>';
 		}
 		$html .= '</tr></thead><tbody>';
 
 		if ($report->trips === []) {
 			return $html . '<tr><td colspan="' . count($columns) . '">'
-				. $this->text($this->l->t('No trips in %1$s.', [(string)$report->year])) . '</td></tr></tbody></table>';
+				. PrintedPage::text($this->l->t('No trips in %1$s.', [(string)$report->year])) . '</td></tr></tbody></table>';
 		}
 
 		foreach ($report->trips as $line) {
@@ -152,25 +130,20 @@ class LogbookRenderer implements IReportRenderer {
 		$sameDay = $this->date($started) === $this->date($ended);
 
 		$cells = [
-			['', $this->text($this->date($started))],
-			['', $this->text($this->time($started) . '–' . ($sameDay ? '' : $this->date($ended) . ' ') . $this->time($ended))],
-			['', $this->text($trip->getFromLabel())],
-			['', $this->text($trip->getToLabel())],
-			['', $this->text($trip->getPurpose())],
+			['', PrintedPage::text($this->date($started))],
+			['', PrintedPage::text($this->time($started) . '–' . ($sameDay ? '' : $this->date($ended) . ' ') . $this->time($ended))],
+			['', PrintedPage::text($trip->getFromLabel())],
+			['', PrintedPage::text($trip->getToLabel())],
+			['', PrintedPage::text($trip->getPurpose())],
 			['number', $this->count($trip->getStartOdo())],
 			['number', $this->count($trip->getEndOdo())],
 			['number', $this->count($trip->kilometres())],
-			['', $this->text($this->category($trip->getCategory()))],
-			...($enteredBy === null ? [] : [['', $this->text($enteredBy[$trip->getCreatedBy()] ?? $trip->getCreatedBy())]]),
+			['', PrintedPage::text($this->category($trip->getCategory()))],
+			...($enteredBy === null ? [] : [['', PrintedPage::text($enteredBy[$trip->getCreatedBy()] ?? $trip->getCreatedBy())]]),
 			['note', $this->notes($trip, $zone)],
 		];
 
-		$html = '<tr' . ($trip->getDeletedAt() === null ? '' : ' class="voided"') . '>';
-		foreach ($cells as [$class, $content]) {
-			$html .= '<td' . ($class === '' ? '' : ' class="' . $class . '"') . '>' . $content . '</td>';
-		}
-
-		return $html . '</tr>';
+		return PrintedPage::row($trip->getDeletedAt() !== null, $cells);
 	}
 
 	private function notes(Trip $trip, \DateTimeZone $zone): string {
@@ -186,7 +159,7 @@ class LogbookRenderer implements IReportRenderer {
 			$notes[] = $this->l->t('Distance derived from the odometer, not read off it');
 		}
 
-		return implode('<br>', array_map($this->text(...), $notes));
+		return implode('<br>', array_map(PrintedPage::text(...), $notes));
 	}
 
 	private function category(string $category): string {
@@ -217,9 +190,5 @@ class LogbookRenderer implements IReportRenderer {
 	 */
 	private function count(?int $value): string {
 		return $value === null ? '' : (string)$value;
-	}
-
-	private function text(?string $value): string {
-		return htmlspecialchars((string)$value, ENT_QUOTES | ENT_SUBSTITUTE | ENT_HTML5, 'UTF-8');
 	}
 }

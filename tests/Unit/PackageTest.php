@@ -46,7 +46,6 @@ class PackageTest extends TestCase {
 	/**
 	 * The build writes a source map beside every chunk. A map is our source, comments and all, for
 	 * anyone to fetch from the server, and much of the tarball's size; the store has no use for it.
-	 * The script removes them from the stage and refuses a tarball that still carries one.
 	 */
 	public function testItShipsNoSourceMaps(): void {
 		$script = (string)file_get_contents(self::ROOT . '/tools/package.sh');
@@ -59,6 +58,21 @@ class PackageTest extends TestCase {
 		$this->assertLessThan($pack, $remove, 'the maps go after the tarball is packed');
 		$this->assertIsInt($check, 'nothing checks the tarball for a map');
 		$this->assertGreaterThan($pack, $check);
+	}
+
+	/**
+	 * The bundle carries other people's code; their licences want their notices beside it
+	 * (tools/third-party-notices.mjs).
+	 */
+	public function testItShipsTheNoticesOfTheBundledPackages(): void {
+		$script = (string)file_get_contents(self::ROOT . '/tools/package.sh');
+
+		$write = strpos($script, 'node tools/third-party-notices.mjs . >"$stage/THIRD-PARTY-NOTICES.txt"');
+		$pack = strpos($script, 'tar --sort=name');
+		$this->assertIsInt($write, 'the stage gets no notices');
+		$this->assertIsInt($pack);
+		$this->assertLessThan($pack, $write, 'the notices are written after the tarball is packed');
+		$this->assertMatchesRegularExpression('/^for needed in [^\n]*\bTHIRD-PARTY-NOTICES\.txt\b/m', $script, 'nothing checks the tarball for them');
 	}
 
 	/** @return list<string> */

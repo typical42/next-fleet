@@ -21,10 +21,6 @@ use PHPUnit\Framework\TestCase;
  * the keys of jurisdictions this release has never heard of.
  */
 class JurisdictionsTest extends TestCase {
-	/**
-	 * A container as the app's own is: it builds what it is asked for. The generic profile takes
-	 * the reader's `IL10N`, which is why the seam resolves through a container rather than `new`.
-	 */
 	private function jurisdictions(): Jurisdictions {
 		return RegisteredProfiles::jurisdictions();
 	}

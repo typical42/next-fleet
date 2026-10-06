@@ -86,7 +86,6 @@ describe('the Access section', () => {
 		expect(select(wrapper, 'Role of R&D').props('modelValue').label).toBe('Viewer')
 	})
 
-	/** A manager edits the vehicle but never its access, so the sheet shows them nothing of it. */
 	it('shows nothing and asks nothing of somebody who does not own the vehicle', async () => {
 		const wrapper = await section({ uuid: 'v-1', may: ['view', 'log', 'edit', 'delete'] })
 
@@ -153,7 +152,6 @@ describe('the Access section', () => {
 		expect(addGrant).toHaveBeenCalledWith('v-1', expect.objectContaining({ grantee: 'crew', grantee_type: 'group' }), 'manager')
 		expect(rows(wrapper)).toEqual(['Anna O\'Brien', 'R&D'])
 		expect(wrapper.findComponent(NcSelectUsers).props('modelValue')).toBeNull()
-		// Somebody else has access from now on, which the vehicle screen shows Bookings by.
 		expect(wrapper.emitted('granted')).toHaveLength(1)
 	})
 
@@ -214,5 +212,24 @@ describe('the Access section', () => {
 
 		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('Access was not changed: role is one of viewer, driver, manager')
 		expect(select(wrapper, 'Role of Anna O\'Brien').props('modelValue').id).toBe('driver')
+	})
+
+	/** Core's search can offer somebody the grant then refuses: gone since, or sharing narrowed. */
+	it.each(/** @type {['user'|'group', string][]} */ ([
+		['user', 'You cannot give this account access.'],
+		['group', 'You cannot give this group access.'],
+	]))('puts a refused %s into words', async (type, words) => {
+		vi.mocked(searchGrantees).mockResolvedValue([{ grantee: 'ben', grantee_type: type, display_name: 'Ben' }])
+		vi.mocked(addGrant).mockRejectedValue(new Error(`grantee is no ${type} you may grant to`))
+		const wrapper = await section()
+
+		await wrapper.findComponent(NcSelectUsers).vm.$emit('search', 'be')
+		await flushPromises()
+		await wrapper.findComponent(NcSelectUsers).vm.$emit('update:modelValue', wrapper.findComponent(NcSelectUsers).props('options')[0])
+		await button(wrapper, 'Give access').vm.$emit('click')
+		await flushPromises()
+
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe(words)
+		expect(rows(wrapper)).toEqual(['Anna O\'Brien', 'R&D'])
 	})
 })

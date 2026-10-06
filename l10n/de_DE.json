@@ -4,6 +4,7 @@
 		"%1$s gave you access to %2$s as a manager": "%1$s hat Ihnen Zugriff auf %2$s als Verwalter gegeben",
 		"%1$s gave you access to %2$s as a viewer": "%1$s hat Ihnen Zugriff auf %2$s als Betrachter gegeben",
 		"%1$s is due": "%1$s ist fällig",
+		"%1$s is due at %2$s h": "%1$s ist bei %2$s h fällig",
 		"%1$s is due at %2$s km": "%1$s ist bei %2$s km fällig",
 		"%1$s is due on %2$s": "%1$s ist am %2$s fällig",
 		"%1$s is due today": "%1$s ist heute fällig",
@@ -604,7 +605,21 @@
 		"Remove access": "Zugriff entfernen",
 		"Odometer at departure": "Kilometerstand bei Abfahrt",
 		"Odometer at arrival": "Kilometerstand bei Ankunft",
-		"Consumption needs the odometer reading.": "Für den Verbrauch wird der Kilometerstand gebraucht."
+		"Consumption needs the odometer reading.": "Für den Verbrauch wird der Kilometerstand gebraucht.",
+		"You cannot give this account access.": "Sie können diesem Konto keinen Zugriff gewähren.",
+		"You cannot give this group access.": "Sie können dieser Gruppe keinen Zugriff gewähren.",
+		"You cannot add this account to the list.": "Sie können dieses Konto nicht in die Liste aufnehmen.",
+		"A reminder of your own needs a title.": "Eine eigene Erinnerung braucht einen Titel.",
+		"The title is longer than 255 characters.": "Der Titel ist länger als 255 Zeichen.",
+		"A reminder due by date needs a due date.": "Eine Erinnerung, die nach Datum fällig wird, braucht ein Fälligkeitsdatum.",
+		"A reminder due by the counter needs the reading it is due at.": "Eine Erinnerung, die nach Zählerstand fällig wird, braucht den Stand, bei dem sie fällig ist.",
+		"A reminder due by date or counter repeats by both or by neither. Fill in both repeat fields, or leave both empty.": "Eine Erinnerung nach Datum oder Zählerstand wiederholt sich nach beidem oder nach keinem. Füllen Sie beide Wiederholungsfelder aus oder lassen Sie beide leer.",
+		"A repeat is more than zero. Leave the field empty for no repeat.": "Eine Wiederholung ist größer als null. Lassen Sie das Feld leer, wenn sich nichts wiederholen soll.",
+		"A reminder repeats every {max} months at most.": "Eine Erinnerung wiederholt sich höchstens alle {max} Monate.",
+		"A snooze ends on a day still to come.": "Zurückstellen geht nur bis zu einem Tag, der noch kommt.",
+		"This reminder was done or skipped somewhere else meanwhile.": "Diese Erinnerung wurde inzwischen woanders erledigt oder übersprungen.",
+		"The field {field} takes {max} characters at most.": "Das Feld {field} fasst höchstens {max} Zeichen.",
+		"You have no access of your own to give back any more.": "Sie haben keinen eigenen Zugriff mehr, den Sie zurückgeben können."
 	},
 	"pluralForm": "nplurals=2; plural=(n != 1);"
 }

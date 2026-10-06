@@ -9,14 +9,8 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Controller;
 
 use OCA\NextFleet\Db\Trip;
-use OCA\NextFleet\Exception\AccessDeniedException;
-use OCA\NextFleet\Exception\AlreadyCreatedException;
-use OCA\NextFleet\Exception\BookingConflictException;
-use OCA\NextFleet\Exception\RefusedException;
-use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\TripService;
 use OCP\AppFramework\Controller;
-use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Http;
 use OCP\AppFramework\Http\Attribute\NoAdminRequired;
 use OCP\AppFramework\Http\Attribute\UserRateLimit;
@@ -29,7 +23,7 @@ use OCP\IUserSession;
  * check.
  */
 class TripController extends Controller {
-	use RequestValues;
+	use EntryAnswers;
 
 	public function __construct(
 		string $appName,
@@ -47,16 +41,16 @@ class TripController extends Controller {
 	#[NoAdminRequired]
 	#[UserRateLimit(limit: 60, period: 60)]
 	public function create(string $uuid): DataResponse {
-		return $this->answer(
-			fn (): Trip => $this->service->record($this->userId(), $uuid, $this->request->getParams()),
+		return $this->answer(fn (): DataResponse => new DataResponse(
+			$this->service->record($this->userId(), $uuid, $this->request->getParams()),
 			Http::STATUS_CREATED,
-		);
+		));
 	}
 
 	/** What the sheet completes route, purpose and partner from: this vehicle's own trips. */
 	#[NoAdminRequired]
 	public function prefill(string $uuid): DataResponse {
-		return $this->answer(fn (): array => $this->service->prefill($this->userId(), $uuid));
+		return $this->answer(fn (): DataResponse => new DataResponse($this->service->prefill($this->userId(), $uuid)));
 	}
 
 	/**
@@ -69,9 +63,7 @@ class TripController extends Controller {
 	#[NoAdminRequired]
 	#[UserRateLimit(limit: 60, period: 60)]
 	public function update(string $uuid, string $trip): DataResponse {
-		return $this->answer(
-			fn (): Trip => $this->service->update($this->userId(), $uuid, $trip, $this->token(), $this->request->getParams()),
-		);
+		return $this->checked(fn (int $token): Trip => $this->service->update($this->userId(), $uuid, $trip, $token, $this->request->getParams()));
 	}
 
 	/**
@@ -83,7 +75,7 @@ class TripController extends Controller {
 	#[NoAdminRequired]
 	#[UserRateLimit(limit: 60, period: 60)]
 	public function delete(string $uuid, string $trip): DataResponse {
-		return $this->answer(fn (): Trip => $this->service->delete($this->userId(), $uuid, $trip, $this->token()));
+		return $this->checked(fn (int $token): Trip => $this->service->delete($this->userId(), $uuid, $trip, $token));
 	}
 
 	/**
@@ -92,7 +84,7 @@ class TripController extends Controller {
 	#[NoAdminRequired]
 	#[UserRateLimit(limit: 60, period: 60)]
 	public function restore(string $uuid, string $trip): DataResponse {
-		return $this->answer(fn (): Trip => $this->service->restore($this->userId(), $uuid, $trip, $this->token()));
+		return $this->checked(fn (int $token): Trip => $this->service->restore($this->userId(), $uuid, $trip, $token));
 	}
 
 	/**
@@ -106,52 +98,9 @@ class TripController extends Controller {
 	#[NoAdminRequired]
 	#[UserRateLimit(limit: 60, period: 60)]
 	public function reconcile(string $uuid, string $trip): DataResponse {
-		return $this->answer(
-			fn (): Trip => $this->service->reconcile($this->userId(), $uuid, $trip, ...$this->gap()),
+		return $this->answer(fn (): DataResponse => new DataResponse(
+			$this->service->reconcile($this->userId(), $uuid, $trip, ...$this->gap()),
 			Http::STATUS_CREATED,
-		);
-	}
-
-	/**
-	 * The two answers every route here shares: the trip a client asked for, or the reason it is
-	 * not getting one.
-	 *
-	 * @param callable():(Trip|array<string, list<string>>) $work
-	 */
-	private function answer(callable $work, int $status = Http::STATUS_OK): DataResponse {
-		try {
-			return new DataResponse($work(), $status);
-		} catch (AlreadyCreatedException $e) {
-			return new DataResponse($e->answer);
-		} catch (DoesNotExistException) {
-			return new DataResponse(['message' => 'No such vehicle'], Http::STATUS_NOT_FOUND);
-		} catch (AccessDeniedException) {
-			return new DataResponse(['message' => 'Not yours'], Http::STATUS_FORBIDDEN);
-		} catch (BookingConflictException $e) {
-			// A trip logged from a booking not back yet, or logged already: EntryAnswers' answer.
-			return new DataResponse(['message' => $e->getMessage(), 'booking' => $e->booking], Http::STATUS_CONFLICT);
-		} catch (StaleUpdateException) {
-			// `conflict` is what tells this apart from Nextcloud's own failed CSRF check, which
-			// is a 412 as well (docs/architecture.md#concurrency).
-			return new DataResponse(
-				['message' => 'Changed since you read it', 'conflict' => true],
-				Http::STATUS_PRECONDITION_FAILED,
-			);
-		} catch (RefusedException $e) {
-			return new DataResponse(['message' => $e->getMessage(), 'reason' => $e->reason], Http::STATUS_BAD_REQUEST);
-		} catch (\InvalidArgumentException $e) {
-			return new DataResponse(['message' => $e->getMessage()], Http::STATUS_BAD_REQUEST);
-		}
-	}
-
-	private function userId(): string {
-		$user = $this->session->getUser();
-		if ($user === null) {
-			// The route requires a login, so this is a broken container rather than an anonymous
-			// request.
-			throw new \RuntimeException('No user in session');
-		}
-
-		return $user->getUID();
+		));
 	}
 }

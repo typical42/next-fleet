@@ -28,8 +28,8 @@ import { appPage, login, logout } from '../tests/e2e/app.js'
 const baseURL = process.env.NEXTFLEET_URL_NC34 ?? 'http://localhost:8080'
 const out = 'design/screenshots'
 
-// The store's own listing is narrow, so a wide desktop shot reads as a smear of whitespace.
-// This is the width at which the navigation and the content column both still carry weight.
+// The store's listing is narrow and a wide shot reads as whitespace; at this width the navigation
+// and the content column both still carry weight.
 const viewport = { width: 1280, height: 800 }
 const thumbnail = { width: 460, height: 288 }
 // Tall enough for the CO₂ estimate under the year's table.
@@ -62,9 +62,8 @@ await mkdir(out, { recursive: true })
 await login(page, 'admin', 'admin')
 await page.goto(appPage)
 
-// The overview: every seeded vehicle in one list, counters included. The seed asks the logbook
-// question of each German vehicle, a card that would push the fleet out of frame; it is hidden as
-// answering it would hide it, since answering would change admin's preferences for good.
+// The overview. The logbook question each German vehicle asks would push the fleet out of frame;
+// CSS hides it, since answering it would change admin's preferences for good.
 await page.getByRole('main').getByRole('listitem').first().waitFor()
 await page.addStyleTag({ content: '#nextfleet .hint > :has(.hint__ask) { display: none; }' })
 await shoot(page, 'overview')
@@ -74,9 +73,8 @@ await page.locator('.app-navigation').getByText('NF-DE 100').click()
 await page.getByRole('heading', { name: 'NF-DE 100' }).waitFor()
 await shoot(page, 'vehicle')
 
-// The entry sheet, open. `waitFor` returns as soon as the dialog has a box, which is before
-// NcDialog has finished fading it in - a screenshot taken then catches it at opacity 0. Waiting
-// on a control inside it, and then on the animation, is what makes the picture reproducible.
+// The entry sheet. The dialog has a box before NcDialog has faded it in from opacity 0, so wait on
+// a control inside it and then on the animation.
 await page.getByRole('button', { name: 'New entry' }).click()
 const sheet = page.getByRole('dialog', { name: 'New entry' })
 await sheet.getByRole('button', { name: 'Save' }).waitFor()
@@ -110,11 +108,9 @@ await page.getByRole('option').filter({ hasText: 'NF-DE 100' }).click()
 await reports.getByRole('link', { name: 'Open mileage claim' }).waitFor()
 await shoot(page, 'reports')
 
-// The thumbnail is the overview again at listing size, not a scaled copy: the store puts it
-// beside the title, where a shrunk 1280px shot is unreadable.
-// The seeded fleet has a vehicle with details missing, whose hint fills the frame at this size.
-// It is hidden here as a dismissal would hide it; dismissing it for real would change admin's
-// preferences, which the seed does not reset.
+// The overview again at listing size, not a scaled copy: beside the store's title a shrunk 1280px
+// shot is unreadable. The missing-details hint would fill the frame; CSS hides it, since
+// dismissing it would change admin's preferences, which the seed does not reset.
 await page.setViewportSize(thumbnail)
 await page.goto(appPage)
 await page.getByRole('main').getByRole('listitem').first().waitFor()

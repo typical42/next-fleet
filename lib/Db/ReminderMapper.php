@@ -22,24 +22,6 @@ class ReminderMapper extends BaseMapper {
 	}
 
 	/**
-	 * One vehicle's live reminders, in the order they were made. Urgency is an evaluation at an
-	 * instant, not a column, so it is not this query's to sort by.
-	 *
-	 * @return list<Reminder>
-	 * @throws \OCP\DB\Exception
-	 */
-	public function findByVehicle(int $vehicleId): array {
-		$qb = $this->db->getQueryBuilder();
-		$qb->select('*')
-			->from($this->tableName)
-			->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
-			->andWhere($qb->expr()->isNull('deleted_at'))
-			->orderBy('id');
-
-		return $this->findEntities($qb);
-	}
-
-	/**
 	 * findByVehicle() for many vehicles in one query, by vehicle.
 	 *
 	 * @param list<int> $vehicleIds

@@ -214,8 +214,8 @@ class OdoReadingMapper extends BaseMapper {
 	}
 
 	/**
-	 * The condition that keeps a query on one counter. A null `counter` is `main`: every Reading
-	 * from before M3 is on the only counter there was (OdoReading::getCounter()).
+	 * The condition that keeps a query on one counter. A null `counter` is `main`
+	 * (OdoReading::getCounter()).
 	 *
 	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
 	 */
@@ -427,10 +427,8 @@ class OdoReadingMapper extends BaseMapper {
 	}
 
 	/**
-	 * The one Reading a trip left on the counter (rule 5), whatever state it is in. `deleted_at`
-	 * is not filtered for the reason `findAnyByUuid` does not filter it: the caller is the one
-	 * that voids the Reading with its trip and brings it back with it, so a voided one is
-	 * precisely the row it is after.
+	 * The one Reading a trip left on the counter (rule 5), deleted or not: the caller voids it with
+	 * its trip and brings it back with it.
 	 *
 	 * @throws \OCP\DB\Exception
 	 */
@@ -451,7 +449,7 @@ class OdoReadingMapper extends BaseMapper {
 
 	/**
 	 * The reading a distance counts from: the newest one on that counter at or before that moment,
-	 * in the same order. Null when the chain has none yet, which is a distance with nothing to add to.
+	 * in findChain()'s order. Null when the chain has none yet.
 	 *
 	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
 	 * @param ?int $except a Reading that is not a candidate: the one being restated

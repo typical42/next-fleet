@@ -97,7 +97,6 @@ beforeEach(() => {
 })
 
 describe('the inbox sheet', () => {
-	/** Attaching takes `log` at least (docs/architecture.md#documents); a viewer's car is not offered. */
 	it('offers the vehicles the session may file papers on, the first of them picked', async () => {
 		const wrapper = await sheet()
 
@@ -111,7 +110,6 @@ describe('the inbox sheet', () => {
 		expect(select(wrapper, 'Vehicle').props('modelValue').id).toBe('v-2')
 	})
 
-	/** The common case is two taps: the file, then Attach. A photographed receipt is a receipt. */
 	it('attaches a receipt to the vehicle in one more tap', async () => {
 		const wrapper = await sheet()
 		expect(select(wrapper, 'What it is').props('modelValue').id).toBe('receipt')
@@ -123,10 +121,6 @@ describe('the inbox sheet', () => {
 		expect(wrapper.emitted('attached')).toEqual([['v-1']])
 	})
 
-	/**
-	 * A driver's paper must hang on a row of their own, so one is picked for them: their newest
-	 * entry, since a receipt is a fill-up's or an invoice's, not a booking's.
-	 */
 	it('picks a driver\'s newest own entry, and attaches to it', async () => {
 		const wrapper = await sheet({ preferred: 'v-2' })
 
@@ -158,7 +152,6 @@ describe('the inbox sheet', () => {
 		expect(wrapper.findComponent(NcNoteCard).props('text')).toContain('only to an entry or a booking of your own')
 	})
 
-	/** A failed read is not "none of your own": it says what went wrong and reads again on request. */
 	it('says the rows could not be read, and reads them again', async () => {
 		vi.mocked(listBookings).mockRejectedValueOnce(new Error('The server answered 500'))
 		const wrapper = await sheet({ preferred: 'v-2' })
@@ -174,7 +167,6 @@ describe('the inbox sheet', () => {
 		expect(select(wrapper, 'Belongs to').props('modelValue').id).toBe('e-1')
 	})
 
-	/** A 404 is the file not being the person's own any more (docs/architecture.md#documents). */
 	it('stays open with what went wrong', async () => {
 		vi.mocked(attachDocument).mockRejectedValue(new NotFoundError('No such vehicle'))
 		const wrapper = await sheet()
@@ -195,7 +187,6 @@ describe('the inbox sheet', () => {
 		expect(wrapper.emitted('log')).toEqual([[{ vehicle: 'v-2', type: 'maintenance', kind: 'receipt' }]])
 	})
 
-	/** The entry sheet offers no fill-up to a vehicle that names no energy, and neither does this. */
 	it('offers a fill-up only on a vehicle that takes one', async () => {
 		const wrapper = await sheet()
 		expect(button(wrapper, 'New fill-up')).toBeUndefined()
@@ -206,7 +197,6 @@ describe('the inbox sheet', () => {
 		expect(button(wrapper, 'New fill-up')).toBeDefined()
 	})
 
-	/** The same search as the documents section (src/utils/owners.js): a receipt filed late belongs far back. */
 	it('searches the whole history for what it belongs to, once per vehicle', async () => {
 		const OLDER = { ...WORK, occurred_at: 1705316400, maintenance: { uuid: 'm-0', title: 'Timing belt' } }
 		vi.mocked(readTimeline).mockImplementation(async (uuid, { type, cursor }) => type !== 'maintenance' || uuid !== 'v-2'
@@ -227,7 +217,6 @@ describe('the inbox sheet', () => {
 		expect(select(wrapper, 'Belongs to').props('options').map((/** @type {any} */ one) => one.id)).toEqual(['b-1', 'e-1', 'm-1'])
 	})
 
-	/** Their own may lie further back than the newest pages, where only a search reaches. */
 	it('offers a driver with nothing of their own among the newest the search', async () => {
 		vi.mocked(readTimeline).mockResolvedValue({ rows: [], next: null })
 		vi.mocked(listBookings).mockResolvedValue([])

@@ -23,7 +23,7 @@ const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
 	vehicle: { type: Object, required: true },
 	/**
-	 * The vehicle's documents, read by its documents section. Those linked to an entry show on its row.
+	 * The vehicle's documents; those linked to an entry show on its row.
 	 *
 	 * @type {import('vue').PropType<import('../services/api.js').Document[]>}
 	 */
@@ -35,18 +35,17 @@ defineEmits(['open', 'new', 'import'])
 
 const store = useVehiclesStore()
 
-/** The chip. The empty one is every kind, which is the absent parameter (src/services/api.js). */
+/** The chosen chip; '' is every kind, the absent parameter (src/services/api.js). */
 const chip = ref('')
 
 /**
- * How many pages are on screen at most. Years of entries scrolled through would otherwise put
- * thousands of rows in the page; the ones above go as the next come, and stay in hand to come
- * back. What is shown keeps its reading order, so a keyboard walks it as before.
+ * Pages on screen at most, so years of entries do not put thousands of rows in the page. Pages
+ * above stay in hand to come back; what is shown keeps its reading order for the keyboard.
  */
 const WINDOW = 4
 
 /**
- * Every page read so far, in order, each row marked raw: a row is replaced, never changed in
+ * Every page read so far, in order. Rows are marked raw: a row is replaced, never changed in
  * place, so Vue need not watch every field of thousands.
  *
  * @type {import('vue').ShallowRef<import('../services/api.js').Entry[][]>}
@@ -61,11 +60,11 @@ const below = computed(() => first.value + WINDOW < pages.value.length)
 const next = ref(null)
 const loading = ref(false)
 const failure = ref('')
-/** True until the current list's first page is in, which is what tells an empty list from an unread one. */
+/** True until the first page is in: tells an empty list from an unread one. */
 const unread = ref(true)
 /**
- * The vehicle's Gaps, whole rather than paged, or null until they are read. Read only under Logbook
- * Mode, the only place they are said (docs/features.md#logbook-mode).
+ * The vehicle's Gaps, whole rather than paged, or null until read. Read only under Logbook Mode
+ * (docs/features.md#logbook-mode).
  *
  * @type {import('vue').Ref<import('../services/api.js').Gap[]|null>}
  */
@@ -77,15 +76,14 @@ const chips = computed(() => [
 	{ value: 'odometer', label: t('nextfleet', 'Odometer') },
 	{ value: 'energy', label: t('nextfleet', 'Energy') },
 	{ value: 'maintenance', label: t('nextfleet', 'Maintenance') },
-	// Energy and maintenance cost money too, but have chips of their own; this one is the rest. Not
-	// "Costs": that is the header's button, which opens the whole bill.
+	// Energy and maintenance have chips of their own; this is the rest. Not "Costs": that is the
+	// header's button for the whole bill.
 	{ value: 'expense', label: t('nextfleet', 'Expenses') },
 ])
 
 /**
- * The rows under their months. Grouped here rather than by the server, because it is a question
- * about how the list reads and the answer depends on the reader's locale (src/utils/format.js).
- * The list is already ordered, so one pass over it is the grouping.
+ * The rows under their months. Grouped here, not by the server, because the month's words are the
+ * reader's locale (src/utils/format.js). The list is ordered, so one pass groups it.
  */
 const groups = computed(() => {
 	// A Gap belongs to the month of the trip whose claim opened it, which is where that trip's row is.
@@ -167,9 +165,8 @@ const question = computed(() => {
 })
 
 /**
- * An element whose coming into view asks `onSeen`: the ends of the list. It comes and goes with
- * the pages, so the observer follows it rather than being set up once. A browser without one still
- * has the button inside it.
+ * An end of the list whose coming into view calls `onSeen`. It comes and goes with the pages, so
+ * the observer follows it. Without IntersectionObserver the button inside it is the way on.
  *
  * @param {() => void} onSeen - what its coming into view asks for
  * @return {{element: import('vue').Ref<HTMLElement|null>, again: () => void}} the element's ref,
@@ -199,8 +196,7 @@ function sentinelOf(onSeen) {
 	return {
 		element,
 		// An element that never leaves the viewport fires no second intersection, so a page that
-		// did not fill the screen would leave the rest of the list unreachable. Asking the observer
-		// the question again is what unsticks it.
+		// did not fill the screen would stall the list. Observing again unsticks it.
 		again() {
 			if (element.value !== null && observer !== null) {
 				observer.unobserve(element.value)
@@ -210,9 +206,8 @@ function sentinelOf(onSeen) {
 	}
 }
 
-// A refused page stops the scrolling from asking the server again: it would ask on every pixel and
-// get the same answer. The button inside the sentinel is what still asks, which is why the retry
-// does not go through here. Pages already read below are no question to the server.
+// After a refusal the scroll stops asking: it would ask on every pixel and get the same answer.
+// The button still retries, which is why it does not go through here. Pages below need no server.
 const end = sentinelOf(() => (below.value || failure.value === '') && more())
 const start = sentinelOf(() => newer())
 // What the template's refs bind to.
@@ -224,12 +219,10 @@ const root = ref(null)
 
 onMounted(reload)
 
-// A chip is a different question and is asked from the top: a cursor the previous chip handed out
-// names a place in an order the narrower list does not have (docs/architecture.md#the-timeline).
-// The shell keeps one vehicle screen and swaps the vehicle under it (src/App.vue), so the second is
-// the same kind of event: the list this component holds belongs to the vehicle it was read for.
-// The mode is the third: switched on, the list has Gaps to state that were never read. A question
-// about a Gap belongs to the list it was asked from.
+// Each starts the list over from the top. A chip: the previous chip's cursor names a place in an
+// order the narrower list lacks (docs/architecture.md#the-timeline). A vehicle: the shell swaps it
+// under one screen (src/App.vue). Logbook Mode switched on: its Gaps were never read. An open Gap
+// question belongs to the list it was asked from.
 watch([chip, () => props.vehicle.uuid, () => props.vehicle.logbook_mode === true], () => {
 	closing.value = null
 	reload()
@@ -240,15 +233,14 @@ watch([chip, () => props.vehicle.uuid, () => props.vehicle.logbook_mode === true
 watch(() => store.restored, reload)
 
 /**
- * Which list is being read, bumped by every question that replaces it - another chip, another
- * vehicle, a write to read back. A page in the air when one of those lands is an answer to a
- * question nobody is asking any more, so it is dropped rather than rendered under the new one.
+ * Which list is being read, bumped by every question that replaces it: a chip, a vehicle, a write
+ * to read back. A page still in the air then answers a question nobody asks, and is dropped.
  */
 let asked = 0
 
 /**
- * Reads the whole list again, from the top. The screen calls it after an entry was written: the row
- * just entered is the one the driver is looking for.
+ * Reads the whole list again from the top. The screen calls it after a write: the row just entered
+ * is the one the driver looks for.
  *
  * @return {Promise<void>} when the first page is in
  */
@@ -264,9 +256,8 @@ async function reload() {
 }
 
 /**
- * The next page, from where the last one stopped: one already read if the window is above it, else
- * the server's. Both ways on lead here: the bottom of the list coming into view, and the button
- * sitting in it.
+ * The next page: one already read if the window is above it, else the server's. Reached from the
+ * bottom sentinel and from the button in it.
  *
  * @return {Promise<void>} when it is in
  */
@@ -282,7 +273,7 @@ async function more() {
 }
 
 /**
- * The page above the window back on screen, from what was read: the server is not asked twice.
+ * Shows the page above the window again, from what was read: the server is not asked twice.
  *
  * @return {Promise<void>} when it is shown
  */
@@ -294,9 +285,8 @@ async function newer() {
 }
 
 /**
- * Moves the window by one page and keeps the reader's place: the first row of a page on screen
- * before and after stays where it was on screen. Browsers that anchor scrolling do this
- * themselves, and then nothing moves here; the rest would jump by a page of rows.
+ * Moves the window by one page and keeps the reader's place: a row on screen before and after
+ * stays put. Browsers that anchor scrolling do this themselves; the rest would jump by a page.
  *
  * @param {1|-1} by - down or up
  * @return {Promise<void>} when it has moved
@@ -340,8 +330,8 @@ async function page(question) {
 	loading.value = true
 	failure.value = ''
 	try {
-		// The Gaps travel with the page until they are in. A header that said nothing because they
-		// never arrived would read as a month with none, so their refusal is the page's.
+		// The Gaps travel with the page until they are in. A header silent because they never
+		// arrived would read as a month with none, so their refusal is the page's.
 		const owed = gaps.value === null && props.vehicle.logbook_mode === true
 		const [answered, found] = await Promise.all([
 			readTimeline(props.vehicle.uuid, { type: chip.value, cursor: next.value }),
@@ -364,8 +354,7 @@ async function page(question) {
 			failure.value = error.message
 		}
 	} finally {
-		// Not the superseded page's to settle: the one that replaced it is still reading, and its
-		// own call clears these when it is done.
+		// A superseded page leaves these to the one that replaced it, which is still reading.
 		if (question === asked) {
 			loading.value = false
 			unread.value = false
@@ -374,8 +363,6 @@ async function page(question) {
 }
 
 /**
- * Opens the question about one Gap.
- *
  * @param {import('../services/api.js').Gap} gap - the Gap a row offered to close
  */
 function ask(gap) {
@@ -392,8 +379,8 @@ function dismiss() {
 }
 
 /**
- * Closes the Gap the driver confirmed, and reads the list again: the trip it wrote is a new row, and
- * the month's header no longer has that Gap to state.
+ * Closes the confirmed Gap and reads the list again: the trip it wrote is a new row, and the
+ * month's header no longer states that Gap.
  *
  * @return {Promise<void>} when it is closed, or the refusal is on screen
  */
@@ -421,9 +408,8 @@ async function confirm() {
 const rowFailure = ref('')
 
 /**
- * Voids a Reconciliation Trip a later trip overtook, from the row that says so, and holds the way
- * back as the sheet's void does (store.strike()). Read again either way: the row it voided goes,
- * or the one that moved is shown as it is now.
+ * Voids a Reconciliation Trip a later trip overtook, with the way back the sheet's void has
+ * (store.strike()). Read again either way: the voided row goes, or a moved one shows as it is now.
  *
  * @param {import('../services/api.js').Entry} entry - the row
  * @return {Promise<void>} when it is voided and the list read again, or the refusal is on screen
@@ -470,8 +456,8 @@ defineExpose({ reload })
 	<section ref="root" class="timeline">
 		<div class="timeline__head">
 			<h3>{{ t('nextfleet', 'Timeline') }}</h3>
-			<!-- The chips are one choice out of six, which is what a radio group is - and it is the
-			     chooser the rest of the app already uses (src/components/EntrySheet.vue). -->
+			<!-- One choice out of six is a radio group, the chooser the app uses elsewhere
+			     (src/components/EntrySheet.vue). -->
 			<NcRadioGroup v-model="chip" class="timeline__chips" :label="t('nextfleet', 'Show')">
 				<NcRadioGroupButton v-for="one in chips"
 					:key="one.value"
@@ -504,8 +490,8 @@ defineExpose({ reload })
 		</div>
 
 		<div v-for="group in groups" :key="group.key" class="timeline__group">
-			<!-- Sticky, so the month a row belongs to is on screen however far down the list somebody
-			     has scrolled (docs/ui.md). -->
+			<!-- Sticky, so a row's month stays on screen however far down one scrolls
+			     (docs/ui.md). -->
 			<h4 class="timeline__month">
 				{{ group.month }}
 				<span v-if="group.gap" class="timeline__gap">

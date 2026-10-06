@@ -4,7 +4,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { addGrant, addRecipient, attachDocument, BookingConflictError, cancelBooking, ChangedError, changeBooking, changeGrant, checkIn, checkOut, closeGap, createBooking, ImportRefusedError, listBookings, ConflictError, previewImport, runImport, undoImport, createReminder, createVehicle, csvUrl, deleteEntry, deleteVehicle, detachDocument, dismissReminder, documentUrl, fetchDocument, getPreferences, LockedError, restoreDocument, listDocuments, listFleetReminders, listGrants, listRecipients, listReminders, listVehicles, logbookUrl, mileageClaimUrl, NotFoundError, OfflineError, readEntry, readGaps, readInbox, readKpis, readTimeline, readYear, recordReading, recordTrip, RefusedError, reminderTemplates, removeRecipient, resetReading, restoreEntry, revokeGrant, searchGrantees, searchUsers, restoreVehicle, savePreferences, snoozeReminder, stickerUrl, thumbnailUrl, updateEntry, updateVehicle } from './api.js'
+import { addGrant, addRecipient, attachDocument, BookingConflictError, cancelBooking, ChangedError, changeBooking, changeGrant, checkIn, checkOut, closeGap, createBooking, ImportRefusedError, listBookings, ConflictError, previewImport, runImport, undoImport, createReminder, createVehicle, csvUrl, deleteEntry, deleteVehicle, detachDocument, dismissReminder, documentUrl, energyPrefill, expensePrefill, fetchDocument, getPreferences, getVehicle, leaveVehicle, LockedError, maintenancePrefill, readHeld, recordEnergy, recordExpense, recordMaintenance, tripPrefill, restoreDocument, listDocuments, listFleetReminders, listGrants, listRecipients, listReminders, listVehicles, logbookUrl, mileageClaimUrl, NotFoundError, OfflineError, readEntry, readGaps, readInbox, readKpis, readTimeline, readYear, recordReading, recordTrip, RefusedError, reminderTemplates, removeRecipient, resetReading, restoreEntry, revokeGrant, searchGrantees, searchUsers, restoreVehicle, savePreferences, snoozeReminder, stickerUrl, thumbnailUrl, updateEntry, updateVehicle } from './api.js'
 
 vi.mock('@nextcloud/router', () => ({
 	generateUrl: (/** @type {string} */ path) => `/index.php${path}`,
@@ -52,11 +52,7 @@ describe('listVehicles', () => {
 })
 
 describe('a request that never reached the server', () => {
-	/**
-	 * fetch rejects with a TypeError when there is no network, in words that differ per browser
-	 * ("Failed to fetch", "Load failed"). A driver with no signal is told so, and that what they
-	 * typed is still there (docs/ui.md, a failed save is never lost).
-	 */
+	/** Offline, fetch throws a TypeError worded per browser ("Failed to fetch", "Load failed"). */
 	it('says there is no connection, whatever the browser called it', async () => {
 		vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Load failed')))
 
@@ -75,10 +71,6 @@ describe('a request that never reached the server', () => {
 })
 
 describe('createVehicle', () => {
-	/**
-	 * The create sheet asks four fields (docs/ui.md); everything else the server decides, so the
-	 * answer is what the client keeps - identity and token included.
-	 */
 	it('sends what the sheet asked for and keeps what the server made of it', async () => {
 		const fetch = answers(201, vehicle)
 
@@ -92,10 +84,6 @@ describe('createVehicle', () => {
 })
 
 describe('recordReading', () => {
-	/**
-	 * A new Reading hangs off its vehicle and carries no token: nothing was read that it could lose
-	 * a race against (docs/architecture.md#concurrency).
-	 */
 	it('posts to the vehicle the reading belongs to', async () => {
 		const fetch = answers(201, { uuid: 'r1', value: 148320, origin: 'observed', flagged: false })
 
@@ -109,12 +97,7 @@ describe('recordReading', () => {
 })
 
 describe('recordTrip', () => {
-	/**
-	 * A trip hangs off its vehicle and carries no token either: it is written, and under Logbook
-	 * Mode later revised through the audit trail rather than overwritten
-	 * (docs/architecture.md#concurrency). What comes back is the row the server wrote, which is
-	 * not what was sent - `reconciled` is the app's to set (lib/Service/TripService.php).
-	 */
+	/** `reconciled` is the server's to set: the answer is the row it wrote, not what was sent. */
 	it('posts to the vehicle the trip belongs to and answers with the row the server wrote', async () => {
 		const fetch = answers(201, { uuid: 't1', end_odo: 148402, distance: null, reconciled: false })
 
@@ -128,14 +111,35 @@ describe('recordTrip', () => {
 	})
 })
 
+describe('the calls that only name their route', () => {
+	const at = 'at=1750000000&off=120'
+	it.each([
+		['getVehicle', () => getVehicle(vehicle.uuid), 'GET', '', undefined],
+		['tripPrefill', () => tripPrefill(vehicle.uuid), 'GET', '/trips/prefill', undefined],
+		['recordEnergy', () => recordEnergy(vehicle.uuid, { amount: 42000 }), 'POST', '/energy', { amount: 42000 }],
+		['energyPrefill', () => energyPrefill(vehicle.uuid, 1750000000, 120), 'GET', `/energy/prefill?${at}`, undefined],
+		['recordMaintenance', () => recordMaintenance(vehicle.uuid, { title: 'Oil' }), 'POST', '/maintenance', { title: 'Oil' }],
+		['maintenancePrefill', () => maintenancePrefill(vehicle.uuid, 1750000000, 120), 'GET', `/maintenance/prefill?${at}`, undefined],
+		['recordExpense', () => recordExpense(vehicle.uuid, { amount: 300 }), 'POST', '/expenses', { amount: 300 }],
+		['expensePrefill', () => expensePrefill(vehicle.uuid, 1750000000, 120), 'GET', `/expenses/prefill?${at}`, undefined],
+		['expensePrefill with a category', () => expensePrefill(vehicle.uuid, 1750000000, 120, 'tax'), 'GET', `/expenses/prefill?${at}&category=tax`, undefined],
+		['readHeld', () => readHeld(vehicle.uuid), 'GET', '/access', undefined],
+		['leaveVehicle', () => leaveVehicle(vehicle.uuid), 'DELETE', '/access', undefined],
+	])('%s asks its route and answers what the server said', async (_, call, method, path, body) => {
+		const fetch = answers(200, { answered: true })
+
+		expect(await call()).toEqual({ answered: true })
+
+		const [url, options] = fetch.mock.calls[0]
+		expect(url).toBe(`/index.php/apps/nextfleet/api/vehicles/${vehicle.uuid}${path}`)
+		expect(options.method).toBe(method)
+		expect(options.body === undefined ? undefined : JSON.parse(options.body)).toEqual(body)
+	})
+})
+
 describe('readTimeline', () => {
 	const page = { rows: [{ type: 'trip', occurred_at: 1750000000, occurred_at_off: 120 }], next: null }
 
-	/**
-	 * The chip and the scroll position are the query string's, and both are optional: a request
-	 * that sends neither asks for the newest rows of every kind
-	 * (lib/Controller/TimelineController.php).
-	 */
 	it('asks for the newest rows of every kind when nothing narrows it', async () => {
 		const fetch = answers(200, page)
 
@@ -148,10 +152,7 @@ describe('readTimeline', () => {
 		expect(answered.rows).toHaveLength(1)
 	})
 
-	/**
-	 * The cursor is the server's own word handed back (docs/architecture.md#the-timeline), so it
-	 * travels as it was given - `:` and all, which is what encoding it as a parameter is for.
-	 */
+	/** The server's cursor, `:` and all, travels as given (docs/architecture.md#the-timeline). */
 	it('sends the chip and the cursor it was handed', async () => {
 		const fetch = answers(200, page)
 
@@ -162,7 +163,6 @@ describe('readTimeline', () => {
 		expect(url).toContain(`cursor=${encodeURIComponent('1750000000:trip:42')}`)
 	})
 
-	/** A chip that narrows nothing is the absent parameter, not an empty one the server refuses. */
 	it('leaves out what was not narrowed', async () => {
 		const fetch = answers(200, page)
 
@@ -173,10 +173,6 @@ describe('readTimeline', () => {
 })
 
 describe('closeGap', () => {
-	/**
-	 * The Gap is named by the trip that opened it, and what the driver confirmed travels with it:
-	 * the server closes nothing that no longer matches (lib/Service/TripService.php).
-	 */
 	it('posts what the driver confirmed and answers with the trip that closed it', async () => {
 		const fetch = answers(201, { uuid: 't-9', category: 'private', distance: 40, reconciled: true })
 
@@ -211,7 +207,6 @@ describe('readKpis', () => {
 })
 
 describe('readYear', () => {
-	/** The server cuts the months at the reader's midnight, so the reader names the zone. */
 	it('asks for one year in the zone it names, and says whether VAT is reclaimed', async () => {
 		const fetch = answers(200, { year: {}, months: [] })
 
@@ -224,7 +219,6 @@ describe('readYear', () => {
 })
 
 describe('readGaps', () => {
-	/** The vehicle's Gaps, from the route beside its timeline (lib/Controller/TimelineController.php). */
 	it('reads the Gaps of the vehicle it names', async () => {
 		const fetch = answers(200, [{ trip: 't-1', distance: 40 }])
 
@@ -239,11 +233,7 @@ describe('readGaps', () => {
 
 describe('updateVehicle', () => {
 
-	/**
-	 * The write addresses the vehicle by uuid and carries the token it was read with, because
-	 * that is what the server checks it against. Nextcloud refuses a session write without the
-	 * request token, so it travels too.
-	 */
+	/** Nextcloud refuses a session write without the request token, so it travels too. */
 	it('sends the identity and the token the server checks', async () => {
 		const fetch = answers(200, { ...vehicle, plate: 'B-ZZ 9', updated_at: 1750000001 })
 
@@ -257,21 +247,13 @@ describe('updateVehicle', () => {
 		expect(saved.updated_at).toBe(1750000001)
 	})
 
-	/**
-	 * The other tab saved first, so this write matched nothing. The sheet has to stay open and
-	 * say so (docs/ui.md), which it cannot do if the client drops the answer.
-	 */
 	it('raises the conflict rather than swallowing it', async () => {
 		answers(412, { message: 'Changed since you read it', conflict: true })
 
 		await expect(updateVehicle(vehicle)).rejects.toBeInstanceOf(ConflictError)
 	})
 
-	/**
-	 * Nextcloud refuses its own failed CSRF check with 412 too
-	 * (docs/architecture.md#concurrency). Offering a retry there would loop, and the values are
-	 * not what is wrong.
-	 */
+	/** A failed CSRF check is a 412 too; offering a retry there would loop. */
 	it('does not read a failed CSRF check as a conflict', async () => {
 		answers(412, { message: 'CSRF check failed' })
 
@@ -293,12 +275,6 @@ describe('updateVehicle', () => {
 })
 
 describe('deleteVehicle', () => {
-	/**
-	 * A DELETE has no body, so the token the write is checked against travels in the query string
-	 * (lib/Controller/VehicleController.php). What comes back is the vehicle as the delete left it,
-	 * and the token on it is the only one the undo is accepted with
-	 * (docs/architecture.md#concurrency).
-	 */
 	it('sends the token in the query string and answers with the one the undo needs', async () => {
 		const fetch = answers(200, { ...vehicle, updated_at: 1750000002 })
 
@@ -313,10 +289,6 @@ describe('deleteVehicle', () => {
 })
 
 describe('restoreVehicle', () => {
-	/**
-	 * Undo is checked against the very token the delete answered with
-	 * (docs/architecture.md#concurrency) - the toast holds that vehicle and hands it back here.
-	 */
 	it('posts the token the delete answered with', async () => {
 		const deleted = { ...vehicle, updated_at: 1750000002 }
 		const fetch = answers(200, deleted)
@@ -330,11 +302,7 @@ describe('restoreVehicle', () => {
 		expect(back.uuid).toBe(vehicle.uuid)
 	})
 
-	/**
-	 * The row moved on since the delete, so the token the toast holds matches nothing. It is the
-	 * same refusal a save gets and it reaches the caller as one: the toast has to say the way back
-	 * is gone rather than claim the vehicle is here.
-	 */
+	/** The toast has to say the way back is gone rather than claim the vehicle is here. */
 	it('raises the conflict when the token no longer matches', async () => {
 		answers(412, { message: 'Changed since you read it', conflict: true })
 
@@ -343,7 +311,6 @@ describe('restoreVehicle', () => {
 })
 
 describe('resetReading', () => {
-	/** Any Entry's Reading, reached as a Reading, and checked against the token it was read with. */
 	it('posts the token the reading was read with', async () => {
 		const reading = { uuid: 'r-1', updated_at: 1750000005 }
 		const fetch = answers(200, { ...reading, kind: 'reset', flagged: false })
@@ -364,10 +331,6 @@ const settings = {
 }
 
 describe('getPreferences', () => {
-	/**
-	 * No identity in the URL: a session reaches its own settings and no others
-	 * (lib/Service/PreferencesService.php).
-	 */
 	it('asks for the settings of whoever is logged in', async () => {
 		const fetch = answers(200, settings)
 
@@ -381,10 +344,6 @@ describe('getPreferences', () => {
 })
 
 describe('savePreferences', () => {
-	/**
-	 * A preference carries no `updated_at`: it has one writer, so there is no race to lose
-	 * (docs/architecture.md#concurrency). The answer is the whole screen again, options included.
-	 */
 	it('writes the chosen value and keeps the state that comes back', async () => {
 		const fetch = answers(200, { ...settings, preferences: { jurisdiction: 'generic' } })
 
@@ -398,24 +357,18 @@ describe('savePreferences', () => {
 })
 
 describe('logbookUrl', () => {
-	/**
-	 * The export is a page the browser opens, not an answer this client reads, so it is an address
-	 * outside `/api` and nothing is fetched (docs/architecture.md#the-fahrtenbuch-export).
-	 */
 	it('names one vehicle and one year outside the api', () => {
 		expect(logbookUrl(vehicle.uuid, '2025')).toBe(`/index.php/apps/nextfleet/vehicles/${vehicle.uuid}/logbook/2025`)
 	})
 })
 
 describe('mileageClaimUrl', () => {
-	/** A page the browser opens, beside the logbook for the same reason. */
 	it('names one vehicle and one year outside the api', () => {
 		expect(mileageClaimUrl(vehicle.uuid, '2025')).toBe(`/index.php/apps/nextfleet/vehicles/${vehicle.uuid}/mileage/2025`)
 	})
 })
 
 describe('csvUrl', () => {
-	/** A file the browser saves, beside the logbook for the same reason. */
 	it('names one vehicle, one year and one table outside the api', () => {
 		expect(csvUrl(vehicle.uuid, '2025', 'trips')).toBe(`/index.php/apps/nextfleet/vehicles/${vehicle.uuid}/csv/2025/trips`)
 	})
@@ -424,7 +377,6 @@ describe('csvUrl', () => {
 describe('the documents', () => {
 	const base = `/index.php/apps/nextfleet/api/vehicles/${vehicle.uuid}/documents`
 
-	/** Each write answers with the list as it now stands, so there is no token to send. */
 	it('lists, attaches and detaches under the vehicle', async () => {
 		const fetch = answers(200, [])
 
@@ -444,10 +396,6 @@ describe('the documents', () => {
 		expect(fetch.mock.calls[2][1].method).toBe('DELETE')
 	})
 
-	/**
-	 * A 404 on attach is the file not being the person's own (docs/architecture.md#documents),
-	 * which the section says in its own words; the server's message names only the vehicle.
-	 */
 	it('tells a refusal for something not there apart from the rest', async () => {
 		answers(404, { message: 'No such vehicle' })
 
@@ -457,12 +405,10 @@ describe('the documents', () => {
 		expect(failure.message).toBe('No such vehicle')
 	})
 
-	/** A link the browser follows, outside the api beside the CSV. */
 	it('downloads one paper outside the api', () => {
 		expect(documentUrl(vehicle.uuid, 'd-1')).toBe(`/index.php/apps/nextfleet/vehicles/${vehicle.uuid}/documents/d-1`)
 	})
 
-	/** Fetched rather than followed, so a refusal is said on the screen and not in a tab of JSON. */
 	it('fetches one paper\'s file from that address', async () => {
 		const file = new Blob(['%PDF'])
 		const fetch = vi.fn().mockResolvedValue({ ok: true, status: 200, blob: async () => file })
@@ -505,7 +451,6 @@ describe('the import calls', () => {
 		expect(JSON.parse(fetch.mock.calls[2][1].body)).toEqual({ created: [{ type: 'energy', uuid: 'e-1' }] })
 	})
 
-	/** The screen previews again on a changed file, and drops the undo on changed entries. */
 	it('tells a 409 that is no booking apart from the rest', async () => {
 		answers(409, { message: 'The file changed since the preview' })
 
@@ -515,7 +460,6 @@ describe('the import calls', () => {
 		expect(failure.message).toBe('The file changed since the preview')
 	})
 
-	/** The reason is a word the screen puts into words; the message is English for a log. */
 	it('carries why a file is not read', async () => {
 		answers(422, { message: 'Not a file an import reads: binary', reason: 'binary', row: 3 })
 
@@ -528,7 +472,6 @@ describe('the import calls', () => {
 })
 
 describe('the inbox', () => {
-	/** One request answers the folder, the files waiting in it and how many there are. */
 	it('reads the waiting files outside any vehicle', async () => {
 		const inbox = { folder: { file_id: 7, path: '/Belege' }, files: [], count: 0 }
 		const fetch = answers(200, inbox)
@@ -538,7 +481,6 @@ describe('the inbox', () => {
 		expect(fetch.mock.calls[0][1].method).toBe('GET')
 	})
 
-	/** Nextcloud's own preview; a PDF, which core may not preview, shows core's PDF icon instead. */
 	it('shows a thumbnail by core\'s preview, and a PDF by its icon', () => {
 		expect(thumbnailUrl({ file_id: 42, mime: 'image/jpeg' })).toBe('/index.php/core/preview?fileId=42&x=256&y=256&a=1&mimeFallback=true')
 		expect(thumbnailUrl({ file_id: 43, mime: 'application/pdf' })).toBe('/core/img/filetypes/application-pdf.svg')
@@ -546,7 +488,6 @@ describe('the inbox', () => {
 })
 
 describe('stickerUrl', () => {
-	/** A phone's camera opens it with nothing to resolve it against, so it names the server. */
 	it('is an absolute address that opens the entry sheet on the vehicle', () => {
 		expect(stickerUrl(vehicle.uuid)).toBe(`${window.location.origin}/index.php/apps/nextfleet/?vehicle=${vehicle.uuid}&entry=new`)
 	})
@@ -555,7 +496,6 @@ describe('stickerUrl', () => {
 describe('the Entry writes', () => {
 	const entry = { uuid: 'e-1', updated_at: 1750000100 }
 
-	/** Each kind is written under its own collection, and the edit carries the token beside the fields. */
 	it('puts an edit where its kind lives, token and all', async () => {
 		const fetch = answers(200, entry)
 
@@ -658,7 +598,6 @@ describe('the recipient calls', () => {
 		expect(fetch.mock.calls[2][1].method).toBe('DELETE')
 	})
 
-	/** The picker asks core, which applies the instance's own rules on who may find whom. */
 	it('searches accounts through the core autocomplete and hands back id and name', async () => {
 		const fetch = answers(200, { ocs: { data: [{ id: 'jane', label: 'Jane Doe', source: 'users' }] } })
 
@@ -678,7 +617,6 @@ describe('the booking calls', () => {
 	const booking = { uuid: 'b-1', updated_at: 1750000300 }
 	const span = { starts_at: 1790000000, starts_at_off: 120, ends_at: 1790007200, ends_at_off: 120, purpose: 'Client' }
 
-	/** A change states the whole booking beside its token; a cancel has no body, so its token is in the query. */
 	it('lists, books, changes and cancels under the vehicle', async () => {
 		const fetch = answers(200, booking)
 
@@ -699,7 +637,6 @@ describe('the booking calls', () => {
 		expect(fetch.mock.calls[3][1].method).toBe('DELETE')
 	})
 
-	/** The 409 carries the booking in the way, so the sheet names it without a second read. */
 	it('hands over the booking that holds the span', async () => {
 		const held = { uuid: 'b-2', user_id: 'anna', user_name: 'Anna', starts_at: 1790000000, starts_at_off: 120, ends_at: 1790014400, ends_at_off: 120 }
 		answers(409, { message: 'the vehicle is booked then', booking: held })
@@ -710,7 +647,6 @@ describe('the booking calls', () => {
 		expect(failure.booking).toEqual(held)
 	})
 
-	/** No token: the state the booking must be in is the guard against a second submit. */
 	it('checks out and in under the booking, with the handover and no token', async () => {
 		const fetch = answers(200, booking)
 		const handover = { odo: 52000, level: 80, notes: 'Scratch on the left door', at_off: 120 }

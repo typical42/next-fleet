@@ -13,7 +13,8 @@ use OCA\NextFleet\Db\Vehicle;
 use PHPUnit\Framework\TestCase;
 
 /**
- * What M7's columns mean when they come back from the database, before any service reads them.
+ * What the booking columns mean when they come back from the database, before any service
+ * reads them.
  */
 class M7EntitiesTest extends TestCase {
 	public function testABookingReadsItsInstantsAndCountersAsIntegers(): void {

@@ -15,6 +15,7 @@ use OCA\NextFleet\Db\AuditMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Service\GrantService;
+use OCA\NextFleet\Service\RecipientService;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\IDBConnection;
@@ -113,6 +114,29 @@ class TransferCommandTest extends TestCase {
 		$this->assertCount(1, $rows);
 		$this->assertSame(Audit::TRANSFERRED_BY, $rows[0]->getCreatedBy());
 		$this->assertSame(['change' => 'transferred', 'fields' => ['user_id' => [self::OWNER, self::NEW_OWNER]]], $rows[0]->getDiffJson());
+	}
+
+	/** Told once, not twice: the list keeps the place the new owner had on it. */
+	public function testANewOwnerOnTheReminderListAlreadyStaysOnItOnce(): void {
+		$vehicle = $this->vehicle();
+		$this->grant($vehicle, self::NEW_OWNER, 'viewer');
+		\OCP\Server::get(RecipientService::class)->add(self::OWNER, $vehicle->getUuid(), self::NEW_OWNER);
+
+		$this->assertSame(0, $this->command->execute(['vehicle' => $vehicle->getUuid(), 'owner' => self::NEW_OWNER]), $this->command->getDisplay());
+
+		$this->assertSame([self::NEW_OWNER], array_values(array_filter($this->recipientsOf($vehicle), static fn (string $uid): bool => $uid === self::NEW_OWNER)));
+	}
+
+	/** A vehicle in the trash is refused as one that is not there. */
+	public function testAnUnknownVehicleIsRefused(): void {
+		$vehicle = $this->vehicle();
+		$this->vehicles->delete(self::OWNER, $vehicle->getUuid(), $this->fresh($vehicle)->getUpdatedAt());
+
+		foreach (['nextfleet-test-transfer-no-such-uuid', $vehicle->getUuid()] as $uuid) {
+			$this->assertSame(1, $this->command->execute(['vehicle' => $uuid, 'owner' => self::NEW_OWNER]));
+			$this->assertStringContainsString('No vehicle has this uuid, or it is deleted', $this->command->getDisplay());
+		}
+		$this->assertSame(self::OWNER, $this->fresh($vehicle)->getUserId());
 	}
 
 	public function testANewOwnerWhoDoesNotExistIsRefused(): void {

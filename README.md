@@ -41,6 +41,14 @@ before you rely on the app.
 
 Report a security problem privately. [SECURITY.md](SECURITY.md) tells you how.
 
+## How this app was made
+
+An AI tool, Claude Code, wrote most of the code, the tests and the documents. It worked in an
+autonomous loop that the maintainer supervised. The maintainer reviewed and tested the result, and
+answers for every line. [Nextcloud's AI
+policy](https://github.com/nextcloud/.github/blob/master/AI_POLICY.md) applies to this app.
+[Contributing](docs/contributing.md#ai-assistance) gives its rules for your changes.
+
 ## License
 
 Copyright (C) 2026 Johannes Kolb

@@ -21,9 +21,8 @@ use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The readings hanging off one vehicle. Every rule is OdometerService's, so what is tested here
- * is the translation between a request and an answer, the way VehicleControllerTest tests the
- * vehicle's.
+ * One vehicle's readings. Every rule is OdometerService's, so this tests request to answer only,
+ * as VehicleControllerTest does.
  */
 class OdometerControllerTest extends TestCase {
 	private const UUID = '0195e2f1-0000-4000-8000-000000000001';
@@ -62,7 +61,6 @@ class OdometerControllerTest extends TestCase {
 		]);
 	}
 
-	/** The timeline asks for one vehicle's readings, and the vehicle is the route's. */
 	public function testTheTimelineIsOneVehiclesReadings(): void {
 		$this->service->expects($this->once())
 			->method('list')
@@ -75,10 +73,7 @@ class OdometerControllerTest extends TestCase {
 		$this->assertCount(1, $response->getData());
 	}
 
-	/**
-	 * A recorded reading answers 201 with the row the server wrote, so the sheet learns the
-	 * `origin` and the `flagged` it was given - neither is a field a client fills in.
-	 */
+	/** The sheet learns `origin` from the 201: no client fills it in. */
 	public function testARecordedReadingComesBackAsTheServerWroteIt(): void {
 		$this->params = ['uuid' => self::UUID, 'value' => '148320', 'read_at_off' => 120];
 		$this->service->expects($this->once())
@@ -92,7 +87,6 @@ class OdometerControllerTest extends TestCase {
 		$this->assertSame('observed', $response->getData()->jsonSerialize()['origin']);
 	}
 
-	/** An edit reaches the service with the token it was read with, and the fields beside it. */
 	public function testAnEditIsCheckedAgainstTheTokenItCarries(): void {
 		$this->params = ['uuid' => self::UUID, 'updated_at' => '1750000000', 'value' => 148400];
 		$this->service->expects($this->once())

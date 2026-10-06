@@ -18,16 +18,19 @@ use OCP\IL10N;
 class ReminderWords {
 	/**
 	 * @param array{template_key: ?string, title: ?string, due_date: ?string, due_odo: ?int, ...} $p
+	 * @param string $unit the vehicle's `odo_unit`, `km` or `h`
 	 * @throws \UnexpectedValueException for a point this app does not send
 	 */
-	public static function line(IL10N $l, string $point, array $p): string {
+	public static function line(IL10N $l, string $point, array $p, string $unit): string {
 		$title = self::title($l, $p);
 		$date = $p['due_date'] === null ? '' : (string)$l->l('date', new \DateTime($p['due_date']), ['width' => 'medium']);
-		$km = (string)$p['due_odo'];
+		$reading = (string)$p['due_odo'];
 
 		return match ($point) {
 			ReminderEngine::MONTH_BEFORE, ReminderEngine::MONTH_START => $l->t('%1$s is due on %2$s', [$title, $date]),
-			ReminderEngine::ODO => $l->t('%1$s is due at %2$s km', [$title, $km]),
+			ReminderEngine::ODO => $unit === 'h'
+				? $l->t('%1$s is due at %2$s h', [$title, $reading])
+				: $l->t('%1$s is due at %2$s km', [$title, $reading]),
 			ReminderEngine::DUE_DATE => $l->t('%1$s is due today', [$title]),
 			ReminderEngine::ODO_DUE => $l->t('%1$s is due', [$title]),
 			ReminderEngine::OVERDUE => $l->t('%1$s is overdue (due %2$s)', [$title, $date]),

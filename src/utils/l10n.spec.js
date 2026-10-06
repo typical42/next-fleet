@@ -35,8 +35,8 @@ describe('t', () => {
 	})
 
 	/**
-	 * The wrapper is only safe while every string reaches the page through Vue's escaping; a raw HTML
-	 * sink would take a name as markup. And a screen that imports the library's `t` escapes again.
+	 * The wrapper is safe only while every string goes through Vue's escaping, and a screen using
+	 * the library's `t` escapes twice.
 	 */
 	it('is the only translator, and nothing writes raw HTML', () => {
 		const offenders = sources(SRC)

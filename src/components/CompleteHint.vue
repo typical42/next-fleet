@@ -28,9 +28,8 @@ const fleet = useVehiclesStore()
 const failure = ref('')
 
 /**
- * The vehicles still worth asking about, each with what it is missing. Nothing is asked before the
- * preferences have arrived: an unread list is not an empty one, and a hint somebody answered last
- * week coming back is exactly what dismissing it was for.
+ * The vehicles still worth asking about, each with what it is missing. Empty until the preferences
+ * arrive: an unread list of dismissals is not an empty one.
  */
 const incomplete = computed(() => {
 	if (!preferences.loaded) {
@@ -45,9 +44,8 @@ const incomplete = computed(() => {
 })
 
 /**
- * The vehicles whose Logbook Mode question is open. Asked once, because the mode stays off by
- * default (docs/ui.md); only where the country has a logbook ruleset, since that is a tax office
- * to keep the logbook for.
+ * The vehicles whose Logbook Mode question is open: only where the country has a logbook ruleset
+ * (docs/ui.md#details-that-decide-whether-it-feels-easy).
  */
 const unasked = computed(() => preferences.loaded
 	? props.vehicles.filter((vehicle) => preferences.hasLogbookRules(vehicle.jurisdiction ?? '')
@@ -58,9 +56,8 @@ const unasked = computed(() => preferences.loaded
 const answering = ref(false)
 
 /**
- * Switch the mode on, then count that as the answer, so a vehicle switched off again later is not
- * asked a second time. Only the switch and the token travel, so the other fields stay as the
- * server has them.
+ * Switch the mode on and count that as the answer, so a vehicle switched off later is not asked
+ * again. Only the switch and the token travel: an edit sheet open elsewhere keeps its fields.
  *
  * @param {import('../services/api.js').Vehicle} vehicle - the vehicle to keep a logbook with
  */
@@ -95,8 +92,7 @@ async function dismiss(uuid) {
 	try {
 		await preferences.dismiss(uuid)
 	} catch (error) {
-		// The hint stays: it is stored for every browser this user opens (docs/ui.md), so a
-		// dismissal the server never took would be back on the next load anyway.
+		// The hint stays: a dismissal the server never took would be back on the next load.
 		failure.value = error.message
 	}
 }
@@ -125,8 +121,8 @@ async function dismiss(uuid) {
 				</li>
 			</ul>
 		</NcNoteCard>
-		<!-- One card for the fleet rather than one per vehicle: three of them stacked would push
-		     the list nobody has finished writing off the screen (docs/ui.md). -->
+		<!-- One card for the fleet, not one per vehicle: stacked cards would push the list off
+		     the screen. -->
 		<NcNoteCard v-if="incomplete.length > 0" type="info" :heading="t('nextfleet', 'Some details are still missing')">
 			<ul class="hint__list">
 				<li v-for="one in incomplete" :key="one.vehicle.uuid" class="hint__item">
@@ -137,8 +133,8 @@ async function dismiss(uuid) {
 					<span class="hint__missing">
 						{{ t('nextfleet', 'Still missing: {fields}', { fields: fieldWords(one.missing) }) }}
 					</span>
-					<!-- Every row says "Dismiss", so the button says which vehicle it is dismissing
-					     to anybody who hears the buttons rather than seeing the row. -->
+					<!-- Every row says "Dismiss": the label names the vehicle for a screen
+					     reader. -->
 					<NcButton variant="tertiary"
 						:aria-label="t('nextfleet', 'Dismiss the hint for {name}', { name: nameOf(one.vehicle) })"
 						@click="dismiss(one.vehicle.uuid)">
@@ -158,9 +154,8 @@ async function dismiss(uuid) {
 	gap: calc(var(--default-grid-baseline) * 4);
 }
 
-/* The line wraps rather than scrolls: at 320 px the name, what is missing and the way out each
-   take their own row, and none of them is cut off. The logbook question's rows are laid out alike
-   but named apart, since a vehicle can be in both cards. */
+/* Wraps rather than scrolls, so at 320 px nothing is cut off. Two names, since a vehicle can be in
+   both cards. */
 .hint__item,
 .hint__ask {
 	display: flex;

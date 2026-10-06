@@ -54,7 +54,7 @@ are named in `lib/ResponseDefinitions.php`.
 | Status | Means | Where the reason is |
 | --- | --- | --- |
 | 200, 201 | Done; 201 for a new row | `data` is the row |
-| 400 | The request is wrong: a field, a missing `updated_at` | `data.message`; `data.reason` on the few a client may word itself, so far `currency_in_use`, `end_below_start`, `ends_in_future`, `not_in_question`, `no_energy` |
+| 400 | The request is wrong: a field, a missing `updated_at`, a body field named like a path parameter with another value | `data.message`; `data.reason` on the few a client may word itself, so far `currency_in_use`, `end_below_start`, `ends_in_future`, `not_in_question`, `no_energy` |
 | 401 | No login, or a wrong or revoked app password: Nextcloud's, before the app runs | `meta.message`; Nextcloud 31 answers it as XML whatever `Accept` says |
 | 403 | The caller's role does not cover this | `meta.message`, `data` empty |
 | 404 | No such vehicle or row, or not on this vehicle | `meta.message`, `data` empty |

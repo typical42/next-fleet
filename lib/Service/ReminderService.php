@@ -57,8 +57,8 @@ class ReminderService {
 	}
 
 	/**
-	 * The state is evaluated at now rather than read from the row: the row holds what the job last
-	 * persisted, and the banner shows where the reminder stands. Nothing is written.
+	 * The state is evaluated at now rather than read from the row, and nothing is written
+	 * (docs/architecture.md#reminder-engine).
 	 *
 	 * @return list<NextFleetListedReminder> the vehicle's live reminders, in their wire form, each
 	 *                                       with its `estimate` (ReminderEngine::estimate())

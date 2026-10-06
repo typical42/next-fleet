@@ -98,8 +98,7 @@ class VehicleAccess {
 
 	/**
 	 * Everything the user may do on one vehicle - what the vehicle JSON carries as `may`, so the
-	 * screen hides by the same answer the server refuses by. The owner needs no grant, and asking
-	 * the table anyway would be a query on every read of every vehicle the common case owns.
+	 * screen hides by the same answer the server refuses by. The owner needs no grant query.
 	 *
 	 * @return list<string>
 	 * @throws \OCP\DB\Exception
@@ -122,12 +121,10 @@ class VehicleAccess {
 
 	/**
 	 * Every vehicle this user may look at through a grant, by id, with what they may do on it.
-	 * What they own is not in it - that is a column on the vehicle itself, and asking this table
-	 * for it would be a second query.
+	 * What they own is not in it: that is a column on the vehicle itself.
 	 *
 	 * The roles travel with the query, so the same table decides here as in may(): a row whose
-	 * role covers nothing must not put a vehicle in a list that carries its plate, its VIN and
-	 * what it cost.
+	 * role covers nothing must not list a vehicle with its plate, its VIN and what it cost.
 	 *
 	 * @return array<int, list<string>>
 	 * @throws \OCP\DB\Exception

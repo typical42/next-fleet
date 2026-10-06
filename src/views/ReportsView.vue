@@ -56,9 +56,9 @@ const options = computed(() => props.vehicles
 const chosen = ref('')
 const selected = computed(() => options.value.find((one) => one.id === chosen.value) ?? options.value[0] ?? null)
 
-// The reader's own year: the export sorts trips into a year by the date they were driven on, which
-// is the date the driver saw (docs/architecture.md#the-fahrtenbuch-export). Last year's until the
-// end of February, when the reports printed are the tax return's.
+// The reader's own year: the export sorts trips by the date the driver saw
+// (docs/architecture.md#the-fahrtenbuch-export). Last year's until the end of February, when the
+// reports printed are the tax return's.
 const today = new Date()
 const year = ref(String(today.getFullYear() - (today.getMonth() < 2 ? 1 : 0)))
 // The route answers anything but four digits with a 400.

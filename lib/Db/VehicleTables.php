@@ -41,7 +41,7 @@ class VehicleTables {
 
 	/**
 	 * The rows whose `vehicle_id` names no vehicle at all, deleted rows included: there are no
-	 * foreign keys to stop one (`occ nextfleet:check`).
+	 * foreign keys to stop one.
 	 *
 	 * @return list<array{table: string, uuid: string, vehicle_id: int}>
 	 * @throws \OCP\DB\Exception

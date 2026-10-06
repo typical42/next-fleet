@@ -16,9 +16,9 @@ use Psr\Container\ContainerInterface;
  */
 class Jurisdictions {
 	/**
-	 * What a vehicle takes when the user has stated no preference (plan.md) - a statement about
-	 * this release, not about Germany: naming another country here leaves `de` registered and
-	 * every vehicle already carrying it untouched.
+	 * What a vehicle takes when the user has stated no preference - a statement about this
+	 * release, not about Germany: naming another country here leaves `de` registered and every
+	 * vehicle already carrying it untouched.
 	 */
 	public const DEFAULT = 'de';
 
@@ -57,8 +57,7 @@ class Jurisdictions {
 
 	/**
 	 * The VAT rate a cost is prefilled with, in basis points, or null where the profile states
-	 * none. Read on the day the moment falls on at the offset it was entered at: a rate changes on
-	 * a day, and the day is the person's, not UTC's (docs/architecture.md#time).
+	 * none. Read on the moment's local day (localTime()).
 	 */
 	public function vatRateAt(string $key, int $at, int $off): ?int {
 		return $this->get($key)->rates()?->vatRateAt(self::localTime($at, $off));
@@ -66,7 +65,7 @@ class Jurisdictions {
 
 	/**
 	 * A moment at the offset it was entered at, in minutes: what a rate table is asked with, since
-	 * a rate changes on a day and the day is the person's (docs/architecture.md#time).
+	 * a rate changes on a day and the day is the person's, not UTC's (docs/architecture.md#time).
 	 */
 	public static function localTime(int $at, int $off): \DateTimeImmutable {
 		$zone = sprintf('%s%02d:%02d', $off < 0 ? '-' : '+', intdiv(abs($off), 60), abs($off) % 60);

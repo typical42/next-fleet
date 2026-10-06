@@ -10,6 +10,7 @@ namespace OCA\NextFleet\Jurisdiction\De;
 
 use OCA\NextFleet\Jurisdiction\IClaimRenderer;
 use OCA\NextFleet\Jurisdiction\MileageClaim;
+use OCA\NextFleet\Jurisdiction\PrintedPage;
 
 /**
  * The business kilometres of one year at the flat rate, as the browser prints them: one line per
@@ -48,11 +49,11 @@ class MileageClaimRenderer implements IClaimRenderer {
 		return '<!DOCTYPE html>'
 			. '<html lang="de"><head><meta charset="utf-8">'
 			. '<meta name="viewport" content="width=device-width, initial-scale=1">'
-			. '<title>Fahrtkosten ' . $this->text($vehicle->getPlate()) . ' ' . $claim->year . '</title>'
+			. '<title>Fahrtkosten ' . PrintedPage::text($vehicle->getPlate()) . ' ' . $claim->year . '</title>'
 			. '<style>' . self::STYLE . '</style></head><body>'
 			. '<header><h1>Fahrtkosten für geschäftliche Fahrten ' . $claim->year . '</h1><dl>'
-			. '<dt>Kennzeichen</dt><dd>' . $this->text($vehicle->getPlate()) . '</dd>'
-			. ($name === '' ? '' : '<dt>Fahrzeug</dt><dd>' . $this->text($name) . '</dd>')
+			. '<dt>Kennzeichen</dt><dd>' . PrintedPage::text($vehicle->getPlate()) . '</dd>'
+			. ($name === '' ? '' : '<dt>Fahrzeug</dt><dd>' . PrintedPage::text($name) . '</dd>')
 			. '</dl><p>Nur Fahrten, die Sie eingetragen haben.</p></header>'
 			. $this->table($claim)
 			. $this->notes($claim)
@@ -86,10 +87,10 @@ class MileageClaimRenderer implements IClaimRenderer {
 			};
 			$cells = [
 				['', gmdate('d.m.Y', $trip->getStartedAt() + $trip->getStartedAtOff() * 60)],
-				['', $this->text($trip->getFromLabel())],
-				['', $this->text($trip->getToLabel())],
-				['', $this->text($trip->getPurpose())],
-				['', $this->text($trip->getPartner())],
+				['', PrintedPage::text($trip->getFromLabel())],
+				['', PrintedPage::text($trip->getToLabel())],
+				['', PrintedPage::text($trip->getPurpose())],
+				['', PrintedPage::text($trip->getPartner())],
 				['number', $line['kilometres'] === null ? self::UNSTATED : $this->count($line['kilometres'])],
 				['number', $line['rate'] === null ? self::UNSTATED : $this->rate($line['rate'])],
 				['number', $amount],
@@ -166,7 +167,7 @@ class MileageClaimRenderer implements IClaimRenderer {
 	}
 
 	private function footer(MileageClaim $claim): string {
-		$url = $this->text($claim->sourceUrl);
+		$url = PrintedPage::text($claim->sourceUrl);
 
 		// docs/legal.md, as on the Fahrtenbuch.
 		return '<footer><p>Satz: <a href="' . $url . '">' . $url . '</a></p>'
@@ -188,9 +189,5 @@ class MileageClaimRenderer implements IClaimRenderer {
 
 	private function class(string $class): string {
 		return $class === '' ? '' : ' class="' . $class . '"';
-	}
-
-	private function text(?string $value): string {
-		return htmlspecialchars((string)$value, ENT_QUOTES | ENT_SUBSTITUTE | ENT_HTML5, 'UTF-8');
 	}
 }

@@ -54,8 +54,7 @@ class SeedCommand extends Command {
 	 *
 	 * A cost row is days back plus what the sheet would post; a fill-up adds what it leaves out
 	 * to self::FILL. Every counter a cost row reads sits between the Readings around it, so the
-	 * only flags are the ones the comments promise - a seeded fill-up that broke a chain would
-	 * teach the screenshots the wrong thing.
+	 * only flags are the ones the comments promise.
 	 *
 	 * A reminder is days or months ahead instead, since what a reminder is worth is that it has
 	 * not fallen due yet. Its interval is the template's, never written down here.
@@ -120,7 +119,7 @@ class SeedCommand extends Command {
 			'maintenance' => [
 				['days' => 240, 'type' => 'service', 'title' => 'Oil change and inspection', 'vendor' => 'Autohaus Becker', 'cost' => 38950, 'vat_rate' => 1900, 'odo' => 106100],
 				['days' => 160, 'type' => 'tyres', 'title' => 'Winter tyres fitted', 'vendor' => 'Reifen Müller', 'cost' => 8900, 'vat_rate' => 1900],
-				['days' => 45, 'type' => 'inspection', 'title' => 'HU/AU', 'vendor' => 'TÜV Süd', 'cost' => 14700, 'vat_rate' => 1900],
+				['days' => 45, 'type' => 'inspection', 'title' => 'HU/AU', 'vendor' => 'Prüfstelle Lindner', 'cost' => 14700, 'vat_rate' => 1900],
 			],
 			// Insurance, tax and the fine carry no VAT and state 0, as the sheet prefills them. Nobody
 			// stated the toll's rate, so the net figure counts it gross and says so.
@@ -220,11 +219,10 @@ class SeedCommand extends Command {
 				['days' => 320, 'category' => 'insurance', 'amount' => 92000, 'vat_rate' => 0],
 				['days' => 110, 'category' => 'parking', 'amount' => 2400, 'notes' => 'Airport, three days'],
 			],
-			// The sticker question answered, three weeks out: a month past its first warning
-			// point, so the banner is amber and the job has a notification to send. Not a month's
-			// end, which is what a sticker names: the demo has to stand three weeks out whichever
-			// day it is seeded on, and a due date the sheet writes - or a recurrence counts from
-			// a maintenance record - falls on any day anyway.
+			// Three weeks out: a month past its first warning point, so the banner is amber and
+			// the job has a notification to send. Not a month's end, as a sticker names: the demo
+			// must stand three weeks out whichever day it is seeded on, and a due date the sheet
+			// writes falls on any day anyway.
 			'reminders' => [
 				['template_key' => 'hu_au', 'due_in_days' => 21],
 			],
@@ -412,8 +410,8 @@ class SeedCommand extends Command {
 	private const DAY = 86400;
 
 	/**
-	 * The demo fleet is German (plan.md), so its readings carry the offset Berlin was on when
-	 * each one was taken - which is what `read_at_off` is for and what a constant would hide.
+	 * The demo fleet is German, so its readings carry the offset Berlin was on when each one was
+	 * taken - which is what `read_at_off` is for and what a constant would hide.
 	 */
 	private const HOME = 'Europe/Berlin';
 

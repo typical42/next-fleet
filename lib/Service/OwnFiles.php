@@ -85,9 +85,8 @@ class OwnFiles {
 
 	/**
 	 * What a list shows of a file `$userId` attached - its name and MIME type while it is still
-	 * their own file (mine()), else null. Mounting their Files per row made a long list slow, so
-	 * the answer is kept five minutes. Only for showing: whatever hands the file out asks find()
-	 * live.
+	 * their own file (mine()), else null. Cached, since mounting their Files per row makes a long
+	 * list slow. Only for showing: whatever hands the file out asks find() live.
 	 *
 	 * @return ?array{name: string, mime: string}
 	 * @throws \OCP\Files\NotPermittedException if the user has no Files; nothing is kept then

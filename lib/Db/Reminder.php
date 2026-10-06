@@ -119,11 +119,7 @@ class Reminder extends BaseEntity implements \JsonSerializable {
 		$this->setter('warnDueDate', [$warn]);
 	}
 
-	/**
-	 * The wire form is the column names, as it is for every entity.
-	 *
-	 * @return NextFleetReminder
-	 */
+	/** @return NextFleetReminder */
 	public function jsonSerialize(): array {
 		return [
 			'uuid' => $this->uuid,

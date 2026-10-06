@@ -11,9 +11,9 @@ declare(strict_types=1);
  *
  *   php custom_apps/nextfleet/tests/e2e/job.php 2031-05-03T12:00:00Z
  *
- * `occ background-job:execute` runs it at the real time, and a reminder engine you cannot move
- * through time is one you cannot test (PRD M4). m4-slice.spec.js runs this inside the container
- * (tests/e2e/server.js). The job sweeps every vehicle on the instance, the demo fleet included.
+ * `occ background-job:execute` runs it at the real time, and reminders are only testable at a moved
+ * clock. m4-slice.spec.js runs this inside the container (tests/e2e/server.js). The job sweeps
+ * every vehicle on the instance, the demo fleet included.
  */
 
 use OCA\NextFleet\AppInfo\Application;

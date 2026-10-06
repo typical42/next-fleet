@@ -9,8 +9,7 @@ import { t } from './l10n.js'
 
 /**
  * A grouped whole number, in any locale: at most three digits, then groups of exactly three. `\s`
- * is what covers the spaces Intl groups with - it matches the no-break and narrow no-break ones
- * as well as the one a keyboard gives.
+ * also matches the no-break and narrow no-break spaces Intl groups with.
  */
 const GROUPED = /^\d{1,3}(?:[.,\s]\d{3})+$/
 
@@ -26,9 +25,8 @@ export function nameOf(vehicle) {
 }
 
 /**
- * The line under the name, which says only what the name did not. A lifecycle appears there when
- * it is not the ordinary one - that is what explains a vehicle sinking down the overview
- * (docs/ui.md).
+ * The line under the name, saying only what the name did not. A lifecycle other than `active`
+ * appears there: it explains a vehicle sinking down the overview (docs/ui.md).
  *
  * @param {Partial<import('../services/api.js').Vehicle>} vehicle - the vehicle as it was read
  * @return {string} the make, the lifecycle, both, or nothing
@@ -83,16 +81,14 @@ export function roleWord(role) {
 }
 
 /**
- * What a trip may be driven for, in the order it is offered (CONTEXT.md). The order is one fact and
- * the words below are another: the words change with the language, this does not.
+ * What a trip may be driven for, in the order it is offered (CONTEXT.md).
  *
  * @type {string[]}
  */
 export const CATEGORIES = ['business', 'private', 'commute']
 
 /**
- * A category is a code in the database and a word on screen (docs/ui.md#languages), looked up on
- * call for the same reason as the lifecycle above.
+ * A category's word on screen, looked up on call like lifecycleWord().
  *
  * @param {string} category - `business`, `private` or `commute` (CONTEXT.md)
  * @return {string} the word for it, or the code where there is none
@@ -156,8 +152,7 @@ export function maintenanceWord(type) {
 
 /**
  * An engine or an energy is a code in the database and a word on screen (docs/ui.md#languages).
- * One list for both, because an energy is an engine's code minus `hybrid` (CONTEXT.md) and the
- * vehicle sheet and the entry sheet name them alike.
+ * One list for both: an energy is an engine's code minus `hybrid` (CONTEXT.md).
  *
  * @param {string} code - petrol, diesel, lpg, cng, electric or hybrid
  * @return {string} the word for it, or the code where there is none
@@ -177,9 +172,8 @@ export function energyWord(code) {
 }
 
 /**
- * What a timeline row is called. A journey is the route it took, which is what a driver recognises
- * it by; a journey nobody labelled is what it was driven for, and one that is neither is still a
- * journey.
+ * What a timeline row is called. A trip is named by its route, which is what a driver recognises
+ * it by, else by its purpose.
  *
  * @param {import('../services/api.js').Entry} entry - the row
  * @return {string} its name
@@ -226,9 +220,8 @@ export function documentKindWord(kind) {
 }
 
 /**
- * A country is a code in the config and a word on screen (docs/ui.md#languages). The words live
- * here rather than in lib/Jurisdiction/, because the catalogues are the frontend's, and they are
- * looked up on call because the catalogue is registered by the page and not by this module.
+ * A country's word on screen, looked up on call like lifecycleWord(). The words live here rather
+ * than in lib/Jurisdiction/, because the catalogues are the frontend's.
  *
  * @param {string} key - the registered key, as lib/Jurisdiction/ spells it
  * @param {string} [name] - what the server calls it: English, and the fallback for a country this
@@ -246,10 +239,8 @@ export function jurisdictionWord(key, name = key) {
 }
 
 /**
- * A column is a name in the database and a word on screen (docs/ui.md#languages). These are the
- * labels the sheets ask by, so a hint naming a field names the one the reader will look for
- * (src/components/VehicleSheet.vue, src/components/EntrySheet.vue), and they are looked up on call
- * for the same reason as above.
+ * A column's word on screen, looked up on call like lifecycleWord(). These are the labels the
+ * sheets ask by, so a hint names the field the reader will look for.
  *
  * @param {string} column - the column, as the API spells it
  * @param {string} [odoUnit] - the vehicle's `odo_unit`, which names a trip's counters
@@ -306,8 +297,8 @@ function madeOf(vehicle) {
 }
 
 /**
- * A count as the reader's locale writes it. Nothing here is hand-rolled: separators, grouping and
- * the digits themselves belong to the locale and not to the language (docs/ui.md#languages).
+ * A count as the reader's locale writes it: separators, grouping and digits belong to the locale,
+ * not the language (docs/ui.md#languages).
  *
  * @param {number} value - the whole number to write out
  * @param {string} [locale] - defaults to the one Nextcloud resolved for this session
@@ -419,13 +410,10 @@ export function formatDecimal(value, places, locale = getCanonicalLocale()) {
 }
 
 /**
- * A counter as somebody typed it into the sheet. It reads in whole kilometres or whole hours
- * (docs/architecture.md#data-model), so a dot, comma or space in it groups thousands - which is
- * what the app itself wrote out a moment earlier, `148.320` in German and `148,320` in English
- * (docs/ui.md#languages). Grouping is what separates three digits and nothing else, so `7,2` is
- * not a counter: it is a question for the driver rather than a number to round.
- *
- * A litre or a euro is read by parseDecimal() instead.
+ * A counter as typed into the sheet. Counters are whole (docs/architecture.md#data-model), so a
+ * dot, comma or space groups thousands, as the app itself writes them: `148.320` in German,
+ * `148,320` in English (docs/ui.md#languages). Grouping separates exactly three digits, so `7,2`
+ * is a question for the driver, not a number to round. Decimals go through parseDecimal().
  *
  * @param {string} input - what the field holds
  * @return {number|null} the counter, or null when the field says nothing usable
@@ -593,13 +581,9 @@ export function monthKey(instant, offset) {
 }
 
 /**
- * An instant as the clock the entry was made against read it. A user-facing instant is two facts -
- * the UTC second and the offset it was entered at (docs/architecture.md#time) - and a Fahrtenbuch is
- * judged on local calendar dates, so a trip ending 00:30 in Berlin belongs to that day and not to
- * the one UTC is still on.
- *
- * The offset is added and the result read back in UTC, which is what keeps the answer off the
- * machine the browser happens to be running on.
+ * An instant as the clock the entry was made against read it (docs/architecture.md#time). A
+ * Fahrtenbuch is judged on local dates, so a trip ending 00:30 in Berlin belongs to that day, not
+ * the one UTC is still on. Read back in UTC, so the browser's own zone never enters.
  *
  * @param {number} instant - when it happened, seconds
  * @param {number} offset - the UTC offset it happened at, minutes

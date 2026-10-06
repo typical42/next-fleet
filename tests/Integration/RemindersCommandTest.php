@@ -133,6 +133,13 @@ class RemindersCommandTest extends TestCase {
 		$this->assertStringContainsString('nextfleet-test-reminders-nobody', $this->command->getErrorOutput());
 	}
 
+	public function testAnUnknownOutputIsBadInput(): void {
+		$this->assertSame(2, $this->command->execute(['uid' => self::OWNER, '--output' => 'xml'], ['capture_stderr_separately' => true]));
+
+		$this->assertSame('', $this->command->getDisplay());
+		$this->assertStringContainsString('xml', $this->command->getErrorOutput());
+	}
+
 	public function testNoUidAndNoSendIsBadInput(): void {
 		$this->assertSame(2, $this->command->execute([], ['capture_stderr_separately' => true]));
 

@@ -19,6 +19,7 @@
     "lint:js": "eslint . --ext .js,.cjs,.mjs,.ts,.vue",
     "lint:types": "tsc --noEmit",
     "package": "sh tools/package.sh",
+    "release": "sh tools/release.sh",
     "screenshots:docker": "docker run --rm --init --network host -u $(id -u):$(id -g) -e HOME=/tmp -e NEXTFLEET_URL_NC34 -v \"$PWD\":/w -w /w mcr.microsoft.com/playwright:v1.63.0-noble node tools/screenshots.mjs",
     "test": "vitest run",
     "test:e2e": "playwright test",

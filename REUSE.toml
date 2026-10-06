@@ -17,10 +17,17 @@ path = [
     "**.md",
     "LICENSE",
     "design/**.html",
-    "design/screenshots/**.png",
     "psalm-baseline.xml",
     "tests/Fixture/import/**.csv",
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2026 Johannes Kolb"
 SPDX-License-Identifier = "AGPL-3.0-or-later"
+
+# The store screenshots show Nextcloud's interface, its logo and its default background, "Fluid"
+# by Jo Myoung Hee (apps/theming/REUSE.toml in the server).
+[[annotations]]
+path = "design/screenshots/**.png"
+precedence = "aggregate"
+SPDX-FileCopyrightText = ["2026 Johannes Kolb", "Nextcloud GmbH and Nextcloud contributors"]
+SPDX-License-Identifier = "AGPL-3.0-or-later AND CC-BY-SA-4.0 AND LicenseRef-NextcloudTrademarks"

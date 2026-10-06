@@ -21,8 +21,7 @@ use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The header's figures. Every rule is KpiService's, so what is tested here is the translation
- * between a request and an answer.
+ * The header's figures. Every rule is KpiService's, so this tests request to answer only.
  */
 class KpiControllerTest extends TestCase {
 	private const UUID = '0195e2f1-0000-4000-8000-000000000001';

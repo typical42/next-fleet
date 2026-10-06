@@ -85,9 +85,9 @@ async function preview(page, name, format) {
 }
 
 /**
- * PRD M9's story: the owner brings a LubeLogger history in, sees in the preview which row is
- * already there and which cannot be read, imports, sees what the import made, takes it back, and
- * then brings a Spritmonitor history in. A driver of the same car is offered no import.
+ * The owner brings a LubeLogger history in, sees in the preview which row is already there and
+ * which cannot be read, imports, takes it back, and then brings a Spritmonitor history in. A
+ * driver of the same car is offered no import.
  */
 test('the owner previews, imports and undoes an export, then imports another', async ({ page, browser }, testInfo) => {
 	// Two new accounts, whose first sign-in took 30 s each on an idle stack.

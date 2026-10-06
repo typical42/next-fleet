@@ -11,6 +11,7 @@ namespace OCA\NextFleet\Jurisdiction\De;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Jurisdiction\IReportRenderer;
 use OCA\NextFleet\Jurisdiction\LogbookReport;
+use OCA\NextFleet\Jurisdiction\PrintedPage;
 
 /**
  * A Fahrtenbuch as the browser prints it: one line per trip, voided ones included, the periods
@@ -54,28 +55,6 @@ class FahrtenbuchRenderer implements IReportRenderer {
 	/** The reader's time zone, which stamp() writes the server's instants in; render() sets it. */
 	private \DateTimeZone $zone;
 
-	/**
-	 * Landscape, because twelve columns do not fit upright, and the header repeated on every sheet.
-	 * Inline, because the page loads nothing (docs/security.md#hostile-content).
-	 */
-	private const STYLE = <<<'CSS'
-		@page { size: A4 landscape; margin: 12mm; }
-		body { font: 9pt/1.35 system-ui, sans-serif; color: #000; background: #fff; margin: 0 auto; max-width: 297mm; padding: 8mm; }
-		h1 { font-size: 16pt; margin: 0 0 2mm; }
-		h2 { font-size: 11pt; margin: 5mm 0 1mm; }
-		dl { display: grid; grid-template-columns: max-content 1fr; gap: 0 4mm; margin: 0; }
-		dd { margin: 0; }
-		table { width: 100%; border-collapse: collapse; margin-top: 4mm; }
-		thead { display: table-header-group; }
-		tr { break-inside: avoid; }
-		th, td { border: 0.5pt solid #555; padding: 1mm 1.5mm; text-align: left; vertical-align: top; }
-		th { background: #eee; }
-		.number { text-align: right; white-space: nowrap; }
-		.voided td:not(.note) { text-decoration: line-through; color: #555; }
-		footer { margin-top: 6mm; font-size: 8pt; }
-		@media print { body { padding: 0; max-width: none; } }
-		CSS;
-
 	public function render(LogbookReport $report): string {
 		$this->zone = $report->zone;
 		$vehicle = $report->vehicle;
@@ -84,11 +63,11 @@ class FahrtenbuchRenderer implements IReportRenderer {
 		return '<!DOCTYPE html>'
 			. '<html lang="de"><head><meta charset="utf-8">'
 			. '<meta name="viewport" content="width=device-width, initial-scale=1">'
-			. '<title>Fahrtenbuch ' . $this->text($vehicle->getPlate()) . ' ' . $report->year . '</title>'
-			. '<style>' . self::STYLE . '</style></head><body>'
+			. '<title>Fahrtenbuch ' . PrintedPage::text($vehicle->getPlate()) . ' ' . $report->year . '</title>'
+			. '<style>' . PrintedPage::LOGBOOK_STYLE . '</style></head><body>'
 			. '<header><h1>Fahrtenbuch ' . $report->year . '</h1><dl>'
-			. '<dt>Kennzeichen</dt><dd>' . $this->text($vehicle->getPlate()) . '</dd>'
-			. ($name === '' ? '' : '<dt>Fahrzeug</dt><dd>' . $this->text($name) . '</dd>')
+			. '<dt>Kennzeichen</dt><dd>' . PrintedPage::text($vehicle->getPlate()) . '</dd>'
+			. ($name === '' ? '' : '<dt>Fahrzeug</dt><dd>' . PrintedPage::text($name) . '</dd>')
 			. '</dl></header>'
 			. $this->periods($report)
 			. $this->table($report)
@@ -128,7 +107,7 @@ class FahrtenbuchRenderer implements IReportRenderer {
 		$named = [];
 		foreach ($plates as $i => $plate) {
 			$named[] = ($i === 0 ? '' : 'ab dem ' . $this->stamp($plate['from']) . ' ')
-				. ($plate['plate'] === null || $plate['plate'] === '' ? 'ohne Kennzeichen' : $this->text($plate['plate']));
+				. ($plate['plate'] === null || $plate['plate'] === '' ? 'ohne Kennzeichen' : PrintedPage::text($plate['plate']));
 		}
 
 		return $named === [] ? '' : ', Kennzeichen ' . implode(', ', $named);
@@ -173,25 +152,20 @@ class FahrtenbuchRenderer implements IReportRenderer {
 			['number', $this->count($trip->getStartOdo())],
 			['number', $this->count($trip->getEndOdo())],
 			['number', $this->count($trip->kilometres())],
-			['', $this->text($trip->getFromLabel())],
-			['', $this->text($trip->getToLabel())],
-			['', $this->text($trip->getPurpose())],
-			['', $this->text($trip->getPartner())],
-			['', $this->text(self::CATEGORIES[$trip->getCategory()] ?? $trip->getCategory())],
+			['', PrintedPage::text($trip->getFromLabel())],
+			['', PrintedPage::text($trip->getToLabel())],
+			['', PrintedPage::text($trip->getPurpose())],
+			['', PrintedPage::text($trip->getPartner())],
+			['', PrintedPage::text(self::CATEGORIES[$trip->getCategory()] ?? $trip->getCategory())],
 			// The server's instant, not the driver's: timeliness is the gap between the two
 			// (docs/architecture.md#time). With its offset - a bare date beside `Datum` in the
 			// trip's own offset can read as entered before driven.
 			['', $this->stamp($trip->getCreatedAt())],
-			...($enteredBy === null ? [] : [['', $this->text($enteredBy[$trip->getCreatedBy()] ?? $trip->getCreatedBy())]]),
+			...($enteredBy === null ? [] : [['', PrintedPage::text($enteredBy[$trip->getCreatedBy()] ?? $trip->getCreatedBy())]]),
 			['note', $this->notes($trip, $missing, $late, $unlogged)],
 		];
 
-		$html = '<tr' . ($trip->getDeletedAt() === null ? '' : ' class="voided"') . '>';
-		foreach ($cells as [$class, $content]) {
-			$html .= '<td' . ($class === '' ? '' : ' class="' . $class . '"') . '>' . $content . '</td>';
-		}
-
-		return $html . '</tr>';
+		return PrintedPage::row($trip->getDeletedAt() !== null, $cells);
 	}
 
 	/**
@@ -207,7 +181,7 @@ class FahrtenbuchRenderer implements IReportRenderer {
 			$notes[] = 'Annulliert am ' . $this->stamp($trip->getDeletedAt());
 		}
 		if ($missing !== []) {
-			$notes[] = 'Unvollständig, es fehlt: ' . $this->text(implode(', ', array_map(
+			$notes[] = 'Unvollständig, es fehlt: ' . PrintedPage::text(implode(', ', array_map(
 				static fn (string $field): string => self::WORDS[$field] ?? $field,
 				$missing,
 			)));
@@ -244,7 +218,7 @@ class FahrtenbuchRenderer implements IReportRenderer {
 
 		$before = [];
 		foreach ($change['fields'] as $field => [$value]) {
-			$before[] = (self::WORDS[$field] ?? $this->text($field)) . ' ' . $this->before($field, $value, $change['offsets']);
+			$before[] = (self::WORDS[$field] ?? PrintedPage::text($field)) . ' ' . $this->before($field, $value, $change['offsets']);
 		}
 
 		return 'Nachträglich geändert am ' . $this->stamp($change['at']) . '. Vorher: ' . implode('; ', $before);
@@ -266,11 +240,11 @@ class FahrtenbuchRenderer implements IReportRenderer {
 			'ended_at' => $this->local((int)$value, $offsets['ended_at_off']),
 			'started_at_off', 'ended_at_off' => $this->offset((int)$value),
 			'start_odo', 'end_odo', 'distance' => $this->count((int)$value),
-			'category' => $this->text(self::CATEGORIES[$value] ?? (string)$value),
+			'category' => PrintedPage::text(self::CATEGORIES[$value] ?? (string)$value),
 			default => match (true) {
 				is_bool($value) => $value ? 'ja' : 'nein',
 				is_int($value) => $this->count($value),
-				default => '„' . $this->text(is_scalar($value) ? (string)$value : (string)json_encode($value)) . '“',
+				default => '„' . PrintedPage::text(is_scalar($value) ? (string)$value : (string)json_encode($value)) . '“',
 			},
 		};
 	}
@@ -286,7 +260,7 @@ class FahrtenbuchRenderer implements IReportRenderer {
 	private function footer(LogbookReport $report): string {
 		$html = '<footer>';
 		if ($report->sourceUrl !== null) {
-			$url = $this->text($report->sourceUrl);
+			$url = PrintedPage::text($report->sourceUrl);
 			$html .= '<p>Anforderung: <a href="' . $url . '">' . $url . '</a></p>';
 		}
 
@@ -307,9 +281,5 @@ class FahrtenbuchRenderer implements IReportRenderer {
 
 	private function count(?int $value): string {
 		return $value === null ? '' : number_format($value, 0, ',', '.');
-	}
-
-	private function text(?string $value): string {
-		return htmlspecialchars((string)$value, ENT_QUOTES | ENT_SUBSTITUTE | ENT_HTML5, 'UTF-8');
 	}
 }

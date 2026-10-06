@@ -152,9 +152,8 @@ class TimelineTest extends TestCase {
 	}
 
 	/**
-	 * A voided trip is out of the timeline - the screen shows what stands, and the export is what
-	 * asks for what was struck (PRD, task 17). `deleted_at IS NULL` is in the shared query, so only
-	 * the instance says it reaches both tables.
+	 * A voided trip is out of the timeline; the export shows what was struck. `deleted_at IS NULL`
+	 * sits in the shared query; this proves it against real SQL for trips.
 	 */
 	public function testAVoidedTripIsNoLongerOnTheTimeline(): void {
 		$standing = $this->trip(1750000000, 120450);
@@ -190,10 +189,9 @@ class TimelineTest extends TestCase {
 	}
 
 	/**
-	 * Paging over both tables against real SQL. The first page is asked for with no cursor, which
-	 * is `PHP_INT_MAX` on a BIGINT column, and the boundary falls inside one instant that a trip
-	 * and an Odometer Entry share - the case the cursor's tie-break exists for, and the one a
-	 * database that compared only the instant would lose a row over.
+	 * Paging over both tables. The first page has no cursor, which is `PHP_INT_MAX` on a BIGINT
+	 * column, and the boundary falls inside one instant a trip and an Odometer Entry share: the
+	 * case the cursor's tie-break exists for.
 	 */
 	public function testAPageBoundaryInsideOneInstantLosesAndRepeatsNothing(): void {
 		// One row above every pair, so the fiftieth falls between a trip and the Entry sharing its

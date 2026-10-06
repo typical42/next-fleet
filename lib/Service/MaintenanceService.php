@@ -288,11 +288,7 @@ class MaintenanceService {
 	 */
 	public function prefill(string $userId, string $vehicleUuid, array $fields): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
-		$at = Field::read('at', 'count', Field::MOMENT, $fields['at'] ?? null);
-		$off = Field::read('off', 'offset', null, $fields['off'] ?? null);
-		if (!is_int($at) || !is_int($off)) {
-			throw new \InvalidArgumentException('at and off are the moment a prefill is for');
-		}
+		[$at, $off] = Field::prefillMoment($fields);
 
 		$vendors = array_map(
 			static fn (Maintenance $record): string => (string)$record->getVendor(),

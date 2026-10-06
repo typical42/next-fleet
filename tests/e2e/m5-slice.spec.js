@@ -45,11 +45,10 @@ test.beforeEach(async ({ page }) => {
 	expect((await dav(page, me, 'MKCOL', folder)).status).toBe(201)
 })
 
-// The one place in M5 where a bug leaks a file across an access boundary (PRD M5): the paper is in
-// the run account's Files and shared with nobody, so only the vehicle's grant can be serving it.
+// Where a bug would leak a file across an access boundary: the paper is in the run account's Files
+// and shared with nobody, so only the vehicle's grant can be serving it.
 test('a paper downloads for a driver of the vehicle, for nobody else, and not once it is deleted', async ({ page, playwright }, testInfo) => {
-	// Two accounts and a grant: 33 s on an idle stack, past 90 s beside the
-	// rest of the suite.
+	// Two accounts and a grant: 33 s on an idle stack, past 90 s beside the rest of the suite.
 	test.slow()
 	const vehicle = await api(page, { method: 'POST', path: '/api/vehicles', body: { plate: `${plates}doc-${Date.now()}`, jurisdiction: 'de' } })
 	// An SVG, because it is the receipt that would run script if it were ever shown inline.
@@ -101,8 +100,8 @@ test('a paper downloads for a driver of the vehicle, for nobody else, and not on
 	await stranger.dispose()
 })
 
-// The only place a paper is added is the vehicle screen, through Nextcloud's own picker. On NC 31
-// opening that picker once remounted the whole app (src/main.js says why), so this runs on both.
+// The only place a paper is added is the vehicle screen, through Nextcloud's own picker, which on
+// NC 31 runs a second copy of the app's entry (src/main.js), so this runs on both.
 test('a paper picked from Files is listed on the vehicle and opens from its entry', async ({ page }) => {
 	const plate = `${plates}screen-${Date.now()}`
 	const vehicle = await api(page, { method: 'POST', path: '/api/vehicles', body: { plate, jurisdiction: 'de' } })
@@ -218,7 +217,8 @@ test('the Costs screen reads a month and exports its trips as CSV', async ({ pag
 	])
 	expect(download.suggestedFilename()).toBe(`${plate}-${year}-trips.csv`)
 	const csv = await readFile(await download.path(), 'utf8')
-	// A spreadsheet's CSV: a BOM, commas, CRLF, and a value with a comma in it quoted (PRD M5).
+	// A spreadsheet's CSV: a BOM, commas, CRLF, a value with a comma quoted
+	// (docs/architecture.md#csv-export).
 	const [head, row, end] = csv.split('\r\n')
 	expect(head).toBe('﻿uuid,started,started_offset_min,ended,ended_offset_min,start_odo,end_odo,distance,odo_unit,from,to,purpose,partner,category,reconciled,voided,created_at,entered_by')
 	expect(row).toContain(`,${year}-03-05 11:00,60,${year}-03-05 14:00,60,10000,10250,`)
@@ -308,8 +308,7 @@ async function soonDue(page, uuid) {
 }
 
 // Every screen and sheet in both themes, at the narrowest width and at the store screenshots'
-// (tools/screenshots.mjs): the accessibility sweep (PRD M5, M6). One major, for the reason
-// tests/e2e/m1-slice.spec.js gives.
+// (tools/screenshots.mjs). One major, for the reason tests/e2e/m1-slice.spec.js gives.
 for (const viewport of [{ width: 320, height: 640 }, { width: 1280, height: 800 }]) {
 	// Below Nextcloud's 1024 px breakpoint the navigation folds behind a toggle.
 	const folded = viewport.width < 1024
@@ -376,8 +375,7 @@ for (const viewport of [{ width: 320, height: 640 }, { width: 1280, height: 800 
 				await check(page, 'the personal settings', ['#nextfleet-settings'])
 			})
 
-			// M5's small gaps (PRD M10): a refused download said in place, on the section and on the
-			// row, and the undo toast a removed paper gets.
+			// A refused download said in place, on the section and on the row.
 			test('the papers\' refusals and their undo fit the width and pass an axe audit', async ({ page }) => {
 				test.slow()
 				const plate = `${plates}papers-${at}`
@@ -406,9 +404,9 @@ for (const viewport of [{ width: 320, height: 640 }, { width: 1280, height: 800 
 				await check(page, 'the undo toast for a paper')
 			})
 
-			// What a grant changes (PRD M6). The owner's Access section holds a long name and a
-			// group. The grantee reaches one vehicle in person as a viewer, which trims its screen
-			// and offers Leave, and another only through that group as a driver, which says so.
+			// The owner's Access section holds a long name and a group. The grantee reaches one
+			// vehicle in person as a viewer, which trims its screen and offers Leave, and another
+			// only through that group as a driver, which says so.
 			test('the screens a grant changes fit the width and pass an axe audit', async ({ page, browser }) => {
 				// A new account's first sign-in alone took 30 s (tests/e2e/m6-slice.spec.js).
 				test.slow()
@@ -474,10 +472,10 @@ for (const viewport of [{ width: 320, height: 640 }, { width: 1280, height: 800 
 				}
 			})
 
-			// What the pool and the inbox add (PRD M7). A driver with a long name has the car while
-			// its owner has booked it for tomorrow with a long purpose, and a photo of the handover
-			// hangs on the driver's booking. The owner walks every sheet a booking opens and gives
-			// the car back into the trip it prefills; the driver files from an inbox of two.
+			// A driver with a long name has the car while its owner has booked it for tomorrow with
+			// a long purpose, and a photo of the handover hangs on the driver's booking. The owner
+			// walks every sheet a booking opens and gives the car back into the trip it prefills;
+			// the driver files from an inbox of two.
 			test('the pool and the inbox fit the width and pass an axe audit', async ({ page, browser }) => {
 				// A new account's first sign-in alone took 30 s (tests/e2e/m6-slice.spec.js).
 				test.slow()
@@ -587,8 +585,8 @@ for (const viewport of [{ width: 320, height: 640 }, { width: 1280, height: 800 
 				}
 			})
 
-			// What the import adds (PRD M9). One file whose dates read either way round, so the
-			// preview asks; one with a long name and thirteen columns, which is imported.
+			// One file whose dates read either way round, so the preview asks; one with a long name
+			// and thirteen columns, which is imported.
 			test('the import screens fit the width and pass an axe audit', async ({ page }) => {
 				test.slow()
 				const plate = `${plates}import-${at}`

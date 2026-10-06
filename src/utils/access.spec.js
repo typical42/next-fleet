@@ -13,7 +13,6 @@ describe('may', () => {
 		expect(may({ may: ['view', 'log'] }, 'edit')).toBe(false)
 	})
 
-	/** No list is no permission: the screen never offers more than the server said. */
 	it('refuses what carries no list', () => {
 		expect(may({}, 'view')).toBe(false)
 		expect(may({ may: null }, 'view')).toBe(false)

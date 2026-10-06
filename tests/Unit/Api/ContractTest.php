@@ -190,7 +190,6 @@ class ContractTest extends TestCase {
 		$this->assertContains('GET ' . self::VEHICLES . ' 200: ocs.data[].kind may now be "bus"', Contract::breaks($promised, $offered));
 	}
 
-	/** A request may take more values, an answer give fewer. */
 	public function testAWiderRequestOrANarrowerAnswerKeepsEveryPromise(): void {
 		$promised = $this->baseline();
 		$promised['paths'][self::VEHICLES]['post']['requestBody']['content']['application/json']['schema']['properties']['color']['enum'] = ['red'];

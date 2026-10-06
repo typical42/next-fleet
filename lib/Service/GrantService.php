@@ -23,10 +23,9 @@ use OCP\IUserManager;
 use Psr\Log\LoggerInterface;
 
 /**
- * Who else may use a vehicle: the owner grants a user or a group a role, changes it and revokes
- * it (CONTEXT.md, Vehicle Access). Those routes take `own`; a grantee's own two - what they hold,
- * and leaving it - take `view`. What a grant allows is VehicleAccess's to say; this writes the
- * rows it reads, and tells the grantee.
+ * Who else may use a vehicle: the owner grants, re-roles and revokes a user's or a group's role
+ * (CONTEXT.md, Vehicle Access), and a grantee reads or leaves their own. What a grant allows is
+ * VehicleAccess's to say; this writes the rows it reads, and tells the grantee.
  *
  * @psalm-import-type NextFleetGrant from \OCA\NextFleet\ResponseDefinitions
  * @psalm-import-type NextFleetHeld from \OCA\NextFleet\ResponseDefinitions
@@ -164,8 +163,8 @@ class GrantService {
 	}
 
 	/**
-	 * Takes one grant away. The row is soft-deleted like every other (docs/architecture.md), so
-	 * who had access when stays on record; granting the same grantee again is a new row.
+	 * Takes one grant away. Soft-deleted like every row (docs/architecture.md#data-model), so who
+	 * had access when stays on record; granting the same grantee again is a new row.
 	 *
 	 * @return list<NextFleetGrant> the list as it now stands
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user does not own this vehicle
@@ -262,12 +261,9 @@ class GrantService {
 	/**
 	 * Revokes a deleted group's grants: a group made later under the same id would otherwise
 	 * inherit every car the old one reached. Revoking's rules apply, one vehicle per transaction
-	 * under its hold, with the members noteGroup() found counted as having seen the car. Run once
-	 * the group is gone, so its former members reach nothing through it.
-	 *
-	 * Without noteGroup() before it nothing tells a former member from a bookkeeper, so every
-	 * recipient who no longer sees the car comes off. Pending until done (docs/architecture.md,
-	 * "Both finish, whatever fails").
+	 * under its hold. The members noteGroup() found count as having seen the car; without it, every
+	 * recipient who no longer sees the car comes off. Run once the group is gone, and pending until
+	 * done (docs/architecture.md#data-model, "Both finish, whatever fails").
 	 *
 	 * @param int|null $since when the group went, for a finish: a grant made or changed later
 	 *                        is the owner's for a group made again under the same id
@@ -309,11 +305,9 @@ class GrantService {
 	 * they left, unless they still see it another way: no revoke runs, so prune() would never hear
 	 * of them. The group's grants stand. One vehicle per transaction under its hold.
 	 *
-	 * Queued (ForgetMemberJob), so the group may be gone by the time it runs: its grants revoked
-	 * since `$removedAt` still count, or deleting the group before cron came round would leave the
-	 * member on the list. forgetGroup() noted only who was still a member. A vehicle that fails
-	 * leaves the others done; the first failure is thrown once all were tried, for the job to run
-	 * again.
+	 * Queued (ForgetMemberJob), so the group may be gone by then. Its grants revoked since
+	 * `$removedAt` still count: forgetGroup() counted only who was still a member. A vehicle that
+	 * fails leaves the others done; the first failure is thrown after them, so the job runs again.
 	 *
 	 * @throws \Throwable
 	 */
@@ -372,12 +366,9 @@ class GrantService {
 	 * Whether a new grant's grantee still exists now that the row is in. One deleted since
 	 * grantee() found it ran its erasure or forgetGroup() before the row existed, and the grant
 	 * would wait for whoever takes the name next - so the row goes, for good: nobody was told of
-	 * it or saw it, and no row is left naming the grantee. Asked under the vehicle's hold, so a
-	 * grant of the same name made meanwhile is answered for too, not removed behind its back.
-	 *
-	 * The grantee is never erased here: a backend briefly out of reach (LDAP) answers "no such
-	 * user" for a live account, and an erasure cannot be undone. Erasing stays
-	 * UserDeletedListener's alone.
+	 * it or saw it. Asked under the vehicle's hold, so a grant of the same name made meanwhile is
+	 * answered for too, not removed behind its back. Never erases the grantee: a backend briefly
+	 * out of reach answers "no such user" for a live account (docs/architecture.md#data-model).
 	 *
 	 * @throws \OCP\DB\Exception
 	 */

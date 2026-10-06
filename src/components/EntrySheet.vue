@@ -27,8 +27,7 @@ const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
 	vehicle: { type: Object, required: true },
 	/**
-	 * The timeline row the sheet was opened on, or null for a new entry. The sheet edits that one
-	 * Entry, so it is read once, when the sheet opens.
+	 * The timeline row the sheet edits, or null for a new entry. Read once, when the sheet opens.
 	 *
 	 * @type {import('vue').PropType<import('../services/api.js').Entry|null>}
 	 */
@@ -36,8 +35,8 @@ const props = defineProps({
 	/** The uuid of a reminder a new Maintenance Record is to close: "Done" in the due banner. */
 	closes: { type: String, default: null },
 	/**
-	 * A returned booking whose trip this is: the sheet opens on its `trip_draft`, and the trip is
-	 * tied to it (docs/ui.md, the Bookings section).
+	 * A returned booking whose trip this is: the sheet opens on its `trip_draft` and ties the trip
+	 * to it (docs/ui.md, the Bookings section).
 	 *
 	 * @type {import('vue').PropType<import('../services/api.js').Booking|null>}
 	 */
@@ -51,20 +50,18 @@ const props = defineProps({
 	receipt: { type: Object, default: null },
 })
 
-// Two things, because the screen behind needs them apart: `saved` is what happened to the vehicle,
-// `close` is what happened to the sheet, and a cancel is only the second.
+// `saved` is what happened to the vehicle, `close` what happened to the sheet; a cancel is only
+// the second (src/views/VehicleView.vue).
 const emit = defineEmits(['close', 'saved'])
 
 const store = useVehiclesStore()
 
-// A journey is what a logbook is for and what a driver enters daily; the counter on its own is the
-// escape hatch for everything not otherwise recorded (docs/ui.md). An Entry opened from its row is
-// of its own kind and stays it.
+// A trip is what a driver enters daily (docs/ui.md#the-entry-sheet-in-detail). An Entry opened
+// from its row keeps its kind.
 const kind = ref(props.entry?.type ?? props.receipt?.kind ?? (props.closes === null ? 'trip' : 'maintenance'))
 
 /**
- * The Entry as it was last read, and the token its next write is checked against - null for a new
- * one. Read back after a refused write, so that write goes out under the token that is current.
+ * The Entry as last read, whose token the next write is checked against; null for a new one.
  *
  * @type {import('vue').Ref<any>}
  */
@@ -74,39 +71,34 @@ const editing = props.entry !== null
 /** Which write the server last refused because the Entry moved on, if one was. */
 const refused = ref(/** @type {'save'|'delete'|null} */ (null))
 
-// `energy_types` decides which energies a fill-up may be of (docs/architecture.md#data-model), so a
-// vehicle that names none can log no fill-up and a diesel is never asked about electricity.
+// A fill-up is only of the vehicle's `energy_types` (docs/architecture.md#data-model).
 const energies = computed(() => (props.vehicle.energy_types ?? [])
 	.map((/** @type {string} */ id) => ({ id, label: energyWord(id) })))
 
-// Which of the two the driver happens to know, and the only thing this chooser decides
-// (docs/architecture.md#odometer-rules): the counter the journey ended on, or the kilometres it
-// covered. Never both - either would state the end of the journey twice.
+// The end counter or the distance, whichever the driver knows; never both, as either states the
+// end of the journey (docs/architecture.md#odometer-rules).
 const knows = ref('counter')
 const tripCounters = computed(() => tripCounterWords(props.vehicle.odo_unit))
-// The same rule as the trip's labels: hours are read off a counter, kilometres off the odometer.
+// Hours are read off a counter, kilometres off the odometer, as in the trip's labels.
 const consumptionNeeds = computed(() => (props.vehicle.odo_unit === 'h'
 	? t('nextfleet', 'Consumption needs the counter reading.')
 	: t('nextfleet', 'Consumption needs the odometer reading.')))
 
 // Which chain an Odometer Entry reads, asked only of a vehicle that keeps two
-// (docs/architecture.md#odometer-rules, rule 4). Kilometres unless the person says otherwise.
+// (docs/architecture.md#odometer-rules, rule 4).
 const reads = ref('main')
 const twoCounters = computed(() => Boolean(props.vehicle.second_unit))
 
-// Prefilled with the counter as it stands and visibly editable, because a driver reads the last
-// three digits off the dashboard and not the whole number (docs/ui.md). The numbers stay strings
-// on the way through: what is typed is what the sheet keeps when a save comes back refused.
+// Prefilled, because a driver reads the last three digits off the dashboard, not the whole number.
+// Strings throughout, so a refused save keeps what was typed.
 const counter = ref(standing('main'))
-// A trip's counters are the one thing the sheet does not prefill: `start_odo` is a claim about
-// what the dashboard read when the journey set off (docs/architecture.md#odometer-rules), and the
-// vehicle's own counter is not that claim. Filling it in would answer the question gap detection
-// exists to ask, and it would answer it wrong for every kilometre nobody logged.
+// Not prefilled: `start_odo` is the driver's claim, and the vehicle's counter would answer the
+// question gap detection exists to ask (docs/ui.md#the-entry-sheet-in-detail).
 const startOdo = ref('')
 const endOdo = ref('')
 const distance = ref('')
-// The moment is the driver's, and the offset it was entered at travels with it
-// (docs/architecture.md#time). Now, because a trip is logged when it is over.
+// Now, because a trip is logged when it is over; the offset travels with the moment
+// (docs/architecture.md#time).
 const departure = ref(new Date())
 const arrival = ref(new Date())
 const fromLabel = ref('')
@@ -119,19 +111,16 @@ const placeList = useId()
 const purposeList = useId()
 const partnerList = useId()
 
-// What the costs share, kept across a switch between them: the moment, now because each is logged
-// where it happens; the VAT rate the jurisdiction states for it; and, for a fill-up and a
-// Maintenance Record, the counters. Those are never prefilled, like a trip's: the counter at the pump or the workshop is
-// the one fact consumption is measured against, and the vehicle's cached one is not that fact
-// (docs/architecture.md#odometer-rules).
-// A receipt's file was saved where the money was paid, which is the best guess the sheet has.
+// What the costs share, kept across a switch between them: the moment (now, as each is logged
+// where it happens), the VAT rate and the counters. The counters are never prefilled: consumption
+// is measured against the counter at the pump, not the vehicle's cached one
+// (docs/architecture.md#odometer-rules). A receipt's file was saved where the money was paid.
 const costAt = ref(props.receipt === null ? new Date() : new Date(props.receipt.at * 1000))
 const vatRate = ref('')
 const entryOdo = ref('')
 const entrySecond = ref('')
 
-// A fill-up. The first of the vehicle's energies, because a single-energy vehicle then has nothing
-// to choose.
+// A fill-up. The first energy, so a single-energy vehicle has nothing to choose.
 const energy = ref(energies.value[0] ?? null)
 const amount = ref('')
 const total = ref('')
@@ -141,22 +130,19 @@ const unitPrice = ref('')
 const fullTank = ref(true)
 const missedPrevious = ref(false)
 const station = ref('')
-// Asked of electricity only, and not answered for the driver: a wall box and a public charger cost
-// differently, and a guess would put one's price on the other.
+// Not guessed: a wall box and a public charger cost differently.
 const where = ref('')
 const isDc = ref(false)
 
-// What the server offered, and the two values the sheet took from it. A field still holding what
-// was prefilled is the server's guess, not the driver's word, which decides what a later prefill
-// may overwrite and whether a unit price is sent at all.
+// What the server offered, and the two values taken from it. A field still holding its prefill is
+// the server's guess, not the driver's word: a later prefill may overwrite it, and a unit price
+// is then not sent beside a total.
 /** @type {import('vue').Ref<import('../services/api.js').EnergyPrefill>} */
 const prefilled = ref({ vat_rate: null, stations: [] })
 const prefilledVat = ref('')
 const prefilledPrice = ref('')
 
 const electric = computed(() => energy.value?.id === 'electric')
-// The station field completes from this vehicle's own history through a native datalist, which
-// the field's input takes by id.
 const stationList = useId()
 const stations = computed(() => [...new Set(prefilled.value.stations.map((one) => one.station))])
 
@@ -172,8 +158,8 @@ const vendors = ref([])
 const vendorList = useId()
 
 // The reminder a Maintenance Record closes (docs/architecture.md#reminder-engine). What the record
-// already closes, or what the banner asked for, is somebody's word; until there is one, the most
-// urgent reminder is picked when the work is its kind.
+// closes or the banner asked for is somebody's word; until then the most urgent reminder is picked
+// when the work is its kind.
 /** @type {import('vue').Ref<import('../services/api.js').Reminder[]>} */
 const reminders = ref([])
 const closing = ref(props.entry?.closes ?? props.closes)
@@ -197,8 +183,8 @@ function pick(uuid, on) {
 }
 
 let listed = false
-// Read once the sheet is on a Maintenance Record. Without the list there is nothing to offer, and
-// the record saves as it would without a reminder, so a failure is not the sheet's to report.
+// Read once the sheet is on a Maintenance Record. Without the list the record saves as it would
+// without a reminder, so a failure is not reported.
 watch(kind, async (now) => {
 	if (now !== 'maintenance' || listed) {
 		return
@@ -212,8 +198,8 @@ watch(kind, async (now) => {
 }, { immediate: true })
 
 /**
- * How the vehicle's last trip ended, offered on a new trip that is the driver's own to state - not
- * on an edit, and not on a booking's, whose handover states it.
+ * How the vehicle's last trip ended, offered on a new trip only: not on an edit, and not on a
+ * booking's, whose handover states it.
  *
  * @type {import('vue').Ref<import('../services/api.js').TripPrefill['last']>}
  */
@@ -223,8 +209,8 @@ const ownNewTrip = !editing && props.booking === null
 const openedDeparture = departure.value
 
 let worded = false
-// Read once the sheet is on a trip, as the reminders are on a record: without them the fields are
-// plain text fields, so a failure is not the sheet's to report either.
+// Read once the sheet is on a trip. Without them the fields stay plain, so a failure is not
+// reported either.
 watch(kind, async (now) => {
 	if (now !== 'trip' || worded) {
 		return
@@ -242,10 +228,9 @@ watch(kind, async (now) => {
 }, { immediate: true })
 
 /**
- * A new trip picks up where this person and this vehicle left off: the category they last chose
- * here, else none, since the claim is theirs to make (docs/features.md#logbook-mode); and the
- * departure at the last arrival when that was today, the driver's next leg. A value somebody
- * already set stays.
+ * A new trip picks up where this person left off on this vehicle: their last category, and the
+ * departure at the last arrival when that was today (docs/ui.md#the-entry-sheet-in-detail). A
+ * value somebody already set stays.
  *
  * @param {import('../services/api.js').TripPrefill} answer - the prefill
  */
@@ -298,19 +283,16 @@ const notes = ref('')
 const saving = ref(false)
 const failure = ref('')
 
-// A code in the database and a word on screen (docs/ui.md#languages), looked up on render because
-// the catalogue is registered by the page and not by this module. The words are the timeline's as
-// well, so they are read from the one place that has them (src/utils/format.js).
+// Looked up on render: the catalogue is registered by the page, not by this module
+// (docs/ui.md#languages).
 const categories = computed(() => CATEGORIES.map((id) => ({ id, label: categoryWord(id) })))
 
-// None until the prefill names this person's last one (follow()) or the driver picks: calling a
-// trip business is the claim the logbook is there to record, and the app does not make it for them.
-// A booking's trip stays empty for the same reason.
+// None until the prefill names this person's last one or the driver picks, a booking's trip too:
+// calling a trip business is the claim, and the app does not make it for them.
 /** @type {import('vue').Ref<{id: string, label: string}|null>} */
 const category = ref(null)
 
-// Under Logbook Mode a trip is voided rather than deleted (docs/features.md#logbook-mode), and the
-// button says what the click does.
+// Under Logbook Mode a trip is voided rather than deleted (docs/features.md#logbook-mode).
 const removal = computed(() => (kind.value === 'trip' && props.vehicle.logbook_mode === true
 	? t('nextfleet', 'Void trip')
 	: t('nextfleet', 'Delete')))
@@ -344,9 +326,8 @@ const note = computed(() => {
 /** What each kind's create is in the store; an edit is one write for every kind. */
 const CREATES = { trip: store.log, energy: store.fill, maintenance: store.maintain, odometer: store.record, expense: store.spend }
 
-// The Entry this sheet creates, named before it is sent: a retry after a lost answer is then that
-// Entry again, not a second one (docs/api.md#retried-creates). Each kind is its own table, so a
-// switch of kind keeps it.
+// Named before it is sent, so a retry after a lost answer is that Entry again, not a second one
+// (docs/api.md#retried-creates). Each kind is its own table, so a switch of kind keeps it.
 const clientUuid = newUuid()
 
 /**
@@ -389,8 +370,8 @@ const REFUSALS = {
 }
 
 /**
- * One attempt at a write. A refusal leaves the sheet open with every value intact and offers the
- * retry - nothing is written anywhere else, because the open sheet is the queue (docs/ui.md).
+ * One attempt at a write. A refusal leaves the sheet open with every value intact: the open sheet
+ * is the queue (docs/ui.md#the-entry-sheet-in-detail).
  *
  * @param {() => Promise<unknown>} work - the write to try; a create answers the Entry it wrote
  * @param {'save'|'delete'} which - which write it is, for the message a refusal gets
@@ -420,8 +401,8 @@ async function attempt(work, which) {
 }
 
 /**
- * The Entry the next write is checked against. After a refused one it is read back first, and
- * what is on screen is written under the token that came with it (docs/ui.md).
+ * The Entry the next write is checked against. After a refused one it is read back first, so what
+ * is on screen goes out under the current token (docs/ui.md#the-entry-sheet-in-detail).
  *
  * @return {Promise<{uuid: string, updated_at: number}>} the Entry as the server now holds it
  */
@@ -435,15 +416,14 @@ async function current() {
 }
 
 /**
- * The escape hatch: one number, at the moment it was read. A correction keeps that moment - the
- * sheet asks for the number and nothing else.
+ * The escape hatch: one number, at the moment it was read. A correction keeps that moment.
  *
  * @return {Record<string, unknown>} the fields
  */
 function reading() {
 	const complaint = t('nextfleet', 'That is not a counter reading.')
-	// An Odometer Entry is the number and nothing else (CONTEXT.md), so an empty field is not a
-	// question left open for the timeline to ask - it is nothing to record.
+	// An Odometer Entry is the number and nothing else (CONTEXT.md), so an empty field is nothing
+	// to record, not a question for the timeline.
 	const value = whole(counter, complaint)
 	if (value === null) {
 		throw new Error(complaint)
@@ -452,8 +432,8 @@ function reading() {
 	return {
 		value,
 		...(twoCounters.value ? { counter: reads.value } : {}),
-		// The clock is the reader's: when they read it, and the offset they read it at
-		// (docs/architecture.md#time). The server's own clock is when it heard about it.
+		// The reader's clock and offset, not when the server heard of it
+		// (docs/architecture.md#time).
 		read_at: editing ? held.value.read_at : Math.floor(Date.now() / 1000),
 		read_at_off: editing ? held.value.read_at_off : -new Date().getTimezoneOffset(),
 	}
@@ -570,10 +550,9 @@ function stateCosts() {
 }
 
 /**
- * What the server prefills a cost with, for the moment the sheet is on:
- * the VAT rate changes on a day (lib/Jurisdiction/De/RateProvider.php), so an entry dated back is
- * asked about again. A rate the person typed or cleared is theirs and stays. A prefill that fails
- * leaves the fields empty, which is what they were before it was asked for.
+ * What the server prefills a cost with, for the moment the sheet is on: the VAT rate changes on a
+ * day (lib/Jurisdiction/De/RateProvider.php), so an entry dated back is asked about again. A rate
+ * the person typed or cleared stays. A prefill that fails leaves the fields as they were.
  */
 async function prefill() {
 	const moment = costAt.value
@@ -618,10 +597,9 @@ let asked = 0
 watch([kind, costAt, spentOn], prefill, { immediate: true })
 
 /**
- * A station the vehicle has filled up at before prefills the price it last charged for this
- * energy (docs/ui.md). The guess belongs to one station and one energy, so it follows both, and
+ * A known station prefills the price it last charged for this energy. The guess follows both, and
  * where there is none the field empties rather than carry another station's price. A price the
- * driver typed is theirs and stays.
+ * driver typed stays.
  */
 function reprice() {
 	// An edit opens on the price the fill-up was saved with, which is no station's guess.
@@ -660,9 +638,8 @@ function decimal(input, places, complaint) {
 }
 
 /**
- * One journey. What it did to the counter is the server's to work out - a counter it ended on, or
- * a distance counted onto the chain - so the sheet sends the one the driver typed and nothing it
- * computed from it (docs/architecture.md#odometer-rules).
+ * One journey. What it did to the counter is the server's to work out, so the sheet sends what the
+ * driver typed and nothing computed from it (docs/architecture.md#odometer-rules).
  *
  * @return {Record<string, unknown>} the fields
  */
@@ -693,10 +670,9 @@ function trip() {
 }
 
 /**
- * The kilometres, as the toggle asks for them. A distance leaves the counter it set off on unsaid
- * (docs/architecture.md#odometer-rules): the claim and the distance are two different facts, and
- * the driver who knows neither is only asked for one. One of the two it must have: a trip that
- * covered no stated distance is one no sum can use, and the server would refuse a backwards pair.
+ * The kilometres, as the toggle asks for them. A distance leaves the start counter unsaid: that is
+ * a claim, not a distance (docs/architecture.md#odometer-rules). One of the two is required, since
+ * no sum can use a trip without a stated distance.
  *
  * @return {Record<string, number>} the fields that state what the journey covered
  */
@@ -723,9 +699,8 @@ function counted() {
 }
 
 /**
- * A number as somebody typed it. A field nobody can read is a question for the driver, and asking
- * it here saves them a round trip that would come back in the server's own words. An empty field is
- * a question they did not answer, and what that means is the caller's to decide.
+ * A number as somebody typed it. One nobody can read is asked about here, saving a round trip that
+ * would come back in the server's words. What an empty field means is the caller's to decide.
  *
  * @param {import('vue').Ref<string>} input - the field
  * @param {string} complaint - what to say when it cannot be read
@@ -756,9 +731,8 @@ function omitted(fields) {
 }
 
 /**
- * One moment of an entry. A date field the driver cleared, or half typed, leaves the picker
- * holding null or an invalid date - and an entry with no moment is one no timeline can place, so
- * it is said in the sheet's own words rather than left to what a null does to the arithmetic.
+ * One moment of an entry. A cleared or half-typed date field leaves the picker holding null or an
+ * invalid date, and an entry no timeline can place is said in the sheet's own words.
  *
  * @param {Date|null} moment - what a picker holds
  * @param {string} complaint - what to say when it holds none
@@ -801,9 +775,8 @@ function standing(chain) {
 }
 
 /**
- * The other chain, prefilled as it stands. What was typed for the first one is a number on the
- * wrong counter, so it is not kept - unless the Entry is being corrected, where moving its number
- * to the right counter is the correction.
+ * The other chain, prefilled as it stands. What was typed for the first is a number on the wrong
+ * counter, so it goes - unless the Entry is being corrected, where moving it is the correction.
  *
  * @param {'main'|'second'} chain - the counter the person now says they read
  */
@@ -927,10 +900,9 @@ function decimalText(value, places) {
 }
 
 /**
- * The Escape a native date picker is dismissed with. The browser draws that picker over the input
- * and closes it on the key, but the keydown reaches the input all the same - so without the `.stop`
- * this handler is here to carry, backing out of a calendar would close the sheet over everything
- * that has been typed into it (src/components/VehicleSheet.vue).
+ * Carries the `.stop` for the Escape that dismisses a native date picker. The browser closes the
+ * picker but still delivers the keydown to the input, which would close the sheet over everything
+ * typed (src/components/VehicleSheet.vue).
  */
 function keepPicker() {}
 
@@ -947,11 +919,9 @@ function requestClose() {
 		:open="true"
 		:size="kind === 'odometer' ? 'small' : 'normal'"
 		@update:open="requestClose">
-		<!-- NcDialog closes itself on Escape, but through a useHotKey, which passes over every
-		     keystroke aimed at a text field - and this sheet opens with the caret in one. So the
-		     key is caught where the dialog cannot see it and stopped there, which keeps the
-		     mid-save guard on the one way out. An open NcSelect stops it first, so its dropdown
-		     still closes on its own. -->
+		<!-- NcDialog's Escape is a useHotKey, which skips keystrokes aimed at a text field, and the
+		     sheet opens with the caret in one. Caught here, the key keeps the mid-save guard. An
+		     open NcSelect stops it first, so its dropdown still closes on its own. -->
 		<div class="sheet"
 			:class="{ 'sheet--roomy': kind !== 'odometer' }"
 			@keydown.esc.stop="requestClose">
@@ -960,8 +930,8 @@ function requestClose() {
 				:type="note.type"
 				:text="note.text" />
 
-			<!-- An Entry opened from its row keeps its kind: a fill-up does not become an expense. A
-			     booking's is a trip, a receipt's the cost it was logged as. -->
+			<!-- A fill-up does not become an expense. A booking's is a trip, a receipt's the
+			     cost it was logged as. -->
 			<NcRadioGroup v-if="entry === null && booking === null && receipt === null"
 				v-model="kind"
 				class="sheet__wide"
@@ -1008,12 +978,10 @@ function requestClose() {
 						:disabled="saving" />
 				</NcRadioGroup>
 
-				<!-- Both fields read in whole kilometres or whole hours, and a comma or a point in
-				     one of them groups thousands - which is what the app wrote out a moment
-				     earlier (docs/ui.md#languages). The number pad, because they are whole. -->
+				<!-- Whole kilometres or hours: a comma or a point groups thousands, as the app
+				     writes them (docs/ui.md#languages). -->
 				<template v-if="knows === 'counter'">
-					<!-- The hint sits with the field it fills, so a phone's single column keeps
-					     the two together. -->
+					<!-- The hint stays with its field in a phone's single column. -->
 					<div class="sheet__field">
 						<NcTextField v-model="startOdo"
 							:label="tripCounters.start_odo"
@@ -1100,8 +1068,7 @@ function requestClose() {
 					:label="t('nextfleet', 'Total price')"
 					:disabled="saving"
 					inputmode="decimal" />
-				<!-- Right after the money: the pump's display and the receipt are read first, the
-				     dashboard on the walk back. -->
+				<!-- After the money: pump and receipt are read first, the dashboard last. -->
 				<NcTextField v-model="entryOdo"
 					:label="t('nextfleet', 'Counter reading')"
 					:helper-text="entryOdo.trim() === '' ? consumptionNeeds : ''"

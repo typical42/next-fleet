@@ -11,9 +11,8 @@ namespace OCA\NextFleet\Tests\Unit;
 use PHPUnit\Framework\TestCase;
 
 /**
- * Reads the stack the way docker itself does - `docker compose config` resolves and
- * validates the file against the compose schema without ever contacting the daemon, so
- * the shape of the dev environment is checked on a machine that cannot run it.
+ * `docker compose config` validates the file against the compose schema without the daemon,
+ * so the dev stack is checked on a machine that cannot run it.
  */
 class ComposeStackTest extends TestCase {
 	private const FILE = __DIR__ . '/../../.docker/compose.yml';
@@ -64,10 +63,7 @@ class ComposeStackTest extends TestCase {
 		return (array)$services[$name];
 	}
 
-	/**
-	 * docs/development.md names six: the database, both Nextcloud majors the M0 gate
-	 * loads, a cron runner for each, and the SMTP sink.
-	 */
+	/** As docs/development.md lists them: two Nextcloud majors, a cron runner each, db, mail. */
 	public function testTheStackDeclaresTheServicesTheDocsDescribe(): void {
 		$this->assertSame(
 			['app', 'app31', 'cron', 'cron31', 'db', 'mail'],
@@ -76,8 +72,7 @@ class ComposeStackTest extends TestCase {
 	}
 
 	/**
-	 * The M0 gate is checked by loading both ports, so the pairing of major to port is the
-	 * one thing in this file a typo would silently invert.
+	 * The E2E reaches each major by its port, so a typo here silently swaps the majors.
 	 */
 	public function testBothNextcloudMajorsArePublishedOnTheirOwnPort(): void {
 		$this->assertSame('nextcloud:34-apache', $this->service('app')['image']);
@@ -121,8 +116,7 @@ class ComposeStackTest extends TestCase {
 
 	/**
 	 * Docker creates the bind mount's parent as root and the image only takes ownership of
-	 * it while it is still empty, so without this NC 31 refuses to install. It is one line
-	 * of shell in a YAML file, and nothing but this test notices when it goes.
+	 * it while it is still empty, so without this NC 31 refuses to install.
 	 *
 	 * @dataProvider webServices
 	 */
@@ -135,9 +129,7 @@ class ComposeStackTest extends TestCase {
 
 	/**
 	 * `docker compose up --wait` is what CI waits on, and without a healthcheck it waits for
-	 * apache rather than for Nextcloud. Apache starts even when the install failed - that is
-	 * exactly how the missing chown above presented - so the check has to ask status.php
-	 * whether the install stands.
+	 * apache, which starts even when the install failed. status.php says whether it stands.
 	 *
 	 * @dataProvider webServices
 	 */
@@ -169,7 +161,7 @@ class ComposeStackTest extends TestCase {
 
 	/**
 	 * A shared schema or a shared html volume means whichever major starts second runs
-	 * `occ upgrade` against the other's install, and the gate then tests one version twice.
+	 * `occ upgrade` against the other's install, and the E2E then tests one version twice.
 	 */
 	public function testTheTwoMajorsShareNothingButTheDatabaseServer(): void {
 		$app = (array)$this->service('app')['environment'];

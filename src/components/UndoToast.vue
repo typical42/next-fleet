@@ -21,8 +21,8 @@ const failure = ref('')
 /** An undo in flight. The second click would be checked against a row that is no longer deleted. */
 const undoing = ref(false)
 
-// A refusal is about the row it was refused for. The next delete is a different row and a
-// different token, so it gets an offer that has not already failed.
+// A refusal is about its own row. The next delete is another row and token, so it gets a fresh
+// offer: one arriving already refused would strand a restorable row.
 watch([() => store.deleted, () => store.struck, () => store.imported, () => store.detached, () => store.saved], () => {
 	failure.value = ''
 })
@@ -100,8 +100,8 @@ const message = computed(() => {
 })
 
 /**
- * The way back. A vehicle that comes back is still the selected one, so its screen returns with
- * it; an Entry's timeline reads itself again off the store.
+ * The way back. A restored vehicle is still the selected one, so its screen returns with it; an
+ * Entry's timeline reads itself again off the store.
  */
 async function undo() {
 	if (undoing.value) {
@@ -134,9 +134,8 @@ function dismiss() {
 </script>
 
 <template>
-	<!-- The region stays in the page and the toast comes and goes inside it: a live region that is
-	     inserted already full is not announced. Polite rather than assertive, because the deletion
-	     is what the user just asked for - it follows what they are reading, it does not cut in. -->
+	<!-- The region stays in the page and the toast comes and goes inside it: a live region
+	     inserted already full is not announced. Polite: the user just asked for the deletion. -->
 	<div class="toast-region" role="status" aria-live="polite">
 		<div v-if="offered" class="toast">
 			<p class="toast__message">
@@ -158,19 +157,14 @@ function dismiss() {
 </template>
 
 <style scoped>
-/*
- * The region is a place for the card to appear in and nothing else: taken out of the flow so that
- * an app shell laying out its children never has to account for it, and left in the page so a
- * screen reader has something to announce the change in.
- */
+/* Out of the flow, so the app shell never lays it out; in the page, so it can announce. */
 .toast-region {
 	position: absolute;
 }
 
 /*
- * No timer on an offer: the token the undo carries is untimed (docs/architecture.md#concurrency),
- * and a way back that disappears on a clock is a time limit on the only way back there is. A
- * "Saved." that offers nothing holds no token, so it leaves on its own (BRIEF).
+ * No timer on an offer: the undo token is untimed (docs/architecture.md#concurrency), and a way
+ * back that leaves on a clock is a time limit on it. A "Saved." with no token leaves (BRIEF).
  */
 .toast {
 	position: fixed;
@@ -192,8 +186,8 @@ function dismiss() {
 }
 
 .toast__message {
-	/* The message takes the row on a phone and shares it once there is room, so both buttons stay
-	   reachable at 320 px without the text being cut. */
+	/* Takes the row on a phone and shares it when there is room, so both buttons stay reachable at
+	   320 px without cutting the text. */
 	flex: 1 1 12em;
 }
 </style>

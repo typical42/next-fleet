@@ -12,13 +12,12 @@ use OCA\NextFleet\AppInfo\Application;
 use PHPUnit\Framework\TestCase;
 
 /**
- * Both languages are first-class from M1, so a string that reaches the screen untranslated is a
- * defect and not a to-do: docs/ui.md#languages asks for exactly this check.
+ * Both languages are first-class, so a string that reaches the screen untranslated is a defect
+ * (docs/ui.md#languages).
  */
 class TranslationsTest extends TestCase {
 	private const LANGUAGES = ['en', 'de', 'de_DE'];
 
-	/** Where the app's own root is, from tests/Unit/. */
 	private static function root(): string {
 		return dirname(__DIR__, 2);
 	}

@@ -18,10 +18,11 @@ use OCP\IL10N;
  * unit, and service, repair and upgrade share their headers, so the user says both.
  *
  * How it writes the values (read 2026-10-03 from `Controllers/Vehicle/ImportController.cs`):
- * CsvHelper with the invariant culture, so `,` separates and RFC 4180 quotes; but each value is `ToString()` in the
- * server's culture. A fuel date carries midnight, `1/15/2024 12:00:00 AM` or `15.01.2024 00:00:00`;
- * the other dates are short dates. A service-type cost is the currency format, `$1,234.56`,
- * `1.234,56 €`, `($5.00)`; a fuel cost is a plain number; a flag is `True` or `False`.
+ * CsvHelper with the invariant culture, so `,` separates and RFC 4180 quotes; but each value is
+ * `ToString()` in the server's culture. A fuel date carries midnight, `1/15/2024 12:00:00 AM` or
+ * `15.01.2024 00:00:00`; the other dates are short dates. A service-type cost is the currency
+ * format, `$1,234.56`, `1.234,56 €`, `($5.00)`; a fuel cost is a plain number; a flag is `True` or
+ * `False`.
  */
 final class LubeLoggerImporter implements IImporter {
 	private const MAINTENANCE = [
@@ -153,7 +154,6 @@ final class LubeLoggerImporter implements IImporter {
 		$marks = [
 			'Odometer' => Values::decimalMark(Cells::column($rows, $positions['Odometer'] ?? null)),
 			'FuelConsumed' => Values::decimalMark(Cells::column($rows, $positions['FuelConsumed'] ?? null)),
-			// LubeLogger writes a cost in the server's currency format, `$42.50`.
 			'Cost' => Values::decimalMark(array_map(
 				static fn (string $cell): string => Values::money($cell)[0],
 				Cells::column($rows, $positions['Cost'] ?? null),
@@ -187,9 +187,9 @@ final class LubeLoggerImporter implements IImporter {
 	}
 
 	/**
-	 * LubeLogger keeps days. A fuel date is written with `ToString()`, which adds midnight in the
-	 * server's culture; without it the day reads as noon, as every date alone does (Values::moment).
-	 * Any other time is kept: it would be one the user gave.
+	 * LubeLogger keeps days, so the midnight a fuel date carries (see the class) goes, and the day
+	 * reads as noon, as every date alone does (Values::moment). Any other time is kept: it would be
+	 * one the user gave.
 	 *
 	 * @param list<string> $row
 	 * @return list<string>

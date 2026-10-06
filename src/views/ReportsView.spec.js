@@ -13,8 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { getPreferences } from '../services/api.js'
 import ReportsView from './ReportsView.vue'
 
-// The network is mocked; the address the export lives at is the real one, because which page opens
-// is the point of the screen.
+// The export's address stays real: which page opens is the point of the screen.
 vi.mock('../services/api.js', async (original) => ({
 	...await original(),
 	getPreferences: vi.fn(),
@@ -91,11 +90,6 @@ afterEach(() => {
 })
 
 describe('reports screen', () => {
-	/**
-	 * A country without a renderer answers the export with a 404, so its vehicles are not offered.
-	 * A sold vehicle is: its logbook is kept for years after it left the fleet
-	 * (docs/features.md#logbook-mode).
-	 */
 	it('offers the vehicles whose country prints a logbook, sold ones included', async () => {
 		const wrapper = await screen()
 
@@ -103,11 +97,7 @@ describe('reports screen', () => {
 			.toEqual(['v-de', 'v-sold'])
 	})
 
-	/**
-	 * Prefilled, like every other choice in the app (docs/ui.md): the first vehicle on offer and
-	 * the year it is now. The export is a page, so the button is a link to it in a tab of its own,
-	 * which leaves the app where it was while the page is printed.
-	 */
+	/** Prefilled like every choice in the app (docs/ui.md); the page opens in a tab of its own. */
 	it('links to the logbook of the first vehicle for this year', async () => {
 		vi.useFakeTimers({ toFake: ['Date'] })
 		vi.setSystemTime(new Date('2026-09-17T10:00:00Z'))
@@ -120,7 +110,6 @@ describe('reports screen', () => {
 		expect(link(wrapper).props('target')).toBe('_blank')
 	})
 
-	/** Until the end of February the reports people print are last year's: the tax return's. */
 	it.each([
 		['New Year', new Date(2027, 0, 1, 0, 1), '2026'],
 		['the last minute of February', new Date(2027, 1, 28, 23, 59), '2026'],
@@ -152,7 +141,6 @@ describe('reports screen', () => {
 		expect(link(wrapper).props('href')).toBe('/index.php/apps/nextfleet/vehicles/v-de/logbook/0999')
 	})
 
-	/** A dropdown with nothing in it teaches nothing; the empty state says where the export comes from. */
 	it('says so when no vehicle is kept under a country that prints a logbook', async () => {
 		const wrapper = await screen([ELSEWHERE])
 
@@ -160,10 +148,7 @@ describe('reports screen', () => {
 		expect(wrapper.findComponent(NcEmptyContent).props('name')).toBe('No logbook to print')
 	})
 
-	/**
-	 * Not knowing which countries print is not knowing that none do: the screen says the read failed
-	 * rather than showing the empty state.
-	 */
+	/** Not knowing which countries print is not knowing that none do. */
 	it('says so when it cannot learn which countries print a logbook', async () => {
 		vi.mocked(getPreferences).mockRejectedValue(new Error('The server answered 500'))
 
@@ -174,7 +159,6 @@ describe('reports screen', () => {
 		expect(link(wrapper).exists()).toBe(false)
 	})
 
-	/** The route answers anything but four digits with a 400, so the screen does not offer it. */
 	it.each(['', '19', '2026abc', '20.26'])('offers no page for the year %j', async (year) => {
 		const wrapper = await screen()
 
@@ -185,7 +169,6 @@ describe('reports screen', () => {
 		expect(field(wrapper).props('error')).toBe(true)
 	})
 
-	/** Same vehicle, same year, the other page: business trips at the country's rate. */
 	it('links to the mileage claim of the vehicle and year chosen', async () => {
 		const wrapper = await screen()
 
@@ -195,24 +178,18 @@ describe('reports screen', () => {
 		expect(claim(wrapper).props('target')).toBe('_blank')
 	})
 
-	/** Who may claim the flat rate at all is said before the page is opened. */
 	it('says the flat rate is only for vehicles outside business assets', async () => {
 		const wrapper = await screen()
 
 		expect(wrapper.text()).toContain('The flat rate applies only to vehicles that are not business assets.')
 	})
 
-	/** The pages it opens are aids nobody checked in law, and the screen says so before them. */
 	it('says no lawyer reviewed the reports', async () => {
 		const wrapper = await screen()
 
 		expect(wrapper.get('.reports__logbook').text()).toContain('Not reviewed by a lawyer.')
 	})
 
-	/**
-	 * The claim route answers 404 where the country states no rate, and for a vehicle counting
-	 * hours, which no kilometre rate values; neither is offered one.
-	 */
 	it('offers no mileage claim where the route has none', async () => {
 		vi.mocked(getPreferences).mockResolvedValue({
 			...settings,

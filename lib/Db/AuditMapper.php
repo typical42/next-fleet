@@ -121,8 +121,8 @@ class AuditMapper extends BaseMapper {
 	 * so the key is the order they were written in, and two changes in the same second still
 	 * come back the way they happened.
 	 *
-	 * A soft-deleted audit row is not filtered out, because nothing may write one. The column is
-	 * there because every table has it.
+	 * `deleted_at` is not filtered: nothing may set it, and the column is there only because every
+	 * table has it.
 	 *
 	 * @return list<Audit>
 	 * @throws \OCP\DB\Exception

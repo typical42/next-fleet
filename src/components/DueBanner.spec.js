@@ -120,7 +120,6 @@ describe('the due banner', () => {
 		expect(listed[3]).toContain('Chain')
 	})
 
-	/** Rule 5: an estimate only with enough data, and otherwise the banner says so. */
 	it('states a due date, a due km, and an estimate or the lack of one', async () => {
 		const wrapper = await banner()
 		const [insurance, , oil, chain] = rows(wrapper)
@@ -145,10 +144,6 @@ describe('the due banner', () => {
 		expect(sheetOf(wrapper).props('reminder')).toEqual(INSURANCE)
 	})
 
-	/**
-	 * "Done" is the maintenance that closes a reminder, so it asks the screen for the entry sheet
-	 * on that reminder rather than opening the reminder sheet.
-	 */
 	it('asks for a maintenance record on a reminder from its Done', async () => {
 		const wrapper = await banner()
 
@@ -159,10 +154,6 @@ describe('the due banner', () => {
 		expect(wrapper.findComponent(ReminderSheet).exists()).toBe(false)
 	})
 
-	/**
-	 * Reminders take `edit`. A driver's maintenance record closes one as anybody's does, so Done
-	 * stays; a viewer reads the list and nothing more.
-	 */
 	it('offers a driver Done and a viewer nothing, and neither the sheet', async () => {
 		vi.mocked(listReminders).mockResolvedValue([OIL])
 		const buttons = (/** @type {import('@vue/test-utils').VueWrapper} */ wrapper) => wrapper.findAllComponents(NcButton).map((one) => one.text())
@@ -176,12 +167,10 @@ describe('the due banner', () => {
 		expect(rows(viewer)).toHaveLength(1)
 		expect(viewer.find('.due__row button').exists()).toBe(false)
 		expect(buttons(viewer)).toEqual([])
-		// No HU/AU question either: its answer is a new reminder.
 		expect(viewer.findComponent(InspectionSticker).exists()).toBe(false)
 		expect(reminderTemplates).not.toHaveBeenCalled()
 	})
 
-	/** Only the list carries the estimate and today's state, so a write is followed by a read. */
 	it('reads the list again after the sheet wrote and after an undo', async () => {
 		const wrapper = await banner()
 		await add(wrapper)
@@ -196,7 +185,6 @@ describe('the due banner', () => {
 		expect(listReminders).toHaveBeenCalledTimes(3)
 	})
 
-	/** A km reminder's state and estimate move with the counter, and another vehicle is another list. */
 	it('reads again when the counter moves or the vehicle changes', async () => {
 		const wrapper = await banner()
 
@@ -208,7 +196,6 @@ describe('the due banner', () => {
 		expect(vi.mocked(listReminders).mock.calls).toEqual([['v-1'], ['v-1'], ['v-2']])
 	})
 
-	/** A slow answer for the vehicle left behind must not land under the one now shown. */
 	it('drops an answer for a vehicle it has moved on from', async () => {
 		/** @type {(value: any) => void} */
 		let late = () => {}
@@ -228,7 +215,6 @@ describe('the due banner', () => {
 		expect(rows(wrapper)[0]).toContain('Technical inspection (HU/AU)')
 	})
 
-	/** The counter has passed the due km, so there is nothing left to estimate, and no lack of data. */
 	it('states no estimate for a reminder by km that is already due', async () => {
 		// Snoozed, so the state alone does not say the km is reached; the counter (148 320) does.
 		vi.mocked(listReminders).mockResolvedValue([reminder({ uuid: 'r-due', title: 'Chain', mode: 'odo', due_odo: 140000, state: 'snoozed' })])
@@ -261,7 +247,6 @@ describe('the HU/AU sticker question', () => {
 		expect(wrapper.findComponent(InspectionSticker).exists()).toBe(false)
 	})
 
-	/** A disposed vehicle's reminders stop: it is asked for no new one, sticker or + Reminder. */
 	it('is not asked of a vehicle disposed of, which offers no + Reminder either', async () => {
 		vi.mocked(listReminders).mockResolvedValue([OIL, DONE])
 		const wrapper = shallowMount(DueBanner, {
@@ -295,7 +280,6 @@ describe('the HU/AU sticker question', () => {
 		expect(rows(wrapper)).toHaveLength(2)
 	})
 
-	/** A change of country or type is another set of templates. */
 	it('asks the templates again when the jurisdiction or the type changes', async () => {
 		const wrapper = await banner()
 

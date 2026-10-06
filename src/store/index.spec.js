@@ -91,10 +91,6 @@ describe('vehicles store', () => {
 	})
 
 	describe('visible', () => {
-		/**
-		 * The overview is a to-do list, not an inventory: a sold vehicle leaves it and a laid-up
-		 * one sinks below the vehicles somebody still drives (docs/ui.md).
-		 */
 		it('drops disposed vehicles and sinks laid-up ones', () => {
 			const store = useVehiclesStore()
 
@@ -107,10 +103,7 @@ describe('vehicles store', () => {
 	})
 
 	describe('load', () => {
-		/**
-		 * The fleet the server sends is the whole answer, so a vehicle somebody deleted in another
-		 * tab has to disappear here rather than linger as a row nothing can write to.
-		 */
+		/** A vehicle deleted in another tab disappears here. */
 		it('holds the fleet the server sent and nothing else', async () => {
 			const store = useVehiclesStore()
 			store.upsert(vehicle({ uuid: 'stale' }))
@@ -123,7 +116,6 @@ describe('vehicles store', () => {
 	})
 
 	describe('create', () => {
-		/** What the sheet leaves out the server decides, so the answer is what the store keeps. */
 		it('keeps what the server made of the four fields', async () => {
 			const store = useVehiclesStore()
 			vi.mocked(createVehicle).mockResolvedValue(vehicle({ uuid: 'new', odo_unit: 'h' }))
@@ -136,12 +128,6 @@ describe('vehicles store', () => {
 	})
 
 	describe('record', () => {
-		/**
-		 * `odo_value` is a cache the server recomputes from the whole chain of readings
-		 * (docs/architecture.md#odometer-rules), and a Reading answers with itself. So the vehicle
-		 * has to be read back; computing the new counter here would be a second implementation of
-		 * the rules, and a wrong one the moment a reading lands out of order.
-		 */
 		it('re-reads the vehicle instead of counting the new value itself', async () => {
 			const store = useVehiclesStore()
 			store.upsert(vehicle({ uuid: 'a', odo_value: 148000 }))
@@ -155,13 +141,6 @@ describe('vehicles store', () => {
 			expect(store.list[0].odo_value).toBe(148320)
 		})
 
-		/**
-		 * The Reading is written by then. Reporting the failed re-read as a failed save would
-		 * offer a retry that writes the Reading a second time - and nothing on the server refuses
-		 * a duplicate, because two equal readings are not a contradiction
-		 * (docs/architecture.md#odometer-rules). A stale counter until the next load is the
-		 * cheaper wrong.
-		 */
 		it('does not report a written reading as failed because the vehicle would not come back', async () => {
 			const store = useVehiclesStore()
 			store.upsert(vehicle({ uuid: 'a', odo_value: 148000 }))
@@ -174,10 +153,6 @@ describe('vehicles store', () => {
 			expect(store.list[0].odo_value).toBe(148000)
 		})
 
-		/**
-		 * A reading the server refused never reached the vehicle either, so re-reading it would
-		 * only hide the failure the sheet has to show (docs/ui.md).
-		 */
 		it('lets a refused reading through and leaves the vehicle alone', async () => {
 			const store = useVehiclesStore()
 			store.upsert(vehicle({ uuid: 'a', odo_value: 148000 }))
@@ -192,12 +167,6 @@ describe('vehicles store', () => {
 	})
 
 	describe('log', () => {
-		/**
-		 * A trip writes a Reading of its own (docs/architecture.md#odometer-rules), so the counter
-		 * moves for the same reason `record` does — and it is read back for the same reason: the
-		 * new value is the server's to compute, whether the trip stated it or was counted a
-		 * distance onto the chain.
-		 */
 		it('re-reads the vehicle the trip moved', async () => {
 			const store = useVehiclesStore()
 			store.upsert(vehicle({ uuid: 'a', odo_value: 148320 }))
@@ -211,10 +180,6 @@ describe('vehicles store', () => {
 			expect(store.list[0].odo_value).toBe(148402)
 		})
 
-		/**
-		 * The trip is written by then, and it wrote a Reading with it. Offering the sheet a retry
-		 * would log the journey twice, and nothing refuses a duplicate.
-		 */
 		it('does not report a written trip as failed because the vehicle would not come back', async () => {
 			const store = useVehiclesStore()
 			store.upsert(vehicle({ uuid: 'a', odo_value: 148320 }))
@@ -227,7 +192,6 @@ describe('vehicles store', () => {
 			expect(store.list[0].odo_value).toBe(148320)
 		})
 
-		/** A trip the server refused never reached the vehicle, so the sheet has to hear the refusal. */
 		it('lets a refused trip through and leaves the vehicle alone', async () => {
 			const store = useVehiclesStore()
 			store.upsert(vehicle({ uuid: 'a', odo_value: 148320 }))
@@ -252,10 +216,6 @@ describe('vehicles store', () => {
 			expect(store.list.map((v) => v.plate)).toEqual(['M-XY 789'])
 		})
 
-		/**
-		 * A refused write reaches whoever asked for the save, so the sheet can stay open and offer a
-		 * retry (docs/ui.md). Swallowing it would close the sheet over a write that never happened.
-		 */
 		it('lets a refused write through and keeps the row it holds', async () => {
 			const store = useVehiclesStore()
 			store.upsert(vehicle({ plate: 'M-AB 123' }))
@@ -269,13 +229,6 @@ describe('vehicles store', () => {
 	})
 
 	describe('remove', () => {
-		/**
-		 * A deleted vehicle is gone from the fleet, not a row carrying a flag: `visible` hides only
-		 * the disposed ones, so a vehicle left behind here would still be listed and still be
-		 * openable. The store keeps the vehicle the delete answered with, because the token on it
-		 * is the only one the undo is accepted with (docs/architecture.md#concurrency) and the
-		 * screen that asked for the delete goes with the vehicle.
-		 */
 		it('drops the vehicle and keeps the token the undo is checked against', async () => {
 			const store = useVehiclesStore()
 			store.upsert(vehicle({ uuid: 'a' }))
@@ -288,10 +241,6 @@ describe('vehicles store', () => {
 			expect(store.deleted?.updated_at).toBe(1750000002)
 		})
 
-		/**
-		 * A refused delete deleted nothing, so dropping the row would take away a vehicle that is
-		 * still there - and the failure has to reach whoever asked, as it does for a save.
-		 */
 		it('lets a refused delete through and keeps the vehicle', async () => {
 			const store = useVehiclesStore()
 			store.upsert(vehicle({ uuid: 'a' }))
@@ -306,7 +255,6 @@ describe('vehicles store', () => {
 	})
 
 	describe('leave', () => {
-		/** Nothing left to reach it by, so it goes the way a deleted vehicle goes - with no undo. */
 		it('drops the vehicle when no group still reaches it', async () => {
 			const store = useVehiclesStore()
 			store.upsert(vehicle({ uuid: 'a' }))
@@ -320,7 +268,6 @@ describe('vehicles store', () => {
 			expect(store.deleted).toBeNull()
 		})
 
-		/** A group still reaches it, perhaps with less: what the caller may do is read again. */
 		it('reads the vehicle again when a group still reaches it', async () => {
 			const store = useVehiclesStore()
 			store.upsert(vehicle({ uuid: 'a', may: ['view', 'log'] }))
@@ -346,11 +293,7 @@ describe('vehicles store', () => {
 	})
 
 	describe('restore', () => {
-		/**
-		 * Undo takes the vehicle the delete answered with, and no other: the token it carries is
-		 * the one the server checks, and it is minted by the delete. The restore mints the next one,
-		 * and the next edit is checked against that (docs/architecture.md#concurrency).
-		 */
+		/** The restore answers with a new token, which the store keeps for the next edit. */
 		it('puts back the vehicle the last delete took, under the token it answered with', async () => {
 			const store = useVehiclesStore()
 			store.upsert(vehicle({ uuid: 'a', plate: 'M-AB 123' }))
@@ -365,11 +308,7 @@ describe('vehicles store', () => {
 			expect(store.deleted).toBeNull()
 		})
 
-		/**
-		 * The token the store holds matched nothing, so the vehicle is still deleted. Inventing a
-		 * row for it here would put a vehicle on the overview that no write can reach, and letting
-		 * go of the token would take away the second attempt.
-		 */
+		/** Still deleted, so no row comes back; the offer stays for a second attempt. */
 		it('lets a refused undo through and puts nothing back', async () => {
 			const store = useVehiclesStore()
 			const refusal = new Error('Changed since you read it')
@@ -384,7 +323,6 @@ describe('vehicles store', () => {
 			expect(store.deleted?.uuid).toBe('a')
 		})
 
-		/** Nothing was deleted, so there is nothing to ask the server for. */
 		it('asks for nothing when there is nothing to undo', async () => {
 			const store = useVehiclesStore()
 
@@ -396,8 +334,7 @@ describe('vehicles store', () => {
 
 	describe('a maintenance record', () => {
 		/**
-		 * A record may close a reminder, and its edit, delete and undo take that back and redo it
-		 * (docs/architecture.md#reminder-engine), so whoever lists reminders reads them again. A
+		 * Each write may close a reminder or reopen it (docs/architecture.md#reminder-engine); a
 		 * fill-up closes none.
 		 */
 		it('tells whoever lists reminders each time it is written', async () => {
@@ -498,7 +435,6 @@ describe('vehicles store', () => {
 	})
 
 	describe('forget', () => {
-		/** The way back is offered once. Letting go of it is what closing the toast means. */
 		it('lets go of the deleted vehicle', async () => {
 			const store = useVehiclesStore()
 			vi.mocked(deleteVehicle).mockResolvedValue(vehicle({ uuid: 'a', updated_at: 1750000002 }))

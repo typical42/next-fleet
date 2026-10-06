@@ -20,6 +20,7 @@ use OCA\NextFleet\Exception\AccessDeniedException;
 use OCA\NextFleet\Exception\CurrencyInUseException;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCA\NextFleet\Service\BookingNotices;
+use OCA\NextFleet\Service\Field;
 use OCA\NextFleet\Service\GrantNotices;
 use OCA\NextFleet\Service\MoneyRows;
 use OCA\NextFleet\Service\NotificationService;
@@ -152,10 +153,6 @@ class VehicleServiceTest extends TestCase {
 		]);
 	}
 
-	/**
-	 * The owner and the author are the session's, and a request that names someone else does
-	 * not get to say so.
-	 */
 	public function testCreateTakesTheOwnerFromTheSessionAndNotFromTheRequest(): void {
 		$vehicle = $this->service()->create('alice', [
 			'plate' => 'B-XY 123',
@@ -183,10 +180,7 @@ class VehicleServiceTest extends TestCase {
 		$this->assertSame('uk', $vehicle->getJurisdiction());
 	}
 
-	/**
-	 * Germany is the first jurisdiction (plan.md), so it is what a user who never chose one
-	 * gets.
-	 */
+	/** Germany, the first jurisdiction, is what a user who never chose one gets. */
 	public function testCreateFallsBackToTheFirstJurisdiction(): void {
 		$vehicle = $this->service()->create('alice', []);
 
@@ -374,7 +368,6 @@ class VehicleServiceTest extends TestCase {
 		$this->assertSame('km', $vehicle->getOdoUnit());
 	}
 
-	/** A truck counts kilometres and may count engine hours beside them. */
 	public function testATruckCountsEngineHoursBesideItsKilometres(): void {
 		$vehicle = $this->service()->create('alice', ['vehicle_type' => 'truck', 'second_unit' => 'h']);
 
@@ -383,7 +376,6 @@ class VehicleServiceTest extends TestCase {
 		$this->assertSame('h', $vehicle->getSecondUnit());
 	}
 
-	/** Hours are the only second counter (PRD M3, out of scope: anything else). */
 	public function testASecondCounterIsHoursOrNothing(): void {
 		$this->expectException(\InvalidArgumentException::class);
 
@@ -632,10 +624,7 @@ class VehicleServiceTest extends TestCase {
 		$this->service()->update(self::STRANGER, self::UUID, 1750000000, ['plate' => 'B-ZZ 9']);
 	}
 
-	/**
-	 * The jurisdiction lives on the vehicle, not on whoever is editing it, and a co-driver's
-	 * own default has no business overwriting it. What a request leaves out stays as it was.
-	 */
+	/** An empty cadence is no choice: the stored one stays. */
 	public function testTheMailCadenceIsWrittenAndAnEmptyOneKeepsTheRows(): void {
 		$this->mapper->method('findByUuid')->willReturn($this->stored());
 		$this->mapper->method('updateChecked')->willReturnArgument(0);
@@ -687,9 +676,7 @@ class VehicleServiceTest extends TestCase {
 		$this->service()->delete(self::DRIVER, self::UUID, 1750000000);
 	}
 
-	/**
-	 * The car is the owner's: a manager changes everything on it but whether it exists.
-	 */
+	/** The car is the owner's: a manager changes everything on it but whether it exists. */
 	public function testAManagerDoesNotDeleteTheVehicle(): void {
 		$this->mapper->method('findByUuid')->willReturn($this->stored());
 		$this->mapper->expects($this->never())->method('softDelete');
@@ -781,10 +768,7 @@ class VehicleServiceTest extends TestCase {
 		$this->assertSame(self::UUID, $this->service()->find(self::OWNER, self::UUID)->getUuid());
 	}
 
-	/**
-	 * The realistic bug in an id-addressed API (docs/security.md): a uuid is all it takes to name
-	 * a row, so every route that takes one asks first.
-	 */
+	/** A uuid is all it takes to name a row, so every route asks first (docs/security.md). */
 	public function testAStrangerDoesNotReachAVehicle(): void {
 		$this->mapper->method('findByUuid')->willReturn($this->stored());
 
@@ -828,6 +812,8 @@ class VehicleServiceTest extends TestCase {
 		yield 'a tank that is not a number' => [['tank_ml' => 'full']];
 		yield 'a tank below empty' => [['tank_ml' => '-1']];
 		yield 'a fractional tank' => [['tank_ml' => '4.5']];
+		yield 'a tank past the bound' => [['tank_ml' => (string)(Field::CAPACITY + 1)]];
+		yield 'a price below the bound' => [['purchase_price' => (string)(-Field::MONEY - 1)]];
 		yield 'a German date' => [['first_reg' => '07.03.2019']];
 		yield 'a day that is not one' => [['first_reg' => '2019-02-31']];
 		yield 'a plate longer than the column' => [['plate' => str_repeat('B', 33)]];

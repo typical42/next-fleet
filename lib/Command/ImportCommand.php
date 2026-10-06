@@ -64,12 +64,12 @@ class ImportCommand extends Command {
 	}
 
 	protected function execute(InputInterface $input, OutputInterface $output): int {
-		$userId = (string)$input->getArgument('user');
+		$asked = (string)$input->getArgument('user');
 		$vehicleUuid = (string)$input->getArgument('vehicle');
 		try {
-			if (!$this->users->userExists($userId)) {
-				throw new \InvalidArgumentException('No such user: ' . $userId);
-			}
+			// The uid as stored, for the reason SeedCommand gives.
+			$userId = $this->users->get($asked)?->getUID()
+				?? throw new \InvalidArgumentException('No such user: ' . $asked);
 			$fields = $this->request($input, $userId);
 			$preview = $this->import->preview($userId, $vehicleUuid, $fields);
 			$this->describe($preview, $output);

@@ -26,7 +26,7 @@ class AutoloadingTest extends TestCase {
 	 */
 	public static function ocpClasses(): iterable {
 		yield 'IDBConnection' => [IDBConnection::class];
-		// The one this suite has already been bitten by: it grew a method in NC 33.
+		// It grew a method in NC 33, so the stubs and the server differ.
 		yield 'ISchemaWrapper' => [ISchemaWrapper::class];
 		yield 'QBMapper' => [QBMapper::class];
 	}

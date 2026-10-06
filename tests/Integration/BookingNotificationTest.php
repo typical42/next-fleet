@@ -132,10 +132,7 @@ class BookingNotificationTest extends TestCase {
 		$this->assertSame(0, $this->stored($booking['uuid']));
 	}
 
-	/**
-	 * Nothing restores a booking yet; if anything ever does, the notice of its cancel is no longer
-	 * true, and the notifier drops it from the store.
-	 */
+	/** Should a cancel ever be undone, its notice is untrue and the notifier drops it. */
 	public function testABookingNoLongerCancelledTakesTheNoticeBack(): void {
 		$vehicle = $this->vehicle();
 		$booking = $this->bookings->book(self::BEN, $vehicle->getUuid(), $this->span());

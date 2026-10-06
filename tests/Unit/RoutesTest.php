@@ -73,8 +73,8 @@ class RoutesTest extends TestCase {
 
 	/**
 	 * A placeholder shares one namespace with the body: Nextcloud binds a controller argument from
-	 * the merged parameters, and a body field of the same name wins. `/energy/{energy}` once
-	 * looked every edited fill-up up by its fuel, "diesel", and answered 404.
+	 * the merged parameters, and PlaceholderMiddleware refuses a body field of the same name with
+	 * another value. `/energy/{energy}` would refuse every edited fill-up for its fuel, "diesel".
 	 */
 	public function testNoPlaceholderIsNamedLikeAFieldAWriteSends(): void {
 		$fields = ['odo', 'second_odo', 'updated_at', 'client_uuid'];

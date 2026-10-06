@@ -21,10 +21,9 @@ use OCP\L10N\IFactory;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The Fahrtenbuch export against the real database, written the way the app writes it: trips
- * through TripService, the mode flipped through VehicleService. What the unit tests take on trust
- * is what this checks - that the year's query selects voided trips, and that the flips come back
- * off the trail as the periods.
+ * The Fahrtenbuch export against the real database, trips and mode flips written through the
+ * services. It checks what the unit tests take on trust: that the year's query selects voided
+ * trips, and that the flips come back off the trail as the periods.
  *
  * It writes to the instance it runs against (docs/development.md#testing).
  */
@@ -121,10 +120,10 @@ class LogbookExportTest extends TestCase {
 	}
 
 	/**
-	 * The PRD's sentence against the instance: the year's trips with the voided one listed as
-	 * voided, last year's left out, the period the mode was on stated, and the requirement cited.
-	 * The flips are written now and the trips in January, so each trip set off outside the period
-	 * and none is marked incomplete, not even the one without a partner.
+	 * The year's trips with the voided one listed as voided, last year's left out, the period the
+	 * mode was on stated, and the requirement cited. The flips are written now and the trips in
+	 * January, so each trip set off outside the period and none is marked incomplete, not even the
+	 * one without a partner.
 	 */
 	public function testTheYearsLogbookListsWhatHappenedInItAsItHappened(): void {
 		$uuid = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 127', 'jurisdiction' => 'de'])->getUuid();
@@ -234,7 +233,7 @@ class LogbookExportTest extends TestCase {
 	}
 
 	/**
-	 * Late is decided at export: a far-future `ended_at` stopped the clock the void stored its flag
+	 * Late is judged at export: a far-future `ended_at` stopped the clock the void stored its flag
 	 * by, and the trip's own `created_at` restarts it. The stored flag says no; the line says late.
 	 */
 	public function testAVoidOfATripEndingFarAheadIsLateFromWhenTheTripWasEntered(): void {
@@ -282,7 +281,7 @@ class LogbookExportTest extends TestCase {
 		$this->assertStringContainsString('Annulliert am', $lines[0]);
 	}
 
-	/** A vehicle nobody else was given access to prints as it did before access existed. */
+	/** Nobody else ever reached the vehicle, so naming who entered a trip says nothing. */
 	public function testALogbookNobodyElseReachesNamesNobody(): void {
 		$uuid = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 134', 'jurisdiction' => 'de'])->getUuid();
 		$this->trip($uuid, gmmktime(8, 0, 0, 1, 10, $this->year), ['start_odo' => 120000, 'end_odo' => 120450]);

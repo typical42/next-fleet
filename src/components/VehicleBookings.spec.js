@@ -111,7 +111,6 @@ afterEach(() => {
 })
 
 describe('the bookings section', () => {
-	/** The coming ones are what a driver plans around, so they come first; the last week's below. */
 	it('lists the coming bookings, then the last week\'s', async () => {
 		const wrapper = await section()
 
@@ -131,7 +130,6 @@ describe('the bookings section', () => {
 		expect(row(wrapper, 'b-1').text()).toContain('Returned')
 	})
 
-	/** Done when: the booking row in the Bookings section shows its photos. */
 	it('shows a booking\'s handover photos on its row, each a link to our download', async () => {
 		const photo = /** @type {import('../services/api.js').Document} */ ({ uuid: 'd-1', kind: 'photo', file_id: 7, name: 'scratch.jpg', mime: 'image/jpeg', linked_type: 'booking', linked_uuid: 'b-1', may: [] })
 		const receipt = /** @type {import('../services/api.js').Document} */ ({ ...photo, uuid: 'd-2', name: 'fuel.pdf', linked_type: 'energy', linked_uuid: 'b-2' })
@@ -166,7 +164,6 @@ describe('the bookings section', () => {
 		expect(wrapper.text()).not.toContain('Last 7 days')
 	})
 
-	/** A car still out past its end has not been given back: it stays among the coming ones. */
 	it('keeps a car that is still out among the coming ones', async () => {
 		vi.mocked(listBookings).mockResolvedValue([booking({ uuid: 'b-4', starts_at: 1790582400, ends_at: 1790596800, state: 'out' })])
 
@@ -199,7 +196,6 @@ describe('the bookings section', () => {
 		expect(wrapper.getComponent(NcNoteCard).props('text')).toContain('500')
 	})
 
-	/** The undo toast brought a trip back: the row it came from links it again (src/store/index.js). */
 	it('reads the list again when an undo restores something', async () => {
 		const wrapper = await section()
 
@@ -236,7 +232,6 @@ describe('booking', () => {
 		expect(button(await section(LAID_UP), 'Book')).toBeUndefined()
 	})
 
-	/** The screen is told too: the header names the reader's own next booking. */
 	it('opens the sheet, and reads the list again once it is saved', async () => {
 		const wrapper = await section()
 
@@ -263,7 +258,6 @@ describe('changing and cancelling', () => {
 		expect(row(wrapper, 'b-3').findAllComponents(NcButton)).toHaveLength(0)
 	})
 
-	/** Read out of its row, "Change" alone does not say which booking it changes. */
 	it('names the booking in each row button\'s label', async () => {
 		const wrapper = await section()
 
@@ -282,7 +276,6 @@ describe('changing and cancelling', () => {
 		expect(/** @type {any} */ (wrapper.getComponent(BookingSheet)).props('booking')).toEqual(COMING)
 	})
 
-	/** A cancel has no undo, so it asks once (docs/ui.md). */
 	it('asks once before it cancels', async () => {
 		const wrapper = await section()
 
@@ -298,7 +291,6 @@ describe('changing and cancelling', () => {
 		expect(wrapper.emitted('changed')).toHaveLength(1)
 	})
 
-	/** A keyboard or screen reader user lands on the answer, and back where they asked from. */
 	it('moves focus to the question and back to the button that asked it', async () => {
 		const wrapper = mount(VehicleBookings, { props: { vehicle: VEHICLE, papers: [] }, attachTo: document.body })
 		await flushPromises()
@@ -313,7 +305,6 @@ describe('changing and cancelling', () => {
 		wrapper.unmount()
 	})
 
-	/** Cancelled, the row keeps no Cancel button; focus stays on the row rather than falling to the page. */
 	it('keeps focus on the row once its booking is cancelled', async () => {
 		const wrapper = mount(VehicleBookings, { props: { vehicle: VEHICLE, papers: [] }, attachTo: document.body })
 		await flushPromises()
@@ -349,7 +340,7 @@ describe('changing and cancelling', () => {
 		expect(wrapper.getComponent(NcNoteCard).props('text')).toBe('This booking was taken, returned or cancelled meanwhile.')
 	})
 
-	/** The booking moved on; what it now is decides whether a cancel still makes sense, so the list is read again. */
+	/** What the booking now is decides whether a cancel still makes sense. */
 	it('says so when the booking changed meanwhile, and shows it as it now stands', async () => {
 		vi.mocked(cancelBooking).mockRejectedValue(new ConflictError('Changed since you read it'))
 		const wrapper = await section()
@@ -388,7 +379,9 @@ describe('the handover', () => {
 		expect(/** @type {any} */ (wrapper.getComponent(HandoverSheet)).props('lastIn')).toBe(52140)
 	})
 
-	/** A logged trip is the record and has moved the vehicle's counter: its check-in counter no longer counts. */
+	/**
+	 * A logged trip is the record and has moved the counter; its check-in counter no longer counts.
+	 */
 	it('hands the sheet no counter from a return whose trip is logged', async () => {
 		const logged = booking({ uuid: 'b-6', starts_at: 1790582400, ends_at: 1790596800, state: 'returned', in_at: 1790596000, in_odo: 52300, trip_uuid: 't-1' })
 		vi.mocked(listBookings).mockResolvedValue([logged, COMING])
@@ -399,7 +392,6 @@ describe('the handover', () => {
 		expect(/** @type {any} */ (wrapper.getComponent(HandoverSheet)).props('lastIn')).toBeNull()
 	})
 
-	/** The screen is told too: the header says who has the car. */
 	it('offers Return the car on a booking that is out, and reads the list again once it is back', async () => {
 		vi.mocked(listBookings).mockResolvedValue([OUT])
 		const wrapper = await section()
@@ -427,7 +419,6 @@ describe('the handover', () => {
 		expect(button(await section(LAID_UP), 'Take it now')).toBeUndefined()
 	})
 
-	/** Taking it now may have booked before the check-out failed; that booking belongs on the list. */
 	it('reads the list again when the sheet is closed unsaved', async () => {
 		const wrapper = await section()
 
@@ -522,7 +513,10 @@ describe('a booking becomes a trip', () => {
 		expect(wrapper.emitted('open')).toBeUndefined()
 	})
 
-	/** The trip opens by its own rule, as its timeline row does; to anyone else the row only says it is logged. */
+	/**
+	 * The trip opens by its own rule, as on its timeline row; to anyone else the row says it is
+	 * logged.
+	 */
 	it('says the trip is logged to a reader who may not open it', async () => {
 		vi.mocked(listBookings).mockResolvedValue([{ ...BACK, trip_uuid: 't-1', trip_voided: false, trip_draft: null, may: [] }])
 		const wrapper = await section()

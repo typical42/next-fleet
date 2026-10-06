@@ -12,9 +12,8 @@ namespace OCA\NextFleet\Jurisdiction;
  * What one country answers about a vehicle registered in it: how it is named, and what a vehicle
  * created under it takes for the fields the create sheet does not ask for (docs/ui.md).
  *
- * Internal seam, not a public API - see docs/contributing.md. Plate format arrives with the feature
- * that reads it; a profile that cannot answer says so rather than guessing, and every caller has
- * to tolerate that.
+ * Internal seam, not a public API - see docs/contributing.md. A profile that cannot answer says so
+ * rather than guessing, and every caller has to tolerate that.
  */
 interface IJurisdiction {
 	/**
@@ -45,9 +44,9 @@ interface IJurisdiction {
 
 	/**
 	 * The ruleset a vehicle under this jurisdiction keeps its logbook by, or null where the
-	 * country requires none - the generic profile's answer, and the one every caller has to
-	 * tolerate. Null is not an empty ruleset: Logbook Mode still keeps trips append-only and
-	 * audited under it, because that part is the core's (docs/features.md#logbook-mode).
+	 * country requires none - the generic profile's answer. Null is not an empty ruleset: Logbook
+	 * Mode still keeps trips append-only and audited under it, because that part is the core's
+	 * (docs/features.md#logbook-mode).
 	 */
 	public function logbookRules(): ?ILogbookRules;
 

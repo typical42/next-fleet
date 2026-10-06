@@ -20,7 +20,6 @@ describe('FORMATS', () => {
 		])
 	})
 
-	/** Nominative only (docs/legal.md): the other project's name says whose format it is. */
 	it('names a format by its file and the record type', () => {
 		expect(formatWord(FORMATS[0])).toBe('CSV (LubeLogger format) — fuel')
 		expect(formatWord(FORMATS[8])).toBe('CSV (Spritmonitor format) — costs')
@@ -59,12 +58,10 @@ describe('reasonWord', () => {
 		expect(reasonWord('date', 'Datum')).toBe('Datum is not a date this import reads.')
 	})
 
-	/** A skip is the user's own answer, not a fault of the file (lib/Import/SpritmonitorImporter.php). */
 	it('words a skipped category as the choice it was', () => {
 		expect(reasonWord('skipped', 'Kostenart')).toBe('Skipped, as you chose for its category.')
 	})
 
-	/** What a Spritmonitor code names that no entry here holds (lib/Import/SpritmonitorImporter.php). */
 	it('words what a code names that no entry holds', () => {
 		expect(reasonWord('adblue', 'Kraftstoff')).toBe('Kraftstoff says AdBlue, which is not a fuel.')
 		expect(reasonWord('hydrogen', 'Fuel')).toBe('Fuel says hydrogen, which this app does not record.')
@@ -72,7 +69,6 @@ describe('reasonWord', () => {
 		expect(reasonWord('refund', 'Kostenart')).toBe('A refund would be a negative cost.')
 	})
 
-	/** A currency blames its column, or none when the vehicle's own currency is no code (lib/Import/Cells.php). */
 	it('words a currency the vehicle is not kept in apart from a vehicle currency that is no code', () => {
 		expect(reasonWord('currency', 'Cost')).toBe('Cost names a currency the vehicle is not kept in.')
 		expect(reasonWord('currency', null)).toBe('The currency of the vehicle is not a three-letter code such as EUR. Correct it in the edit sheet of the vehicle, then preview again.')
@@ -99,13 +95,11 @@ describe('refusalWord', () => {
 		expect(refusalWord('too_large', null)).toBe('The file is larger than 5 MB.')
 		expect(refusalWord('line_too_long', 7)).toBe('Row 7 is longer than 64 KiB, so the file is not read.')
 		expect(refusalWord('too_many_cells', 1)).toBe('Row 1 has more than 256 cells, so the file is not read.')
-		// The file's cap names no row (CsvReader::MAX_FILE_CELLS).
 		expect(refusalWord('too_many_cells', null)).toBe('The file has more than 500,000 cells.')
 	})
 })
 
 describe('placedWord', () => {
-	/** Spritmonitor's costs report names checks, not entry fields (`date`, `currency`, …). */
 	it('names the field a column became', () => {
 		expect(placedWord('filled_at', 'fuel')).toBe('Date')
 		expect(placedWord('date', 'costs')).toBe('Date')
@@ -113,7 +107,6 @@ describe('placedWord', () => {
 		expect(placedWord('currency', 'fuel')).toBe('Currency (checked, not imported)')
 	})
 
-	/** A fill-up's `amount` is litres or kWh; everyone else's is money. */
 	it('tells a quantity from a sum of money', () => {
 		expect(placedWord('amount', 'fuel')).toBe('Quantity')
 		expect(placedWord('amount', 'tax')).toBe('Amount')

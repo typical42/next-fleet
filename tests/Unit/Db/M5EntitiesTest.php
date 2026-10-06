@@ -12,7 +12,8 @@ use OCA\NextFleet\Db\Document;
 use PHPUnit\Framework\TestCase;
 
 /**
- * What M5's columns mean when they come back from the database, before any service reads them.
+ * What the document columns mean when they come back from the database, before any service
+ * reads them.
  */
 class M5EntitiesTest extends TestCase {
 	public function testADocumentReadsItsIdsAsIntegers(): void {
