@@ -65,7 +65,7 @@ class VehicleService {
 	 * What is missing is the point. `uuid` is the identity and `user_id`/`created_by` the
 	 * provenance, so a request cannot choose them; `odo_value` and `second_value` are caches
 	 * recomputed from the Readings (docs/architecture.md#odometer-rules); and `folder_file_id` is
-	 * the app's to set (docs/architecture.md#nextcloud-integration).
+	 * reserved, never set (docs/architecture.md#nextcloud-integration).
 	 *
 	 * @var array<string, array{string, string, int|list<string>|null}>
 	 */
