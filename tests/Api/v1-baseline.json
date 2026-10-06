@@ -3,7 +3,7 @@
     "info": {
         "title": "nextfleet",
         "version": "0.0.1",
-        "description": "Vehicle fleet management",
+        "description": "A logbook for your vehicles",
         "license": {
             "name": "AGPL-3.0-or-later"
         }
@@ -274,6 +274,7 @@
                     "grams",
                     "unstated",
                     "source",
+                    "year",
                     "grid"
                 ],
                 "properties": {
@@ -287,6 +288,11 @@
                     },
                     "source": {
                         "type": "string"
+                    },
+                    "year": {
+                        "type": "integer",
+                        "format": "int64",
+                        "nullable": true
                     },
                     "grid": {
                         "nullable": true,
@@ -1019,7 +1025,8 @@
                 "type": "object",
                 "required": [
                     "role",
-                    "groups"
+                    "groups",
+                    "holders"
                 ],
                 "properties": {
                     "role": {
@@ -1047,6 +1054,321 @@
                                 }
                             }
                         }
+                    },
+                    "holders": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": [
+                                "display_name",
+                                "grantee_type",
+                                "role"
+                            ],
+                            "properties": {
+                                "display_name": {
+                                    "type": "string"
+                                },
+                                "grantee_type": {
+                                    "type": "string"
+                                },
+                                "role": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "ImportPreview": {
+                "type": "object",
+                "required": [
+                    "importer",
+                    "record_type",
+                    "columns",
+                    "questions",
+                    "categories",
+                    "category_defaults",
+                    "counts",
+                    "reasons",
+                    "proposals",
+                    "etag"
+                ],
+                "properties": {
+                    "importer": {
+                        "type": "string"
+                    },
+                    "record_type": {
+                        "type": "string"
+                    },
+                    "columns": {
+                        "type": "object",
+                        "required": [
+                            "placed",
+                            "ignored"
+                        ],
+                        "properties": {
+                            "placed": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "required": [
+                                        "header",
+                                        "field"
+                                    ],
+                                    "properties": {
+                                        "header": {
+                                            "type": "string"
+                                        },
+                                        "field": {
+                                            "type": "string"
+                                        }
+                                    }
+                                }
+                            },
+                            "ignored": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "questions": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": [
+                                "name",
+                                "choices"
+                            ],
+                            "properties": {
+                                "name": {
+                                    "type": "string"
+                                },
+                                "choices": {
+                                    "type": "array",
+                                    "items": {
+                                        "type": "string"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "categories": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "category_defaults": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": [
+                                "text",
+                                "meaning"
+                            ],
+                            "properties": {
+                                "text": {
+                                    "type": "string"
+                                },
+                                "meaning": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    },
+                    "counts": {
+                        "type": "object",
+                        "required": [
+                            "new",
+                            "duplicate",
+                            "unreadable",
+                            "creates"
+                        ],
+                        "properties": {
+                            "new": {
+                                "type": "integer",
+                                "format": "int64"
+                            },
+                            "duplicate": {
+                                "type": "integer",
+                                "format": "int64"
+                            },
+                            "unreadable": {
+                                "type": "integer",
+                                "format": "int64"
+                            },
+                            "creates": {
+                                "type": "integer",
+                                "format": "int64"
+                            }
+                        }
+                    },
+                    "reasons": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": [
+                                "reason",
+                                "count"
+                            ],
+                            "properties": {
+                                "reason": {
+                                    "type": "string"
+                                },
+                                "count": {
+                                    "type": "integer",
+                                    "format": "int64"
+                                }
+                            }
+                        }
+                    },
+                    "proposals": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/ImportProposal"
+                        }
+                    },
+                    "etag": {
+                        "type": "string"
+                    }
+                }
+            },
+            "ImportProposal": {
+                "type": "object",
+                "required": [
+                    "row",
+                    "kind",
+                    "fields",
+                    "outcome",
+                    "reason",
+                    "column"
+                ],
+                "properties": {
+                    "row": {
+                        "type": "integer",
+                        "format": "int64"
+                    },
+                    "kind": {
+                        "type": "string"
+                    },
+                    "fields": {
+                        "type": "object",
+                        "additionalProperties": {
+                            "nullable": true,
+                            "oneOf": [
+                                {
+                                    "type": "integer",
+                                    "format": "int64"
+                                },
+                                {
+                                    "type": "string"
+                                },
+                                {
+                                    "type": "boolean"
+                                }
+                            ]
+                        }
+                    },
+                    "outcome": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "reason": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "column": {
+                        "type": "string",
+                        "nullable": true
+                    }
+                }
+            },
+            "ImportRefusal": {
+                "type": "object",
+                "required": [
+                    "message",
+                    "reason",
+                    "row"
+                ],
+                "properties": {
+                    "message": {
+                        "type": "string"
+                    },
+                    "reason": {
+                        "type": "string"
+                    },
+                    "row": {
+                        "type": "integer",
+                        "format": "int64",
+                        "nullable": true
+                    }
+                }
+            },
+            "ImportResult": {
+                "type": "object",
+                "required": [
+                    "counts",
+                    "created"
+                ],
+                "properties": {
+                    "counts": {
+                        "type": "object",
+                        "required": [
+                            "new",
+                            "duplicate",
+                            "unreadable",
+                            "creates"
+                        ],
+                        "properties": {
+                            "new": {
+                                "type": "integer",
+                                "format": "int64"
+                            },
+                            "duplicate": {
+                                "type": "integer",
+                                "format": "int64"
+                            },
+                            "unreadable": {
+                                "type": "integer",
+                                "format": "int64"
+                            },
+                            "creates": {
+                                "type": "integer",
+                                "format": "int64"
+                            }
+                        }
+                    },
+                    "created": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": [
+                                "type",
+                                "uuid"
+                            ],
+                            "properties": {
+                                "type": {
+                                    "type": "string"
+                                },
+                                "uuid": {
+                                    "type": "string"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "ImportUndone": {
+                "type": "object",
+                "required": [
+                    "undone"
+                ],
+                "properties": {
+                    "undone": {
+                        "type": "integer",
+                        "format": "int64"
                     }
                 }
             },
@@ -1468,6 +1790,7 @@
                         "required": [
                             "jurisdiction",
                             "dismissed_hints",
+                            "dismissed_logbook_hints",
                             "reclaim_vat",
                             "kpi_period",
                             "grid_factor",
@@ -1478,6 +1801,12 @@
                                 "type": "string"
                             },
                             "dismissed_hints": {
+                                "type": "array",
+                                "items": {
+                                    "type": "string"
+                                }
+                            },
+                            "dismissed_logbook_hints": {
                                 "type": "array",
                                 "items": {
                                     "type": "string"
@@ -1510,6 +1839,7 @@
                                 "name",
                                 "logbook_export",
                                 "mileage_claim",
+                                "logbook_rules",
                                 "grid_factor"
                             ],
                             "properties": {
@@ -1523,6 +1853,9 @@
                                     "type": "boolean"
                                 },
                                 "mileage_claim": {
+                                    "type": "boolean"
+                                },
+                                "logbook_rules": {
                                     "type": "boolean"
                                 },
                                 "grid_factor": {
@@ -1550,6 +1883,7 @@
                     "flagged",
                     "source_type",
                     "source_id",
+                    "source_uuid",
                     "counter",
                     "created_at",
                     "updated_at",
@@ -1587,6 +1921,10 @@
                     "source_id": {
                         "type": "integer",
                         "format": "int64",
+                        "nullable": true
+                    },
+                    "source_uuid": {
+                        "type": "string",
                         "nullable": true
                     },
                     "counter": {
@@ -1632,6 +1970,9 @@
                 ],
                 "properties": {
                     "message": {
+                        "type": "string"
+                    },
+                    "reason": {
                         "type": "string"
                     }
                 }
@@ -2218,7 +2559,7 @@
                         "nullable": true,
                         "allOf": [
                             {
-                                "$ref": "#/components/schemas/Reminder"
+                                "$ref": "#/components/schemas/ListedReminder"
                             }
                         ]
                     }
@@ -2466,7 +2807,9 @@
                 "required": [
                     "places",
                     "purposes",
-                    "partners"
+                    "partners",
+                    "category",
+                    "last"
                 ],
                 "properties": {
                     "places": {
@@ -2485,6 +2828,34 @@
                         "type": "array",
                         "items": {
                             "type": "string"
+                        }
+                    },
+                    "category": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "last": {
+                        "type": "object",
+                        "nullable": true,
+                        "required": [
+                            "end_odo",
+                            "ended_at",
+                            "ended_at_off"
+                        ],
+                        "properties": {
+                            "end_odo": {
+                                "type": "integer",
+                                "format": "int64",
+                                "nullable": true
+                            },
+                            "ended_at": {
+                                "type": "integer",
+                                "format": "int64"
+                            },
+                            "ended_at_off": {
+                                "type": "integer",
+                                "format": "int64"
+                            }
                         }
                     }
                 }
@@ -2527,7 +2898,8 @@
                     "may",
                     "owned_by",
                     "out_with",
-                    "my_next_booking"
+                    "my_next_booking",
+                    "ever_granted"
                 ],
                 "properties": {
                     "uuid": {
@@ -2729,6 +3101,9 @@
                                 "format": "int64"
                             }
                         }
+                    },
+                    "ever_granted": {
+                        "type": "boolean"
                     }
                 }
             },
@@ -2951,7 +3326,7 @@
                                         "type": "string",
                                         "nullable": true,
                                         "default": null,
-                                        "description": "car, van, truck, trailer, tractor or generator"
+                                        "description": "car, motorcycle, van, truck, trailer, tractor or generator"
                                     },
                                     "engine": {
                                         "type": "string",
@@ -3074,6 +3449,12 @@
                                         "nullable": true,
                                         "default": null,
                                         "description": "off, daily, weekly or monthly"
+                                    },
+                                    "client_uuid": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "a uuid of the client's for the new row: a retry under it answers that row"
                                     }
                                 }
                             }
@@ -3095,6 +3476,36 @@
                 "responses": {
                     "201": {
                         "description": "the vehicle",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/Vehicle"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "200": {
+                        "description": "the vehicle an earlier create under the same `client_uuid` wrote",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -3504,7 +3915,7 @@
                                         "type": "string",
                                         "nullable": true,
                                         "default": null,
-                                        "description": "car, van, truck, trailer, tractor or generator"
+                                        "description": "car, motorcycle, van, truck, trailer, tractor or generator"
                                     },
                                     "engine": {
                                         "type": "string",
@@ -4532,6 +4943,12 @@
                                         "nullable": true,
                                         "default": null,
                                         "description": "main, or second for the engine hours; main when left out"
+                                    },
+                                    "client_uuid": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "a uuid of the client's for the new row: a retry under it answers that row"
                                     }
                                 }
                             }
@@ -4562,6 +4979,36 @@
                 "responses": {
                     "201": {
                         "description": "the Reading",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/Reading"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "200": {
+                        "description": "the Reading an earlier create under the same `client_uuid` wrote",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -5483,6 +5930,249 @@
                 }
             }
         },
+        "/ocs/v2.php/apps/nextfleet/api/v1/vehicles/{uuid}/readings/{reading}/reset": {
+            "post": {
+                "operationId": "ocs_odometer-reset",
+                "summary": "Answer a Reading in question: the counter was replaced",
+                "description": "The Reading becomes a `reset`: it stands, and starts a new segment. Any Entry's Reading, and answering takes what changing that Entry takes. The other answer, a typo, is an edit of the Entry.",
+                "tags": [
+                    "ocs_odometer"
+                ],
+                "security": [
+                    {
+                        "bearer_auth": []
+                    },
+                    {
+                        "basic_auth": []
+                    }
+                ],
+                "requestBody": {
+                    "required": false,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "updated_at": {
+                                        "type": "integer",
+                                        "format": "int64",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "required: the Reading's `updated_at` as the caller read it"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "parameters": [
+                    {
+                        "name": "uuid",
+                        "in": "path",
+                        "description": "the vehicle's uuid",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "reading",
+                        "in": "path",
+                        "description": "the Reading's uuid",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "OCS-APIRequest",
+                        "in": "header",
+                        "description": "Required to be true for the API request to pass",
+                        "required": true,
+                        "schema": {
+                            "type": "boolean",
+                            "default": true
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "the Reading as a reset, with its new `updated_at`",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/Reading"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "`updated_at` is missing, or the Reading is not in question (`reason`: `not_in_question`)",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/Refusal"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "412": {
+                        "description": "the Reading changed since `updated_at`; read it again",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/Conflict"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "the caller may not change this Reading's Entry",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "no such vehicle or live Reading",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Current user is not logged in",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/ocs/v2.php/apps/nextfleet/api/v1/vehicles/{uuid}/trips": {
             "post": {
                 "operationId": "ocs_trip-create",
@@ -5590,6 +6280,12 @@
                                         "nullable": true,
                                         "default": null,
                                         "description": "the booking it was driven on"
+                                    },
+                                    "client_uuid": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "a uuid of the client's for the new row: a retry under it answers that row"
                                     }
                                 }
                             }
@@ -5620,6 +6316,36 @@
                 "responses": {
                     "201": {
                         "description": "the trip",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/Trip"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "200": {
+                        "description": "the trip an earlier create under the same `client_uuid` wrote",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -5829,7 +6555,7 @@
             "get": {
                 "operationId": "ocs_trip-prefill",
                 "summary": "Suggestions for a trip form",
-                "description": "The places, purposes and partners of this vehicle's own trips.",
+                "description": "The places, purposes and partners of this vehicle's own trips, the category the caller last entered here, and how the vehicle's last trip ended.",
                 "tags": [
                     "ocs_trip"
                 ],
@@ -6156,7 +6882,7 @@
                 ],
                 "responses": {
                     "200": {
-                        "description": "the trip as edited, with its new `updated_at`",
+                        "description": "the trip as edited, with its new `updated_at`; a save that changed nothing writes nothing and keeps it",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -7179,6 +7905,12 @@
                                         "nullable": true,
                                         "default": null,
                                         "description": "the engine hours, on a vehicle that counts them"
+                                    },
+                                    "client_uuid": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "a uuid of the client's for the new row: a retry under it answers that row"
                                     }
                                 }
                             }
@@ -7209,6 +7941,36 @@
                 "responses": {
                     "201": {
                         "description": "the fill-up",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/Energy"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "200": {
+                        "description": "the fill-up an earlier create under the same `client_uuid` wrote",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -8496,6 +9258,12 @@
                                         "nullable": true,
                                         "default": null,
                                         "description": "the uuid of the reminder this work closes"
+                                    },
+                                    "client_uuid": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "a uuid of the client's for the new row: a retry under it answers that row"
                                     }
                                 }
                             }
@@ -8526,6 +9294,36 @@
                 "responses": {
                     "201": {
                         "description": "the record",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/Maintenance"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "200": {
+                        "description": "the record an earlier create under the same `client_uuid` wrote",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -9761,6 +10559,12 @@
                                         "nullable": true,
                                         "default": null,
                                         "description": "what it was"
+                                    },
+                                    "client_uuid": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "a uuid of the client's for the new row: a retry under it answers that row"
                                     }
                                 }
                             }
@@ -9791,6 +10595,36 @@
                 "responses": {
                     "201": {
                         "description": "the Expense",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/Expense"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "200": {
+                        "description": "the Expense an earlier create under the same `client_uuid` wrote",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -9970,7 +10804,7 @@
             "get": {
                 "operationId": "ocs_expense-prefill",
                 "summary": "What an Expense form starts from",
-                "description": "The VAT rate on the day `at` falls on, or none for a category the jurisdiction charges no VAT on.",
+                "description": "The VAT rate on the day `at` falls on, or 0 for a category the jurisdiction charges no VAT on.",
                 "tags": [
                     "ocs_expense"
                 ],
@@ -12247,6 +13081,12 @@
                                         "nullable": true,
                                         "default": null,
                                         "description": "warn on the due date"
+                                    },
+                                    "client_uuid": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "a uuid of the client's for the new row: a retry under it answers that row"
                                     }
                                 }
                             }
@@ -12277,6 +13117,36 @@
                 "responses": {
                     "201": {
                         "description": "the reminder",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/Reminder"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "200": {
+                        "description": "the reminder an earlier create under the same `client_uuid` wrote",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -14967,6 +15837,12 @@
                                         "nullable": true,
                                         "default": null,
                                         "description": "required: manager, driver or viewer"
+                                    },
+                                    "client_uuid": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "a uuid of the client's for the new row: a retry under it answers that row"
                                     }
                                 }
                             }
@@ -14996,7 +15872,7 @@
                 ],
                 "responses": {
                     "200": {
-                        "description": "the grants as they now stand",
+                        "description": "the grants as they now stand; a retry under the same `client_uuid` writes nothing",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -15029,7 +15905,7 @@
                         }
                     },
                     "400": {
-                        "description": "no such grantee, the grantee is the owner, or the role is none",
+                        "description": "no grantee the owner may grant to, the grantee is the owner, or the role is none",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -16274,6 +17150,12 @@
                                         "nullable": true,
                                         "default": null,
                                         "description": "the uuid of the row it backs; with `linked_type`"
+                                    },
+                                    "client_uuid": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "a uuid of the client's for the new row: a retry under it answers that row"
                                     }
                                 }
                             }
@@ -16303,7 +17185,7 @@
                 ],
                 "responses": {
                     "200": {
-                        "description": "the papers as they now stand",
+                        "description": "the papers as they now stand; a retry under the same `client_uuid` writes nothing",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -16709,6 +17591,1213 @@
                 }
             }
         },
+        "/ocs/v2.php/apps/nextfleet/api/v1/vehicles/{uuid}/documents/{document}/restore": {
+            "post": {
+                "operationId": "ocs_document-restore",
+                "summary": "Undo a paper's detach",
+                "description": "No token, for the reason detaching takes none. A paper already back, or whose file is on the same row again, stays as it is.",
+                "tags": [
+                    "ocs_document"
+                ],
+                "security": [
+                    {
+                        "bearer_auth": []
+                    },
+                    {
+                        "basic_auth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "uuid",
+                        "in": "path",
+                        "description": "the vehicle's uuid",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "document",
+                        "in": "path",
+                        "description": "the document's uuid",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "OCS-APIRequest",
+                        "in": "header",
+                        "description": "Required to be true for the API request to pass",
+                        "required": true,
+                        "schema": {
+                            "type": "boolean",
+                            "default": true
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "the papers as they now stand",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "type": "array",
+                                                    "items": {
+                                                        "$ref": "#/components/schemas/Document"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "the request is not one this route takes",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/Refusal"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "412": {
+                        "description": "another write to the paper raced this one; send it again",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/Conflict"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "the caller may not keep this paper",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "no such vehicle or paper, live or detached, or the row it belonged to is deleted",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Current user is not logged in",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/ocs/v2.php/apps/nextfleet/api/v1/vehicles/{uuid}/import/preview": {
+            "post": {
+                "operationId": "ocs_import-preview",
+                "summary": "Preview an import",
+                "description": "What importing a file from the caller's own Files would create, row by row, without writing anything. Takes `edit` on a vehicle that is not disposed. A client puts the file there over WebDAV first. The answer carries the file's etag; the import is checked against it.",
+                "tags": [
+                    "ocs_import"
+                ],
+                "security": [
+                    {
+                        "bearer_auth": []
+                    },
+                    {
+                        "basic_auth": []
+                    }
+                ],
+                "requestBody": {
+                    "required": false,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "file_id": {
+                                        "type": "integer",
+                                        "format": "int64",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "required: the file's id in Files"
+                                    },
+                                    "importer": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "required: lubelogger or spritmonitor"
+                                    },
+                                    "record_type": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "required: what the file holds; for lubelogger fuel, service, repair, upgrade, tax, supplies or odometer, for spritmonitor fuel or costs"
+                                    },
+                                    "units": {
+                                        "type": "object",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "required: `distance` km or mi, and for fuel `volume` l, us_gal or uk_gal",
+                                        "additionalProperties": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "tz": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "required: the IANA zone a date without a time is noon in"
+                                    },
+                                    "date_order": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "dmy or mdy, when the file's slash dates fit both"
+                                    },
+                                    "energy": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "one of the vehicle's energy types, for fill-ups whose row names none, when it takes several"
+                                    },
+                                    "category_map": {
+                                        "type": "object",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "each cost category text to `skip`, `expense.<category>` or `maintenance.<type>`",
+                                        "additionalProperties": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "include_duplicates": {
+                                        "type": "boolean",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "whether rows already on the vehicle count as created; false when left out"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "parameters": [
+                    {
+                        "name": "uuid",
+                        "in": "path",
+                        "description": "the vehicle's uuid",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "OCS-APIRequest",
+                        "in": "header",
+                        "description": "Required to be true for the API request to pass",
+                        "required": true,
+                        "schema": {
+                            "type": "boolean",
+                            "default": true
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "the preview",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/ImportPreview"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "a field or an answer is not one the request takes, or the vehicle is disposed or takes no energy yet; the message names it",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/Refusal"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "the file is not one an import reads; `reason` says why and `row` where reading stopped",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/ImportRefusal"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "423": {
+                        "description": "somebody is writing the file; send it again",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/Refusal"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "the caller may not edit this vehicle",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "no such vehicle, or file of the caller's own",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Current user is not logged in",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/ocs/v2.php/apps/nextfleet/api/v1/vehicles/{uuid}/import": {
+            "post": {
+                "operationId": "ocs_import-import",
+                "summary": "Import a file",
+                "description": "Writes what the preview with the same fields counted as created, all of it or nothing, each row as the entry routes would and entered by the caller. Answers the counts and every entry it created; that list is what undoing the import names.",
+                "tags": [
+                    "ocs_import"
+                ],
+                "security": [
+                    {
+                        "bearer_auth": []
+                    },
+                    {
+                        "basic_auth": []
+                    }
+                ],
+                "requestBody": {
+                    "required": false,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "file_id": {
+                                        "type": "integer",
+                                        "format": "int64",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "required: the file's id in Files"
+                                    },
+                                    "importer": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "required: lubelogger or spritmonitor"
+                                    },
+                                    "record_type": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "required: what the file holds, as for the preview"
+                                    },
+                                    "units": {
+                                        "type": "object",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "required: as for the preview",
+                                        "additionalProperties": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "tz": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "required: the IANA zone a date without a time is noon in"
+                                    },
+                                    "etag": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "required: the etag the preview answered"
+                                    },
+                                    "date_order": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "dmy or mdy, when the file's slash dates fit both"
+                                    },
+                                    "energy": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "one of the vehicle's energy types, for fill-ups whose row names none, when it takes several"
+                                    },
+                                    "category_map": {
+                                        "type": "object",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "each cost category text to `skip`, `expense.<category>` or `maintenance.<type>`",
+                                        "additionalProperties": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "include_duplicates": {
+                                        "type": "boolean",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "whether rows already on the vehicle are created again; false when left out"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "parameters": [
+                    {
+                        "name": "uuid",
+                        "in": "path",
+                        "description": "the vehicle's uuid",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "OCS-APIRequest",
+                        "in": "header",
+                        "description": "Required to be true for the API request to pass",
+                        "required": true,
+                        "schema": {
+                            "type": "boolean",
+                            "default": true
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "what was created",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/ImportResult"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "a field or an answer is not one the request takes, a question is still open, or a row is one its entry route refuses; the message names it, and nothing was written",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/Refusal"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "the file changed since the preview, or while it was read; preview it again",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/Refusal"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "412": {
+                        "description": "another write to the vehicle raced this one; nothing was written, send it again",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/Conflict"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "the file is not one an import reads; `reason` says why and `row` where reading stopped",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/ImportRefusal"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "423": {
+                        "description": "somebody is writing the file; send it again",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/Refusal"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "the caller may not edit this vehicle",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "no such vehicle, or file of the caller's own",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Current user is not logged in",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/ocs/v2.php/apps/nextfleet/api/v1/vehicles/{uuid}/import/undo": {
+            "post": {
+                "operationId": "ocs_import-undo",
+                "summary": "Undo an import",
+                "description": "Soft-deletes every entry one import created, named by the `created` list its answer carried, all of them or none. Each must still be live on this vehicle and entered by the caller. Takes `edit`, as the import did.",
+                "tags": [
+                    "ocs_import"
+                ],
+                "security": [
+                    {
+                        "bearer_auth": []
+                    },
+                    {
+                        "basic_auth": []
+                    }
+                ],
+                "requestBody": {
+                    "required": false,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object",
+                                "properties": {
+                                    "created": {
+                                        "type": "array",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "required: the import's answer's list, as it came",
+                                        "items": {
+                                            "type": "object",
+                                            "required": [
+                                                "type",
+                                                "uuid"
+                                            ],
+                                            "properties": {
+                                                "type": {
+                                                    "type": "string"
+                                                },
+                                                "uuid": {
+                                                    "type": "string"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "parameters": [
+                    {
+                        "name": "uuid",
+                        "in": "path",
+                        "description": "the vehicle's uuid",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "OCS-APIRequest",
+                        "in": "header",
+                        "description": "Required to be true for the API request to pass",
+                        "required": true,
+                        "schema": {
+                            "type": "boolean",
+                            "default": true
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "every entry was deleted",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/ImportUndone"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "`created` is not a list of `{type, uuid}` an import answers, or names an entry twice",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/Refusal"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "an entry is no longer live on this vehicle or was not entered by the caller; nothing was deleted",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/Refusal"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "412": {
+                        "description": "another write to an entry raced this one; nothing was deleted, send it again",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/Conflict"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "the caller may not edit this vehicle",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "no such vehicle",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Current user is not logged in",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/ocs/v2.php/apps/nextfleet/api/v1/vehicles/{uuid}/bookings": {
             "get": {
                 "operationId": "ocs_booking-index",
@@ -16973,6 +19062,12 @@
                                         "nullable": true,
                                         "default": null,
                                         "description": "what it is booked for"
+                                    },
+                                    "client_uuid": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "a uuid of the client's for the new row: a retry under it answers that row"
                                     }
                                 }
                             }
@@ -17003,6 +19098,36 @@
                 "responses": {
                     "201": {
                         "description": "the booking",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/Booking"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "200": {
+                        "description": "the booking an earlier create under the same `client_uuid` wrote",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -18430,6 +20555,15 @@
                                             "type": "string"
                                         }
                                     },
+                                    "dismissed_logbook_hints": {
+                                        "type": "array",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "the vehicles whose Logbook Mode question is answered, by uuid",
+                                        "items": {
+                                            "type": "string"
+                                        }
+                                    },
                                     "reclaim_vat": {
                                         "type": "boolean",
                                         "nullable": true,
@@ -18859,7 +20993,7 @@
         },
         {
             "name": "vehicle",
-            "description": "The vehicle routes the web UI uses. Every rule lives in VehicleService, so what happens here is the translation between a request and an answer (docs/adr/0006-one-api-surface-in-v1.md)."
+            "description": "The vehicle routes the web UI uses. Every rule lives in VehicleService, so what happens here is the translation between a request and an answer (docs/adr/0009-the-ocs-api-v1-is-the-public-contract.md)."
         },
         {
             "name": "odometer",
@@ -18898,6 +21032,10 @@
             "description": "One vehicle's papers. Every rule lives in DocumentService, including the access check. Each route answers with the list as it now stands, so there is no token: nothing edits a document."
         },
         {
+            "name": "import",
+            "description": "Another tool's export, from a file the user picked in their own Files. Every rule lives in ImportService, the access check included."
+        },
+        {
             "name": "booking",
             "description": "The bookings that hang off one vehicle. Every rule lives in BookingService, including the access check."
         },
@@ -18915,7 +21053,7 @@
         },
         {
             "name": "preferences",
-            "description": "The personal settings screen's two calls. Like every other controller here it carries no rules (docs/adr/0006-one-api-surface-in-v1.md); a preference carries no `updated_at` either, because a user's own setting has no second writer to lose a race against."
+            "description": "The personal settings screen's two calls. Like every other controller here it carries no rules (docs/adr/0009-the-ocs-api-v1-is-the-public-contract.md); a preference carries no `updated_at` either, because a user's own setting has no second writer to lose a race against."
         },
         {
             "name": "inbox",
@@ -18968,6 +21106,10 @@
         {
             "name": "ocs_document",
             "description": "One vehicle's papers through the OCS door: the twin of the internal DocumentController, all but the download, which stays a link (docs/api.md#downloads). Each answer is the list as it now stands, and no write carries a token, for the reason the twin gives; a 412 is still answered as the twin answers it (RecipientController)."
+        },
+        {
+            "name": "ocs_import",
+            "description": "Another tool's export through the OCS door: the twin of the internal ImportController."
         },
         {
             "name": "ocs_booking",
