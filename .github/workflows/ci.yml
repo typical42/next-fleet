@@ -349,6 +349,12 @@ jobs:
           --health-interval=10s
           --health-timeout=5s
           --health-retries=12
+      # The SMTP sink the dev stack runs as `mail`; the integration suite reads what it caught.
+      mailpit:
+        image: axllent/mailpit:v1.31.4@sha256:b68349e3a014b90c5610bfb26b2ae36f3892d7b8cf25ee140c6c71c98d2fcf48
+        ports:
+          - 1025:1025
+          - 8025:8025
     steps:
       # The server carries its dependencies in the 3rdparty submodule, so a checkout with
       # submodules is a runnable Nextcloud and needs no composer install of its own.
@@ -386,6 +392,15 @@ jobs:
           esac
           php occ maintenance:install --admin-user=admin --admin-pass=admin "${args[@]}"
 
+      # What the Nextcloud image makes of the dev stack's SMTP_* and MAIL_* (.docker/compose.yml).
+      - name: Send mail through Mailpit
+        run: |
+          php occ config:system:set mail_smtpmode --value=smtp
+          php occ config:system:set mail_smtphost --value=localhost
+          php occ config:system:set mail_smtpport --value=1025 --type=integer
+          php occ config:system:set mail_from_address --value=nextfleet
+          php occ config:system:set mail_domain --value=example.org
+
       # The migration runs here, and a class the server refuses takes the whole app down
       # with it - see tests/Unit/MigrationsTest.php.
       - name: Enable the app
@@ -400,22 +415,25 @@ jobs:
         working-directory: apps/nextfleet
         run: composer run test
 
-      # The unit suite mocks the database away, so this is the only job that measures the
-      # schema against a real one - and the only place the app meets postgres and sqlite.
-      - name: Test against the server
-        working-directory: apps/nextfleet
-        env:
-          NEXTCLOUD_ROOT: ${{ github.workspace }}
-        run: composer run test:integration
-
-      # The API suite needs a web server; PHP's own lives until the job ends. One worker serves
-      # one request at a time and the suite's race would never meet, so it gets four.
+      # Both suites below call the server over HTTP; PHP's own web server lives until the job
+      # ends. One worker serves one request at a time and the API suite's race would never meet,
+      # so it gets four.
       - name: Serve Nextcloud
         env:
           PHP_CLI_SERVER_WORKERS: 4
         run: |
           php -S localhost:8080 > "$RUNNER_TEMP/php-server.log" 2>&1 &
           timeout 30 sh -c 'until curl -fsS http://localhost:8080/status.php > /dev/null; do sleep 1; done'
+
+      # The unit suite mocks the database away, so this is the only job that measures the
+      # schema against a real one - and the only place the app meets postgres and sqlite.
+      - name: Test against the server
+        working-directory: apps/nextfleet
+        env:
+          NEXTCLOUD_ROOT: ${{ github.workspace }}
+          NEXTFLEET_SERVER_URL: http://localhost:8080
+          NEXTFLEET_MAILPIT_URL: http://localhost:8025
+        run: composer run test:integration
 
       - name: Test as a client
         working-directory: apps/nextfleet

@@ -45,7 +45,6 @@ class RemindersCommandTest extends TestCase {
 	use Accounts;
 
 	private const OWNER = 'nextfleet-test-reminders-owner';
-	private const MAILPIT = 'http://mail:8025/api/v1';
 
 	private VehicleService $vehicles;
 	private ReminderService $reminders;
@@ -217,7 +216,7 @@ class RemindersCommandTest extends TestCase {
 	}
 
 	private function mailpit(string $method, string $path): array {
-		$response = \OCP\Server::get(IClientService::class)->newClient()->request($method, self::MAILPIT . $path, [
+		$response = \OCP\Server::get(IClientService::class)->newClient()->request($method, Endpoints::mailpit() . $path, [
 			'nextcloud' => ['allow_local_address' => true],
 		]);
 

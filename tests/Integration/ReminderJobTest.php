@@ -583,7 +583,7 @@ class ReminderJobTest extends TestCase {
 	 */
 	private function notifications(string $uid): array {
 		$response = \OCP\Server::get(IClientService::class)->newClient()->get(
-			'http://localhost/ocs/v2.php/apps/notifications/api/v2/notifications?format=json',
+			Endpoints::server() . '/ocs/v2.php/apps/notifications/api/v2/notifications?format=json',
 			[
 				'auth' => [$uid, self::$password],
 				'headers' => ['OCS-APIRequest' => 'true'],

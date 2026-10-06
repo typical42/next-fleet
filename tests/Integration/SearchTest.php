@@ -73,7 +73,7 @@ class SearchTest extends TestCase {
 		$golf = $this->vehicles->create(self::ACCOUNT, ['plate' => 'B-XY 123', 'model' => 'Golf']);
 
 		$response = \OCP\Server::get(IClientService::class)->newClient()->get(
-			'http://localhost/ocs/v2.php/search/providers/nextfleet/search?format=json&term=golf',
+			Endpoints::server() . '/ocs/v2.php/search/providers/nextfleet/search?format=json&term=golf',
 			[
 				'auth' => [self::ACCOUNT, $password],
 				'headers' => ['OCS-APIRequest' => 'true'],

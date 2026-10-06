@@ -49,7 +49,6 @@ class ReminderMailTest extends TestCase {
 	private const OWNER = 'nextfleet-test-mail-owner';
 	/** On the list, with no Vehicle Access: told the plate and title, not given the link. */
 	private const OUTSIDER = 'nextfleet-test-mail-outsider';
-	private const MAILPIT = 'http://mail:8025/api/v1';
 
 	private const LANGUAGES = [self::OWNER => 'de', self::OUTSIDER => 'en'];
 
@@ -478,7 +477,7 @@ class ReminderMailTest extends TestCase {
 	}
 
 	private function mailpit(string $method, string $path): array {
-		$response = \OCP\Server::get(IClientService::class)->newClient()->request($method, self::MAILPIT . $path, [
+		$response = \OCP\Server::get(IClientService::class)->newClient()->request($method, Endpoints::mailpit() . $path, [
 			'nextcloud' => ['allow_local_address' => true],
 		]);
 
@@ -488,7 +487,7 @@ class ReminderMailTest extends TestCase {
 	/** @return list<array<string, mixed>> the user's notifications of this app, over OCS */
 	private function notifications(string $uid): array {
 		$response = \OCP\Server::get(IClientService::class)->newClient()->get(
-			'http://localhost/ocs/v2.php/apps/notifications/api/v2/notifications?format=json',
+			Endpoints::server() . '/ocs/v2.php/apps/notifications/api/v2/notifications?format=json',
 			[
 				'auth' => [$uid, self::$password],
 				'headers' => ['OCS-APIRequest' => 'true'],

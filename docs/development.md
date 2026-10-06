@@ -36,7 +36,10 @@ docker compose -f .docker/compose.yml exec -u www-data -w /var/www/html/custom_a
 ```
 
 `NEXTCLOUD_ROOT` says where the server is, `/var/www/html` by default. The schema test drops and
-rebuilds the app's tables, so run it against a dev instance and nothing else.
+rebuilds the app's tables, so run it against a dev instance and nothing else. Some cases read over
+HTTP what the server's own routes answer and what Mailpit caught; `NEXTFLEET_SERVER_URL` and
+`NEXTFLEET_MAILPIT_URL` override where (`http://localhost` and `http://mail:8025`, the stack's
+addresses from inside `app`).
 
 `UserMigrationTest` runs the [personal data export](architecture.md#personal-data-export) the way
 `occ user:export` does, through Nextcloud's *user_migration* app, and imports the archive into a
@@ -107,10 +110,10 @@ because that is the axis users actually vary.
 | Weekly | The fuller matrix with *user_migration*, plus Oracle, the upgrade check and an E2E smoke run on NC 32 and NC 33, allowed to fail loudly without blocking anyone |
 
 `.github/workflows/ci.yml` implements it. Alongside the matrix run — a Nextcloud checkout, a real
-database, `occ maintenance:install`, `occ app:enable`, then the unit and integration suites, which is
-where the schema meets PostgreSQL and SQLite, then `php -S localhost:8080` in front of the checkout
-(four workers, so the suite's two requests at once can meet) and the API suite against it — three
-jobs run once each:
+database and Mailpit, `occ maintenance:install` with mail sent to Mailpit, `occ app:enable`, the
+unit suite, then `php -S localhost:8080` in front of the checkout (four workers, so the API suite's
+two requests at once can meet) and against it the integration suite, which is where the schema
+meets PostgreSQL and SQLite, and the API suite — three jobs run once each:
 static analysis with `composer lint`, `composer audit` and a fresh `openapi.json` diffed against the
 committed one, the frontend checks — Vitest twice, the second time in `America/Los_Angeles`, since
 a runner's UTC is the one zone where a local date and a UTC date never differ — and `reuse lint`.

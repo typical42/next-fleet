@@ -186,15 +186,62 @@ class CiWorkflowTest extends TestCase {
 	}
 
 	/**
-	 * The API suite speaks HTTP, and a checkout of the server is not a web server. The one it is
-	 * given must be up before the suite runs, or every case fails on a refused connection.
+	 * Both suites speak HTTP - the API suite throughout, the integration suite to read what the
+	 * server's own routes answer - and a checkout of the server is not a web server. The one it is
+	 * given must be up before either runs, and each must be told where it listens.
 	 */
-	public function testTheServerJobServesNextcloudBeforeTheApiSuite(): void {
+	public function testTheServerJobServesNextcloudBeforeBothSuitesThatCallIt(): void {
 		$script = $this->script('server');
 
 		$serve = strpos($script, 'php -S localhost:8080');
 		$this->assertIsInt($serve, 'the server job starts no web server');
+		$this->assertLessThan(strpos($script, 'composer run test:integration'), $serve);
 		$this->assertLessThan(strpos($script, 'composer run test:api'), $serve);
+
+		$this->assertSame('http://localhost:8080', $this->env('server', 'composer run test:integration')['NEXTFLEET_SERVER_URL'] ?? null);
+		$this->assertSame('http://localhost:8080', $this->env('server', 'composer run test:api')['NEXTFLEET_API_URL'] ?? null);
+	}
+
+	/**
+	 * The reminder digest and `occ nextfleet:mail-test` are proven by the mail Mailpit caught, as
+	 * on the dev stack (.docker/compose.yml). The image carries its digest: a tag can move.
+	 */
+	public function testTheServerJobSendsMailToMailpitBeforeTheIntegrationSuite(): void {
+		$services = (array)($this->job('server')['services'] ?? []);
+		$this->assertArrayHasKey('mailpit', $services, 'the server job runs no Mailpit');
+		$this->assertMatchesRegularExpression('{^axllent/mailpit:v[\d.]+@sha256:[0-9a-f]{64}$}', (string)($services['mailpit']['image'] ?? ''));
+		$this->assertEqualsCanonicalizing(['1025:1025', '8025:8025'], (array)($services['mailpit']['ports'] ?? []));
+
+		$script = $this->script('server');
+		$suite = strpos($script, 'composer run test:integration');
+		foreach ([
+			'mail_smtpmode --value=smtp',
+			'mail_smtphost --value=localhost',
+			'mail_smtpport --value=1025',
+			'mail_from_address --value=nextfleet',
+			'mail_domain --value=example.org',
+		] as $setting) {
+			$at = strpos($script, 'php occ config:system:set ' . $setting);
+			$this->assertIsInt($at, "the server job never sets $setting");
+			$this->assertLessThan($suite, $at, "$setting is set after the integration suite");
+		}
+
+		$this->assertSame('http://localhost:8025', $this->env('server', 'composer run test:integration')['NEXTFLEET_MAILPIT_URL'] ?? null);
+	}
+
+	/**
+	 * The environment of the one step of `$job` that runs `$command`.
+	 *
+	 * @return array<string, mixed>
+	 */
+	private function env(string $job, string $command): array {
+		$steps = array_values(array_filter(
+			(array)$this->job($job)['steps'],
+			static fn (mixed $step): bool => trim((string)(((array)$step)['run'] ?? '')) === $command,
+		));
+		$this->assertCount(1, $steps, "no single step of '$job' runs '$command'");
+
+		return (array)($steps[0]['env'] ?? []);
 	}
 
 	/**
