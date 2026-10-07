@@ -108,6 +108,14 @@ class SchemaTest extends TestCase {
 		return self::$live->getTable($this->prefixed($name));
 	}
 
+	/**
+	 * PostgreSQL drops the name a migration gives the primary key and calls it `<table>_pkey`,
+	 * within its own 63 characters. Oracle keeps the app's name, which this suite checks there.
+	 */
+	protected function namesThePrimaryKeyItself(): bool {
+		return Server::get(IDBConnection::class)->getDatabaseProvider() === IDBConnection::PLATFORM_POSTGRES;
+	}
+
 	/** `occ nextfleet:check` finds orphans only in the tables VehicleTables lists. */
 	public function testVehicleTablesListsEveryTableWithAVehicleId(): void {
 		$withColumn = array_values(array_filter($this->fleetTableNames(), fn (string $name): bool => $this->table($name)->hasColumn('vehicle_id')));

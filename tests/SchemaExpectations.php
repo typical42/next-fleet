@@ -63,6 +63,11 @@ trait SchemaExpectations {
 		return $columns;
 	}
 
+	/** Whether the primary key reads back under the database's own name rather than the app's. */
+	protected function namesThePrimaryKeyItself(): bool {
+		return false;
+	}
+
 	/** Whether the database numbers the column itself. Oracle reads back no such flag. */
 	protected function autoincrements(string $table, Column $column): bool {
 		return $column->getAutoincrement();
@@ -540,6 +545,9 @@ trait SchemaExpectations {
 				$names[] = $column->getName();
 			}
 			foreach ($table->getIndexes() as $index) {
+				if ($index->isPrimary() && $this->namesThePrimaryKeyItself()) {
+					continue;
+				}
 				$names[] = $index->getName();
 				// Not a database limit: one rule, a table name's 27, for every name the app picks.
 				if (!$index->isPrimary()) {
