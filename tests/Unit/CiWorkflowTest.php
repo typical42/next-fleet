@@ -230,6 +230,18 @@ class CiWorkflowTest extends TestCase {
 	}
 
 	/**
+	 * Run as a superuser, Nextcloud's PostgreSQL setup connects to the database it is told to use
+	 * before creating it, and fails when it is not there, so the service creates it first.
+	 */
+	public function testThePostgresServiceHoldsTheDatabaseTheInstallNames(): void {
+		$service = (array)($this->job('server')['services']['postgres'] ?? []);
+		$this->assertArrayHasKey('env', $service, 'the server job runs no PostgreSQL');
+
+		$this->assertMatchesRegularExpression('{--database=pgsql .*--database-name=nextcloud }', $this->script('server'));
+		$this->assertSame('nextcloud', $service['env']['POSTGRES_DB'] ?? null);
+	}
+
+	/**
 	 * The reminder digest and `occ nextfleet:mail-test` are proven by the mail Mailpit caught, as
 	 * on the dev stack (.docker/compose.yml). The image carries its digest: a tag can move.
 	 */

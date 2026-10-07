@@ -357,6 +357,8 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_PASSWORD: postgres
+          # Run as the superuser, Nextcloud's setup connects to its database before creating it.
+          POSTGRES_DB: nextcloud
         ports:
           - 5432:5432
         options: >-
