@@ -315,7 +315,7 @@ function requestClose() {
 				<p class="import__format">
 					{{ format?.label }}
 				</p>
-				<NcLoadingIcon v-if="busy && preview === null" />
+				<NcLoadingIcon v-if="busy && preview === null" :name="t('nextfleet', 'Loading…')" />
 
 				<!-- At 320 px the sheet scrolls, often with no field in the preview; this stop is
 				     where a keyboard scrolls it from. -->

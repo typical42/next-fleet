@@ -220,6 +220,8 @@ export async function audit(page, screen, within = ['#nextfleet']) {
  * @param {string[]} [scrolls] - selectors of the regions that are meant to scroll sideways
  */
 export async function fits(page, screen, scrolls = []) {
+	// A spinner's box is wider than itself while it turns, and the screen is not laid out yet.
+	await expect(page.locator('#nextfleet .loading-icon, #nextfleet-settings .loading-icon, [role="dialog"] .loading-icon'), screen).toHaveCount(0)
 	const spills = await page.evaluate((scrolls) => {
 		const boxes = [document.documentElement, ...document.querySelectorAll('#nextfleet *, #nextfleet-settings *, [role="dialog"] *')]
 		return boxes.filter((box) => {

@@ -104,7 +104,9 @@ class OnceTest extends TestCase {
 		$this->rows = [$this->row(self::VEHICLE)];
 
 		try {
-			$this->create(['client_uuid' => self::UUID])->run(fn (): never => $this->fail('created twice'));
+			$this->create(['client_uuid' => self::UUID])->run(function (): never {
+				$this->fail('created twice');
+			});
 		} catch (AlreadyCreatedException $e) {
 			$this->assertSame(['answered' => self::UUID], $e->answer);
 
@@ -119,7 +121,9 @@ class OnceTest extends TestCase {
 
 		$this->expectException(\InvalidArgumentException::class);
 		$this->expectExceptionMessage('client_uuid is taken');
-		$this->create(['client_uuid' => self::UUID])->run(fn (): never => $this->fail('created over it'));
+		$this->create(['client_uuid' => self::UUID])->run(function (): never {
+			$this->fail('created over it');
+		});
 	}
 
 	/** Its twin committed between the check and the insert: the unique index refuses, and the twin's row answers. */
@@ -144,7 +148,9 @@ class OnceTest extends TestCase {
 		$duplicate = $this->duplicateKey();
 
 		try {
-			$this->create(['client_uuid' => self::UUID])->run(static fn (): never => throw $duplicate);
+			$this->create(['client_uuid' => self::UUID])->run(static function () use ($duplicate): never {
+				throw $duplicate;
+			});
 		} catch (Exception $e) {
 			$this->assertSame($duplicate, $e);
 

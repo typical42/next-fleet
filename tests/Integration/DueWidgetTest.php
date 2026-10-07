@@ -163,7 +163,7 @@ class DueWidgetTest extends TestCase {
 		$this->remind($mine, ['title' => 'Oil', 'due_date' => $this->day('-1 day')], self::ACCOUNT);
 
 		$response = \OCP\Server::get(IClientService::class)->newClient()->get(
-			'http://localhost/ocs/v2.php/apps/dashboard/api/v2/widget-items?format=json&widgets[]=nextfleet',
+			Endpoints::server() . '/ocs/v2.php/apps/dashboard/api/v2/widget-items?format=json&widgets[]=nextfleet',
 			[
 				'auth' => [self::ACCOUNT, $password],
 				'headers' => ['OCS-APIRequest' => 'true'],

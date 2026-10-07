@@ -519,7 +519,7 @@ defineExpose({ reload })
 				{{ failure && !below ? t('nextfleet', 'Try again') : t('nextfleet', 'Load more') }}
 			</NcButton>
 		</div>
-		<NcLoadingIcon v-else-if="loading" class="timeline__waiting" />
+		<NcLoadingIcon v-else-if="loading" class="timeline__waiting" :name="t('nextfleet', 'Loading…')" />
 
 		<!-- One Gap, one question, never a batch (CONTEXT.md). -->
 		<NcDialog v-if="closing"

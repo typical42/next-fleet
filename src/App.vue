@@ -175,7 +175,10 @@ function sort() {
 			</template>
 		</NcAppNavigation>
 		<NcAppContent>
-			<NcLoadingIcon v-if="loading" class="app__loading" :size="64" />
+			<NcLoadingIcon v-if="loading"
+				class="app__loading"
+				:size="64"
+				:name="t('nextfleet', 'Loading…')" />
 			<!-- A fleet that did not arrive is not an empty fleet: offering to create the first
 			     vehicle there teaches the wrong thing and hides the retry. -->
 			<NcEmptyContent v-else-if="failure"

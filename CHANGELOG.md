@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.1 — not released
+## 0.3.1 — 2026-10-15
 
 The first release: a logbook for your vehicles, with their fill-ups, maintenance, costs and
 reminders, and access for the people who drive them, book them and hand them over. For Nextcloud

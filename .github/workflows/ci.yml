@@ -15,6 +15,8 @@ on:
   schedule:
     # Monday, 04:30 UTC.
     - cron: '30 4 * * 1'
+  # The weekly set, started by hand.
+  workflow_dispatch:
 
 # A compromised action owns the release (docs/security.md#supply-chain), so the token can
 # only read and every `uses` below names a commit, not a tag that can move under it.
@@ -84,9 +86,12 @@ jobs:
       - run: composer install --no-progress
       - run: php vendor/bin/phpunit --fail-on-skipped --filter LicensingTest
 
-      # @nextcloud/vite-config's polyfill chain carries seven low-severity advisories with
-      # no upstream fix, so gate above them rather than mute the tool.
-      - run: npm audit --audit-level moderate
+      # Only the bundle ships, so only its packages gate. The dev tools' advisories have no
+      # upstream fix or need a major upgrade of @nextcloud/eslint-config. Two build plugins are
+      # dev packages that put code in the bundle (the Vue plugin's helper, the node polyfills'
+      # shims), and this does not audit them. Vite, whose preload helper ships too, is audited:
+      # vue-router pulls it in.
+      - run: npm audit --omit=dev --audit-level moderate
 
   e2e:
     name: Playwright and axe, NC 31 and NC 34
@@ -127,11 +132,22 @@ jobs:
 
       - run: npm run test:e2e
 
+      # The runner is gone once the job ends, and a red spec is read from its trace and
+      # error-context.md (playwright.config.js keeps them on failure), not from the log. A job
+      # past its timeout ends cancelled, not failed.
+      - name: Keep Playwright's evidence
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-test-results
+          path: test-results/
+          retention-days: 5
+
   # The job above meets 31 and 34. A component the bundle needs that 32 or 33 lacks would reach
   # users unseen, so weekly the two majors between load the app and take a vehicle and a reading.
   e2e-weekly:
     name: Playwright smoke, NC 32 and NC 33
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     # Three minutes of specs after a cold install; a stalled one should not hold the runner.
     timeout-minutes: 45
@@ -164,10 +180,19 @@ jobs:
         # The files first: `--project` takes every word after it as a project name.
         run: npx playwright test tests/e2e/m0-gate.spec.js tests/e2e/m1-slice.spec.js --project nc32 --project nc33
 
+      # As in the e2e job; the name differs because one run holds both.
+      - name: Keep Playwright's evidence
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-weekly-test-results
+          path: test-results/
+          retention-days: 5
+
   # The one test of what users keep across a release, weekly so a break shows that week.
   upgrade:
     name: Upgrade check from ${{ matrix.base }}, ${{ matrix.db }}
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     # A run takes about ten minutes; a hung `occ upgrade` should not hold the runner for six hours.
     timeout-minutes: 45
@@ -201,7 +226,7 @@ jobs:
   # (docs/development.md#oracle) and weekly only: the build fetches Oracle's client.
   oracle:
     name: NC 34 on Oracle
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     # A cold run builds, starts Oracle and runs the suite in about 15 minutes; a stalled start
     # should not hold the runner for GitHub's six hours.
@@ -299,7 +324,7 @@ jobs:
         run: |
           case "$GITHUB_EVENT_NAME" in
             pull_request) combinations="$ON_PULL_REQUEST" ;;
-            schedule) combinations="$ON_SCHEDULE" ;;
+            schedule|workflow_dispatch) combinations="$ON_SCHEDULE" ;;
             *) combinations="$ON_PUSH" ;;
           esac
           matrix=$(jq -c '{include: .}' <<< "$combinations")
@@ -339,6 +364,12 @@ jobs:
           --health-interval=10s
           --health-timeout=5s
           --health-retries=12
+      # The SMTP sink the dev stack runs as `mail`; the integration suite reads what it caught.
+      mailpit:
+        image: axllent/mailpit:v1.31.4@sha256:b68349e3a014b90c5610bfb26b2ae36f3892d7b8cf25ee140c6c71c98d2fcf48
+        ports:
+          - 1025:1025
+          - 8025:8025
     steps:
       # The server carries its dependencies in the 3rdparty submodule, so a checkout with
       # submodules is a runnable Nextcloud and needs no composer install of its own.
@@ -354,15 +385,34 @@ jobs:
         with:
           path: apps/nextfleet
 
+      # The app's notices are stored, counted and read back through it. A release and the image
+      # ship it; a checkout of the server does not.
+      - name: Check out the notifications app
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: nextcloud/notifications
+          ref: ${{ matrix.nextcloud }}
+          path: apps/notifications
+
+      # apcu: the dev stack's image caches in it, and the import and OwnFiles remember through
+      # the cache. gmp: the notifications app's web-push dependencies require it.
       - uses: shivammathur/setup-php@f3e473d116dcccaddc5834248c87452386958240 # 2.37.2
         with:
           php-version: ${{ matrix.php }}
-          extensions: bcmath, ctype, curl, dom, fileinfo, gd, iconv, intl, mbstring, openssl, pdo_mysql, pdo_pgsql, pdo_sqlite, posix, sqlite3, xml, zip
+          extensions: apcu, bcmath, ctype, curl, dom, fileinfo, gd, gmp, iconv, intl, mbstring, openssl, pdo_mysql, pdo_pgsql, pdo_sqlite, posix, sqlite3, xml, zip
+          ini-values: apc.enable_cli=1
           coverage: none
 
       - name: Install the app's dependencies
         working-directory: apps/nextfleet
         run: composer install --no-progress
+
+      # On 34 its lib/ uses web-push classes this builds into lib/Vendor, and without them the
+      # app fails to load; before 34 it installs nothing. Before the install, which enables the
+      # app by default.
+      - name: Install the notifications app's dependencies
+        working-directory: apps/notifications
+        run: composer install --no-dev --no-progress
 
       - name: Install Nextcloud
         env:
@@ -376,6 +426,23 @@ jobs:
           esac
           php occ maintenance:install --admin-user=admin --admin-pass=admin "${args[@]}"
 
+      # What the Nextcloud image makes of the dev stack's SMTP_* and MAIL_* (.docker/compose.yml).
+      - name: Send mail through Mailpit
+        run: |
+          php occ config:system:set mail_smtpmode --value=smtp
+          php occ config:system:set mail_smtphost --value=localhost
+          php occ config:system:set mail_smtpport --value=1025 --type=integer
+          php occ config:system:set mail_from_address --value=nextfleet
+          php occ config:system:set mail_domain --value=example.org
+
+      # As the dev stack's image sets it. With no distributed cache set, Nextcloud uses this one.
+      - name: Cache in APCu
+        run: php occ config:system:set memcache.local --value='\OC\Memcache\APCu'
+
+      # The install has enabled it by default already; said here, the suite's need of it is too.
+      - name: Enable the notifications app
+        run: php occ app:enable notifications
+
       # The migration runs here, and a class the server refuses takes the whole app down
       # with it - see tests/Unit/MigrationsTest.php.
       - name: Enable the app
@@ -383,12 +450,22 @@ jobs:
 
       # docs/development.md#testing. Weekly only: the app store is a download.
       - name: Install user_migration
-        if: github.event_name == 'schedule'
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: php occ app:install user_migration
 
       - name: Test
         working-directory: apps/nextfleet
         run: composer run test
+
+      # Both suites below call the server over HTTP; PHP's own web server lives until the job
+      # ends. One worker serves one request at a time and the API suite's race would never meet,
+      # so it gets four.
+      - name: Serve Nextcloud
+        env:
+          PHP_CLI_SERVER_WORKERS: 4
+        run: |
+          php -S localhost:8080 > "$RUNNER_TEMP/php-server.log" 2>&1 &
+          timeout 30 sh -c 'until curl -fsS http://localhost:8080/status.php > /dev/null; do sleep 1; done'
 
       # The unit suite mocks the database away, so this is the only job that measures the
       # schema against a real one - and the only place the app meets postgres and sqlite.
@@ -396,16 +473,9 @@ jobs:
         working-directory: apps/nextfleet
         env:
           NEXTCLOUD_ROOT: ${{ github.workspace }}
+          NEXTFLEET_SERVER_URL: http://localhost:8080
+          NEXTFLEET_MAILPIT_URL: http://localhost:8025
         run: composer run test:integration
-
-      # The API suite needs a web server; PHP's own lives until the job ends. One worker serves
-      # one request at a time and the suite's race would never meet, so it gets four.
-      - name: Serve Nextcloud
-        env:
-          PHP_CLI_SERVER_WORKERS: 4
-        run: |
-          php -S localhost:8080 > "$RUNNER_TEMP/php-server.log" 2>&1 &
-          timeout 30 sh -c 'until curl -fsS http://localhost:8080/status.php > /dev/null; do sleep 1; done'
 
       - name: Test as a client
         working-directory: apps/nextfleet

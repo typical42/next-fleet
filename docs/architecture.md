@@ -605,9 +605,9 @@ on a vehicle nobody else was ever given access to. A trip also carries `created_
 clock in UTC (`YYYY-MM-DD HH:MM:SS`).
 
 **The file is for a spreadsheet** (`Csv`): UTF-8 with a BOM, `,`, CRLF, a cell quoted when it holds a
-separator, quote or line break. A string starting with `=`, `+`, `-`, `@`, tab or CR gets a leading
-`'` ([security](security.md)). Only strings are defused: a number is ours, and a negative amount
-stays a number.
+separator, quote or line break. A string that would start a formula gets a leading `'`, at its start
+and after each `;`, tab or line break in it ([security](security.md#hostile-content)). Only strings
+are defused: a number is ours, and a negative amount stays a number.
 
 ### Personal data export
 

@@ -39,8 +39,13 @@ export default defineConfig({
 	// budget goes up with it: a cold run of the M1 slice measured 30 s against the 30 s default.
 	expect: { timeout: 15_000 },
 	timeout: 90_000,
+	// What a failed test leaves in test-results/, which CI uploads. retain-on-failure still records
+	// every test, a cost the local run, already near its timeouts, does without; `--trace on` adds
+	// one there.
 	use: {
 		browserName: 'chromium',
+		screenshot: 'only-on-failure',
+		trace: process.env.CI ? 'retain-on-failure' : 'off',
 	},
 	projects: majors.map(({ name, baseURL, grepInvert }) => ({ name, grepInvert, use: { baseURL } })),
 })

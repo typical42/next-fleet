@@ -31,6 +31,9 @@ class CiWorkflowTest extends TestCase {
 		'stable34' => ['8.2', '8.3', '8.4', '8.5'],
 	];
 
+	/** The gate of every weekly job and step: the schedule, or a run started by hand. */
+	private const WEEKLY = "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'";
+
 	/** @var array<string, mixed> */
 	private static array $workflow;
 
@@ -56,13 +59,29 @@ class CiWorkflowTest extends TestCase {
 	 */
 	private function combinations(string $event): array {
 		$env = (array)($this->job('plan')['env'] ?? []);
-		$key = 'ON_' . strtoupper($event);
+		$key = $this->variableFor($event);
 		$this->assertArrayHasKey($key, $env, "the plan job holds no combinations for '$event'");
 
 		/** @var list<array{nextcloud: string, php: string, db: string}> $decoded */
 		$decoded = json_decode((string)$env[$key], true, 512, JSON_THROW_ON_ERROR);
 
 		return $decoded;
+	}
+
+	/**
+	 * The variable the plan step's `case` reads for `$event`, picked as bash picks the arm: the
+	 * first whose patterns name the event, else the first `*`.
+	 */
+	private function variableFor(string $event): string {
+		preg_match_all('/^\s*([\w|*]+)\) combinations="\$(\w+)" ;;$/m', $this->script('plan'), $arms, PREG_SET_ORDER);
+		foreach ($arms as [, $patterns, $variable]) {
+			$names = explode('|', $patterns);
+			if (in_array($event, $names, true) || in_array('*', $names, true)) {
+				return $variable;
+			}
+		}
+
+		$this->fail("the plan step picks no list for '$event'");
 	}
 
 	/**
@@ -104,10 +123,10 @@ class CiWorkflowTest extends TestCase {
 		$this->assertSame(['contents' => 'read'], (array)(self::$workflow['permissions'] ?? []));
 	}
 
-	public function testTheWorkflowRunsOnPullRequestsOnMainAndWeekly(): void {
+	public function testTheWorkflowRunsOnPullRequestsOnMainWeeklyAndOnDemand(): void {
 		$triggers = $this->triggers();
 
-		$this->assertSame(['pull_request', 'push', 'schedule'], array_keys($triggers));
+		$this->assertSame(['pull_request', 'push', 'schedule', 'workflow_dispatch'], array_keys($triggers));
 		$this->assertSame(['main'], (array)$triggers['push']['branches']);
 		$this->assertNotEmpty($triggers['schedule'][0]['cron'] ?? null);
 	}
@@ -143,6 +162,14 @@ class CiWorkflowTest extends TestCase {
 		$this->assertGreaterThan(count($this->combinations('push')), count($this->combinations('schedule')));
 
 		$this->assertArrayNotHasKey('continue-on-error', $this->job('server'));
+	}
+
+	/**
+	 * Started by hand, the run is the weekly one: before a release, or to see a fix to a weekly
+	 * job without waiting for Monday.
+	 */
+	public function testARunStartedByHandRunsTheWeeklyMatrix(): void {
+		$this->assertSame($this->combinations('schedule'), $this->combinations('workflow_dispatch'));
 	}
 
 	/**
@@ -186,15 +213,132 @@ class CiWorkflowTest extends TestCase {
 	}
 
 	/**
-	 * The API suite speaks HTTP, and a checkout of the server is not a web server. The one it is
-	 * given must be up before the suite runs, or every case fails on a refused connection.
+	 * Both suites speak HTTP - the API suite throughout, the integration suite to read what the
+	 * server's own routes answer - and a checkout of the server is not a web server. The one it is
+	 * given must be up before either runs, and each must be told where it listens.
 	 */
-	public function testTheServerJobServesNextcloudBeforeTheApiSuite(): void {
+	public function testTheServerJobServesNextcloudBeforeBothSuitesThatCallIt(): void {
 		$script = $this->script('server');
 
 		$serve = strpos($script, 'php -S localhost:8080');
 		$this->assertIsInt($serve, 'the server job starts no web server');
+		$this->assertLessThan(strpos($script, 'composer run test:integration'), $serve);
 		$this->assertLessThan(strpos($script, 'composer run test:api'), $serve);
+
+		$this->assertSame('http://localhost:8080', $this->env('server', 'composer run test:integration')['NEXTFLEET_SERVER_URL'] ?? null);
+		$this->assertSame('http://localhost:8080', $this->env('server', 'composer run test:api')['NEXTFLEET_API_URL'] ?? null);
+	}
+
+	/**
+	 * The reminder digest and `occ nextfleet:mail-test` are proven by the mail Mailpit caught, as
+	 * on the dev stack (.docker/compose.yml). The image carries its digest: a tag can move.
+	 */
+	public function testTheServerJobSendsMailToMailpitBeforeTheIntegrationSuite(): void {
+		$services = (array)($this->job('server')['services'] ?? []);
+		$this->assertArrayHasKey('mailpit', $services, 'the server job runs no Mailpit');
+		$this->assertMatchesRegularExpression('{^axllent/mailpit:v[\d.]+@sha256:[0-9a-f]{64}$}', (string)($services['mailpit']['image'] ?? ''));
+		$this->assertEqualsCanonicalizing(['1025:1025', '8025:8025'], (array)($services['mailpit']['ports'] ?? []));
+
+		$script = $this->script('server');
+		$suite = strpos($script, 'composer run test:integration');
+		foreach ([
+			'mail_smtpmode --value=smtp',
+			'mail_smtphost --value=localhost',
+			'mail_smtpport --value=1025',
+			'mail_from_address --value=nextfleet',
+			'mail_domain --value=example.org',
+		] as $setting) {
+			$at = strpos($script, 'php occ config:system:set ' . $setting);
+			$this->assertIsInt($at, "the server job never sets $setting");
+			$this->assertLessThan($suite, $at, "$setting is set after the integration suite");
+		}
+
+		$this->assertSame('http://localhost:8025', $this->env('server', 'composer run test:integration')['NEXTFLEET_MAILPIT_URL'] ?? null);
+	}
+
+	/**
+	 * A notice is stored, counted and read back by the notifications app, which a release and the
+	 * image ship and a checkout of the server does not. It comes from the same branch as the server.
+	 */
+	public function testTheServerJobRunsTheNotificationsAppBeforeTheIntegrationSuite(): void {
+		$steps = (array)$this->job('server')['steps'];
+		$checkouts = array_keys(array_filter(
+			$steps,
+			static fn (mixed $step): bool => (((array)$step)['with']['repository'] ?? null) === 'nextcloud/notifications',
+		));
+		$this->assertCount(1, $checkouts, 'the server job never checks out the notifications app');
+		$checkout = (array)$steps[$checkouts[0]];
+		$this->assertSame('${{ matrix.nextcloud }}', $checkout['with']['ref'] ?? null);
+		$this->assertSame('apps/notifications', $checkout['with']['path'] ?? null);
+
+		// Its lib/ uses the web-push classes `composer install` builds into lib/Vendor, which
+		// need gmp.
+		$installs = array_keys(array_filter(
+			$steps,
+			static fn (mixed $step): bool => (((array)$step)['working-directory'] ?? null) === 'apps/notifications'
+				&& str_starts_with((string)(((array)$step)['run'] ?? ''), 'composer install --no-dev'),
+		));
+		$this->assertCount(1, $installs, 'the notifications app\'s dependencies are never installed');
+		$this->assertGreaterThan($checkouts[0], $installs[0]);
+		// The install enables it, and on 34 it fails to load without lib/Vendor.
+		$install = array_key_first(array_filter(
+			$steps,
+			static fn (mixed $step): bool => str_contains((string)(((array)$step)['run'] ?? ''), 'php occ maintenance:install'),
+		));
+		$this->assertIsInt($install, 'the server job never installs Nextcloud');
+		$this->assertLessThan($install, $installs[0], 'the notifications app is enabled before its dependencies are installed');
+		$this->assertContains('gmp', $this->phpExtensions());
+
+		$script = $this->script('server');
+		$enable = strpos($script, 'php occ app:enable notifications');
+		$this->assertIsInt($enable, 'the server job never enables the notifications app');
+		$this->assertLessThan(strpos($script, 'composer run test:integration'), $enable);
+	}
+
+	/**
+	 * The import's remembered answer and the names of a vehicle's files live in the distributed
+	 * cache. Without a memcache that is a NullCache, which remembers nothing. The dev stack's
+	 * image sets APCu, which the integration suite reaches from the command line.
+	 */
+	public function testTheServerJobCachesInApcuAsTheDevStackDoes(): void {
+		$this->assertContains('apcu', $this->phpExtensions());
+		$this->assertStringContainsString('apc.enable_cli=1', (string)($this->setupPhp()['with']['ini-values'] ?? ''));
+
+		$script = $this->script('server');
+		$cache = strpos($script, "php occ config:system:set memcache.local --value='\\OC\\Memcache\\APCu'");
+		$this->assertIsInt($cache, 'the server job sets no local memcache');
+		$this->assertLessThan(strpos($script, 'composer run test:integration'), $cache);
+	}
+
+	/** @return array<string, mixed> the server job's setup-php step */
+	private function setupPhp(): array {
+		$steps = array_values(array_filter(
+			(array)$this->job('server')['steps'],
+			static fn (mixed $step): bool => str_starts_with((string)(((array)$step)['uses'] ?? ''), 'shivammathur/setup-php@'),
+		));
+		$this->assertCount(1, $steps, 'the server job sets PHP up not exactly once');
+
+		return (array)$steps[0];
+	}
+
+	/** @return list<string> */
+	private function phpExtensions(): array {
+		return array_map('trim', explode(',', (string)($this->setupPhp()['with']['extensions'] ?? '')));
+	}
+
+	/**
+	 * The environment of the one step of `$job` that runs `$command`.
+	 *
+	 * @return array<string, mixed>
+	 */
+	private function env(string $job, string $command): array {
+		$steps = array_values(array_filter(
+			(array)$this->job($job)['steps'],
+			static fn (mixed $step): bool => trim((string)(((array)$step)['run'] ?? '')) === $command,
+		));
+		$this->assertCount(1, $steps, "no single step of '$job' runs '$command'");
+
+		return (array)($steps[0]['env'] ?? []);
 	}
 
 	/**
@@ -218,7 +362,7 @@ class CiWorkflowTest extends TestCase {
 			static fn (mixed $step): bool => str_contains((string)(((array)$step)['run'] ?? ''), 'php occ app:install user_migration'),
 		));
 		$this->assertCount(1, $installs, 'the server job never installs user_migration');
-		$this->assertSame("github.event_name == 'schedule'", $installs[0]['if'] ?? null);
+		$this->assertSame(self::WEEKLY, $installs[0]['if'] ?? null);
 
 		$script = $this->script('server');
 		$this->assertLessThan(strpos($script, 'composer run test:integration'), strpos($script, 'php occ app:install user_migration'));
@@ -244,7 +388,7 @@ class CiWorkflowTest extends TestCase {
 	 * suite. Weekly only - the image build fetches Oracle's client and takes minutes.
 	 */
 	public function testOracleRunsWeeklyThroughTheIntegrationSuite(): void {
-		$this->assertSame("github.event_name == 'schedule'", $this->job('oracle')['if'] ?? null);
+		$this->assertSame(self::WEEKLY, $this->job('oracle')['if'] ?? null);
 		$script = $this->script('oracle');
 
 		$steps = [
@@ -270,7 +414,7 @@ class CiWorkflowTest extends TestCase {
 	 */
 	public function testTheWeeklyRunSmokesTheEndToEndOnNextcloud32And33(): void {
 		$job = $this->job('e2e-weekly');
-		$this->assertSame("github.event_name == 'schedule'", $job['if'] ?? null);
+		$this->assertSame(self::WEEKLY, $job['if'] ?? null);
 		$script = $this->script('e2e-weekly');
 
 		$steps = [
@@ -295,7 +439,7 @@ class CiWorkflowTest extends TestCase {
 	 */
 	public function testTheWeeklyRunChecksTheUpgradeOnMariadbAndPostgresql(): void {
 		$job = $this->job('upgrade');
-		$this->assertSame("github.event_name == 'schedule'", $job['if'] ?? null);
+		$this->assertSame(self::WEEKLY, $job['if'] ?? null);
 		$this->assertSame(['mariadb', 'pgsql'], $job['strategy']['matrix']['db'] ?? null);
 		// 0.2.0 and 0.3.0, the two a user may run from source (CHANGELOG, "For apps, scripts and admins").
 		$this->assertSame(['9056da5', 'e7bdbe1'], $job['strategy']['matrix']['base'] ?? null);
@@ -339,6 +483,16 @@ class CiWorkflowTest extends TestCase {
 		$this->assertIsInt($build, 'the frontend job builds no bundle');
 		$this->assertIsInt($check, 'the frontend job never checks the bundle\'s licences');
 		$this->assertLessThan($check, $build, 'the licences are checked before the build');
+	}
+
+	/** One gate, on the packages the bundle ships; the step's comment says why not the dev tools. */
+	public function testTheFrontendJobAuditsTheShippedPackages(): void {
+		$audits = array_values(array_filter(
+			explode("\n", $this->script('frontend')),
+			static fn (string $line): bool => str_starts_with($line, 'npm audit'),
+		));
+
+		$this->assertSame(['npm audit --omit=dev --audit-level moderate'], $audits);
 	}
 
 	private function script(string $job): string {
@@ -387,6 +541,40 @@ class CiWorkflowTest extends TestCase {
 		$this->assertIsInt($seed, 'the job never seeds the fleet its specs read');
 		$this->assertIsInt($run, 'the job never runs the E2E');
 		$this->assertLessThan($run, $seed, 'the fleet is seeded after the run that reads it');
+	}
+
+	/**
+	 * A runner is gone when the job ends, and a red E2E is read from its traces, not its log.
+	 * Only a failure uploads, and only for days: a green run's evidence answers nothing. A job
+	 * past its `timeout-minutes` ends cancelled, not failed, and a stalled spec is the one to read.
+	 */
+	public function testEveryEndToEndJobKeepsPlaywrightsEvidenceWhenItFails(): void {
+		$names = [];
+		foreach ([
+			'e2e' => 'npm run test:e2e',
+			'e2e-weekly' => 'npx playwright test tests/e2e/m0-gate.spec.js tests/e2e/m1-slice.spec.js --project nc32 --project nc33',
+		] as $job => $command) {
+			$steps = array_values((array)$this->job($job)['steps']);
+			$run = array_search($command, array_map(static fn (mixed $step): string => (string)(((array)$step)['run'] ?? ''), $steps), true);
+			$this->assertIsInt($run, "'$job' never runs the E2E");
+
+			$uploads = array_filter(
+				$steps,
+				static fn (mixed $step): bool => str_starts_with((string)(((array)$step)['uses'] ?? ''), 'actions/upload-artifact@'),
+			);
+			$this->assertCount(1, $uploads, "'$job' uploads its evidence not exactly once");
+			$at = array_key_first($uploads);
+			$upload = (array)$uploads[$at];
+
+			$this->assertGreaterThan($run, $at, "'$job' uploads the evidence before the run that writes it");
+			$this->assertSame('failure() || cancelled()', $upload['if'] ?? null);
+			$this->assertSame('test-results/', $upload['with']['path'] ?? null);
+			$this->assertLessThanOrEqual(7, (int)($upload['with']['retention-days'] ?? 90));
+			$names[] = $upload['with']['name'] ?? null;
+		}
+
+		// One run holds both, and an artifact's name is unique within a run.
+		$this->assertSame($names, array_unique($names));
 	}
 
 	/**

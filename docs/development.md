@@ -36,7 +36,10 @@ docker compose -f .docker/compose.yml exec -u www-data -w /var/www/html/custom_a
 ```
 
 `NEXTCLOUD_ROOT` says where the server is, `/var/www/html` by default. The schema test drops and
-rebuilds the app's tables, so run it against a dev instance and nothing else.
+rebuilds the app's tables, so run it against a dev instance and nothing else. Some cases read over
+HTTP what the server's own routes answer and what Mailpit caught; `NEXTFLEET_SERVER_URL` and
+`NEXTFLEET_MAILPIT_URL` override where (`http://localhost` and `http://mail:8025`, the stack's
+addresses from inside `app`).
 
 `UserMigrationTest` runs the [personal data export](architecture.md#personal-data-export) the way
 `occ user:export` does, through Nextcloud's *user_migration* app, and imports the archive into a
@@ -104,13 +107,15 @@ because that is the axis users actually vary.
 |---|---|
 | Pull request | Three: NC 31 with the oldest PHP it supports, and NC 34 with the newest, MariaDB both — the oldest combination is where breakage hides, so it belongs on every PR rather than in a nightly nobody reads — and NC 34 on SQLite, which a first try runs on and which accepts the least |
 | Merge to `main` | Add PostgreSQL, on NC 34 |
-| Weekly | The fuller matrix with *user_migration*, plus Oracle, the upgrade check and an E2E smoke run on NC 32 and NC 33, allowed to fail loudly without blocking anyone |
+| Weekly, or by hand with `gh workflow run ci.yml` | The fuller matrix with *user_migration*, plus Oracle, the upgrade check and an E2E smoke run on NC 32 and NC 33, allowed to fail loudly without blocking anyone |
 
-`.github/workflows/ci.yml` implements it. Alongside the matrix run — a Nextcloud checkout, a real
-database, `occ maintenance:install`, `occ app:enable`, then the unit and integration suites, which is
-where the schema meets PostgreSQL and SQLite, then `php -S localhost:8080` in front of the checkout
-(four workers, so the suite's two requests at once can meet) and the API suite against it — three
-jobs run once each:
+`.github/workflows/ci.yml` implements it. Alongside the matrix run — a Nextcloud checkout with the
+*notifications* app of the same branch beside it, a real database and Mailpit,
+`occ maintenance:install` with mail sent to Mailpit and APCu as the memcache, as the dev stack's
+image has them, `occ app:enable`, the
+unit suite, then `php -S localhost:8080` in front of the checkout (four workers, so the API suite's
+two requests at once can meet) and against it the integration suite, which is where the schema
+meets PostgreSQL and SQLite, and the API suite — three jobs run once each:
 static analysis with `composer lint`, `composer audit` and a fresh `openapi.json` diffed against the
 committed one, the frontend checks — Vitest twice, the second time in `America/Los_Angeles`, since
 a runner's UTC is the one zone where a local date and a UTC date never differ — and `reuse lint`.
@@ -278,9 +283,11 @@ for its block on the user's settings page. Vite names each output after its entr
 `vite.config.js`, which is what the template then asks `script()` for. `npm run watch` does the
 same in development mode and rebuilds on save. Two bits of noise to ignore: `@nextcloud/vite-config`
 sets `outDir` to the repo root on purpose, so that every build prints Vite's "build.outDir must not
-be … a parent directory of root"; and its polyfill chain pulls in `elliptic` and `crypto-browserify`,
-so `npm audit` reports seven low-severity advisories with no upstream fix. Gate CI at `--audit-level
-moderate` rather than muting the tool.
+be … a parent directory of root"; and `npm audit` reports advisories in the dev tools, such as
+`elliptic` in `@nextcloud/vite-config`'s polyfill chain. None of those packages reaches the bundle,
+so CI audits only the runtime packages (the frontend job in `ci.yml`) rather than muting the tool.
+Of the dev packages that `LicensingTest` notes do reach it, that audit skips two: the Vue plugin
+and the node polyfills. Vite stays in, because `vue-router` pulls it in.
 
 **The main entry is one dynamic import of `src/boot.js`.** NC 31 loads an entry as
 `nextfleet-main.mjs?v=…`, while a lazy chunk (the file picker, a date locale) imports Vite's preload
@@ -458,6 +465,9 @@ It needs the stack up and `js/` built — without a bundle the root stays empty 
 the assertion, not the missing build. It logs in through the form — Nextcloud redirects a browser to
 `/login` whatever `Authorization` header it carries, so basic auth is no shortcut.
 `NEXTFLEET_URL_NC34` and `NEXTFLEET_URL_NC31` override the two ports.
+A failed test leaves a screenshot and `error-context.md` in `test-results/`, on CI a trace as well;
+the e2e job uploads the folder when it fails or times out, as the artifact `e2e-test-results`, kept five days,
+and the weekly smoke run as `e2e-weekly-test-results`.
 
 Every vehicle the run makes wears a plate its own spec file owns — `E2E-` for the M1 slice,
 `M2-E2E-` to `M7-E2E-` for the next six, `M9-E2E-` for the M9 slice, `ROLES-` for the role cases — and each file deletes what it finds under its prefix before it starts.
@@ -583,12 +593,9 @@ The steps:
    with `oci8`. `--db` goes before the tarball. How it works is in `tools/upgrade-check.sh`.
    Until a release is out, also check the upgrade from 0.3.0's source, `e7bdbe1`, on MariaDB and
    PostgreSQL: the weekly CI job that does runs only once this workflow is on `main`.
-7. **Publish the source.** Fast-forward `main` to `initial` (`git push origin initial:main`, or a
-   pull request if `main` is protected): `info.xml` points the store at the screenshots and the
-   manuals on `main`. Then tag the release commit `v<x>` and push the tag. **The first release
-   cannot fast-forward:** the history was rewritten on 2026-10-04, and `origin/main` (`f6a099d`)
-   shares no commit with `initial`. Replace it once, with the ruleset that refuses force-pushes
-   lifted for that push: `git push --force-with-lease=main:f6a099d origin initial:main`.
+7. **Publish the source.** Merge the release branch into `main` through a pull request; the
+   ruleset on `main` takes no direct push. `info.xml` points the store at the screenshots and the
+   manuals on `main`. Then tag the release commit on `main` `v<x>` and push the tag.
 8. **Upload.** Attach the tarball to a GitHub release for the tag; the store downloads it from
    there. On apps.nextcloud.com, *Upload app release* takes that download URL and the tarball's
    signature:

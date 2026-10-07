@@ -106,7 +106,7 @@ async function dismiss(uuid) {
 			:heading="t('nextfleet', 'Keep a logbook for the tax office with this vehicle?')">
 			<ul class="hint__list">
 				<li v-for="vehicle in unasked" :key="vehicle.uuid" class="hint__ask">
-					<NcButton variant="tertiary" @click="$emit('select', vehicle.uuid)">
+					<NcButton class="hint__name" variant="tertiary" @click="$emit('select', vehicle.uuid)">
 						{{ nameOf(vehicle) }}
 					</NcButton>
 					<NcButton variant="secondary" :disabled="answering" @click="switchOn(vehicle)">
@@ -127,7 +127,7 @@ async function dismiss(uuid) {
 			<ul class="hint__list">
 				<li v-for="one in incomplete" :key="one.vehicle.uuid" class="hint__item">
 					<!-- The answer is in the vehicle's own edit sheet, so the name is the way there. -->
-					<NcButton variant="tertiary" @click="$emit('select', one.vehicle.uuid)">
+					<NcButton class="hint__name" variant="tertiary" @click="$emit('select', one.vehicle.uuid)">
 						{{ nameOf(one.vehicle) }}
 					</NcButton>
 					<span class="hint__missing">
@@ -162,6 +162,15 @@ async function dismiss(uuid) {
 	flex-wrap: wrap;
 	align-items: center;
 	gap: var(--default-grid-baseline);
+}
+
+/* A button keeps its text on one line, so a long plate or make and model would make the card as
+   wide as the name. The name is how the person picks the vehicle, so it breaks rather than being
+   cut off. */
+.hint__name :deep(.button-vue__text) {
+	white-space: normal;
+	overflow-wrap: anywhere;
+	text-align: start;
 }
 
 .hint__missing {
