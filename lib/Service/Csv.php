@@ -34,10 +34,11 @@ final class Csv {
 		return implode(',', array_map(static fn (int|string|null $cell): string => is_string($cell) ? self::cell($cell) : (string)$cell, $cells));
 	}
 
+	/** Every place a reader may start a cell, not only the field's start (docs/security.md#hostile-content). */
+	private const CELL_START = '/(^|[;\t\r\n])(?=[ "]*[=+\-@\t\r])/';
+
 	private static function cell(string $value): string {
-		if (strspn($value, "=+-@\t\r", 0, 1) === 1) {
-			$value = "'" . $value;
-		}
+		$value = (string)preg_replace(self::CELL_START, "\$1'", $value);
 
 		return strpbrk($value, ",\"\r\n") === false ? $value : '"' . str_replace('"', '""', $value) . '"';
 	}

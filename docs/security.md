@@ -89,9 +89,12 @@ every rule above holds through it, and the IDOR matrix walks both doors. What it
   is never trusted. **An SVG served inline from our origin is script execution** — a receipt is a
   plausible SVG, so this is not theoretical. The screen saves a paper through a blob URL, which is
   of our origin too, so the blob is typed `application/octet-stream` (`src/utils/papers.js`).
-- **CSV export is escaped against formula injection.** A field starting with `=`, `+`, `-`, `@`, tab
-  or CR gets a leading apostrophe. Otherwise a trip named `=cmd|…` runs when a colleague opens the
-  export in Excel — the classic bug in an app whose main output is CSV.
+- **CSV export is escaped against formula injection.** Wherever a reader may start a cell, text
+  that begins with `=`, `+`, `-`, `@`, tab or CR (after any spaces or quotes) gets a leading
+  apostrophe. Otherwise a trip named `=cmd|…` runs when a colleague opens the export in Excel — the
+  classic bug in an app whose main output is CSV. A cell can start at the field's start, and also
+  after a `;`, a tab or a line break inside it: Excel in a German locale splits the comma file on
+  `;`, and sees a quote only at the start of what it takes for a cell, so quoting does not help.
 - **CSV import is bounded** (`lib/Import/CsvReader.php`): at most 5 000 000 bytes, 20 000 data
   rows and 500 000 cells (header included), read streaming, each byte scanned once. A row over
   64 KiB or 256 cells, a NUL byte, an unclosed quote, CR-only line breaks, or text that is not all

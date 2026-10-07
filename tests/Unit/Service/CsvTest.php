@@ -47,6 +47,30 @@ class CsvTest extends TestCase {
 		$this->assertSame("\u{FEFF}purpose\r\n" . $cell . "\r\n", Csv::of(['purpose'], [[$value]]));
 	}
 
+	/** @return iterable<string, array{string, string}> */
+	public static function laterCells(): iterable {
+		yield 'after a semicolon' => ['Kunde;=1+1;', "Kunde;'=1+1;"];
+		yield 'after a tab' => ["Kunde\t+1", "Kunde\t'+1"];
+		yield 'after a line break' => ["Kunde\n@SUM(A1)", "\"Kunde\n'@SUM(A1)\""];
+		yield 'after spaces' => ['Kunde; -1', "Kunde;' -1"];
+		yield 'after a quote' => ['Kunde;"=1"', "\"Kunde;'\"\"=1\"\"\""];
+		yield 'every one' => ['a;=1;b;-2', "a;'=1;b;'-2"];
+		yield 'a tab that starts one' => ["a;\t=1", "a;'\t'=1"];
+		yield 'a spaced value' => [' =1', "' =1"];
+		yield 'plain text' => ['Kunde; Besuch', 'Kunde; Besuch'];
+	}
+
+	/**
+	 * A reader may split a comma file on `;` (Excel in a German locale), on tabs or at a line break
+	 * inside quotes, and starts a cell after each. Quoting does not help there: such a reader sees
+	 * a quote only at the start of what it takes for a cell.
+	 *
+	 * @dataProvider laterCells
+	 */
+	public function testEveryPlaceACellCanStartIsDefused(string $value, string $cell): void {
+		$this->assertSame("\u{FEFF}purpose\r\n" . $cell . "\r\n", Csv::of(['purpose'], [[$value]]));
+	}
+
 	/** A number is ours, not the user's: a refund of -500 cents stays a number. */
 	public function testANegativeNumberIsANumber(): void {
 		$this->assertSame("\u{FEFF}amount\r\n-500\r\n", Csv::of(['amount'], [[-500]]));
