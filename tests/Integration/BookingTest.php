@@ -579,7 +579,9 @@ class BookingTest extends TestCase {
 		$this->pushBack($erins['uuid'], 86400);
 
 		try {
-			$this->bookings->book(self::OWNER, $uuid, $this->span($this->justNow(), 2));
+			// A minute back: at a minute's first second justNow() is the clock itself, where the
+			// half-open hold already ends (BookingMapperTest).
+			$this->bookings->book(self::OWNER, $uuid, $this->span($this->justNow() - 60, 2));
 			$this->fail('a booking was taken while the car is overdue');
 		} catch (BookingConflictException $e) {
 			$this->assertSame($erins['uuid'], $e->booking['uuid']);
