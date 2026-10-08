@@ -9,6 +9,8 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Tests\Integration;
 
 use OCA\NextFleet\AppInfo\Application;
+use OCA\NextFleet\Db\Audit;
+use OCA\NextFleet\Db\AuditMapper;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Service\GrantService;
 use OCA\NextFleet\Service\LogbookExport;
@@ -265,13 +267,16 @@ class LogbookExportTest extends TestCase {
 		$this->switchMode($uuid, true);
 		$trip = $this->trip($uuid, $this->now - 7200, ['start_odo' => 120000, 'end_odo' => 120450]);
 		$this->trips->delete(self::AUTHOR, $uuid, $trip->getUuid(), $trip->getUpdatedAt());
-		$db = \OCP\Server::get(IDBConnection::class);
-		$qb = $db->getQueryBuilder();
+		// Found through the mapper: PostgreSQL has no LIKE on a json column.
+		$voids = array_values(array_filter(
+			\OCP\Server::get(AuditMapper::class)->findForEntity('trip', (int)$trip->getId()),
+			static fn (Audit $row): bool => ($row->getDiffJson()['change'] ?? null) === 'voided',
+		));
+		$this->assertCount(1, $voids);
+		$qb = \OCP\Server::get(IDBConnection::class)->getQueryBuilder();
 		$qb->update('fleet_audit')
 			->set('diff_json', $qb->createNamedParameter(json_encode(['change' => 'voided', 'fields' => ['deleted_at' => [null, $this->now]], 'late' => true])))
-			->where($qb->expr()->eq('entity', $qb->createNamedParameter('trip')))
-			->andWhere($qb->expr()->eq('entity_id', $qb->createNamedParameter($trip->getId(), $qb::PARAM_INT)))
-			->andWhere($qb->expr()->like('diff_json', $qb->createNamedParameter('%voided%')));
+			->where($qb->expr()->eq('id', $qb->createNamedParameter($voids[0]->getId(), $qb::PARAM_INT)));
 		$this->assertSame(1, $qb->executeStatement());
 
 		[$lines] = $this->printed($uuid, (int)gmdate('Y', $this->now - 3600));
