@@ -117,8 +117,8 @@ class Notifier implements INotifier {
 			default => $this->reminded($l, $user, $vehicle, (int)$notification->getObjectId(), $notification->getSubject(), $p),
 		};
 		$notification->setParsedSubject($subject)->setIcon($icon);
-		// Being on the list grants nothing: the plate and title are told, the vehicle opens only
-		// for someone who may see it.
+		// Being on the list grants nothing: the vehicle's name and the title are told, the vehicle
+		// opens only for someone who may see it.
 		if ($this->sees($user, $vehicle)) {
 			$notification->setLink($this->urls->linkToRouteAbsolute('nextfleet.page.index', ['vehicle' => $vehicle->getUuid()]));
 		}
@@ -137,7 +137,7 @@ class Notifier implements INotifier {
 	 * @throws \OCP\DB\Exception
 	 */
 	private function reminded(IL10N $l, string $user, Vehicle $vehicle, int $reminderId, string $point, array $p): string {
-		$subject = $this->subject($l, $point, $p, $vehicle->getOdoUnit());
+		$subject = $this->subject($l, $point, $p, $vehicle);
 		$vehicleId = (int)$vehicle->getId();
 		if (!isset($this->reminded[$vehicleId])) {
 			$this->reminded[$vehicleId] = [];
@@ -170,17 +170,21 @@ class Notifier implements INotifier {
 	}
 
 	/**
+	 * Led by the plate it rang with, so a plated notice reads as it did then. One that rang
+	 * without a plate names the vehicle as it stands now.
+	 *
 	 * @param ReminderNotice $p
 	 * @throws UnknownNotificationException for a point this app does not send
 	 */
-	private function subject(IL10N $l, string $point, array $p, string $unit): string {
+	private function subject(IL10N $l, string $point, array $p, Vehicle $vehicle): string {
 		try {
-			$line = ReminderWords::line($l, $point, $p, $unit);
+			$line = ReminderWords::line($l, $point, $p, $vehicle->getOdoUnit());
 		} catch (\UnexpectedValueException) {
 			throw new UnknownNotificationException();
 		}
+		$name = $p['plate'] !== '' ? $p['plate'] : VehicleWords::name($l, $vehicle);
 
-		return $l->t('%1$s: %2$s', [$p['plate'], $line]);
+		return $l->t('%1$s: %2$s', [$name, $line]);
 	}
 
 	/**

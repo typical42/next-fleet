@@ -10,6 +10,7 @@ namespace OCA\NextFleet\Command;
 
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
+use OCA\NextFleet\Notification\VehicleWords;
 use OCP\IUserManager;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
@@ -52,10 +53,13 @@ class VehiclesCommand extends Command {
 		$format->rows($output, array_map(static fn (Vehicle $vehicle): array => [
 			'uuid' => $vehicle->getUuid(),
 			'plate' => $vehicle->getPlate(),
-			'name' => trim(($vehicle->getManufacturer() ?? '') . ' ' . ($vehicle->getModel() ?? '')),
+			'display_name' => $vehicle->getDisplayName(),
+			'name' => VehicleWords::made($vehicle),
 			'owner' => $vehicle->getUserId(),
 			'lifecycle' => $vehicle->getLifecycle(),
 			'deleted_at' => Format::instant($vehicle->getDeletedAt()),
+			'eu_category' => $vehicle->getEuCategory(),
+			'body_type' => $vehicle->getBodyType(),
 		], $vehicles), 'No vehicles.');
 
 		return self::SUCCESS;

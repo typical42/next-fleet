@@ -11,6 +11,7 @@ namespace OCA\NextFleet\Jurisdiction\De;
 use OCA\NextFleet\Jurisdiction\IClaimRenderer;
 use OCA\NextFleet\Jurisdiction\MileageClaim;
 use OCA\NextFleet\Jurisdiction\PrintedPage;
+use OCA\NextFleet\Notification\VehicleWords;
 
 /**
  * The business kilometres of one year at the flat rate, as the browser prints them: one line per
@@ -44,16 +45,14 @@ class MileageClaimRenderer implements IClaimRenderer {
 
 	public function render(MileageClaim $claim): string {
 		$vehicle = $claim->vehicle;
-		$name = trim(($vehicle->getManufacturer() ?? '') . ' ' . ($vehicle->getModel() ?? ''));
 
 		return '<!DOCTYPE html>'
 			. '<html lang="de"><head><meta charset="utf-8">'
 			. '<meta name="viewport" content="width=device-width, initial-scale=1">'
-			. '<title>Fahrtkosten ' . PrintedPage::text($vehicle->getPlate()) . ' ' . $claim->year . '</title>'
+			. '<title>Fahrtkosten ' . PrintedPage::text(VehicleWords::nameOr($vehicle, FahrtenbuchRenderer::UNNAMED)) . ' ' . $claim->year . '</title>'
 			. '<style>' . self::STYLE . '</style></head><body>'
 			. '<header><h1>Fahrtkosten für geschäftliche Fahrten ' . $claim->year . '</h1><dl>'
-			. '<dt>Kennzeichen</dt><dd>' . PrintedPage::text($vehicle->getPlate()) . '</dd>'
-			. ($name === '' ? '' : '<dt>Fahrzeug</dt><dd>' . PrintedPage::text($name) . '</dd>')
+			. PrintedPage::vehicle($vehicle, FahrtenbuchRenderer::VEHICLE, FahrtenbuchRenderer::UNNAMED)
 			. '</dl><p>Nur Fahrten, die Sie eingetragen haben.</p></header>'
 			. $this->table($claim)
 			. $this->notes($claim)

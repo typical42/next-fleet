@@ -82,6 +82,7 @@ stack.
 | `phpunit -c phpunit.integration.xml` | PHP tests against a real Nextcloud and database | Container |
 | `phpunit -c phpunit.api.xml` | The OCS API over HTTP | Container |
 | `npm run test:e2e:docker` | Playwright tests in a browser, on both servers | Host, with Docker |
+| `npm run docs:diagrams` | Every Mermaid diagram under `docs/` renders | Host, with Docker |
 
 The container has no Composer. Run the integration tests and the API tests with PHPUnit in the
 container, for example:
@@ -137,6 +138,7 @@ Report a security problem privately. [SECURITY.md](../../SECURITY.md) tells you 
 
 | Document | Read it to know |
 |---|---|
+| [design/](../design/README.md) | The UML diagrams: use cases, deployment, components, classes, tables, flows and states |
 | [architecture.md](../architecture.md) | The layers, the data model, the Nextcloud integration, the reminder engine and the calculations |
 | [api.md](../api.md) | The OCS API for clients: login, answers, tokens, sync, and what version 1 promises |
 | [ui.md](../ui.md) | The screens, the entry form, and the rules for English and German texts |

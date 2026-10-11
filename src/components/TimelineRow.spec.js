@@ -107,6 +107,20 @@ describe('a cost row', () => {
 		expect(opening).not.toContain('/100 km')
 	})
 
+	/** A km + hours vehicle's fill-up states the segment per engine hour after its figure per 100 km. */
+	it('states the consumption per engine hour after the one per 100 km', () => {
+		const both = row(cost('energy', { energy: 'diesel', amount: 30000, full_tank: true, station: 'Aral Nord' }, {
+			flags: [], readings: [], consumption: { value: 6.04, per: 'km' }, consumption_per_hour: { value: 4.5, per: 'h' },
+		}), CAR).text()
+		const kmOnly = row(cost('energy', { energy: 'diesel', amount: 30000, full_tank: true }, {
+			flags: [], readings: [], consumption: { value: 6.04, per: 'km' }, consumption_per_hour: null,
+		}), CAR).text()
+
+		expect(both).toMatch(/6\.0 l\/100 km.*4\.5 l\/h.*Aral Nord/)
+		expect(kmOnly).toContain('6.0 l/100 km')
+		expect(kmOnly).not.toContain('l/h')
+	})
+
 	/** Flags are computed on read and said as words, never as a colour alone (docs/ui.md). */
 	it('says what a fill-up is flagged for, in words', () => {
 		const text = row(cost('energy', { energy: 'diesel', amount: 90000, full_tank: true }, {

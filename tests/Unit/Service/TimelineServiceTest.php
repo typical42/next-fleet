@@ -62,6 +62,8 @@ class TimelineServiceTest extends TestCase {
 	private int $nextCostId = 1;
 	/** What the gate hands back: the vehicle's own fields, over its id and uuid. */
 	private array $vehicleRow = [];
+	/** How often consumption read the whole fill-up history. */
+	private int $historyReads = 0;
 
 	private TripMapper&MockObject $trips;
 	private OdoReadingMapper&MockObject $readings;
@@ -78,6 +80,7 @@ class TimelineServiceTest extends TestCase {
 		$this->nextReadingId = 1;
 		$this->nextCostId = 1;
 		$this->vehicleRow = [];
+		$this->historyReads = 0;
 
 		// The three cost tables page alike, each over its own rows.
 		foreach ([
@@ -98,12 +101,15 @@ class TimelineServiceTest extends TestCase {
 
 		// What consumption reads: every fill-up, oldest first.
 		$this->energy->method('findAllForVehicle')->willReturnCallback(
-			fn (int $vehicleId): array => array_reverse($this->before(
-				array_values(array_filter($this->costRows, static fn (object $row): bool => $row instanceof Energy)),
-				$vehicleId,
-				[PHP_INT_MAX, PHP_INT_MAX],
-				PHP_INT_MAX,
-			)),
+			function (int $vehicleId): array {
+				$this->historyReads++;
+				return array_reverse($this->before(
+					array_values(array_filter($this->costRows, static fn (object $row): bool => $row instanceof Energy)),
+					$vehicleId,
+					[PHP_INT_MAX, PHP_INT_MAX],
+					PHP_INT_MAX,
+				));
+			},
 		);
 
 		$this->trips = $this->createMock(TripMapper::class);
@@ -539,6 +545,51 @@ class TimelineServiceTest extends TestCase {
 			6.0,
 			$this->service()->one(self::OWNER, self::VEHICLE, TimelineService::ENERGY, $closing->getUuid())['consumption']['value'],
 		);
+	}
+
+	/**
+	 * A km + hours vehicle's fill-up also states its segment per engine hour, when both ends carry
+	 * hours; a one-counter vehicle's row has no such key.
+	 */
+	public function testAFillUpOnAKmAndHoursVehicleCarriesItsConsumptionPerHour(): void {
+		$this->vehicleRow = ['energy_types' => '["diesel"]', 'odo_unit' => 'km', 'second_unit' => 'h'];
+		$opening = $this->fillUp(1750000000, 40000, 7500, 'diesel');
+		$this->reading(1750000000, 10000, OdoReading::ENERGY, (int)$opening->getId());
+		$this->reading(1750000000, 3100, OdoReading::ENERGY, (int)$opening->getId())->setCounter(OdoReading::SECOND);
+		$closing = $this->fillUp(1750100000, 30000, 7500, 'diesel');
+		$this->reading(1750100000, 10500, OdoReading::ENERGY, (int)$closing->getId());
+		$this->reading(1750100000, 3105, OdoReading::ENERGY, (int)$closing->getId())->setCounter(OdoReading::SECOND);
+		$unmeasured = $this->fillUp(1750200000, 25000, 7500, 'diesel');
+		$this->reading(1750200000, 10900, OdoReading::ENERGY, (int)$unmeasured->getId());
+
+		$rows = $this->service()->page(self::OWNER, self::VEHICLE, null, null)['rows'];
+
+		$this->assertSame(6.25, $rows[0]['consumption']['value']);
+		$this->assertNull($rows[0]['consumption_per_hour']);
+		$this->assertSame(6.0, $rows[1]['consumption_per_hour']['value']);
+		$this->assertSame('h', $rows[1]['consumption_per_hour']['per']);
+		$this->assertNull($rows[2]['consumption_per_hour']);
+		$this->energy->method('findOnVehicle')->willReturn($closing);
+		$this->assertSame(
+			6.0,
+			$this->service()->one(self::OWNER, self::VEHICLE, TimelineService::ENERGY, $closing->getUuid())['consumption_per_hour']['value'],
+		);
+
+		$this->vehicleRow = ['energy_types' => '["diesel"]', 'odo_unit' => 'km'];
+		$this->assertArrayNotHasKey('consumption_per_hour', $this->service()->page(self::OWNER, self::VEHICLE, null, null)['rows'][1]);
+	}
+
+	/**
+	 * The one exception to "stores, not expectations": the fill-up history grows with the vehicle's
+	 * age, so a page reads it once, whether it measures one counter or two.
+	 */
+	public function testAPageReadsTheFillUpHistoryOnceForBothCounters(): void {
+		$this->vehicleRow = ['energy_types' => '["diesel"]', 'odo_unit' => 'km', 'second_unit' => 'h'];
+		$this->fillUp(1750000000, 40000, 7500, 'diesel');
+
+		$this->service()->page(self::OWNER, self::VEHICLE, null, null);
+
+		$this->assertSame(1, $this->historyReads);
 	}
 
 	/**

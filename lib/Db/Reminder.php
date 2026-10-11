@@ -54,6 +54,7 @@ class Reminder extends BaseEntity implements \JsonSerializable {
 	public const DONE = 'done';
 	public const SNOOZED = 'snoozed';
 	public const DISMISSED = 'dismissed';
+	public const STATES = [self::PLANNED, self::WARNED, self::DUE, self::OVERDUE, self::DONE, self::SNOOZED, self::DISMISSED];
 
 	protected int $vehicleId = 0;
 	protected ?string $templateKey = null;

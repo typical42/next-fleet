@@ -75,6 +75,11 @@ you what to include.
    sudo -E -u www-data php occ upgrade
    ```
 
+3. If you upgraded with `occ`, reload the web server or PHP-FPM. PHP's opcache can keep the code
+   of the old version until it checks the files again: 60 seconds in the Nextcloud Docker image,
+   never if `opcache.validate_timestamps` is off. Until then, the app can show errors when it reads
+   a vehicle. The **Apps** page resets the opcache itself.
+
 The upgrade changes the database automatically. Each new version can add migrations and repair
 steps. Nextcloud runs each migration one time only.
 [Data and backups](data.md#how-an-upgrade-changes-the-data) gives the details.

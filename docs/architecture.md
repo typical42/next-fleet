@@ -4,6 +4,8 @@ Part of the [NextFleet plan](../plan.md). Terms are defined in [CONTEXT.md](../C
 
 ## Stack and layers
 
+Drawn in [design/components.md](design/components.md).
+
 Standard Nextcloud app, no external services.
 
 - **PHP:** the intersection of what NC 31–34 support — confirmed at M0, let CI decide. Public `OCP`
@@ -30,37 +32,14 @@ Odometer is **not** a field you edit. It is derived: every Entry that knows a mi
 Reading, and the vehicle carries the latest value as a cache. That keeps trips, fill-ups and
 maintenance from drifting apart.
 
-```mermaid
-erDiagram
-    VEHICLES ||--o{ ODO_READINGS : "has — odo_value caches the newest"
-    VEHICLES ||--o{ TRIPS : has
-    VEHICLES ||--o{ ENERGY : has
-    VEHICLES ||--o{ MAINTENANCE : has
-    VEHICLES ||--o{ EXPENSES : has
-    VEHICLES ||--o{ REMINDERS : has
-    VEHICLES ||--o{ DOCUMENTS : has
-    VEHICLES ||--o{ ACCESS : "access through"
-    VEHICLES ||--o{ BOOKINGS : "booked through"
-    TRIPS ||--|| ODO_READINGS : writes
-    ENERGY ||--o{ ODO_READINGS : "writes, one per counter"
-    MAINTENANCE ||--o{ ODO_READINGS : "writes, one per counter"
-    ENERGY |o--o{ DOCUMENTS : "papers"
-    MAINTENANCE |o--o{ DOCUMENTS : "papers"
-    EXPENSES |o--o{ DOCUMENTS : "papers"
-    BOOKINGS |o--o{ DOCUMENTS : "papers"
-    MAINTENANCE }o--o| REMINDERS : "closes, then recurs"
-    REMINDERS ||--o{ REMINDER_RECEIPTS : "one row per point, channel and recipient"
-    VEHICLES ||--o{ REMINDER_RECIPIENTS : "reminders go to"
-    BOOKINGS ||--o| TRIPS : becomes
-    TRIPS ||--o{ AUDIT : "revisions, Logbook Mode only"
-    VEHICLES ||--o{ AUDIT : "mode flips, plate, country, currency, type"
-```
+Drawn in [design/data-model.md](design/data-model.md); the states of its rows in
+[design/lifecycles.md](design/lifecycles.md).
 
 Tables (prefix `fleet_`; Nextcloud prepends `oc_`, so names stay under 27 characters):
 
 | Table | Key columns |
 |---|---|
-| `fleet_vehicles` | `user_id` (owner), `plate`, `manufacturer`, `model`, `vehicle_type`, `engine`, `energy_types`, `tank_ml`, `battery_wh`, `first_reg`, `vin`, `odo_value` (cache), `odo_unit` (km/h), `second_unit` (null/h), `second_value` (cache), `purchase_price`, `residual_est`, `currency`, `jurisdiction`, `logbook_mode`, `lifecycle`, `disposed_at`, `folder_file_id`, `retention_months`, `color`, `notes`, `reminder_mail` (off/daily/weekly/monthly, default weekly) |
+| `fleet_vehicles` | `user_id` (owner), `plate`, `manufacturer`, `model`, `vehicle_type`, `engine`, `energy_types`, `tank_ml`, `battery_wh`, `first_reg`, `vin`, `odo_value` (cache), `odo_unit` (km/h), `second_unit` (null/h), `second_value` (cache), `purchase_price`, `residual_est`, `currency`, `jurisdiction`, `logbook_mode`, `lifecycle`, `disposed_at`, `folder_file_id`, `retention_months`, `color`, `notes`, `reminder_mail` (off/daily/weekly/monthly, default weekly), `display_name` (second label, at most 64 characters), `eu_category` (field J, `G` appended off-road: `N3G`), `body_type` (EU body code and add-on: `BA03`) |
 | `fleet_odo_readings` | `vehicle_id`, `read_at`, `read_at_off`, `value`, `kind` (reading/reset/correction), `origin` (observed/derived), `flagged`, `source_type` (manual/trip/energy/maintenance), `source_id`, `counter` (main/second, null reads as main) |
 | `fleet_trips` | `vehicle_id`, `started_at`, `started_at_off`, `ended_at`, `ended_at_off`, `start_odo` (nullable claim), `end_odo`, `distance`, `from_label`, `to_label`, `purpose`, `partner`, `category` (business/private/commute), `reconciled` |
 | `fleet_energy` | `vehicle_id`, `filled_at`, `filled_at_off`, `odo`, `second_odo`, `energy` (petrol/diesel/lpg/cng/electric), `amount` (ml or Wh, per `energy`), `unit_price` (tenths of a cent per l or kWh), `total`, `vat_rate`, `full_tank`, `missed_previous`, `station`, `is_dc`, `location_kind` (home/public) |
@@ -102,6 +81,13 @@ no energies takes them from the engine (`VehicleService::ENGINE_ENERGIES`); an u
 nothing, so an owner can still empty the set. A fill-up of an
 energy outside the set is saved and flagged, as one without a total is flagged "no price"; both
 flags are computed on read (`EnergyService::flags()`), never stored.
+
+**`vehicle_type` drives the rules, `eu_category` and `body_type` are data**
+([ADR 0010](adr/0010-the-vehicle-type-drives-rules-the-eu-codes-are-data.md)). The server refuses a
+code outside the EU lists (`Registration`) and a body type that does not fit the category, on the
+row as it ends up: a change of category alone that strands the stored body type is a 400 too. The
+fit is judged only when the pair changes, so a misfit stored without the check stands while other
+fields are saved; the edit sheet sends it back as read until its registration fields are touched.
 
 **`tank_ml` and `battery_wh` exist only to flag implausible amounts** — sixty litres into a
 forty-five-litre tank. They never constrain a save. The flag is `overfilled`, computed on read like
@@ -287,6 +273,21 @@ was ever given access, the rule *Entered by* follows and the screen shows Bookin
 **A boolean column is nullable and carries a default.** Nextcloud's schema check refuses a `NOT NULL`
 boolean outright — it is an integer of length 1 on the databases it supports — and NC 31 enforces
 that where NC 34 no longer does. The default is what a flag nobody touched means.
+
+**A column of typed text is four times as long on Oracle.** A field is bounded in characters
+(`Field::text`), and MariaDB and PostgreSQL count a column's length in characters too. Oracle's
+`VARCHAR2(n)` counts bytes, so there a plate, a name or a title of n characters that are not all
+ASCII would not fit. Such a column is 4n on Oracle, since UTF-8 spends at most four bytes on a
+character; the bounds stay in characters and the other databases keep n. `Db\TypedText` lists the
+columns, and the schema test expects 4n on Oracle for exactly those. Migration 9 widened the first
+ones from a frozen list of its own: a shipped step does not change. A new column of typed text is
+made 4n on Oracle by the step that adds it, and joins `Db\TypedText`; the unit `TypedTextTest`
+fails while a text field a service bounds sits in a string column outside the list and outside its
+few ASCII exceptions. A later migration that touches one of these columns keeps it at 4n on Oracle,
+or `OracleSchemaTest` fails in the unit suite.
+Codes the app makes — uuids, ISO codes, the vocabularies — stay at n: they are ASCII. The
+jurisdiction is the one key among the 4n columns, because a key the app does not know is kept as
+written.
 
 **Indexes are part of the schema, not an optimisation:** a unique index on `uuid` everywhere, so the
 database states the identity too; `(vehicle_id, <time column>)` on every child table, `(user_id)` on
@@ -475,7 +476,9 @@ counter), for the same reason a trip carries its one; they are looked up by `(so
 source_id)`, because an id is unique only inside its own table. A fill-up row carries `flags` as
 well, and `consumption`: the segment it closes, or null
 ([numbers](#numbers-consumption-cost-emissions)). That is measured over the vehicle's whole energy
-chain, since the fill-up that opened the segment may be pages away.
+chain, since the fill-up that opened the segment may be pages away. A vehicle with a second counter
+also gets `consumption_per_hour`, the segment on the engine-hour chain, or null: a fill-up without
+hours closes a km segment but not an hour one.
 
 **One row reads back on its own**, `GET /api/vehicles/{uuid}/timeline/{type}/{id}`, in the same
 shape. The entry sheet asks for it after an edit lost a race, for the token its _Save anyway_ writes
@@ -515,7 +518,8 @@ local date ([time](#time)), voided ones included, each with what its ruleset fin
 late changes, the periods the mode was on with the plates carried in each, and the ruleset's source
 URL. The periods are read off the vehicle's flips ([logbook mode](features.md#logbook-mode)): the
 first flip's `before` says whether the vehicle was created under the mode, and with no flip the
-column says it. The plates are read off the same trail: the header names today's, and each period
+column says it. The plates are read off the same trail: the header names today's (without one, the
+vehicle's name as `VehicleWords` gives it, each field under its own term), and each period
 names the one it was kept under and when a new one took over inside it, because the receipts carry
 the old. A jurisdiction with no renderer answers 404, not an empty page that would pass for a logbook.
 
@@ -611,6 +615,8 @@ are defused: a number is ours, and a negative amount stays a number.
 
 ### Personal data export
 
+Drawn in [design/flows.md#a-personal-data-export](design/flows.md#a-personal-data-export).
+
 One person's data, as Nextcloud's *user_migration* app exports an account (`FleetMigrator`, an
 `IMigrator`). It writes `nextfleet/<table>.json` for every table that names an account
 (`AccountTables`, the list the erasure rewrites): each row whose account column holds the uid,
@@ -632,6 +638,8 @@ whose vehicle a row belongs to cannot be decided on a server with other people a
 would fail every other app's import with it.
 
 ### Documents
+
+Drawn in [design/domain.md#documents-and-the-inbox](design/domain.md#documents-and-the-inbox).
 
 `GET`, `POST /api/vehicles/{uuid}/documents`, `DELETE …/documents/{document}` and `POST
 …/documents/{document}/restore` list, attach, detach and restore a vehicle's papers
@@ -699,6 +707,8 @@ attach is shown as "not a file of your own", which is what it nearly always mean
 
 ### The inbox
 
+Drawn in [design/lifecycles.md#a-receipt-in-the-inbox](design/lifecycles.md#a-receipt-in-the-inbox).
+
 A receipt photographed on the phone reaches an entry without the file picker: the Nextcloud mobile
 app's auto-upload fills a folder, and the app lists what in it belongs to no vehicle yet. **The
 folder is a preference**, `inbox_folder` in `GET`/`PUT /api/preferences`: a file id, or null. As for
@@ -722,6 +732,9 @@ watches the folder; it is read when the app loads, for the count in the navigati
 the [Inbox screen](ui.md#the-inbox-screen) opens.
 
 ### Import
+
+Drawn in [design/domain.md#import](design/domain.md#import) and
+[design/flows.md#an-import](design/flows.md#an-import).
 
 Another tool's CSV export becomes entries (`ImportService`). The file is picked in Files, never
 uploaded, and must be the caller's own, by the check a paper's attach makes (`OwnFiles`). Importing
@@ -825,6 +838,8 @@ prints the created list the undo route takes.
 
 ## Nextcloud integration
 
+Drawn in [design/context.md#deployment](design/context.md#deployment).
+
 | Concern | Mechanism |
 |---|---|
 | Identity, ACL | `OCP\IUserSession`, `IGroupManager`. Every query runs through `VehicleAccess::may` from M1 on: owner, or a row in `fleet_access` with a sufficient role ([ADR 0001](adr/0001-own-access-table.md)); the strongest row wins and none narrows another. Five operations: `view` (viewer, driver, manager), `log` (driver, manager: add an entry, change one you entered), `edit` (manager: vehicle settings, reminders, recipients, the vehicle's own documents, any entry), `delete` (manager: delete any entry) and `own` (the owner alone: access, deleting and restoring the vehicle). A route that names one vehicle asks `may`; a route that lists them asks `reachable` instead, so the widening is one query and not one per row. An Entry route asks for `log`, then `VehicleService::change` for the Entry it found: `edit` or `delete`, or `log` alone when its `created_by` is the caller. The vehicle JSON carries `may`, the caller's operations, from the same rows, plus `book` where they hold `log` on an `active` vehicle — the booking rule as a word to hide by, not a sixth operation — and each timeline row carries `may` too — `edit` and `delete`, or neither, as `VehicleService::changes` reads them off the vehicle with no further query; the UI hides by these ([screens follow the role](ui.md#screens-follow-the-role)). On a vehicle with any `fleet_access` row, revoked ones included, timeline rows and the logbook name who entered each Entry from its `created_by` (`EnteredBy`, [who entered it](ui.md#who-entered-it)). `…/grants` lists, grants, re-roles (`PUT …/grants/{grant}`) and revokes, all `own`, each answering with the list and each grantee's display name. A grantee is a user or a group the instance has, never the owner, and one the admin's sharing settings let the owner reach — none while the Share API is off or the owner is excluded from sharing; under "members only" a user sharing a group with the owner, minus the exempt groups, or a group the owner is in, and no group at all where group sharing is off — read as core's own share checks read them; any other is the same 400 as nobody. Granting one again changes the role. A revoke takes off the reminder recipients who reached `view` before it and do not after; one who never did, such as a bookkeeper on the owner's list, stays. Taking a member out of a group does the same for each car the group reached when they left, since no revoke runs; a queued job does it (`GroupMemberRemovedListener`, `ForgetMemberJob`, `GrantService::forgetMember`), so a group admin's click waits on no vehicle, and it counts grants revoked since, as deleting the group before cron came round revokes them. A grant adds none. A new grant notifies the user at once, or each member the group has when a queued job runs (`GrantNoticeJob`; a grant revoked by then tells nobody), never the owner; the notification's object is the grant, so a revoke withdraws it, and `Notifier::prepare()` names owner, vehicle and role as they stand when it is read, or drops it once the reader no longer reaches `view`, as a former group member does. A role change sends nothing. `…/access` is the caller's own, at `view`: `GET` answers their own grant's role, each group that reaches the vehicle, and `holders`, who reads the vehicle — the owner (role `owner`), then each grant — by display name and role, without uids, leaving out a grantee the instance no longer has; empty for the owner and for a caller who holds nothing; `DELETE` leaves, giving back only the grant in their own name, with a revoke's rules (recipients, notification). Through a group there is nothing to leave — a personal opt-out would be a weaker row beating a stronger one — and the owner holds no grant, so both 404. A deleted group's grants are revoked ([data model](#data-model)). A booking route asks for `view` to list and `log` for the rest, then `VehicleAccess::mayBooking` for the booking it found: `edit`, or `log` alone when the caller is the booker — the Entry rule with the booker in the author's place, not a sixth operation. Each listed booking carries `may`: `edit`, `cancel`, `check_out`, `check_in`, `log_trip` and `attach` as its state and that rule allow; a trip logged from a booking takes the same rule. A document route asks for `log`, then the rule of the Entry or booking the paper hangs on, or `edit` for the vehicle's own ([documents](#documents)). A cancel by anyone but the booker notifies the booker, without naming who cancelled ([legal](legal.md)); the notification's object is the booking, `Notifier::prepare()` drops it once the booking is no longer cancelled, and deleting the vehicle withdraws it (`BookingNotices`). |
@@ -835,7 +850,7 @@ prints the created list the undo route takes.
 | Talk (optional) | Post due items into a fleet room, only when the Talk app is present. In the backlog, cheap, and very much the reason someone runs Nextcloud. |
 | Activity stream | `OCA\Activity` provider — optional, after v1. |
 | Dashboard | `OCP\Dashboard\IAPIWidgetV2` over `ReminderService::due()`: the overview's reminder read (`fleet()`), open ones only, in the overview's urgency order, sorted in PHP because the widget has no browser code. It runs no query of its own. It lists red and amber only: the dashboard is what needs you now. |
-| Unified search | `OCP\Search\IProvider`: find a vehicle by plate (separators ignored), manufacturer or model, among the ones `VehicleService::list` gives the searcher, disposed ones left out. Vehicles only: searching trip purposes or notes would take the access check somewhere nobody tests it. |
+| Unified search | `OCP\Search\IProvider`: find a vehicle by plate (separators ignored), display name, manufacturer or model, titled and subtitled as the navigation names it (body type left out: its words live in the frontend), among the ones `VehicleService::list` gives the searcher, disposed ones left out. Vehicles only: searching trip purposes or notes would take the access check somewhere nobody tests it. |
 | Settings | Personal settings (default jurisdiction, "I reclaim VAT", grid factor, the [inbox](#the-inbox) folder). The mail cadence is per vehicle. |
 | CLI | `occ nextfleet:import` imports a CSV export as the user it names ([import](#import)); `occ nextfleet:transfer` hands a vehicle to another account ([data model](#data-model)); `occ nextfleet:seed` writes a demo fleet ([development](development.md)). The admin commands, with their options and exit codes, are in [occ commands](admin/occ.md); what they go through is here. Each is a thin shell and writes no SQL. `vehicles`, `access` and `audit` read the mappers rather than as the owner, so a vehicle in the trash or an erased owner's answers. `check` (`CheckService`) changes nothing. It reports a row whose `vehicle_id` names no vehicle (in the tables `Db\VehicleTables` lists), the drift `OdometerService::drift()` finds, an Entry's Readings out of step with it (rule 5; their values are not compared), twin live grants, a grantee no backend knows with nothing pending, and a pseudonym from before 0.3.0. `recompute` fixes the drift through `OdometerService::recompute()`, the settling a write runs, under each vehicle's hold. `pending --finish` and `reminders --send` run `PendingJob`'s and `ReminderJob`'s rounds. `mail-test` goes through `MailService::test()`. `restore` goes through `VehicleService::restore()` as the owner, so it leaves what the owner's undo leaves. `Command\Format` is the shared `--output`. |
 
@@ -844,6 +859,9 @@ one. A reminder that is changed, snoozed or completed would leave an event that 
 reminders write none.
 
 ## Reminder engine
+
+Drawn in [design/flows.md#the-reminder-round](design/flows.md#the-reminder-round) and
+[design/lifecycles.md#a-reminder](design/lifecycles.md#a-reminder).
 
 One rule set, used by the templates — HU/AU, oil change, brake fluid, tyre swap — and by a reminder
 with its own title, such as an insurance renewal or a licence check.
@@ -968,7 +986,8 @@ so the digest always runs.
 - The notification stores parameters — vehicle, plate, template key or title, due date and km,
   occurrence — and `Notifier::prepare()` translates them in the reader's language and locale. It links to
   `…/apps/nextfleet/?vehicle=<uuid>` only for someone with `VIEW`; everyone else on the list gets
-  the plate and title. It has no actions.
+  the plate and title. It has no actions. It leads with the plate stored when it rang; one that
+  rang without a plate names the vehicle as it stands, display name first (`VehicleWords::name`).
 - Its object is the reminder. A new point replaces the recipient's old one. A point already sent
   stays up while the state moves on: an unticked due date leaves "due on" standing. The job takes
   it back when the reminder moves to where nothing is told, and so do snoozing, dismissing,
@@ -1019,6 +1038,8 @@ date and mileage cap, two columns no milestone has added.
 
 ## Numbers: consumption, cost, emissions
 
+Drawn in [design/flows.md#a-fill-up-and-its-figures](design/flows.md#a-fill-up-and-its-figures).
+
 Every fuel tracker gets this wrong at least once, so specify it before writing code.
 
 **Consumption is only defined between two full tanks.** Take a full fill-up A and the next full
@@ -1030,10 +1051,21 @@ their own, and a vehicle's first fill-up yields no consumption at all.
   or derived reading at either end, an end without a counter, or a counter replaced in between
   ([odometer rules](#odometer-rules)).
   A gap must produce no number rather than a wrong one.
+- **A full fill-up at A's own reading is not a B.** It measured no distance, so it ends no
+  segment: its amount is summed in and the next full fill-up closes the segment from A. A reading
+  below A's still ends it with no number.
 - Each energy is a chain of its own, and the distance is always the main counter's: per 100 km, or
   per hour on a vehicle counted in hours. A truck that also counts engine hours is measured against
   its kilometres, so its figure includes the fuel burnt working. `ConsumptionService` is the one
   place this is computed.
+- **A truck that also counts engine hours gets a figure per hour beside it**: the same chain,
+  measured on the second counter. A segment counts towards it only when both its full fill-ups
+  carry engine hours, under the same rules as above on that counter's Readings and resets. So the
+  two figures may rest on different segments; neither is derived from the other. Both chains come
+  from one read of the fill-ups (`ConsumptionService::ofEachCounter()`).
+- **No segment ever is not a quiet period.** The figures also name the energies that closed a
+  segment at any time, per counter (`measured`, `measured_per_hour`), so the header can say what a
+  figure needs where it never had one, and stay silent where a period merely closed none.
 - **Electric gets a second figure, not a broken first one.** There is no wall-side equivalent of a
   full tank: people charge to 80 %, at three different chargers, and never to 100 %. The segment
   rule stays as it is and simply rarely fires for electricity. Alongside it, show a **rolling
@@ -1065,7 +1097,10 @@ distance in the period, the cost is the period's total. A period with no fill-up
 has no cost rather than zero — and so no TCO — since 0 would mean both "nothing spent" and "nothing
 recorded", and a new vehicle would swing against months in which it did not exist. The header shows
 such a period as zero and compares nothing with it. Under "I reclaim VAT" each row counts net of
-its own rate; a row without a stated rate counts gross, and the figure says so.
+its own rate; a row without a stated rate counts gross, and the figure says so. A truck that also
+counts engine hours gets cost and energy cost per hour beside them, over how far the second counter
+moved in the period (`hours`, `value_per_hour`, `energy_value_per_hour`); without that, they are
+null.
 
 **The Costs screen's year** is the same figure, once for the year and once per month, from
 `GET /api/vehicles/{uuid}/costs/{year}?tz=`. The client names the zone and the server cuts the
@@ -1075,9 +1110,9 @@ category, in the sheet's order, then any word the sheet does not offer, then the
 they are unstated, not "other". The
 three bands are energy, maintenance and the expenses' sum. An empty month has no cost, like any
 empty period. The thirteen costs come from one read of each table over the year and one
-`ConsumptionService::distances()` call, which looks each month edge up once; the holding's distance
-is read once for all of them. The year costs the same number of queries however long the
-vehicle's history is (`KpiTest`).
+`ConsumptionService::distances()` call per counter, which looks each month edge up once; the
+holding's distance is read once for all of them. The year costs the same number of queries however
+long the vehicle's history is (`KpiTest`).
 
 **TCO** adds depreciation: (purchase − estimated residual) ÷ km over the holding period. Both fields
 are optional, and an empty field hides the KPI rather than inventing it. The holding period's

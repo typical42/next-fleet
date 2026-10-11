@@ -57,12 +57,15 @@ class CostServiceTest extends TestCase {
 			'net' => false,
 			'per' => 'km',
 			'distance' => 1000,
+			'hours' => null,
 			'total' => 25000,
 			'energy' => 8000,
 			'maintenance' => 12000,
 			'expenses' => [['category' => null, 'total' => 5000]],
 			'value' => 2500.0,
 			'energy_value' => 800.0,
+			'value_per_hour' => null,
+			'energy_value_per_hour' => null,
 			'tco' => null,
 			'incomplete' => false,
 			'unstated' => false,
@@ -249,6 +252,47 @@ class CostServiceTest extends TestCase {
 		$this->assertSame(1600.0, $cost['value']);
 	}
 
+	public function testATwoCounterVehicleAlsoCostsPerEngineHour(): void {
+		$this->reading(100, 10000);
+		$this->reading(900, 10500);
+		$this->reading(100, 2000, counter: OdoReading::SECOND);
+		$this->reading(900, 2040, counter: OdoReading::SECOND);
+		$this->fill(8000, null);
+		$this->maintain(4000, null);
+
+		$cost = $this->of($this->vehicle(secondUnit: 'h'));
+
+		$this->assertSame(40, $cost['hours']);
+		$this->assertSame(300.0, $cost['value_per_hour']);
+		$this->assertSame(200.0, $cost['energy_value_per_hour']);
+	}
+
+	public function testWithoutEngineHoursInThePeriodThereIsNoCostPerHour(): void {
+		$this->reading(100, 10000);
+		$this->reading(900, 10500);
+		$this->reading(100, 2000, counter: OdoReading::SECOND);
+		$this->reading(900, 2000, counter: OdoReading::SECOND);
+		$this->fill(8000, null);
+
+		$cost = $this->of($this->vehicle(secondUnit: 'h'));
+
+		$this->assertNull($cost['hours']);
+		$this->assertNull($cost['value_per_hour']);
+		$this->assertSame(1600.0, $cost['value']);
+	}
+
+	public function testAVehicleWithoutACurrencyHasNoCostPerHourEither(): void {
+		$this->reading(100, 2000, counter: OdoReading::SECOND);
+		$this->reading(900, 2040, counter: OdoReading::SECOND);
+		$this->fill(8000, null);
+
+		$cost = $this->of($this->vehicle(currency: null, secondUnit: 'h'));
+
+		$this->assertSame(40, $cost['hours']);
+		$this->assertNull($cost['value_per_hour']);
+		$this->assertNull($cost['energy_value_per_hour']);
+	}
+
 	public function testAVehicleWithoutACurrencyHasNoCostFigures(): void {
 		$this->reading(100, 10000);
 		$this->reading(900, 11000);
@@ -313,7 +357,7 @@ class CostServiceTest extends TestCase {
 		]);
 	}
 
-	private function reading(int $at, int $value, bool $flagged = false): void {
+	private function reading(int $at, int $value, bool $flagged = false, string $counter = OdoReading::MAIN): void {
 		$this->readingRows[] = OdoReading::fromRow([
 			'id' => count($this->readingRows) + 1,
 			'vehicle_id' => self::VEHICLE_ID,
@@ -323,7 +367,7 @@ class CostServiceTest extends TestCase {
 			'origin' => OdometerService::OBSERVED,
 			'flagged' => $flagged,
 			'source_type' => OdoReading::MANUAL,
-			'counter' => OdoReading::MAIN,
+			'counter' => $counter,
 		]);
 	}
 

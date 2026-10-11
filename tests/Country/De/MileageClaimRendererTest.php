@@ -51,9 +51,12 @@ class MileageClaimRendererTest extends TestCase {
 		return ['trip' => $trip, 'kilometres' => $kilometres, 'rate' => $rate, 'amount' => $amount];
 	}
 
-	/** @param list<array{trip: Trip, kilometres: ?int, rate: ?int, amount: ?int, missing?: list<string>, reconciled?: bool}> $lines */
-	private function render(array $lines, ?int $total, ?int $kilometres): \DOMXPath {
-		$vehicle = Vehicle::fromRow(['id' => 7, 'plate' => 'B-XY 123', 'manufacturer' => 'VW', 'model' => 'Caddy', 'jurisdiction' => 'de']);
+	/**
+	 * @param list<array{trip: Trip, kilometres: ?int, rate: ?int, amount: ?int, missing?: list<string>, reconciled?: bool}> $lines
+	 * @param array<string, string> $names the vehicle's plate, display name, make and model
+	 */
+	private function render(array $lines, ?int $total, ?int $kilometres, array $names = ['plate' => 'B-XY 123', 'manufacturer' => 'VW', 'model' => 'Caddy']): \DOMXPath {
+		$vehicle = Vehicle::fromRow(['id' => 7, 'jurisdiction' => 'de'] + $names);
 		$html = (new De\MileageClaimRenderer())->render(new MileageClaim($vehicle, 2026, $lines, $total, $kilometres, self::SOURCE));
 
 		$document = new \DOMDocument();
@@ -213,5 +216,17 @@ class MileageClaimRendererTest extends TestCase {
 		$this->assertStringContainsString('Die Kilometerpauschale gilt nur für Fahrzeuge, die nicht zum Betriebsvermögen gehören.', $body);
 		$this->assertSame(self::SOURCE, $page->evaluate('string(//footer//a/@href)'));
 		$this->assertStringContainsString('nicht rechtlich geprüft', self::text($page, '//footer'));
+	}
+
+	/**
+	 * Called by its name as the Fahrtenbuch calls it (FahrtenbuchRendererTest has every case): a
+	 * vehicle without a plate is called by its display name, under its own word.
+	 */
+	public function testAVehicleWithoutAPlateIsCalledByItsName(): void {
+		$page = $this->render([], 0, 0, ['display_name' => 'Firmenwagen', 'manufacturer' => 'VW', 'model' => 'Caddy']);
+
+		$this->assertSame('Fahrtkosten Firmenwagen 2026', self::text($page, '//title'));
+		$header = array_map(static fn (\DOMNode $node): string => $node->textContent, iterator_to_array($page->query('//header/dl/*') ?: []));
+		$this->assertSame(['Anzeigename', 'Firmenwagen', 'Fahrzeug', 'VW Caddy'], $header);
 	}
 }

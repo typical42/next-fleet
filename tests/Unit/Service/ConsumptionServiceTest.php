@@ -116,6 +116,44 @@ class ConsumptionServiceTest extends TestCase {
 		$this->assertSame([], $this->of($this->vehicle(['petrol'])));
 	}
 
+	/** A full tank at the same reading ends no segment: its fuel counts towards the next one. */
+	public function testAFullTankAtTheSameReadingCarriesItsFuelIntoTheNextSegment(): void {
+		$this->fill(100, 'petrol', 40000, 10000);
+		$this->fill(150, 'petrol', 10000, 10000);
+		$closing = $this->fill(200, 'petrol', 30000, 10500);
+
+		$segments = $this->of($this->vehicle(['petrol']));
+
+		$this->assertSame([[$closing->getUuid(), 40000, 500, 8.0]], array_map(
+			static fn (array $segment): array => [$segment['closes'], $segment['amount'], $segment['distance'], $segment['value']],
+			$segments,
+		));
+	}
+
+	public function testAFullTankAtTheSameEngineHoursCarriesItsFuelIntoTheNextHourSegment(): void {
+		$this->fill(100, 'diesel', 200000, 50000, second: 100);
+		$this->fill(200, 'diesel', 30000, 50100, second: 100);
+		$closing = $this->fill(300, 'diesel', 50000, 51000, second: 110);
+
+		$segments = $this->service()->of($this->vehicle(['diesel'], 'km', 'h'), OdoReading::SECOND);
+
+		$this->assertSame([[$closing->getUuid(), 80000, 10, 8.0]], array_map(
+			static fn (array $segment): array => [$segment['closes'], $segment['amount'], $segment['distance'], $segment['value']],
+			$segments,
+		));
+	}
+
+	public function testAFullTankBelowTheOpeningReadingStillBreaksTheChain(): void {
+		$this->fill(100, 'petrol', 40000, 10000);
+		$this->fill(150, 'petrol', 10000, 9900);
+		$closing = $this->fill(200, 'petrol', 30000, 10500);
+
+		$this->assertSame([[$closing->getUuid(), 30000, 600]], array_map(
+			static fn (array $segment): array => [$segment['closes'], $segment['amount'], $segment['distance']],
+			$this->of($this->vehicle(['petrol'])),
+		));
+	}
+
 	/**
 	 * A counter replaced between two full tanks leaves the old counter's last kilometres unknown,
 	 * so the segment over the swap yields no number, and the next one counts on the new counter.
@@ -204,6 +242,75 @@ class ConsumptionServiceTest extends TestCase {
 		$this->assertSame(15.0, $segments[0]['value']);
 	}
 
+	public function testATwoCounterVehicleIsAlsoMeasuredAgainstItsEngineHours(): void {
+		$this->fill(100, 'diesel', 200000, 50000, second: 3000);
+		$closing = $this->fill(200, 'diesel', 150000, 51000, second: 3040);
+
+		$this->assertSame([[
+			'energy' => 'diesel',
+			'closes' => $closing->getUuid(),
+			'filled_at' => 200,
+			'amount' => 150000,
+			'distance' => 40,
+			'per' => 'h',
+			'value' => 3.75,
+		]], $this->service()->of($this->vehicle(['diesel'], 'km', 'h'), OdoReading::SECOND));
+	}
+
+	/** Kilometres at both ends make a segment per 100 km, not one per hour. */
+	public function testAFillUpWithoutEngineHoursEndsNoHourSegmentAndStartsNone(): void {
+		$this->fill(100, 'diesel', 200000, 50000, second: 3000);
+		$this->fill(200, 'diesel', 150000, 51000);
+		$this->fill(300, 'diesel', 150000, 52000, second: 3100);
+
+		$vehicle = $this->vehicle(['diesel'], 'km', 'h');
+		$this->assertSame([], $this->service()->of($vehicle, OdoReading::SECOND));
+		$this->assertCount(2, $this->service()->of($vehicle));
+	}
+
+	public function testAFlaggedHourReadingAtAnEndSkipsTheHourSegment(): void {
+		$this->fill(100, 'diesel', 200000, 50000, second: 3000);
+		$this->fill(200, 'diesel', 150000, 51000);
+		$this->readingRows[] = OdoReading::fromRow([
+			'id' => count($this->readingRows) + 1,
+			'vehicle_id' => self::VEHICLE_ID,
+			'read_at' => 200,
+			'read_at_off' => 120,
+			'value' => 3040,
+			'origin' => OdometerService::OBSERVED,
+			'flagged' => true,
+			'source_type' => OdoReading::ENERGY,
+			'source_id' => 2,
+			'counter' => OdoReading::SECOND,
+		]);
+
+		$vehicle = $this->vehicle(['diesel'], 'km', 'h');
+		$this->assertSame([], $this->service()->of($vehicle, OdoReading::SECOND));
+		$this->assertCount(1, $this->service()->of($vehicle));
+	}
+
+	public function testAnHourSegmentOverAReplacedHourCounterYieldsNone(): void {
+		$this->fill(100, 'diesel', 200000, 50000, second: 3000);
+		$this->read(150, 0, OdoReading::RESET, counter: OdoReading::SECOND);
+		$this->fill(200, 'diesel', 150000, 51000, second: 20);
+		$this->fill(300, 'diesel', 150000, 52000, second: 60);
+
+		$segments = $this->service()->of($this->vehicle(['diesel'], 'km', 'h'), OdoReading::SECOND);
+
+		$this->assertSame([[300, 40]], array_map(static fn (array $segment): array => [$segment['filled_at'], $segment['distance']], $segments));
+	}
+
+	public function testAPeriodPerHourSumsTheHourSegmentsClosingInIt(): void {
+		$this->fill(100, 'diesel', 200000, 50000, second: 3000);
+		$this->fill(200, 'diesel', 150000, 51000, second: 3040);
+		$this->fill(300, 'diesel', 90000, 52000, second: 3060);
+
+		$this->assertSame(
+			[['energy' => 'diesel', 'amount' => 240000, 'distance' => 60, 'per' => 'h', 'value' => 4.0]],
+			$this->service()->measuredOnEachCounter($this->vehicle(['diesel'], 'km', 'h'), 150, 400)[OdoReading::SECOND]['period'],
+		);
+	}
+
 	public function testAnHourReadingAloneIsNoCounterForATwoCounterVehicle(): void {
 		$this->fill(100, 'diesel', 200000, 50000, second: 3000);
 		$this->fill(200, 'diesel', 150000, null, second: 3040);
@@ -269,14 +376,35 @@ class ConsumptionServiceTest extends TestCase {
 		$this->assertSame([
 			['energy' => 'petrol', 'amount' => 120000, 'distance' => 1000, 'per' => 'km', 'value' => 12.0],
 			['energy' => 'electric', 'amount' => 9000, 'distance' => 50, 'per' => 'km', 'value' => 18.0],
-		], $this->service()->period($this->vehicle(['petrol', 'electric']), 150, 500));
+		], $this->service()->measuredOnEachCounter($this->vehicle(['petrol', 'electric']), 150, 500)[OdoReading::MAIN]['period']);
 	}
 
 	public function testAPeriodWithoutAClosedSegmentStatesNoConsumption(): void {
 		$this->fill(100, 'petrol', 40000, 10000);
 		$this->fill(200, 'petrol', 30000, 10500);
 
-		$this->assertSame([], $this->service()->period($this->vehicle(['petrol']), 300, 400));
+		$this->assertSame([], $this->service()->measuredOnEachCounter($this->vehicle(['petrol']), 300, 400)[OdoReading::MAIN]['period']);
+	}
+
+	/** A period that closed no segment still knows the energy was measured once. */
+	public function testMeasuredNamesTheEnergiesThatEverClosedASegment(): void {
+		$this->fill(100, 'petrol', 40000, 10000);
+		$this->fill(200, 'petrol', 30000, 10500);
+		$this->fill(300, 'electric', 8000, 10600);
+
+		$this->assertSame(
+			[OdoReading::MAIN => ['period' => [], 'measured' => ['petrol']]],
+			$this->service()->measuredOnEachCounter($this->vehicle(['petrol', 'electric']), 300, 400),
+		);
+	}
+
+	public function testMeasuredPerHourNeedsEngineHoursAtBothEnds(): void {
+		$this->fill(100, 'diesel', 200000, 50000, second: 3000);
+		$this->fill(200, 'diesel', 150000, 51000);
+
+		$measured = $this->service()->measuredOnEachCounter($this->vehicle(['diesel'], 'km', 'h'), 0, 1000);
+		$this->assertSame(['period' => [], 'measured' => []], $measured[OdoReading::SECOND]);
+		$this->assertSame(['diesel'], $measured[OdoReading::MAIN]['measured']);
 	}
 
 	public function testTheSecondCounterMovesOnItsOwnChain(): void {
@@ -323,8 +451,8 @@ class ConsumptionServiceTest extends TestCase {
 		]);
 	}
 
-	/** An Odometer Entry on the main counter, of the kind given. */
-	private function read(int $at, int $value, string $kind = OdoReading::READING, bool $flagged = false): void {
+	/** An Odometer Entry of the kind given, on the main counter unless the case says otherwise. */
+	private function read(int $at, int $value, string $kind = OdoReading::READING, bool $flagged = false, string $counter = OdoReading::MAIN): void {
 		$this->readingRows[] = OdoReading::fromRow([
 			'id' => count($this->readingRows) + 1,
 			'vehicle_id' => self::VEHICLE_ID,
@@ -335,7 +463,7 @@ class ConsumptionServiceTest extends TestCase {
 			'origin' => OdometerService::OBSERVED,
 			'flagged' => $flagged,
 			'source_type' => OdoReading::MANUAL,
-			'counter' => OdoReading::MAIN,
+			'counter' => $counter,
 		]);
 	}
 

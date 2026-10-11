@@ -30,7 +30,8 @@ If an argument is missing, or an option is unknown, `occ` itself stops with exit
 
 ### nextfleet:vehicles
 
-Shows all live vehicles with their UUID, plate, name, owner and lifecycle.
+Shows all live vehicles with their UUID, plate, display name, make and model (`name`), owner,
+lifecycle, EU vehicle category and EU body code.
 
 Usage: `occ nextfleet:vehicles [--user <uid>] [--deleted] [--output <format>]`
 
@@ -41,11 +42,11 @@ Usage: `occ nextfleet:vehicles [--user <uid>] [--deleted] [--output <format>]`
 
 ```console
 $ sudo -E -u www-data php occ nextfleet:vehicles --user alice
-+--------------------------------------+-----------+---------------------------+-------+-----------+------------+
-| uuid                                 | plate     | name                      | owner | lifecycle | deleted_at |
-+--------------------------------------+-----------+---------------------------+-------+-----------+------------+
-| e95df47f-772d-4af6-8991-76d4adfdac33 | NF-DE 100 | Volkswagen Passat Variant | alice | active    |            |
-+--------------------------------------+-----------+---------------------------+-------+-----------+------------+
++--------------------------------------+-----------+-----------------------+---------------------------+-------+-----------+------------+-------------+-----------+
+| uuid                                 | plate     | display_name          | name                      | owner | lifecycle | deleted_at | eu_category | body_type |
++--------------------------------------+-----------+-----------------------+---------------------------+-------+-----------+------------+-------------+-----------+
+| e95df47f-772d-4af6-8991-76d4adfdac33 | NF-DE 100 | Außendienst Stuttgart | Volkswagen Passat Variant | alice | active    |            | M1          | AC        |
++--------------------------------------+-----------+-----------------------+---------------------------+-------+-----------+------------+-------------+-----------+
 ```
 
 ### nextfleet:access

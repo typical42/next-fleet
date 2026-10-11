@@ -78,6 +78,9 @@ class VehicleController extends OCSController {
 	 * currency, a car in service.
 	 *
 	 * @param string|null $plate the plate, a label and never the identity
+	 * @param string|null $display_name a second label beside the plate, up to 64 characters
+	 * @param string|null $eu_category field J of the registration certificate, such as M1, N3G or L3e-A2
+	 * @param string|null $body_type field 4, the EU body code with its add-on, such as AC or BA03; it has to fit eu_category
 	 * @param string|null $manufacturer the make
 	 * @param string|null $model the model
 	 * @param string|null $vehicle_type car, motorcycle, van, truck, trailer, tractor or generator
@@ -114,6 +117,9 @@ class VehicleController extends OCSController {
 	#[UserRateLimit(limit: 60, period: 60)]
 	public function create(
 		mixed $plate = null,
+		mixed $display_name = null,
+		mixed $eu_category = null,
+		mixed $body_type = null,
 		mixed $manufacturer = null,
 		mixed $model = null,
 		mixed $vehicle_type = null,
@@ -153,6 +159,9 @@ class VehicleController extends OCSController {
 	 * @param string $uuid the vehicle's uuid
 	 * @param int|null $updated_at required: the vehicle's `updated_at` as the caller read it
 	 * @param string|null $plate the plate, a label and never the identity
+	 * @param string|null $display_name a second label beside the plate, up to 64 characters
+	 * @param string|null $eu_category field J of the registration certificate, such as M1, N3G or L3e-A2
+	 * @param string|null $body_type field 4, the EU body code with its add-on, such as AC or BA03; it has to fit eu_category
 	 * @param string|null $manufacturer the make
 	 * @param string|null $model the model
 	 * @param string|null $vehicle_type car, motorcycle, van, truck, trailer, tractor or generator
@@ -189,6 +198,9 @@ class VehicleController extends OCSController {
 		string $uuid,
 		mixed $updated_at = null,
 		mixed $plate = null,
+		mixed $display_name = null,
+		mixed $eu_category = null,
+		mixed $body_type = null,
 		mixed $manufacturer = null,
 		mixed $model = null,
 		mixed $vehicle_type = null,

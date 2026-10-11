@@ -6,6 +6,7 @@
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcDateTimePickerNative from '@nextcloud/vue/components/NcDateTimePickerNative'
 import NcDialog from '@nextcloud/vue/components/NcDialog'
+import NcEllipsisedOption from '@nextcloud/vue/components/NcEllipsisedOption'
 import NcFormBoxSwitch from '@nextcloud/vue/components/NcFormBoxSwitch'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import NcSelect from '@nextcloud/vue/components/NcSelect'
@@ -21,6 +22,7 @@ import { useVehiclesStore } from '../store/index.js'
 import { usePreferencesStore } from '../store/preferences.js'
 import { may } from '../utils/access.js'
 import { decimalComplaint, energyWord, formatCount, formatDay, formatDecimal, jurisdictionWord, lifecycleWord, parseDay, parseDecimal, parseWhole } from '../utils/format.js'
+import { OFF_ROAD, REGISTRATION_HELP, addOnOptions, bodyOptions, categoryOptions, filterOptions, joinBody, joinCategory, splitBody, splitCategory, takesAddOn, typeOfCategory } from '../utils/registration.js'
 import { INSPECTION, inspectionOf, rewrite } from '../utils/reminders.js'
 import { t } from '../utils/l10n.js'
 import { newUuid } from '../utils/uuid.js'
@@ -45,6 +47,7 @@ const editing = computed(() => props.vehicle !== null)
 // the server to judge, so the sheet never blocks on validation - except the four decimals, which
 // go out as the integer their column keeps.
 const plate = ref(text(props.vehicle?.plate))
+const displayName = ref(text(props.vehicle?.display_name))
 const manufacturer = ref(text(props.vehicle?.manufacturer))
 const model = ref(text(props.vehicle?.model))
 const vin = ref(text(props.vehicle?.vin))
@@ -136,6 +139,42 @@ const jurisdiction = ref(text(props.vehicle?.jurisdiction))
 // Engine hours as a second counter beside the kilometres (docs/architecture.md#odometer-rules).
 const countsHours = ref(props.vehicle?.second_unit === 'h')
 const offersHours = computed(() => odoUnit.value?.id === 'km')
+// Field J, its off-road suffix a switch of its own: nobody looks for `N3G` in a list.
+const storedCategory = splitCategory(props.vehicle?.eu_category)
+const categories = computed(() => categoryOptions(vehicleType.value?.id))
+const category = ref(chosen(categories.value, storedCategory.code))
+const offRoad = ref(storedCategory.offRoad)
+const offersOffRoad = computed(() => OFF_ROAD.includes(category.value?.id ?? ''))
+// Field 4, its add-on a list of its own, offered only after the codes that take one.
+const storedBody = splitBody(props.vehicle?.body_type)
+const bodies = computed(() => bodyOptions(joinCategory(category.value?.id ?? null, offRoad.value)))
+const body = ref(chosen(bodies.value, storedBody.code))
+const addOns = addOnOptions()
+const addOn = ref(chosen(addOns, storedBody.addOn))
+const offersAddOn = computed(() => takesAddOn(body.value?.id))
+
+// The server refuses a body type its category does not take, so the sheet never sends one. The
+// off-road switch counts too: SM is for off-road vehicles only.
+watch(bodies, (offered) => {
+	if (!offered.some((one) => one.id === body.value?.id)) {
+		body.value = null
+	}
+})
+
+// A hidden list holds nothing.
+watch(offersAddOn, (offered) => {
+	if (!offered) {
+		addOn.value = null
+	}
+})
+
+// A code the lists cannot show reads as an empty dropdown, and the server lets a stored misfit stand
+// while other fields change (docs/architecture.md#data-model). Until one of the four is touched, the
+// registration goes back as the server holds it rather than as the dropdowns show it (write()).
+const registrationTouched = ref(false)
+watch([category, offRoad, body, addOn], () => {
+	registrationTouched.value = true
+})
 // A column nobody wrote is null, which means off (docs/architecture.md#data-model).
 const logbookMode = ref(props.vehicle?.logbook_mode === true)
 
@@ -175,6 +214,25 @@ function chooseType(option) {
 }
 
 /**
+ * The category, and the type it makes plain - which the user may still change. A type it agrees
+ * with is left alone, and with it the unit chosen for it. Nothing flows back from the type: an M2
+ * says bus, and the app has no bus.
+ *
+ * @param {{ id: string, label: string }|null} option - the category chosen
+ */
+function chooseCategory(option) {
+	category.value = option
+	// A hidden switch holds nothing.
+	if (!offersOffRoad.value) {
+		offRoad.value = false
+	}
+	const type = typeOfCategory(option?.id)
+	if (type !== null && type !== vehicleType.value?.id) {
+		chooseType(chosen(types.value, type))
+	}
+}
+
+/**
  * What the fields hold, raw: the import takes this sheet's place (src/views/VehicleView.vue), so it
  * waits until nothing typed would be lost. Not fields(), which throws on a half-typed decimal.
  *
@@ -182,11 +240,12 @@ function chooseType(option) {
  */
 function typed() {
 	return JSON.stringify([
-		plate.value, manufacturer.value, model.value, vin.value, tank.value, battery.value,
+		plate.value, displayName.value, manufacturer.value, model.value, vin.value, tank.value, battery.value,
 		purchasePrice.value, residualEst.value, currency.value, color.value, notes.value,
 		formatDay(firstReg.value), formatDay(disposedAt.value), reminderMail.value,
 		vehicleType.value?.id, engine.value?.id, energyTypes.value.map((/** @type {{ id: string }} */ one) => one.id),
 		odoUnit.value?.id, lifecycle.value?.id, jurisdiction.value, countsHours.value, logbookMode.value,
+		category.value?.id, offRoad.value, body.value?.id, addOn.value?.id,
 	])
 }
 const untyped = typed()
@@ -345,14 +404,18 @@ async function writeInterval() {
  * what the payload names, so an emptied field travels empty to be cleared. `retention_months` is
  * not asked, since nothing purges yet (docs/legal.md); it travels as it was read.
  *
+ * @param {import('../services/api.js').Vehicle} read - the vehicle as current() read it
  * @return {Record<string, unknown>} the vehicle's new state
  */
-function fields() {
+function fields(read) {
 	return {
 		plate: plate.value,
+		display_name: displayName.value,
 		manufacturer: manufacturer.value,
 		model: model.value,
 		vehicle_type: vehicleType.value?.id ?? '',
+		eu_category: registrationTouched.value ? joinCategory(category.value?.id ?? null, offRoad.value) : text(read.eu_category),
+		body_type: registrationTouched.value ? joinBody(body.value?.id ?? null, addOn.value?.id ?? null) : text(read.body_type),
 		engine: engine.value?.id ?? '',
 		energy_types: energyTypes.value.map((/** @type {{ id: string }} */ one) => one.id),
 		tank_ml: decimal(tank, 3, t('nextfleet', 'That is not a tank size.')),
@@ -392,6 +455,7 @@ function tooLong(field, max) {
  */
 const REFUSALS = {
 	'plate is longer than 32 characters': () => tooLong(t('nextfleet', 'Registration plate'), 32),
+	'display_name is longer than 64 characters': () => tooLong(t('nextfleet', 'Display name'), 64),
 	'manufacturer is longer than 64 characters': () => tooLong(t('nextfleet', 'Manufacturer'), 64),
 	'model is longer than 64 characters': () => tooLong(t('nextfleet', 'Model'), 64),
 	'vin is longer than 32 characters': () => tooLong(t('nextfleet', 'VIN'), 32),
@@ -462,9 +526,9 @@ async function current() {
  * again after current(): a vehicle read back may now be under the mode.
  */
 async function write() {
-	// Read first: a field nobody can read stops the save before the interval is written.
-	const changed = fields()
 	const vehicle = await current()
+	// Read before anything is written: a field nobody can read stops the save before the interval.
+	const changed = fields(vehicle)
 	if (askingOff.value) {
 		return
 	}
@@ -487,7 +551,7 @@ async function erase() {
 	await store.remove(await current())
 }
 
-/** The create: four fields, then the counter as a first Reading. */
+/** The create: five fields, then the counter as a first Reading. */
 async function add() {
 	// Judged before anything is written: an unreadable counter is a question for the driver, not a
 	// vehicle created without it.
@@ -499,6 +563,7 @@ async function add() {
 	if (created.value === null) {
 		created.value = await store.create({
 			plate: plate.value,
+			display_name: displayName.value,
 			manufacturer: manufacturer.value,
 			model: model.value,
 			engine: engine.value?.id ?? '',
@@ -620,12 +685,15 @@ function chosen(options, id) {
 				:type="note.type"
 				:text="note.text" />
 
-			<!-- Creating asks for four fields, not twelve: the rest arrives through the vehicle's
+			<!-- Creating asks for five fields, not twelve: the rest arrives through the vehicle's
 			     own edit sheet and the hint that points at it (docs/ui.md). -->
 			<NcTextField v-model="plate"
 				:label="t('nextfleet', 'Registration plate')"
 				:disabled="saving || !!created"
 				autofocus />
+			<NcTextField v-model="displayName"
+				:label="t('nextfleet', 'Display name')"
+				:disabled="saving || !!created" />
 			<NcTextField v-model="manufacturer"
 				:label="t('nextfleet', 'Manufacturer')"
 				:disabled="saving || !!created" />
@@ -646,6 +714,60 @@ function chosen(options, id) {
 				:clearable="false"
 				label="label"
 				@update:model-value="chooseType" />
+			<!-- The registration codes are data beside the type, which drives the rules; choosing one
+			     may pre-fill the type. Edited only: nobody has the certificate at hand on a create. -->
+			<fieldset v-if="editing" class="sheet__wide sheet__registration">
+				<legend>{{ t('nextfleet', 'Registration') }}</legend>
+				<NcSelect :model-value="category"
+					:options="categories"
+					:input-label="t('nextfleet', 'EU vehicle category')"
+					:disabled="saving"
+					:filter="filterOptions"
+					:selectable="(option) => !option.header"
+					label="label"
+					@update:model-value="chooseCategory">
+					<template #option="option">
+						<strong v-if="option.header">{{ option.label }}</strong>
+						<NcEllipsisedOption v-else :name="option.label" />
+					</template>
+				</NcSelect>
+				<NcFormBoxSwitch v-if="offersOffRoad"
+					v-model="offRoad"
+					:label="t('nextfleet', 'Off-road vehicle (G)')"
+					:disabled="saving" />
+				<a class="sheet__help"
+					:href="REGISTRATION_HELP"
+					target="_blank"
+					rel="noopener noreferrer">{{ t('nextfleet', 'Field J on the registration certificate') }}</a>
+				<!-- Closed without a category, and for one that has no body codes (L, T, C, R, S). -->
+				<NcSelect v-model="body"
+					:options="bodies"
+					:input-label="t('nextfleet', 'EU body type')"
+					:disabled="saving || bodies.length === 0"
+					:filter="filterOptions"
+					:selectable="(option) => !option.header"
+					label="label">
+					<template #option="option">
+						<strong v-if="option.header">{{ option.label }}</strong>
+						<NcEllipsisedOption v-else :name="option.label" />
+					</template>
+				</NcSelect>
+				<NcSelect v-if="offersAddOn"
+					v-model="addOn"
+					:options="addOns"
+					:input-label="t('nextfleet', 'Body add-on')"
+					:disabled="saving"
+					:filter="filterOptions"
+					label="label">
+					<template #option="option">
+						<NcEllipsisedOption :name="option.label" />
+					</template>
+				</NcSelect>
+				<a class="sheet__help"
+					:href="REGISTRATION_HELP"
+					target="_blank"
+					rel="noopener noreferrer">{{ t('nextfleet', 'Field 4 on the registration certificate (EU body code)') }}</a>
+			</fieldset>
 			<NcSelect v-model="odoUnit"
 				:options="units"
 				:input-label="t('nextfleet', 'Counter unit')"
@@ -659,10 +781,10 @@ function chosen(options, id) {
 				inputmode="numeric" />
 
 			<template v-if="editing">
-				<!-- Switching off hides the hour field and keeps the hour Readings. -->
+				<!-- Switching off hides the hour field and keeps the hour Readings. Beside the unit,
+				     whose second counter it is. -->
 				<NcFormBoxSwitch v-if="offersHours"
 					v-model="countsHours"
-					class="sheet__wide"
 					:label="t('nextfleet', 'Also counts engine hours')"
 					:disabled="saving" />
 				<NcSelect v-model="energyTypes"
@@ -727,7 +849,7 @@ function chosen(options, id) {
 					:label="t('nextfleet', 'Currency')"
 					:disabled="saving"
 					maxlength="3" />
-				<!-- The jurisdiction is not a fifth create field: it defaults from the personal
+				<!-- The jurisdiction is not a create field: it defaults from the personal
 				     setting and is changed here (docs/ui.md). -->
 				<NcSelect :model-value="country"
 					:options="jurisdictions"
@@ -841,6 +963,26 @@ function chosen(options, id) {
 
 .sheet__hint {
 	color: var(--color-text-maxcontrast);
+}
+
+/* A group by its legend, not by a frame: the dialog is the frame. */
+.sheet__registration {
+	display: grid;
+	gap: calc(var(--default-grid-baseline) * 2);
+	margin: 0;
+	padding: 0;
+	border: none;
+	min-width: 0;
+}
+
+.sheet__registration legend {
+	padding: 0;
+	font-weight: bold;
+}
+
+.sheet__help {
+	color: var(--color-text-maxcontrast);
+	text-decoration: underline;
 }
 
 /* One column on a phone; two once there is room, so twenty fields are not twenty screens. */

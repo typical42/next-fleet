@@ -109,6 +109,12 @@ trip is higher than at the end of the trip before. The timeline shows the gap, f
 The timeline shows all entries of the vehicle, newest first, in groups by month. To show only one
 type, click it in **Show**.
 
+An energy entry with a full tank shows the consumption since the full tank before it, for example
+**6.0 l/100 km**. On a vehicle that counts kilometres and engine hours, it also shows the
+consumption per engine hour, for example **4.5 l/h**, when both full tanks have engine hours.
+A full tank at the same counter reading as the full tank before it shows no consumption: its
+amount counts towards the next full tank.
+
 A row can show these words:
 
 | Word | Meaning |

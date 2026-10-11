@@ -116,6 +116,10 @@ class SchemaTest extends TestCase {
 		return Server::get(IDBConnection::class)->getDatabaseProvider() === IDBConnection::PLATFORM_POSTGRES;
 	}
 
+	protected function countsBytes(): bool {
+		return Server::get(IDBConnection::class)->getDatabaseProvider() === IDBConnection::PLATFORM_ORACLE;
+	}
+
 	/** `occ nextfleet:check` finds orphans only in the tables VehicleTables lists. */
 	public function testVehicleTablesListsEveryTableWithAVehicleId(): void {
 		$withColumn = array_values(array_filter($this->fleetTableNames(), fn (string $name): bool => $this->table($name)->hasColumn('vehicle_id')));

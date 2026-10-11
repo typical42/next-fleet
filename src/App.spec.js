@@ -292,6 +292,26 @@ describe('the app shell', () => {
 		expect(entry(wrapper, 'Overview').props('active')).toBe(true)
 	})
 
+	/** The navigation reads the store, so a display name saved on the sheet shows without a reload. */
+	it('shows a vehicle in the navigation by its plate and, under it, its display name', async () => {
+		const wrapper = shallowMount(App, {
+			global: {
+				stubs: {
+					NcContent: { template: '<div><slot /></div>' },
+					NcAppNavigation: { template: '<div><slot name="list" /></div>' },
+					VehicleList: false,
+					NcListItem: { template: '<li class="vehicle"><slot name="name" /> / <slot name="subname" /></li>' },
+				},
+			},
+		})
+		await flushPromises()
+
+		useVehiclesStore().upsert({ ...VEHICLE, display_name: 'Blue van' })
+		await flushPromises()
+
+		expect(wrapper.findAll('.vehicle').map((one) => one.text())).toEqual(['B-XY 123 / Blue van'])
+	})
+
 	/** Without a folder the entry would open a screen that can only send them to their settings. */
 	it('offers no inbox while no folder is chosen', async () => {
 		vi.mocked(getPreferences).mockResolvedValue(SETTINGS)

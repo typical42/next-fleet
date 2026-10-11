@@ -122,6 +122,7 @@ const tail = computed(() => {
 	if (energy.value !== undefined) {
 		return [
 			props.entry.consumption ? formatConsumption(props.entry.consumption, energy.value.energy) : '',
+			props.entry.consumption_per_hour ? formatConsumption(props.entry.consumption_per_hour, energy.value.energy) : '',
 			energy.value.station,
 			// Not flags but what the driver said; they are why a fill-up closes no consumption
 			// segment, so the row says them.

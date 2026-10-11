@@ -154,6 +154,16 @@ class UserMigrationTest extends TestCase {
 		}
 	}
 
+	/** A column added since the first release reaches the archive with the rest of its row. */
+	public function testTheVehicleRowCarriesItsDisplayNameAndRegistrationCodes(): void {
+		$row = $this->nextfleetFiles((string)self::$archive)['nextfleet/fleet_vehicles.json'][0];
+
+		$this->assertSame(
+			['display_name' => 'Pool van', 'eu_category' => 'N1', 'body_type' => 'BA03'],
+			array_intersect_key($row, array_flip(['display_name', 'eu_category', 'body_type'])),
+		);
+	}
+
 	/**
 	 * docs/legal.md: export only. The import says so and writes no row, neither under the new
 	 * account nor as the archive stored it.
@@ -200,7 +210,7 @@ class UserMigrationTest extends TestCase {
 		$booking = $bookings->book(self::DRIVER, $uuid, ['starts_at' => time() + 3600, 'starts_at_off' => 120, 'ends_at' => time() + 3 * 3600, 'ends_at_off' => 120]);
 		$bookings->checkOut(self::DRIVER, $uuid, (string)$booking['uuid'], ['odo' => 12100, 'notes' => 'Scratch on the tailgate', 'at_off' => 120]);
 
-		$own = self::vehicle(self::DRIVER, ['plate' => 'B-DR 1']);
+		$own = self::vehicle(self::DRIVER, ['plate' => 'B-DR 1', 'display_name' => 'Pool van', 'eu_category' => 'N1', 'body_type' => 'BA03']);
 		$grants->grant(self::DRIVER, $own->getUuid(), ['grantee' => self::OWNER, 'grantee_type' => 'user', 'role' => 'viewer']);
 
 		$theirs = self::vehicle(self::STRANGER, ['plate' => 'B-ST 1', 'logbook_mode' => true]);

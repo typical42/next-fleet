@@ -125,7 +125,7 @@ test('the owner previews, imports and undoes an export, then imports another', a
 	await owner.goto(`${appPage}?vehicle=${vehicle.uuid}`)
 	const rows = owner.locator('.timeline__rows > li')
 	await expect(rows).toHaveCount(1)
-	await expect(tile(owner, 'Diesel consumption')).toHaveCount(0)
+	await expect(tile(owner, 'Diesel consumption')).toContainText('Needs two full fill-ups')
 
 	// The preview names the row already there and the row it cannot read, and why.
 	const fromLubelogger = await preview(owner, 'fuel.csv', 'CSV (LubeLogger format) — fuel')
@@ -148,7 +148,7 @@ test('the owner previews, imports and undoes an export, then imports another', a
 	await toast.getByRole('button', { name: 'Undo' }).click()
 	await expect(toast).toBeHidden()
 	await expect(rows).toHaveCount(1)
-	await expect(tile(owner, 'Diesel consumption')).toHaveCount(0)
+	await expect(tile(owner, 'Diesel consumption')).toContainText('Needs two full fill-ups')
 
 	// The second file: a fill type it does not know and a fill-up in francs are left out.
 	const fromSpritmonitor = await preview(owner, 'Spritmonitor.csv', 'CSV (Spritmonitor format) — fuel')

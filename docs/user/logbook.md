@@ -66,6 +66,9 @@ later change to that trip.
 For a German vehicle, the logbook is in German and has the title **Fahrtenbuch**. For other
 vehicles, it is in your language.
 
+The logbook names the vehicle by its plate. A vehicle without a plate is named by its display name,
+or else by its manufacturer and model.
+
 ## Print the mileage claim
 
 The mileage claim lists the business trips that you recorded on one vehicle in one year. It gives
@@ -77,5 +80,5 @@ country **Germany**.
 3. Click **Open mileage claim**.
 4. Print the page with your browser.
 
-Commutes are not on the mileage claim. The flat rate applies only to vehicles that are not business
-assets.
+The mileage claim names the vehicle as the logbook does. Commutes are not on the mileage claim. The
+flat rate applies only to vehicles that are not business assets.

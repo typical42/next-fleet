@@ -52,10 +52,13 @@ entry to fix the number ([odometer rules](architecture.md#odometer-rules)).
 │ Overview        │  M-AB 1234   [New entry][Costs][Edit][QR sticker]  │
 │ Inbox       (3) │  VW Passat Variant                                 │
 │                 │  148 320 km · 6,4 l/100 km · 42,10 €/100 km        │
-│ ● M-AB 1234  ⚠  │  ┌────────────────────────────────────────────┐   │
-│ ● HH-CD 42      │  │ ● Coming up · HU/AU · due 24.09.2026 [Done]│   │
-│ ● M-EV 7   ⛔   │  │ ● Planned · Oil change · ~02.11.2026 [Done]│   │
-│                 │  └────────────────────────────────────────────┘   │
+│ M-AB 1234       │  ┌────────────────────────────────────────────┐   │
+│ VW Passat Vari… │  │ ● Coming up · HU/AU · due 24.09.2026 [Done]│   │
+│ HH-CD 42        │  │ ● Planned · Oil change · ~02.11.2026 [Done]│   │
+│ Blue van        │  └────────────────────────────────────────────┘   │
+│ M-EV 7          │                                                    │
+│ Kia EV6         │                                                    │
+│                 │                                                    │
 │ Reports         │                                                    │
 │ ─────────────── │  Bookings [Book][Take it now]                      │
 │ Settings        │  COMING                                            │
@@ -75,16 +78,28 @@ entry to fix the number ([odometer rules](architecture.md#odometer-rules)).
 └─────────────────┴────────────────────────────────────────────────────┘
 ```
 
+Each vehicle in the navigation is an `NcListItem`: the plate in bold, and under it the display name,
+else make and model and the body type ("VW Passat · Station wagon"). Without a plate, the display
+name moves up to the first line and make, model and body type under it. A line too long for the
+navigation is cut and shown whole on hover. The vehicle header and the overview cards say the same
+under the name, and add a lifecycle other than active.
+
 The header states the odometer, then the period's figures: consumption per energy (a plug-in hybrid
 gets two, and the wall-side kWh beside them), cost, energy-only cost and TCO, per 100 km or per hour
 ([the maths](architecture.md#numbers-consumption-cost-emissions)). A vehicle that counts engine
 hours beside its kilometres adds the hours in the period, noting that the consumption includes fuel
-used while working. The period is picked above the figures — last 12 months by default, this year,
-last year, or one month — and each figure is compared with the period before, of the same length, as
+used while working, and each energy's consumption per engine hour after its per-100 km tile, noting
+that it includes fuel used while driving; cost and energy cost per engine hour follow their tiles
+the same way. The Costs screen states its year per 100 km only. The
+period is picked above the figures — last 12 months by default, this year, last year, or one month — and each figure is compared with the period before, of the same length, as
 a signed difference rather than a colour. A figure either period lacks gets no comparison; a period that recorded no cost shows it as zero,
 uncompared. With
 no distance in the period the costs are period totals; without a currency the header says so in
-place of every cost. The client names the period, because a year starts at midnight where the
+place of every cost. A consumption tile the data can never fill yet says what it needs in its
+place, in body text rather than at a figure's size: two full fill-ups for an energy never measured
+(never for electricity, whose figure is the wall-side one), engine hours on full fill-ups beside a
+per-100 km figure whose energy was never measured per hour. A period that closed no segment of an
+energy measured before shows neither tile, as it did. The client names the period, because a year starts at midnight where the
 person is; the server answers `GET …/kpis?from=&to=&net=` once for each of the two. The chosen
 period and "I reclaim VAT" (a switch on the personal settings page, off by default) are
 preferences, so the next machine opens on the same figures; `net` is the second one.
@@ -140,7 +155,8 @@ record its cost, an expense its amount. A flagged Reading is carried on the row 
 word rather than a colour, and so is what a fill-up is flagged for — no price, an energy the
 vehicle does not take, more than it holds — and whether it was partial or missed the one before.
 A fill-up that closes a full-to-full segment also states that segment's consumption, the one figure
-on a row that is worked out rather than given.
+on a row that is worked out rather than given. On a vehicle that counts kilometres and engine hours,
+the segment per hour follows the one per 100 km.
 
 The vehicle's own data — the things you set once and rarely touch — lives in the edit sheet, not on
 the screen. That keeps the screen free for the things you touch weekly. The documents sit in a section of their own
@@ -156,12 +172,14 @@ or the row says why.
 
 ### Screens
 
+Drawn in [design/components.md#frontend](design/components.md#frontend).
+
 | Screen | Purpose | Primary action |
 |---|---|---|
 | **Overview** | All vehicles, sorted by urgency, not alphabetically: laid-up ones last, then by the most urgent open reminder's state and day, then by plate. Traffic light (red due or overdue, amber coming up, green otherwise) with its word, plate, km, next due. A vehicle reached through a grant sorts among the reader's own and says "Owned by" its owner's display name, from the server's `owned_by`. A car that is out says who has it until when ([who has the car](#the-bookings-section)). Disposed vehicles are listed apart below, and open. | Open a vehicle |
 | **Vehicle** | Header KPIs + due banner + bookings + documents + timeline (above) | **New entry** |
 | **Entry sheet** | Trip / Energy / Maintenance / Odometer / Expense — see below | Save |
-| **Vehicle sheet** | Create with four fields; edit every writable one, plus lifecycle, jurisdiction, [logbook mode](features.md#logbook-mode), the inspection interval, the reminder recipients and mail cadence, [access](#the-access-section); delete, undoably | Save |
+| **Vehicle sheet** | Create with plate, display name, manufacturer, model, engine, vehicle type, counter unit and the first counter reading; edit every writable one, the [EU registration codes](user/vehicles.md#registration-type) among them, plus lifecycle, jurisdiction, [logbook mode](features.md#logbook-mode), the inspection interval, the reminder recipients and mail cadence, [access](#the-access-section); delete, undoably | Save |
 | **Costs** | One year, one vehicle: stacked bars per month, table below, the CO₂ estimate, export button | Export |
 | **Inbox** | The files in the person's inbox folder that belong to no vehicle yet, as thumbnails ([the Inbox screen](#the-inbox-screen)). Shown once a folder is chosen | Attach |
 | **Reports** | Fahrtenbuch and mileage claim — pick a vehicle and a year, get a printable page ([ADR 0005](adr/0005-no-pdf-library.md)). Costs and CO₂ are not reports: they live on the Costs screen, and its CSV exports the rows behind the costs | Open logbook, Open mileage claim (the browser prints) |
@@ -436,6 +454,7 @@ A grantee sees the whole vehicle and only the buttons their role allows. The scr
 and by nothing else: the vehicle carries the operations the session holds
 ([Vehicle Access](../CONTEXT.md)), and each timeline row carries `edit` and `delete` where the
 reader may change that Entry. The server still refuses on its own; the screen just stops offering.
+Drawn in [design/context.md#by-role](design/context.md#by-role).
 
 | Offered | Takes |
 |---|---|
@@ -478,8 +497,8 @@ and after such a leave the words naming the group take it.
 
 ### Details that decide whether it feels easy
 
-- **Ask for four fields, not twelve.** Creating a vehicle needs plate, make/model, engine and
-  current km. The vehicle type and the counter unit sit beside the counter, prefilled with car and
+- **Ask for five fields, not twelve.** Creating a vehicle asks for plate, display name (optional),
+  make/model, engine and current km. The vehicle type and the counter unit sit beside the counter, prefilled with car and
   km, so they cost no answer; choosing a tractor or a generator switches the unit to hours, still
   changeable. VIN, first registration and the capacity of the energy the vehicle takes — a tank for
   a diesel, a battery for an electric one — arrive through a dismissible "complete this vehicle"

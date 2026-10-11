@@ -116,7 +116,7 @@ describe('vehicles store', () => {
 	})
 
 	describe('create', () => {
-		it('keeps what the server made of the four fields', async () => {
+		it('keeps what the server made of the five fields', async () => {
 			const store = useVehiclesStore()
 			vi.mocked(createVehicle).mockResolvedValue(vehicle({ uuid: 'new', odo_unit: 'h' }))
 

@@ -12,7 +12,7 @@ import { barsOf, co2Of, tableOf } from './costs.js'
  * @return {import('../services/api.js').Cost} the month's cost
  */
 function cost(cost = {}) {
-	return { currency: 'EUR', net: false, per: 'km', distance: null, total: 0, energy: 0, maintenance: 0, expenses: [], value: null, energy_value: null, tco: null, incomplete: false, unstated: false, ...cost }
+	return { currency: 'EUR', net: false, per: 'km', distance: null, hours: null, total: 0, energy: 0, maintenance: 0, expenses: [], value: null, energy_value: null, value_per_hour: null, energy_value_per_hour: null, tco: null, incomplete: false, unstated: false, ...cost }
 }
 
 /** A month with no rows: no sums at all (lib/Service/CostService.php). */
@@ -25,7 +25,7 @@ const EMPTY = cost({ total: null, energy: null, maintenance: null, expenses: nul
 function year(costs) {
 	const months = Array.from({ length: 12 }, (_, i) => ({ month: i + 1, from: 0, to: 0, cost: costs[i + 1] ?? EMPTY }))
 
-	return { year: { consumption: [], wall_side: null, cost: cost(), hours: null }, co2: null, months }
+	return { year: { consumption: [], consumption_per_hour: null, measured: [], measured_per_hour: null, wall_side: null, cost: cost(), hours: null }, co2: null, months }
 }
 
 describe('the bars', () => {

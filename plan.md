@@ -90,7 +90,7 @@ type that does not exist yet is the wrong order.
 
 ## Decisions taken
 
-Dated 2026-09-03, revised 2026-09-04, 2026-09-23 and 2026-10-02. Where an ADR exists it carries the reasoning; this list is
+Dated 2026-09-03, revised 2026-09-04, 2026-09-23, 2026-10-02 and 2026-10-10. Where an ADR exists it carries the reasoning; this list is
 the index.
 
 **Shape of the product**
@@ -152,6 +152,8 @@ the index.
 21. **Erasing a driver pseudonymises** —
     [ADR 0008](docs/adr/0008-erasing-a-driver-pseudonymises.md). Retention is opt-in and off by
     default ([data protection](docs/legal.md)).
+22. **The vehicle type drives the rules; the EU registration codes are data** —
+    [ADR 0010](docs/adr/0010-the-vehicle-type-drives-rules-the-eu-codes-are-data.md).
 
 ## Risks
 

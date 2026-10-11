@@ -147,6 +147,12 @@ docker run --rm -v "$PWD":/data fsfe/reuse:latest lint
 REUSE reads test files too, so a line that merely quotes an SPDX identifier has to be fenced; see
 [legal](legal.md).
 
+`npm run docs:diagrams` renders every Mermaid block under `docs/` with the pinned
+`minlag/mermaid-cli` image (`tools/check-diagrams.sh`) and fails on the first that does not render.
+It is a local check, like the screenshots: no CI job runs it. Pass file names to check only those.
+It prints `[@zenuml/core] Store is a function …` per diagram; that is the image's noise, not an
+error.
+
 The E2E job starts the compose stack on the runner and waits for it with `docker compose up
 --wait`, which means *installed* only because both app services carry a healthcheck asking
 `status.php` — apache answers long before Nextcloud does, and answers even when the install failed.
@@ -167,10 +173,15 @@ stable components. If no single bundle spans the range, the 31 floor moves; the 
 — including the awkward rows: a flagged backwards odometer, a plug-in hybrid with both energy
 types, a vehicle counted in hours, a truck that counts engine hours beside its kilometres, and one
 nobody finished creating, which is what the "complete this vehicle" hint has to ask about
-([ui](ui.md#details-that-decide-whether-it-feels-easy)). The last year carries costs: fill-ups with
+([ui](ui.md#details-that-decide-whether-it-feels-easy)). Most vehicles carry an EU category and a
+body type, the truck's with an add-on (`BA03`). The navigation's second line shows each of its
+sources: a display name on three, the truck's 64 characters long so it truncates and ending in
+"Lübeck" so Oracle stores more bytes than characters, and make, model and body type on the
+trailer. The last year carries costs: fill-ups with
 a partial and a `missed_previous`, the hybrid charging at home and in public, maintenance, expenses
-with a stated VAT rate and without one, and a vehicle with purchase price and
-residual, so every header figure has something to show. Three reminders look the other way: an
+with a stated VAT rate and without one, the truck's full fill-ups reading engine hours for the
+per-hour figures, and a vehicle with purchase price and residual, so every header figure has
+something to show. Three reminders look the other way: an
 HU/AU three weeks out, an oil change by kilometres with the Readings an estimated date needs, and
 a truck the scheme inspects every 12 months. The Passat has a cost in every month of that year, so
 the Costs screen has bars; a business trip for the mileage claim and a private one it leaves out;
@@ -226,14 +237,19 @@ migrations 1–7, the seed and the integration suite. What Oracle asked for:
 - **A bare column name folds to upper case** in raw SQL. Quote it with `getColumnName()`.
 - **Introspection** reports no autoincrement and quotes index columns; `SchemaExpectations`
   allows for both.
+- **A string column counts bytes**, where the app counts characters (ORA-12899). Each column of
+  typed text is 4n there ([data model](architecture.md#data-model)); the integration
+  `TypedTextTest` writes every one at full length in `ü` and in `🚗`.
 
-What Oracle covers, measured 2026-10-04:
+What Oracle covers, measured 2026-10-04 where a row names no date:
 
 | Check | Result |
 | --- | --- |
 | Integration suite, five fresh stacks in a row | 1595 tests green each time, 5:13–5:31 |
+| Integration suite with migration 9, 2026-10-11, one fresh stack | 1733 tests green, *user_migration* skipped, 7:58 beside another suite |
 | API suite, the same stack after it | 19 tests green, 33 s |
 | Upgrade check from 0.2.0, NC 34 only (`--db oracle`, [release](#release)) | 12 tables' rows intact, schema the fresh one's |
+| Upgrade check from 0.3.1, 2026-10-11, migration 9 widening columns that hold rows | 13 tables' rows intact, schema the fresh one's |
 | E2E | not run |
 
 The API suite runs as on the dev stack, with `-c phpunit.api.xml`. A first run has ended once with
@@ -309,7 +325,9 @@ them when they bother you; nothing reads them.
 --noEmit` — and `npm run lint:js`, `lint:css` and `lint:types` run them one at a time. `npm test`
 is Vitest; frontend tests sit next to what they test as `src/**/*.spec.js`, and `tests/js/` holds
 the ones about the repository itself rather than about the app. `tests/e2e/` is Playwright's and
-stays out of the Vitest run; everything else under `tests/` is PHPUnit's.
+stays out of the Vitest run; everything else under `tests/` is PHPUnit's. The exception is a rule
+written in both PHP and JS: both tests read its cases from one JSON table in `tests/Fixture/`
+(`Tests\Fixture\SharedCases`), so the twins cannot drift apart.
 
 Vitest transforms `@nextcloud/vue` rather than letting Node load it (`server.deps.inline` in
 `vitest.config.js`). Its components import their own `.css`, which Node refuses with "Unknown file
@@ -430,6 +448,10 @@ no spec here: its slice is a client's, so it lives in the API suite, and the M7 
 the web UI did not move. `m9-slice.spec.js` covers importing with fresh accounts: the owner previews
 a LubeLogger file whose rows are new, already there and unreadable, imports it, sees the consumption
 it closes, undoes it from the toast, and imports a Spritmonitor file. A driver is offered no import.
+`m17-slice.spec.js` covers the registration codes and the figures per engine hour: a German account
+finds the station wagon by "kombi", sees M1 pre-fill the car and N3 drop the body, and saves a lorry
+with its add-on; a vehicle that counts kilometres and engine hours states consumption and cost per
+engine hour in the header, and consumption per engine hour on the timeline.
 
 **The job at a moved clock.** The server's clock cannot move, so `tests/e2e/job.php` runs
 `ReminderJob` once with a stopped `ITimeFactory` at the instant it is given. `server.js` runs it
@@ -447,7 +469,8 @@ Four things about those files worth knowing before adding to them:
   through `fits()` and axe at 320 × 640 and 1280 × 800, light and dark. Since M6 that includes
   what a grant changes for the owner and the grantee; since M7 the bookings, the handover sheets,
   who has the car and the inbox; since M9 the import's format step, its preview with an open
-  question and with a long column list, and its result. The tag is filtered out per project in
+  question and with a long column list, and its result; since M17 the navigation's two lines, with a
+  display name as long as one may be. The tag is filtered out per project in
   `playwright.config.js`.
 - **A dialog is visible from the first frame of its fade-in**, so an audit taken right after
   `toBeVisible()` measures the text against a background it is still blended with and reports a
@@ -470,7 +493,7 @@ the e2e job uploads the folder when it fails or times out, as the artifact `e2e-
 and the weekly smoke run as `e2e-weekly-test-results`.
 
 Every vehicle the run makes wears a plate its own spec file owns — `E2E-` for the M1 slice,
-`M2-E2E-` to `M7-E2E-` for the next six, `M9-E2E-` for the M9 slice, `ROLES-` for the role cases — and each file deletes what it finds under its prefix before it starts.
+`M2-E2E-` to `M7-E2E-` for the next six, `M9-E2E-` and `M17-E2E-` for the M9 and M17 slices, `ROLES-` for the role cases — and each file deletes what it finds under its prefix before it starts.
 They all belong to the run's account or to an account a spec made, so the teardown that deletes the
 accounts ([testing](#testing)) takes them out of every list. The sweep up front is for
 `--repeat-each`, which runs a file again on the same account. The prefixes have to stay disjoint:

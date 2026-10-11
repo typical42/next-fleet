@@ -22,7 +22,7 @@ vi.mock('../services/api.js', async (original) => ({
 	updateVehicle: vi.fn(),
 }))
 
-/** Created in the four fields the sheet asks for (docs/ui.md) and never finished. */
+/** Created in the five fields the sheet asks for (docs/ui.md) and never finished. */
 const NEW = {
 	uuid: 'v-new',
 	updated_at: 1700000000,

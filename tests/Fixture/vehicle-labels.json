@@ -1,0 +1,84 @@
+[
+	{
+		"case": "the display name under the plate",
+		"vehicle": { "plate": "M-AB 1234", "display_name": "Blue van", "manufacturer": "VW", "model": "Passat" },
+		"name": "M-AB 1234",
+		"second_label": "Blue van"
+	},
+	{
+		"case": "make and model under the plate",
+		"vehicle": { "plate": "M-AB 1234", "manufacturer": "VW", "model": "Passat" },
+		"name": "M-AB 1234",
+		"second_label": "VW Passat"
+	},
+	{
+		"case": "make and model under the display name",
+		"vehicle": { "display_name": "Blue van", "manufacturer": "VW", "model": "Passat" },
+		"name": "Blue van",
+		"second_label": "VW Passat"
+	},
+	{
+		"case": "nothing under make and model",
+		"vehicle": { "manufacturer": "VW", "model": "Passat" },
+		"name": "VW Passat",
+		"second_label": ""
+	},
+	{
+		"case": "nothing under a model alone",
+		"vehicle": { "model": "Passat" },
+		"name": "Passat",
+		"second_label": ""
+	},
+	{
+		"case": "nothing under a plate alone",
+		"vehicle": { "plate": "M-AB 1234" },
+		"name": "M-AB 1234",
+		"second_label": ""
+	},
+	{
+		"case": "a display name that is the make and model, once",
+		"vehicle": { "display_name": "VW Golf", "manufacturer": "VW", "model": "Golf" },
+		"name": "VW Golf",
+		"second_label": ""
+	},
+	{
+		"case": "a stand-in for nothing at all",
+		"vehicle": {},
+		"name": "Unnamed vehicle",
+		"second_label": ""
+	},
+	{
+		"case": "the body type after the make",
+		"vehicle": { "plate": "M-AB 1234", "manufacturer": "Volkswagen", "model": "Passat", "body_type": "AC" },
+		"name": "M-AB 1234",
+		"second_label": "Volkswagen Passat · Station wagon",
+		"search_line": "Volkswagen Passat"
+	},
+	{
+		"case": "the body type alone under the plate",
+		"vehicle": { "plate": "M-AB 1234", "body_type": "BA03" },
+		"name": "M-AB 1234",
+		"second_label": "Lorry",
+		"search_line": ""
+	},
+	{
+		"case": "the display name ahead of the body type",
+		"vehicle": { "plate": "M-AB 1234", "display_name": "Blue van", "manufacturer": "VW", "body_type": "AC" },
+		"name": "M-AB 1234",
+		"second_label": "Blue van"
+	},
+	{
+		"case": "the body type under a make that names the vehicle",
+		"vehicle": { "manufacturer": "VW", "model": "Passat", "body_type": "AC" },
+		"name": "VW Passat",
+		"second_label": "Station wagon",
+		"search_line": ""
+	},
+	{
+		"case": "make, model and body type under the display name",
+		"vehicle": { "display_name": "Blue van", "manufacturer": "VW", "model": "Passat", "body_type": "AC" },
+		"name": "Blue van",
+		"second_label": "VW Passat · Station wagon",
+		"search_line": "VW Passat"
+	}
+]

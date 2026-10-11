@@ -13,6 +13,34 @@ A car, motorcycle, van, truck, trailer, tractor or generator someone keeps recor
 by its `uuid`; the plate is a mutable label.
 _Avoid_: Car, asset
 
+**Display Name**:
+An optional free-text label of a Vehicle, seen by everyone with access to it. The plate stays the
+Vehicle's name in mails, notices, exports, the audit trail and the logbook; there a Vehicle without
+a plate is called by its Display Name, else by make and model. Not a Nextcloud account's display
+name, which names a person.
+_Avoid_: Nickname, alias
+
+**Second Label**:
+The line under a Vehicle's name on screen and in search: its Display Name, else make and model with
+the Body Type, leaving out what already reads as the name. Search leaves out the Body Type.
+_Avoid_: Subtitle (the Second Label with a lifecycle other than active)
+
+**Vehicle Type**:
+The coarse class of a Vehicle: car, motorcycle, van, truck, trailer, tractor or generator. The
+rules read it — the mileage rate, the inspection, the default counter unit
+([ADR 0010](docs/adr/0010-the-vehicle-type-drives-rules-the-eu-codes-are-data.md)).
+_Avoid_: Category, kind
+
+**EU Category**:
+Field J of the registration certificate, a vehicle category of EU type approval: `M1`, `N3G`,
+`L3e-A2`, `T1b`. Data beside the Vehicle Type, which it may pre-fill; no rule reads it.
+_Avoid_: Vehicle class, type (alone)
+
+**Body Type**:
+The EU body code of a Vehicle, with its two-digit add-on where it takes one: `AC`, `BA03`. Fits its
+EU Category or is refused. Data, as the EU Category is.
+_Avoid_: Bodywork, Aufbau (in code)
+
 **Entry**:
 Anything a person creates through the entry sheet: a Trip, an Energy Entry, a Maintenance Record, an
 Odometer Entry or an Expense.

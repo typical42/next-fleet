@@ -14,6 +14,7 @@ use OCA\NextFleet\Db\Expense;
 use OCA\NextFleet\Db\ExpenseMapper;
 use OCA\NextFleet\Db\Maintenance;
 use OCA\NextFleet\Db\MaintenanceMapper;
+use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Db\Vehicle;
 
 /**
@@ -55,6 +56,9 @@ class CostService {
 		$records = $this->maintenance->findBetween($vehicleId, $from, $to);
 		$expenses = $this->expenses->findBetween($vehicleId, $from, $to);
 		$distances = $this->consumption->distances($vehicle, $periods);
+		$hours = $vehicle->getSecondUnit() === null
+			? array_fill(0, count($periods), null)
+			: $this->consumption->distances($vehicle, $periods, OdoReading::SECOND);
 		// Depreciation belongs to the whole holding, so its distance is read once for every period.
 		$held = false;
 		$tco = function (float $value, string $per) use ($vehicle, &$held): ?float {
@@ -79,6 +83,7 @@ class CostService {
 				array_values(array_filter($records, static fn (Maintenance $record): bool => $within($record->getDoneAt()))),
 				array_values(array_filter($expenses, static fn (Expense $expense): bool => $within($expense->getSpentAt()))),
 				$distances[$i],
+				$hours[$i],
 				$tco,
 			);
 		}
@@ -96,7 +101,7 @@ class CostService {
 	 * @return Cost
 	 * @throws \OCP\DB\Exception
 	 */
-	private function cost(Vehicle $vehicle, bool $net, array $fills, array $records, array $expenses, ?int $distance, \Closure $tco): array {
+	private function cost(Vehicle $vehicle, bool $net, array $fills, array $records, array $expenses, ?int $distance, ?int $hours, \Closure $tco): array {
 		$unstated = false;
 		$count = static function (?int $gross, ?int $rate) use ($net, &$unstated): int {
 			if ($gross === null || !$net) {
@@ -137,12 +142,15 @@ class CostService {
 			'net' => $net,
 			'per' => $per,
 			'distance' => $distance,
+			'hours' => $hours,
 			'total' => $priced ? $total : null,
 			'energy' => $priced ? $energy : null,
 			'maintenance' => $priced ? $maintenance : null,
 			'expenses' => $priced ? self::itemised($byCategory) : null,
 			'value' => $value,
 			'energy_value' => $priced ? self::value($energy, $distance, $per) : null,
+			'value_per_hour' => $priced ? self::value($total, $hours, 'h') : null,
+			'energy_value_per_hour' => $priced ? self::value($energy, $hours, 'h') : null,
 			'tco' => $value === null ? null : $tco($value, $per),
 			'incomplete' => $incomplete,
 			'unstated' => $unstated,

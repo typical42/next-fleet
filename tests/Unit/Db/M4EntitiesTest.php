@@ -97,6 +97,16 @@ class M4EntitiesTest extends TestCase {
 		$this->assertSame('monthly', Vehicle::fromRow(['reminder_mail' => 'monthly'])->jsonSerialize()['reminder_mail']);
 	}
 
+	public function testAVehicleAnswersWithItsEuCategory(): void {
+		$this->assertSame('N1G', Vehicle::fromRow(['eu_category' => 'N1G'])->jsonSerialize()['eu_category']);
+		$this->assertNull((new Vehicle())->jsonSerialize()['eu_category']);
+	}
+
+	public function testAVehicleAnswersWithItsBodyType(): void {
+		$this->assertSame('BA03', Vehicle::fromRow(['body_type' => 'BA03'])->jsonSerialize()['body_type']);
+		$this->assertNull((new Vehicle())->jsonSerialize()['body_type']);
+	}
+
 	public function testAMaintenanceRecordNamesTheReminderItClosed(): void {
 		$closing = Maintenance::fromRow(['reminder_id' => '9']);
 

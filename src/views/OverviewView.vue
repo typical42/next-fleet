@@ -67,7 +67,7 @@ useHotKey('n', () => emit('new'))
 	</NcEmptyContent>
 	<div v-else class="overview">
 		<h2>{{ t('nextfleet', 'Vehicles') }}</h2>
-		<!-- Creating a vehicle asks for four fields; the rest is asked for here, once there is a
+		<!-- Creating a vehicle asks for five fields; the rest is asked for here, once there is a
 		     fleet to ask it about (docs/ui.md). -->
 		<CompleteHint :vehicles="vehicles" @select="$emit('select', $event)" />
 		<p v-if="failure" class="overview__failure">

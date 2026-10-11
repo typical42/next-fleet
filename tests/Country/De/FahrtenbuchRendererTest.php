@@ -12,6 +12,7 @@ use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Jurisdiction\De;
 use OCA\NextFleet\Jurisdiction\LogbookReport;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -56,9 +57,10 @@ class FahrtenbuchRendererTest extends TestCase {
 	 * @param list<array{trip: Trip, missing: list<string>, late: list<LateChange>, unlogged?: ?int}> $trips
 	 * @param list<array{from: int, to: ?int}> $periods
 	 * @param ?array<string, string> $enteredBy
+	 * @param array<string, string> $names the vehicle's plate, display name, make and model
 	 */
-	private function render(array $trips, array $periods = [], ?string $source = self::SOURCE, ?array $enteredBy = null): \DOMXPath {
-		$vehicle = Vehicle::fromRow(['id' => 7, 'plate' => 'B-XY 123', 'manufacturer' => 'VW', 'model' => 'Caddy', 'jurisdiction' => 'de']);
+	private function render(array $trips, array $periods = [], ?string $source = self::SOURCE, ?array $enteredBy = null, array $names = ['plate' => 'B-XY 123', 'manufacturer' => 'VW', 'model' => 'Caddy']): \DOMXPath {
+		$vehicle = Vehicle::fromRow(['id' => 7, 'jurisdiction' => 'de'] + $names);
 		$html = (new De\FahrtenbuchRenderer())->render(new LogbookReport($vehicle, 2026, $trips, $periods, $source, $enteredBy, new \DateTimeZone('Europe/Berlin')));
 
 		$document = new \DOMDocument();
@@ -374,5 +376,57 @@ class FahrtenbuchRendererTest extends TestCase {
 		$this->assertSame('Fahrtenbuch 2026', $this->text($page, '//h1'));
 		$this->assertStringContainsString('B-XY 123', $this->text($page, '//header'));
 		$this->assertStringContainsString('VW Caddy', $this->text($page, '//header'));
+	}
+
+	/**
+	 * The title calls the vehicle by its name, as a notice does: the plate, else the display name,
+	 * else make and model. The header names it by the same fields, each under its own word; a
+	 * plated vehicle's display name stays off the page.
+	 *
+	 * @param array<string, string> $names
+	 * @param array<string, string> $header
+	 */
+	#[DataProvider('names')]
+	public function testThePageCallsTheVehicleByItsName(array $names, string $title, array $header): void {
+		$page = $this->render([], [], self::SOURCE, null, $names);
+
+		$this->assertSame($title, $this->text($page, '//title'));
+		$this->assertSame($header, $this->header($page));
+	}
+
+	/** @return array<string, array{array<string, string>, string, array<string, string>}> */
+	public static function names(): array {
+		return [
+			'plated' => [
+				['plate' => 'B-XY 123', 'display_name' => 'Firmenwagen', 'manufacturer' => 'VW', 'model' => 'Caddy'],
+				'Fahrtenbuch B-XY 123 2026',
+				['Kennzeichen' => 'B-XY 123', 'Fahrzeug' => 'VW Caddy'],
+			],
+			'with a display name' => [
+				['display_name' => 'Firmenwagen', 'manufacturer' => 'VW', 'model' => 'Caddy'],
+				'Fahrtenbuch Firmenwagen 2026',
+				['Anzeigename' => 'Firmenwagen', 'Fahrzeug' => 'VW Caddy'],
+			],
+			'with make and model' => [
+				['manufacturer' => 'VW', 'model' => 'Caddy'],
+				'Fahrtenbuch VW Caddy 2026',
+				['Fahrzeug' => 'VW Caddy'],
+			],
+			'with none' => [
+				[],
+				'Fahrtenbuch Fahrzeug ohne Namen 2026',
+				['Fahrzeug' => 'Fahrzeug ohne Namen'],
+			],
+		];
+	}
+
+	/** @return array<string, string> the header's terms and what each says */
+	private function header(\DOMXPath $page): array {
+		$header = [];
+		foreach ($page->query('//header/dl/dt') ?: [] as $dt) {
+			$header[trim($dt->textContent)] = trim((string)$dt->nextSibling?->textContent);
+		}
+
+		return $header;
 	}
 }

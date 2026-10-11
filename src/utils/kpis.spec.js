@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { periodTilesOf, tilesOf } from './kpis.js'
+import { perDistanceOnly, periodTilesOf, tilesOf } from './kpis.js'
 
 const CAR = { uuid: 'v-1', updated_at: 1700000000, odo_value: 48210, odo_unit: 'km', second_unit: null, currency: 'EUR', energy_types: ['diesel'] }
 
@@ -14,7 +14,7 @@ const CAR = { uuid: 'v-1', updated_at: 1700000000, odo_value: 48210, odo_unit: '
  * @return {import('../services/api.js').Cost} the cost part of an answer
  */
 function cost(cost = {}) {
-	return { currency: 'EUR', net: false, per: 'km', distance: 1000, total: 20000, energy: 12000, maintenance: 0, expenses: [], value: 2000, energy_value: 1200, tco: null, incomplete: false, unstated: false, ...cost }
+	return { currency: 'EUR', net: false, per: 'km', distance: 1000, hours: null, total: 20000, energy: 12000, maintenance: 0, expenses: [], value: 2000, energy_value: 1200, value_per_hour: null, energy_value_per_hour: null, tco: null, incomplete: false, unstated: false, ...cost }
 }
 
 /**
@@ -22,7 +22,7 @@ function cost(cost = {}) {
  * @return {import('../services/api.js').Kpis} the answer
  */
 function kpis(kpis = {}) {
-	return { consumption: [], wall_side: null, cost: cost(), hours: null, ...kpis }
+	return { consumption: [], consumption_per_hour: null, measured: ['diesel'], measured_per_hour: null, wall_side: null, cost: cost(), hours: null, ...kpis }
 }
 
 const DIESEL = { energy: 'diesel', amount: 61000, distance: 1000, per: 'km', value: 6.1 }
@@ -199,8 +199,181 @@ describe('the header tiles', () => {
 			change: '+20 h vs. the period before',
 			notes: ['Consumption includes fuel used while working'],
 		})
-		// Still measured against kilometres (docs/architecture.md), not per hour.
+		// Still measured against kilometres (docs/architecture.md); per hour is a tile of its own.
 		expect(tile(tiles, 'Diesel consumption')?.figure).toBe('6.1 l/100 km')
+	})
+
+	it('states each energy per engine hour right after its per-100 km tile, compared per hour', () => {
+		const truck = { ...CAR, second_unit: 'h', energy_types: ['diesel', 'electric'] }
+		const ELECTRIC = { energy: 'electric', amount: 20000, distance: 100, per: 'km', value: 20 }
+		const now = kpis({
+			consumption: [DIESEL, ELECTRIC],
+			consumption_per_hour: [{ energy: 'diesel', amount: 61000, distance: 10, per: 'h', value: 6.1 }],
+		})
+		const before = kpis({
+			consumption: [{ ...DIESEL, value: 4.5 }],
+			consumption_per_hour: [{ energy: 'diesel', amount: 45000, distance: 10, per: 'h', value: 4.5 }],
+		})
+
+		const tiles = periodTilesOf(truck, now, before, 'en')
+
+		expect(tiles.map((one) => one.label).slice(0, 3)).toEqual(['Diesel consumption', 'Diesel consumption per engine hour', 'Electric consumption'])
+		expect(tile(tiles, 'Diesel consumption per engine hour')).toMatchObject({
+			figure: '6.1 l/h',
+			change: '+1.6 l/h vs. the period before',
+			notes: ['Includes fuel used while driving'],
+		})
+	})
+
+	it('states each cost per engine hour right after its per-100 km tile, compared per hour', () => {
+		const truck = { ...CAR, second_unit: 'h' }
+		const now = kpis({ cost: cost({ hours: 10, value_per_hour: 3000, energy_value_per_hour: 1800, tco: 3500, net: true }) })
+		const before = kpis({ cost: cost({ hours: 8, value_per_hour: 2500, energy_value_per_hour: null }) })
+
+		const tiles = periodTilesOf(truck, now, before, 'en')
+
+		expect(tiles.map((one) => [one.label, one.figure])).toEqual([
+			['Cost', '€20.00/100 km'],
+			['Cost per engine hour', '€30.00/h'],
+			['Energy cost', '€12.00/100 km'],
+			['Energy cost per engine hour', '€18.00/h'],
+			['Total cost of ownership', '€35.00/100 km'],
+		])
+		expect(tile(tiles, 'Cost per engine hour')).toMatchObject({ change: '+€5.00/h vs. the period before', notes: ['Net of VAT'] })
+		expect(tile(tiles, 'Energy cost per engine hour')?.change).toBeNull()
+	})
+
+	it('states a cost per engine hour beside the period total when no Reading gives a distance', () => {
+		const truck = { ...CAR, second_unit: 'h' }
+
+		const tiles = periodTilesOf(truck, kpis({ cost: cost({ distance: null, value: null, energy_value: null, hours: 10, value_per_hour: 3000, energy_value_per_hour: 1800 }) }), null, 'en')
+
+		expect(tiles.map((one) => one.label)).toEqual(['Cost in the period', 'Cost per engine hour', 'Energy cost in the period', 'Energy cost per engine hour'])
+	})
+
+	it('states a period that ran engine hours but recorded no cost as zero per hour, as per 100 km', () => {
+		const truck = { ...CAR, second_unit: 'h' }
+		const empty = cost({ total: null, energy: null, value: null, energy_value: null, hours: 10 })
+
+		const tiles = periodTilesOf(truck, kpis({ cost: empty }), kpis({ cost: cost({ hours: null }) }), 'en')
+
+		expect(tile(tiles, 'Cost per engine hour')).toMatchObject({ figure: '€0.00/h', change: null })
+		expect(tile(tiles, 'Cost')?.figure).toBe('€0.00/100 km')
+	})
+
+	it('states no cost per engine hour without engine hours, or on a vehicle that counts none', () => {
+		const stale = kpis({ cost: cost({ hours: 10, value_per_hour: 3000, energy_value_per_hour: 1800 }) })
+
+		expect(periodTilesOf({ ...CAR, second_unit: 'h' }, kpis(), null, 'en').map((one) => one.label)).toEqual(['Cost', 'Energy cost'])
+		expect(periodTilesOf(CAR, stale, null, 'en').map((one) => one.label)).toEqual(['Cost', 'Energy cost'])
+	})
+
+	it('states no per-hour consumption on a vehicle that counts no engine hours, whatever an older answer says', () => {
+		const stale = kpis({ consumption: [DIESEL], consumption_per_hour: [{ energy: 'diesel', amount: 61000, distance: 10, per: 'h', value: 6.1 }] })
+
+		const tiles = periodTilesOf(CAR, stale, null, 'en')
+
+		expect(tiles.map((one) => one.label)).not.toContain('Diesel consumption per engine hour')
+	})
+
+	it('says an energy never measured needs two full fill-ups, in place of its consumption', () => {
+		const tiles = periodTilesOf(CAR, kpis({ measured: [] }), null, 'en')
+
+		expect(tiles.map((one) => [one.label, one.figure])).toEqual([
+			['Diesel consumption', 'Needs two full fill-ups'],
+			['Cost', '€20.00/100 km'],
+			['Energy cost', '€12.00/100 km'],
+		])
+		expect(tile(tiles, 'Diesel consumption')).toMatchObject({ change: null, notes: [] })
+	})
+
+	it('keeps a period quiet that closed no segment of an energy measured before', () => {
+		const tiles = periodTilesOf(CAR, kpis({ measured: ['diesel'] }), null, 'en')
+
+		expect(tile(tiles, 'Diesel consumption')).toBeUndefined()
+	})
+
+	it('hints only for the energy of a hybrid that was never measured', () => {
+		const hybrid = { ...CAR, energy_types: ['petrol', 'diesel'] }
+		const PETROL = { energy: 'petrol', amount: 30000, distance: 500, per: 'km', value: 6 }
+
+		const tiles = periodTilesOf(hybrid, kpis({ consumption: [PETROL], measured: ['petrol'] }), null, 'en')
+
+		expect(tiles.map((one) => [one.label, one.figure]).slice(0, 2)).toEqual([
+			['Petrol consumption', '6.0 l/100 km'],
+			['Diesel consumption', 'Needs two full fill-ups'],
+		])
+	})
+
+	it('asks for engine hours on full fill-ups where an energy was measured per 100 km but never per hour', () => {
+		const truck = { ...CAR, second_unit: 'h' }
+
+		const tiles = periodTilesOf(truck, kpis({ consumption: [DIESEL], consumption_per_hour: [], measured_per_hour: [] }), null, 'en')
+
+		expect(tiles.map((one) => [one.label, one.figure]).slice(0, 2)).toEqual([
+			['Diesel consumption', '6.1 l/100 km'],
+			['Diesel consumption per engine hour', 'Enter engine hours on full fill-ups'],
+		])
+	})
+
+	it('asks for nothing per hour while the energy was never measured at all, or was per hour before', () => {
+		const truck = { ...CAR, second_unit: 'h' }
+
+		const never = periodTilesOf(truck, kpis({ consumption_per_hour: [], measured: [], measured_per_hour: [] }), null, 'en')
+		const quiet = periodTilesOf(truck, kpis({ consumption: [DIESEL], consumption_per_hour: [], measured_per_hour: ['diesel'] }), null, 'en')
+
+		expect(tile(never, 'Diesel consumption')?.figure).toBe('Needs two full fill-ups')
+		expect(tile(never, 'Diesel consumption per engine hour')).toBeUndefined()
+		expect(tile(quiet, 'Diesel consumption per engine hour')).toBeUndefined()
+	})
+
+	it('keeps a period quiet that closed no kilometre segment, engine hours or not', () => {
+		const truck = { ...CAR, second_unit: 'h' }
+
+		const tiles = periodTilesOf(truck, kpis({ consumption_per_hour: [], measured_per_hour: [] }), null, 'en')
+
+		expect(tiles.map((one) => one.label)).toEqual(['Cost', 'Energy cost'])
+	})
+
+	it('asks for no full fill-ups where an energy is measured per engine hour alone', () => {
+		const truck = { ...CAR, second_unit: 'h' }
+		const answer = kpis({ consumption_per_hour: [{ energy: 'diesel', amount: 61000, distance: 10, per: 'h', value: 6.1 }], measured: [], measured_per_hour: ['diesel'] })
+
+		const tiles = periodTilesOf(truck, answer, null, 'en')
+
+		expect(tiles.map((one) => one.label).slice(0, 2)).toEqual(['Diesel consumption per engine hour', 'Cost'])
+	})
+
+	it('asks for no full fill-ups per 100 km alone where an energy is measured per engine hour', () => {
+		const truck = { ...CAR, second_unit: 'h' }
+		const answer = kpis({ consumption_per_hour: [{ energy: 'diesel', amount: 61000, distance: 10, per: 'h', value: 6.1 }], measured: [], measured_per_hour: ['diesel'] })
+
+		const tiles = periodTilesOf(truck, perDistanceOnly(answer), null, 'en')
+
+		expect(tiles.map((one) => one.label)).toEqual(['Cost', 'Energy cost'])
+	})
+
+	it('leaves the electric chain unhinted, as the charger gives the figure in any period with a charge', () => {
+		const ev = { ...CAR, energy_types: ['electric'] }
+
+		const charged = periodTilesOf(ev, kpis({ measured: [], wall_side: { amount: 100000, distance: 500, per: 'km', value: 20 } }), null, 'en')
+		const uncharged = periodTilesOf(ev, kpis({ measured: [] }), null, 'en')
+
+		expect(tile(charged, 'Electric consumption')).toBeUndefined()
+		expect(tile(uncharged, 'Electric consumption')).toBeUndefined()
+	})
+
+	it('marks a hint, so it is not read as a figure', () => {
+		const tiles = periodTilesOf(CAR, kpis({ measured: [] }), null, 'en')
+
+		expect(tile(tiles, 'Diesel consumption')?.hint).toBe(true)
+		expect(tile(tiles, 'Cost')?.hint).toBeUndefined()
+	})
+
+	it('asks for no engine hours on a vehicle that counts none, whatever an older answer says', () => {
+		const tiles = periodTilesOf(CAR, kpis({ consumption: [DIESEL], consumption_per_hour: [], measured_per_hour: [] }), null, 'en')
+
+		expect(tile(tiles, 'Diesel consumption per engine hour')).toBeUndefined()
 	})
 
 	it('leaves engine hours out when the second counter did not move', () => {

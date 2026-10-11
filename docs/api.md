@@ -6,6 +6,8 @@ What a client other than the web UI is built against. It lives at
 
 ## Signing in
 
+Drawn in [design/flows.md#a-request-with-an-app-password](design/flows.md#a-request-with-an-app-password).
+
 A client signs in with a Nextcloud app password over Basic auth. Nextcloud issues it; the app keeps
 no credentials of its own.
 
@@ -31,6 +33,8 @@ curl -u anna:<app password> \
 cannot carry.
 
 ## One rule, two doors
+
+Drawn in [design/components.md#a-request](design/components.md#a-request).
 
 The web UI keeps its internal routes under `/apps/nextfleet/api`. Each OCS route twins one of them
 at the same path under `/api/v1`, with the same verb and parameters, through a controller of the

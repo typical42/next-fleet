@@ -4,7 +4,8 @@
  */
 
 import { describe, expect, it, vi } from 'vitest'
-import { categoryWord, formatConsumption, formatCount, formatDecimal, formatDay, formatEnergyAmount, formatMoney, formatWallSide, fullMoment, formatMonth, formatOdometer, formatSpan, formatWhen, isoInstant, monthKey, nameOf, parseDay, parseDecimal, parseWhole, shortDate, subtitleOf } from './format.js'
+import LABELS from '../../tests/Fixture/vehicle-labels.json'
+import { categoryWord, formatConsumption, formatCount, formatDecimal, formatDay, formatEnergyAmount, formatMoney, formatWallSide, fullMoment, formatMonth, formatOdometer, formatSpan, formatWhen, isoInstant, monthKey, nameOf, parseDay, parseDecimal, parseWhole, secondLabelOf, shortDate, subtitleOf } from './format.js'
 
 vi.mock('@nextcloud/l10n', () => ({
 	getCanonicalLocale: () => 'en-GB',
@@ -76,16 +77,17 @@ describe('formatOdometer', () => {
 	})
 })
 
+// The cases VehicleWordsTest and VehicleSearchProviderTest read too: a notice, a search result
+// and the screen call a vehicle alike.
 describe('nameOf', () => {
-	it('calls a vehicle by its plate, and by its make when it has none', () => {
-		expect(nameOf({ plate: 'M-AB 1234', manufacturer: 'VW', model: 'Passat' })).toBe('M-AB 1234')
-		expect(nameOf({ manufacturer: 'VW', model: 'Passat' })).toBe('VW Passat')
-		expect(nameOf({ model: 'Passat' })).toBe('Passat')
+	it.each(LABELS)('names $case', ({ vehicle, name }) => {
+		expect(nameOf(vehicle)).toBe(name)
 	})
+})
 
-	/** A vehicle with nothing filled in is still a row somebody has to be able to click. */
-	it('names a vehicle that says nothing about itself', () => {
-		expect(nameOf({})).toBe('Unnamed vehicle')
+describe('secondLabelOf', () => {
+	it.each(LABELS)('says $case', ({ vehicle, second_label: second }) => {
+		expect(secondLabelOf(vehicle)).toBe(second)
 	})
 })
 
@@ -95,6 +97,16 @@ describe('subtitleOf', () => {
 		expect(subtitleOf({ plate: 'M-AB 1234', manufacturer: 'VW', model: 'Passat', lifecycle: 'active' }))
 			.toBe('VW Passat')
 		expect(subtitleOf({ manufacturer: 'VW', model: 'Passat', lifecycle: 'active' })).toBe('')
+	})
+
+	it('says the make under a display name that stands in for the plate', () => {
+		expect(subtitleOf({ display_name: 'Blue van', manufacturer: 'VW', model: 'Passat', lifecycle: 'active' }))
+			.toBe('VW Passat')
+	})
+
+	it('says the display name under the plate', () => {
+		expect(subtitleOf({ plate: 'M-AB 1234', display_name: 'Blue van', manufacturer: 'VW', lifecycle: 'laid_up' }))
+			.toBe('Blue van · Laid up')
 	})
 
 	it('spells out a lifecycle that is not the ordinary one', () => {

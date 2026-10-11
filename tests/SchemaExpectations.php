@@ -11,6 +11,7 @@ namespace OCA\NextFleet\Tests;
 use Doctrine\DBAL\Schema\Column;
 use Doctrine\DBAL\Schema\Table;
 use Doctrine\DBAL\Types\Type;
+use OCA\NextFleet\Db\TypedText;
 use OCP\DB\Types;
 
 /**
@@ -73,6 +74,31 @@ trait SchemaExpectations {
 		return $column->getAutoincrement();
 	}
 
+	/** Whether the database counts a string column's length in bytes, as Oracle does. */
+	protected function countsBytes(): bool {
+		return false;
+	}
+
+	/**
+	 * Where the database counts bytes, each column of typed text is four times its length
+	 * (the step that widens them, docs/architecture.md#data-model). The list is held to the data model on every
+	 * database, so it cannot name a column at a length the column does not have.
+	 *
+	 * @param array<string, string> $expected column => its description
+	 * @return array<string, string>
+	 */
+	private function onThisDatabase(string $table, array $expected): array {
+		foreach (TypedText::COLUMNS[$table] ?? [] as $column => $length) {
+			$declared = 'string(' . $length . ')';
+			$this->assertStringStartsWith($declared, $expected[$column] ?? '', $table . '.' . $column . ' is not ' . $declared);
+			if ($this->countsBytes()) {
+				$expected[$column] = 'string(' . (TypedText::BYTES_PER_CHARACTER * $length) . ')' . substr($expected[$column], strlen($declared));
+			}
+		}
+
+		return $expected;
+	}
+
 	/**
 	 * The table's indexes, the primary key aside.
 	 *
@@ -118,7 +144,7 @@ trait SchemaExpectations {
 	 * @param array<string, string> $own
 	 */
 	private function assertTable(string $table, array $own): void {
-		$expected = array_merge($this->commonColumns(), $own);
+		$expected = $this->onThisDatabase($table, array_merge($this->commonColumns(), $own));
 		ksort($expected);
 
 		$this->assertSame($expected, $this->columns($table));
@@ -178,6 +204,12 @@ trait SchemaExpectations {
 			// off, daily, weekly or monthly. Defaulted, so the vehicles already there need no
 			// backfill.
 			'reminder_mail' => "string(8), not null, default 'weekly'",
+			// A second label beside the plate, never the identity.
+			'display_name' => 'string(64), null',
+			// The EU codes of the registration certificate, fields J and 4: data, while
+			// `vehicle_type` decides the rules.
+			'eu_category' => 'string(8), null',
+			'body_type' => 'string(4), null',
 		]);
 	}
 

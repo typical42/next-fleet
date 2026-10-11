@@ -18,6 +18,8 @@ The app holds a movement profile: where someone was, when, and why. Treat it acc
 
 ### Authorization
 
+Drawn in [design/flows.md#the-access-check](design/flows.md#the-access-check).
+
 - **Every controller method is annotated deliberately** — `#[NoAdminRequired]` on user endpoints,
   `#[NoCSRFRequired]` only where a read-only page or download is opened by navigating to it (the
   [Fahrtenbuch export](architecture.md#the-fahrtenbuch-export): a navigation carries no token, and

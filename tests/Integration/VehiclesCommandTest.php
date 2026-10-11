@@ -75,7 +75,7 @@ class VehiclesCommandTest extends TestCase {
 
 	/** The instance may hold other vehicles, so only ours are compared. */
 	public function testItListsEveryLiveVehicleByOwnerThenPlate(): void {
-		$second = $this->vehicle(self::ANNA, ['plate' => 'NF-VL 2', 'manufacturer' => 'Škoda', 'model' => 'Octavia']);
+		$second = $this->vehicle(self::ANNA, ['plate' => 'NF-VL 2', 'display_name' => 'Pool car', 'eu_category' => 'M1', 'body_type' => 'AC', 'manufacturer' => 'Škoda', 'model' => 'Octavia']);
 		$first = $this->vehicle(self::ANNA, ['plate' => 'NF-VL 1']);
 		$bens = $this->vehicle(self::BEN, ['plate' => 'NF-VL 0']);
 
@@ -83,7 +83,7 @@ class VehiclesCommandTest extends TestCase {
 
 		$this->assertSame([
 			$this->row($first, self::ANNA, 'NF-VL 1', ''),
-			$this->row($second, self::ANNA, 'NF-VL 2', 'Škoda Octavia'),
+			$this->row($second, self::ANNA, 'NF-VL 2', 'Škoda Octavia', 'Pool car', 'M1', 'AC'),
 			$this->row($bens, self::BEN, 'NF-VL 0', ''),
 		], $this->ours($this->listed()));
 	}
@@ -118,7 +118,7 @@ class VehiclesCommandTest extends TestCase {
 		$this->assertSame(0, $this->command->execute(['--user' => self::ANNA]));
 
 		$display = $this->command->getDisplay();
-		$this->assertMatchesRegularExpression('/\|\s*uuid\s*\|\s*plate\s*\|\s*name\s*\|\s*owner\s*\|\s*lifecycle\s*\|\s*deleted_at\s*\|/', $display);
+		$this->assertMatchesRegularExpression('/\|\s*uuid\s*\|\s*plate\s*\|\s*display_name\s*\|\s*name\s*\|\s*owner\s*\|\s*lifecycle\s*\|\s*deleted_at\s*\|\s*eu_category\s*\|\s*body_type\s*\|/', $display);
 		$this->assertStringContainsString($vehicle->getUuid(), $display);
 	}
 
@@ -150,8 +150,8 @@ class VehiclesCommandTest extends TestCase {
 	}
 
 	/** @return array<string, string|null> */
-	private function row(Vehicle $vehicle, string $owner, string $plate, string $name): array {
-		return ['uuid' => $vehicle->getUuid(), 'plate' => $plate, 'name' => $name, 'owner' => $owner, 'lifecycle' => Vehicle::ACTIVE, 'deleted_at' => null];
+	private function row(Vehicle $vehicle, string $owner, string $plate, string $name, ?string $displayName = null, ?string $euCategory = null, ?string $bodyType = null): array {
+		return ['uuid' => $vehicle->getUuid(), 'plate' => $plate, 'display_name' => $displayName, 'name' => $name, 'owner' => $owner, 'lifecycle' => Vehicle::ACTIVE, 'deleted_at' => null, 'eu_category' => $euCategory, 'body_type' => $bodyType];
 	}
 
 	/** @return list<array<string, string|null>> */

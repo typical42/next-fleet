@@ -18,6 +18,7 @@ use OCA\NextFleet\Db\ReminderReceiptMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Notification\ReminderWords;
+use OCA\NextFleet\Notification\VehicleWords;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Db\TTransactional;
 use OCP\AppFramework\Utility\ITimeFactory;
@@ -266,12 +267,12 @@ class MailService {
 		$template->addHeader();
 		$template->addHeading($l->t('Reminders for your vehicles'));
 		foreach ($news as [$vehicle, $points]) {
-			$plate = $vehicle->getPlate() ?? '';
+			$name = VehicleWords::name($l, $vehicle);
 			if ($this->access->may($user->getUID(), VehicleAccess::VIEW, $vehicle)) {
 				$url = $this->urls->linkToRouteAbsolute('nextfleet.page.index', ['vehicle' => $vehicle->getUuid()]);
-				$template->addBodyText('<a href="' . htmlspecialchars($url) . '">' . htmlspecialchars($plate) . '</a>', $plate . ' – ' . $url);
+				$template->addBodyText('<a href="' . htmlspecialchars($url) . '">' . htmlspecialchars($name) . '</a>', $name . ' – ' . $url);
 			} else {
-				$template->addBodyText($plate);
+				$template->addBodyText($name);
 			}
 			foreach ($points as [$reminder, $point]) {
 				// `false` as the plain meta info, or the plain text gets " ()" after each line.

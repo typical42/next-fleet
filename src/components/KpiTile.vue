@@ -13,7 +13,7 @@ defineProps({
 	<!-- A div is the one wrapper a description list allows around a term and its values. -->
 	<div class="tile">
 		<dt>{{ tile.label }}</dt>
-		<dd class="tile__figure">
+		<dd class="tile__figure" :class="{ 'tile__figure--hint': tile.hint }">
 			{{ tile.figure }}
 		</dd>
 		<dd v-if="tile.change" class="tile__small">
@@ -43,5 +43,10 @@ defineProps({
 
 .tile__figure {
 	font-size: 1.5em;
+}
+
+/* A sentence at a figure's size wraps over many lines in a narrow tile. */
+.tile__figure--hint {
+	font-size: inherit;
 }
 </style>

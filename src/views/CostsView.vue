@@ -15,7 +15,7 @@ import { csvUrl, readYear } from '../services/api.js'
 import { usePreferencesStore } from '../store/preferences.js'
 import { BANDS, bandWord, barsOf, co2Of, tableOf } from '../utils/costs.js'
 import { formatMoney, nameOf } from '../utils/format.js'
-import { periodTilesOf } from '../utils/kpis.js'
+import { perDistanceOnly, periodTilesOf } from '../utils/kpis.js'
 import { t } from '../utils/l10n.js'
 
 const props = defineProps({
@@ -61,8 +61,9 @@ const answer = ref(null)
 const failure = ref('')
 
 // Depreciation is not in the bars: it is an estimate spread over the holding period, not a month's
-// spending. It is in the TCO tile, and only there.
-const tiles = computed(() => answer.value ? periodTilesOf(props.vehicle, answer.value.year, null) : [])
+// spending. It is in the TCO tile, and only there. The year is stated per 100 km alone: per engine
+// hour belongs to the vehicle header (docs/ui.md).
+const tiles = computed(() => answer.value ? periodTilesOf(props.vehicle, perDistanceOnly(answer.value.year), null) : [])
 const bars = computed(() => answer.value ? barsOf(answer.value) : [])
 const table = computed(() => answer.value ? tableOf(answer.value) : null)
 const priced = computed(() => answer.value?.year.cost.currency !== null)

@@ -23,7 +23,7 @@ const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', odo_va
  * @return {import('../services/api.js').Cost} a period's cost
  */
 function cost(cost = {}) {
-	return { currency: 'EUR', net: false, per: 'km', distance: 1000, total: 0, energy: 0, maintenance: 0, expenses: [], value: 0, energy_value: 0, tco: null, incomplete: false, unstated: false, ...cost }
+	return { currency: 'EUR', net: false, per: 'km', distance: 1000, hours: null, total: 0, energy: 0, maintenance: 0, expenses: [], value: 0, energy_value: 0, value_per_hour: null, energy_value_per_hour: null, tco: null, incomplete: false, unstated: false, ...cost }
 }
 
 const EMPTY = cost({ distance: null, total: null, energy: null, maintenance: null, expenses: null, value: null, energy_value: null })
@@ -36,7 +36,7 @@ function answer(year = {}) {
 	const march = cost({ total: 12000, energy: 9000, maintenance: 3000, value: 1200, energy_value: 900 })
 
 	return {
-		year: { consumption: [], wall_side: null, cost: cost({ total: 12000, energy: 9000, maintenance: 3000, value: 1200, energy_value: 900, tco: 3500, ...year }), hours: null },
+		year: { consumption: [], consumption_per_hour: null, measured: ['diesel'], measured_per_hour: null, wall_side: null, cost: cost({ total: 12000, energy: 9000, maintenance: 3000, value: 1200, energy_value: 900, tco: 3500, ...year }), hours: null },
 		co2: { grams: 109630, unstated: false, source: 'https://example.org/fuels', year: null, grid: null },
 		months: Array.from({ length: 12 }, (_, i) => ({ month: i + 1, from: 0, to: 0, cost: i === 2 ? march : EMPTY })),
 	}
@@ -115,6 +115,24 @@ describe('the Costs screen', () => {
 		const wrapper = await screen()
 
 		expect(wrapper.findAll('.tile dt').map((one) => one.text())).toEqual(['Cost', 'Energy cost', 'Total cost of ownership'])
+	})
+
+	it('states a two-counter vehicle\'s year per 100 km only', async () => {
+		const year = answer()
+		year.year = {
+			...year.year,
+			consumption: [{ energy: 'diesel', amount: 61000, distance: 1000, per: 'km', value: 6.1 }],
+			consumption_per_hour: [{ energy: 'diesel', amount: 61000, distance: 10, per: 'h', value: 6.1 }],
+			// Never measured per hour, which would ask for engine hours on the header.
+			measured_per_hour: [],
+			cost: { ...year.year.cost, hours: 10, value_per_hour: 3000, energy_value_per_hour: 1800 },
+		}
+		vi.mocked(readYear).mockResolvedValue(year)
+
+		const wrapper = mount(CostsView, { props: { vehicle: { ...VEHICLE, second_unit: 'h' } } })
+		await flushPromises()
+
+		expect(wrapper.findAll('.tile dt').map((one) => one.text())).toEqual(['Diesel consumption', 'Cost', 'Energy cost', 'Total cost of ownership'])
 	})
 
 	/** A spreadsheet's year is the one on screen, one file per table (docs/architecture.md#csv-export). */

@@ -21,7 +21,7 @@ const CAPACITY = {
 const ORDER = ['vin', 'first_reg', 'tank_ml', 'battery_wh', 'currency']
 
 /**
- * What creating a vehicle in four fields left out (docs/ui.md): its identity, its age, its
+ * What creating a vehicle in five fields left out (docs/ui.md): its identity, its age, its
  * capacities and its currency, asked of every vehicle since a trailer has costs too. The hint is a
  * question, not a validation: a vehicle is usable without any of it.
  *
