@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.4.0 — not released
+## 0.4.0 — 2026-10-15
 
 A vehicle says what it is: a display name, and the EU type codes from its registration
 certificate. A vehicle that counts kilometres and engine hours gets its figures per engine hour too.
