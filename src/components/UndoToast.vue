@@ -93,7 +93,7 @@ const message = computed(() => {
 	if (failure.value) {
 		return t('nextfleet', 'The entry could not be brought back: {reason}', { reason: failure.value })
 	}
-	// Under Logbook Mode a trip is voided rather than deleted (docs/features.md#logbook-mode).
+	// Under Logbook Mode a trip is voided rather than deleted (docs/architecture.md#logbook-mode).
 	return struck?.type === 'trip' && store.byUuid.get(struck.vehicle)?.logbook_mode === true
 		? t('nextfleet', 'The trip was voided.')
 		: t('nextfleet', 'The entry was deleted.')

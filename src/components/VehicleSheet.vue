@@ -184,7 +184,7 @@ const logbookMode = ref(props.vehicle?.logbook_mode === true)
  */
 const confirmedOff = ref(false)
 
-// Switching the mode off ends the period its trips are read under (docs/features.md#logbook-mode),
+// Switching the mode off ends the period its trips are read under (docs/architecture.md#logbook-mode),
 // so it is asked about; switching on takes nothing away. Derived, so putting the switch back
 // answers it. Checked against `held`, not the prop: somebody else switching the mode on meanwhile
 // turns a plain save into a switch-off.
@@ -858,7 +858,7 @@ function chosen(options, id) {
 					:clearable="false"
 					label="label"
 					@update:model-value="jurisdiction = $event?.id ?? jurisdiction" />
-				<!-- The switch the vehicle's logbook rules hang off (docs/features.md#logbook-mode),
+				<!-- The switch the vehicle's logbook rules hang off (docs/architecture.md#logbook-mode),
 				     beside the country whose ruleset it invokes. -->
 				<NcFormBoxSwitch v-model="logbookMode"
 					class="sheet__wide"

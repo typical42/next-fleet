@@ -1,12 +1,16 @@
 # NextFleet documentation
 
-Select the part for your task:
+NextFleet is a vehicle logbook inside Nextcloud.
+It records trips, fuel and charging, maintenance and costs, and it reminds you of inspections and services.
 
-| Part | For | Content |
+Pick your path.
+Each page ends with a link to the next one, so you can read a path from start to end.
+
+| You are | Start here | The path |
 |---|---|---|
-| [User manual](user/README.md) | Users of the app | Vehicles, entries, the logbook, costs, reminders, access, documents, import, settings |
-| [Administration](admin/README.md) | Administrators of a Nextcloud server | Install, upgrade, data and backups, `occ` commands, troubleshooting |
-| [Developer guide](developer/README.md) | People who change the code | Development server, tests, code layout, how to send a change, the design documents |
+| A user of the app | [User manual](user/README.md) | Get started, vehicles, entries, logbook, costs, reminders, access, documents, import, settings |
+| The administrator of a Nextcloud server | [Administration](admin/README.md) | Install, data and backups, `occ` commands, troubleshooting |
+| A developer | [Developer guide](developer/README.md) | Set up, architecture, interface, API, security, legal, contributing, testing and release |
 
-The decision records are in [adr/](adr/), the UML diagrams in [design/](design/README.md). The
-glossary is [CONTEXT.md](../CONTEXT.md).
+Each word has one meaning in the app, the code and these pages.
+[CONTEXT.md](../CONTEXT.md) defines them.

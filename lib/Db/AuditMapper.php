@@ -22,7 +22,7 @@ class AuditMapper extends BaseMapper {
 	}
 
 	/**
-	 * The trail is append-only (docs/features.md#logbook-mode), so the three writes the base
+	 * The trail is append-only (docs/architecture.md#logbook-mode), so the three writes the base
 	 * mapper offers every other table are shut here. A row that can be corrected afterwards
 	 * records nothing an auditor can use.
 	 *

@@ -1,101 +1,75 @@
 # Data and backups
 
-This page tells you where NextFleet keeps its data, what protects it, and how an upgrade changes
-it. The reasons for each rule are in [architecture](../architecture.md#data-model).
+Where NextFleet keeps its data, what protects it, and what an upgrade does to it.
 
 ## Where the data is
 
-- **The Nextcloud database.** All vehicles, entries, counter readings, reminders, access grants,
-  bookings and audit rows are in tables that start with `fleet_`. With the default prefix, the
-  names start with `oc_fleet_`.
-- **The `oc_appconfig` table.** It marks account deletions and group deletions that are not
-  complete.
-- **The `oc_preferences` table.** It holds the personal settings of each account.
-- **The Files of each account.** A document or a receipt is a file in the Files of the account
-  that attached it. NextFleet keeps only the file ID. If the owner of the file deletes it or moves
-  it out of their Files, the vehicle cannot open it. The row in the database stays.
+- **Database tables** that start with `oc_fleet_`: vehicles, entries, readings, reminders, access, bookings and the audit trail.
+- **`oc_preferences`**: the personal settings of each account.
+- **`oc_appconfig`**: account and group deletions that are not complete yet.
+- **The Files of each account**: attached documents.
+  NextFleet keeps only the file ID.
+  If the file goes, the row stays without a file.
 
-NextFleet itself sends only the reminder mails off the server. Nextcloud can send notifications to
-phones through its push service.
+NextFleet sends nothing off the server except the reminder mails.
+Nextcloud's push service can carry the notifications to phones.
 
 ## Make a backup
 
 > [!IMPORTANT]
-> Only your database backup protects NextFleet data against a damaged database. NextFleet keeps no
-> copy of its own.
+> NextFleet keeps no copy of its own.
+> Only your backup protects its data.
 
-Include these items in the backup of Nextcloud:
+Back up the database and the data folder together, and restore them together.
+The [Nextcloud admin manual](https://docs.nextcloud.com/server/latest/admin_manual/maintenance/restore.html) shows how.
+A backup from before an account deletion brings the account name back into the rows.
+Delete that account again after the restore.
 
-- The database.
-- The data folder. It contains the attached documents and receipts.
+A user's export with the **User migration** app is no backup.
+Importing it restores nothing.
 
-To restore NextFleet data, restore the Nextcloud database and data folder from the same backup.
-A backup from before an account deletion brings back the account name in the NextFleet rows. After
-such a restore, delete that account again.
-The [Nextcloud administration manual](https://docs.nextcloud.com/server/latest/admin_manual/maintenance/restore.html)
-describes the procedure.
+## What protects the data
 
-A user can export their own data with the Nextcloud **User migration** app. That export is not a
-backup. An import of it restores no NextFleet data.
-
-## What protects data from user errors
-
-- **Deletion is soft.** A deleted vehicle, entry, reminder or document stays in the database with
-  a deletion date. Nothing removes it later. To restore a vehicle that a user deleted, use
-  [`nextfleet:restore`](occ.md#nextfleetrestore).
-- **Account deletion keeps the rows.** When you delete an account, NextFleet removes it from the
-  reminder lists. In all other rows, it replaces the account name with a random name
-  ([ADR 0008](../adr/0008-erasing-a-driver-pseudonymises.md)). NextFleet removes all access to the
-  vehicles of that account and moves them to the trash. This works only while the app is enabled.
-  Refer to [Disable or remove the app](README.md#disable-or-remove-the-app).
+- **Deletion is soft.**
+  A deleted row stays with a deletion date.
+  Nothing purges it.
+  [`nextfleet:restore`](occ.md#nextfleetrestore) brings a deleted vehicle back.
+- **Account deletion keeps the rows.**
+  NextFleet takes the account off the reminder lists and replaces its name everywhere else with a random name ([ADR 0008](../adr/0008-erasing-a-driver-pseudonymises.md)).
+  The account's own vehicles lose all access and go to the trash.
+  This works only while the app is enabled.
+- **Interrupted work completes.**
+  If an error stops an account or group deletion, an hourly job finishes it.
+  [`nextfleet:pending --finish`](occ.md#nextfleetpending) finishes it now.
+- **A write is whole or not done.**
+  One write is one transaction.
+  Two writes to one vehicle wait for each other.
+  If two users change the same record, the second one is told and can save again.
 
 > [!WARNING]
-> Before you delete the account of a vehicle owner, give their vehicles to a different account with
-> [`nextfleet:transfer`](occ.md#nextfleettransfer). After the deletion, nobody can use them again.
-
-- **Interrupted work completes.** If an error stops an account deletion or a group deletion, an
-  hourly job completes it. To complete it immediately, use
-  [`nextfleet:pending --finish`](occ.md#nextfleetpending).
-- **Each write is complete or not done.** A change to many rows uses one database transaction.
-  Two writes to one vehicle at the same time run one after the other. If two users change the same
-  record, the second user gets a message and can save again.
+> Before you delete the account of a vehicle owner, move the vehicles to another account with [`nextfleet:transfer`](occ.md#nextfleettransfer).
+> After the deletion, nobody can use them.
 
 ## How an upgrade changes the data
 
-When the version number in `appinfo/info.xml` increases, Nextcloud runs these steps:
+1. **Migrations** in `lib/Migration/` add tables, columns and indexes.
+   Nextcloud runs each one once.
+   They keep all rows.
+2. **Repair steps** in `lib/Repair/` run after them:
+   - `ErasedPseudonyms` renames deleted accounts from versions before 0.3.0 to the new format.
+     A live account with an old-format name is reported in the upgrade output, the log and a notification to the administrators.
+   - `StrangerRecipients` removes reminder recipients who cannot see the vehicle and whom nobody may share with.
+     It runs only on an upgrade from before 0.3.1.
 
-1. **Migrations.** Nextcloud runs each class in `lib/Migration/` that it did not run before. It
-   records each migration, so a migration never runs two times. The migrations add tables, columns
-   and indexes. They keep all rows.
-2. **Repair steps.** Then Nextcloud runs the classes in `lib/Repair/`:
-   - `ErasedPseudonyms` changes the names of deleted accounts from versions before 0.3.0 to the
-     new format. If a live account has a name in the old format, the step tells you. The message is
-     in the upgrade output, in the log and in a notification to each administrator.
-   - `StrangerRecipients` removes each reminder recipient who cannot see the vehicle, and whom
-     neither the owner nor the user who added them can share with. It runs only when you upgrade
-     from a version before 0.3.1.
+Each release is installed over the one before it in a test.
+The test fails if a row is lost, or if the schema differs from a fresh install ([release](../development.md#release)).
 
-Before each release, the developers install the new version over the old one with
-`tools/upgrade-check.sh`. The test fails if a row is missing after the upgrade. It also fails if
-the schema is not the same as after a new installation ([release](../development.md#release)).
+## Find and repair damaged data
 
-## Find and correct damaged data
+The database has no foreign keys, so it does not stop every wrong link between rows.
 
-There are no foreign keys in the database. Thus the database does not prevent all incorrect links
-between rows. Use these commands to find and correct them:
+1. Run `occ nextfleet:check`.
+2. For a `cache` or `flag` finding, run `occ nextfleet:recompute --vehicle <uuid>`.
+3. For other findings, look at the rows it names ([Troubleshooting](troubleshooting.md)).
 
-1. Find problems:
-
-   ```bash
-   sudo -E -u www-data php occ nextfleet:check
-   ```
-
-2. If the command shows a `cache` or `flag` finding, correct the counter of that vehicle:
-
-   ```bash
-   sudo -E -u www-data php occ nextfleet:recompute --vehicle <vehicle-uuid>
-   ```
-
-3. For other findings, examine the rows that the command shows.
-
-[Troubleshooting](troubleshooting.md) gives more examples.
+Next: [occ commands](occ.md)

@@ -191,7 +191,7 @@ function sort() {
 				</template>
 			</NcEmptyContent>
 			<!-- The whole fleet rather than the visible one: a sold vehicle's logbook is still kept
-			     (docs/features.md#logbook-mode). -->
+			     (docs/architecture.md#logbook-mode). -->
 			<ReportsView v-else-if="reporting" :vehicles="store.list" />
 			<InboxView v-else-if="sorting" :vehicles="store.visible" />
 			<CostsView v-else-if="vehicle && costing" :vehicle="vehicle" @back="costing = false" />

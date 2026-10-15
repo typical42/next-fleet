@@ -277,7 +277,7 @@ class LogbookExportTest extends TestCase {
 	}
 
 	/**
-	 * What the logbook asks is said only under the mode (docs/features.md#logbook-mode), so a trip is
+	 * What the logbook asks is said only under the mode (docs/architecture.md#logbook-mode), so a trip is
 	 * marked only when it set off inside a period: from the flip on, up to but not at the flip off.
 	 */
 	public function testOnlyATripSetOffUnderTheModeLacksAnything(): void {
@@ -438,7 +438,7 @@ class LogbookExportTest extends TestCase {
 
 	/**
 	 * A vehicle created with the mode on and never switched has been under it since it was created
-	 * (docs/features.md#logbook-mode): that period has no row of its own to begin.
+	 * (docs/architecture.md#logbook-mode): that period has no row of its own to begin.
 	 */
 	public function testAModeOnSinceCreationIsOnePeriodFromCreation(): void {
 		$this->logbookMode = true;

@@ -18,7 +18,7 @@ use OCA\NextFleet\Db\Vehicle;
  * The Gaps in a vehicle's logbook (CONTEXT.md). A trip's `start_odo` is a claim about the counter,
  * and the last trip's Reading before it is what it is measured against
  * (docs/architecture.md#odometer-rules, rule 5). Computed on read for every vehicle, and said only
- * under Logbook Mode (docs/features.md#logbook-mode).
+ * under Logbook Mode (docs/architecture.md#logbook-mode).
  */
 class Gaps {
 	public function __construct(

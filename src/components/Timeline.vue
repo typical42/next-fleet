@@ -64,7 +64,7 @@ const failure = ref('')
 const unread = ref(true)
 /**
  * The vehicle's Gaps, whole rather than paged, or null until read. Read only under Logbook Mode
- * (docs/features.md#logbook-mode).
+ * (docs/architecture.md#logbook-mode).
  *
  * @type {import('vue').Ref<import('../services/api.js').Gap[]|null>}
  */
@@ -150,7 +150,7 @@ const closingFailure = ref('')
 const moved = ref(false)
 const writing = ref(false)
 
-/** The question names exactly what the server will write (docs/features.md#logbook-mode). */
+/** The question names exactly what the server will write (docs/architecture.md#logbook-mode). */
 const question = computed(() => {
 	const gap = closing.value
 	if (gap === null) {

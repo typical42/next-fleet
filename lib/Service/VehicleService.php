@@ -306,7 +306,7 @@ class VehicleService {
 	/**
 	 * The audit row a save leaves on the vehicle when it flipped the Logbook Mode or changed one of
 	 * its `FACTS`. The export reads the mode's periods off these rows
-	 * (docs/features.md#logbook-mode); an unrecorded flip leaves trips it cannot place.
+	 * (docs/architecture.md#logbook-mode); an unrecorded flip leaves trips it cannot place.
 	 *
 	 * Only a change: a sheet sends every column on every save (docs/ui.md), and a recorded mode it
 	 * already had makes an auditor count periods that never began. `null` and `false` are both off

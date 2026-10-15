@@ -419,7 +419,7 @@ class TimelineService {
 
 	/**
 	 * What each trip on the page leaves unstated of what its jurisdiction requires. Measured on
-	 * every vehicle; the screen decides whether to say so (docs/features.md#logbook-mode).
+	 * every vehicle; the screen decides whether to say so (docs/architecture.md#logbook-mode).
 	 *
 	 * @param list<array<string, mixed>> $rows
 	 * @return list<array<string, mixed>>

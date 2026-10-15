@@ -826,7 +826,7 @@ export async function updateEntry(uuid, type, entry, fields) {
 
 /**
  * Delete one Entry or Reminder - a trip under Logbook Mode is voided
- * (docs/features.md#logbook-mode). The answer carries the token the undo is checked against, as a
+ * (docs/architecture.md#logbook-mode). The answer carries the token the undo is checked against, as a
  * vehicle's does.
  *
  * @param {string} uuid - the vehicle it hangs off
@@ -1166,7 +1166,7 @@ export async function readGaps(uuid) {
 }
 
 /**
- * Close one Gap as one private trip the server marks reconciled (docs/features.md#logbook-mode). The
+ * Close one Gap as one private trip the server marks reconciled (docs/architecture.md#logbook-mode). The
  * Gap travels as the driver confirmed it, and the server closes nothing that no longer matches.
  *
  * @param {string} uuid - the vehicle the Gap is in

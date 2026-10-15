@@ -687,7 +687,7 @@ class TimelineServiceTest extends TestCase {
 		$this->assertSame($reading, $rows[0]['reading']);
 	}
 
-	/** The vehicle the gate hands back here is not under Logbook Mode (docs/features.md#logbook-mode). */
+	/** The vehicle the gate hands back here is not under Logbook Mode (docs/architecture.md#logbook-mode). */
 	public function testATripRowSaysWhatItLeavesUnstatedWhetherOrNotTheModeIsOn(): void {
 		$bare = $this->trip(1750000000);
 		$stated = $this->trip(1750100000);

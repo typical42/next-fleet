@@ -630,7 +630,7 @@ class TripServiceTest extends TestCase {
 	/**
 	 * The database would refuse these as a 500 naming no field; refused here, they are a 400 the
 	 * sheet can point at. A field the logbook wants but the driver left empty is a flag instead
-	 * (docs/features.md#logbook-mode).
+	 * (docs/architecture.md#logbook-mode).
 	 *
 	 * @param array<string, mixed> $fields
 	 * @dataProvider misshapenTrips
@@ -743,7 +743,7 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
-	 * Under Logbook Mode a trip is recorded as written (docs/features.md#logbook-mode): the row
+	 * Under Logbook Mode a trip is recorded as written (docs/architecture.md#logbook-mode): the row
 	 * names the trip by table and id, and carries its own author and instant.
 	 */
 	public function testATripWrittenUnderLogbookModeLeavesAnAuditRow(): void {
@@ -859,7 +859,7 @@ class TripServiceTest extends TestCase {
 	}
 
 	/**
-	 * A delete voids, it does not remove (docs/features.md#logbook-mode): the trash, the undo and
+	 * A delete voids, it does not remove (docs/architecture.md#logbook-mode): the trash, the undo and
 	 * the Fahrtenbuch export read the row back through `deleted_at`.
 	 */
 	public function testDeletingATripVoidsItRatherThanRemovingIt(): void {
@@ -1175,7 +1175,7 @@ class TripServiceTest extends TestCase {
 	/**
 	 * The request is the whole trip, as the sheet posts it: a field it leaves out is a field the
 	 * driver emptied. That is what lets a distance trip become a counter trip - the one answer a
-	 * business trip asked for both counters has (docs/features.md#logbook-mode).
+	 * business trip asked for both counters has (docs/architecture.md#logbook-mode).
 	 */
 	public function testAnEditCanTurnADistanceTripIntoACounterTrip(): void {
 		$service = $this->service();

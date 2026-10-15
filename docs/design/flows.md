@@ -1,16 +1,15 @@
 # Flows
 
-The key requests and jobs, step by step, from the browser, client or timer to the database and
-back. Read it to see which class does what in what order, before changing one of them. The access
-check and the OCS request come first, since every other flow passes them. Mappers are drawn as the
-database, each message naming the mapper call. [The index](README.md) explains the notation.
+The key requests and jobs, step by step, from the browser, client or timer to the database and back.
+The access check and the OCS request come first, because every other flow passes them.
+Mappers are drawn as the database.
+[The index](README.md) explains the notation.
 
 ## The access check
 
-`VehicleService::reach()` is the one gate on a vehicle; `VehicleService::change()` is the second
-gate, on the Entry the route names. Editing a fill-up as an example. Each operation, role and
-reason is in [Nextcloud integration](../architecture.md#nextcloud-integration) and
-[authorization](../security.md#authorization).
+`VehicleService::reach()` is the gate on a vehicle.
+`VehicleService::change()` is the second gate, on the Entry the route names.
+Here, editing a fill-up ([access](../architecture.md#access), [authorization](../security.md#authorization)).
 
 ```mermaid
 sequenceDiagram
@@ -52,17 +51,14 @@ sequenceDiagram
     Energy-->>Controller: the row
 ```
 
-A fill-up of another vehicle is not found by `findOnVehicle`, so it is a 404 too. A booking passes
-`VehicleAccess::mayBooking()` in the second gate's place, with the booker for `created_by`.
-`EntryAnswers` and `OcsAnswers` turn each exception into its status.
+A fill-up of another vehicle is not found, so it is a 404 too.
+A booking passes `VehicleAccess::mayBooking()` in the second gate's place.
 
 ## A request with an app password
 
-A client signs in with an app password over Basic auth ([signing in](../api.md#signing-in)).
-Nextcloud checks it and the limits before the app runs; the app's middleware and the OCS twin of
-the web controller come after. The same edit as above, through the OCS door. The statuses are in
-[answers](../api.md#answers), the limits in [rate limits](../api.md#rate-limits), the token in
-[writes and tokens](../api.md#writes-and-tokens).
+The same edit through the OCS door ([signing in](../api.md#signing-in)).
+Nextcloud checks the password and the [rate limits](../api.md#rate-limits) before the app runs.
+The statuses are in [answers](../api.md#answers), the token in [writes and tokens](../api.md#writes-and-tokens).
 
 ```mermaid
 sequenceDiagram
@@ -110,17 +106,14 @@ sequenceDiagram
     Envelope-->>Client: the OCS envelope, its statuscode as the HTTP status
 ```
 
-The web door is the same from the dispatcher on, with `EnergyController` and `EntryAnswers`; its
-CSRF check takes the session's `requesttoken`.
+The web door is the same from the dispatcher on, with `EnergyController`, `EntryAnswers` and the session's `requesttoken`.
 
 ## A fill-up and its figures
 
 ### Saving it
 
-The entry sheet posts the fill-up; the service writes it and its Readings under the vehicle's
-hold, in one transaction. A retried create is answered, not written again
-([retried creates](../api.md#retried-creates), [concurrency](../architecture.md#concurrency)). How a
-Reading is flagged is in [odometer rules](../architecture.md#odometer-rules).
+The service writes the fill-up and its Readings under the vehicle's hold, in one transaction.
+A retried create is answered, not written again ([retried creates](../api.md#retried-creates), [odometer rules](../architecture.md#odometer-rules)).
 
 ```mermaid
 sequenceDiagram
@@ -168,16 +161,12 @@ sequenceDiagram
     Sheet-->>User: closes, emits saved
 ```
 
-A field the service refuses is a 400 and the sheet stays open with what was typed
-([the entry sheet](../ui.md#the-entry-sheet-in-detail)).
+A refused field is a 400, and the sheet stays open with what was typed.
 
 ### The figures it moves
 
-On `saved`, the vehicle screen reloads its timeline, its KPI header and its bookings; the bookings
-are left out here. The first two read the same
-segments from `ConsumptionService`, worked out on read and never stored
-([numbers](../architecture.md#numbers-consumption-cost-emissions),
-[the timeline](../architecture.md#the-timeline)). The calls go through `api.js`, left out here.
+After a save, the vehicle screen reloads its timeline and its header.
+Both read the same segments from `ConsumptionService`, computed on read and never stored ([numbers](../architecture.md#numbers-consumption-cost-emissions)).
 
 ```mermaid
 sequenceDiagram
@@ -217,10 +206,9 @@ sequenceDiagram
 
 ## A booking to its handover
 
-A driver books a vehicle, takes it, brings it back, and logs the trip from the booking. Booking and
-handover write `fleet_bookings` only; the trip writes the Reading. The rules are in the data
-model's bookings paragraphs ([data model](../architecture.md#data-model)), the states in
-[Pool](../../CONTEXT.md).
+A driver books, takes the car, brings it back, and logs the trip from the booking.
+Booking and handover write `fleet_bookings` only.
+The trip writes the Reading ([bookings](../architecture.md#bookings)).
 
 ```mermaid
 sequenceDiagram
@@ -276,21 +264,18 @@ sequenceDiagram
     TripController-->>Driver: 201, the trip
 ```
 
-Neither handover takes the `updated_at` token. Check-in passes on any lifecycle: a car laid up while
-out still comes back. A cancel by anybody but the booker notifies the booker
-(`BookingNotices::tellCancelled`).
+The handover takes no token.
+Check-in works on any lifecycle.
+A cancel by anybody but the booker notifies the booker.
 
 ## The reminder round
 
-`ReminderJob` runs hourly and hands the round to `NotificationService`, then to `MailService`.
-Every rule is in [the reminder engine](../architecture.md#reminder-engine): the state at an
-instant, who is told, the job and the digest.
+`ReminderJob` runs hourly: first `NotificationService`, then `MailService` ([the reminder engine](../architecture.md#reminder-engine)).
 
 ### The notifications
 
-Each vehicle is evaluated under its hold, one transaction each. A receipt is claimed before the
-send, and the send waits for the commit, so a second run sends nothing and a rollback leaves no
-notice without its receipt.
+Each vehicle is evaluated under its hold, one transaction each.
+A receipt is claimed before the send, and the send waits for the commit.
 
 ```mermaid
 sequenceDiagram
@@ -337,13 +322,11 @@ sequenceDiagram
     end
 ```
 
-A vehicle or a send that fails is logged and the round goes on. Snoozing, dismissing and deleting
-withdraw through `NotificationService::withdraw()` too, from `ReminderService`.
+A failed vehicle or send is logged, and the round goes on.
 
 ### The digest
 
-After the notifications, at most one mail a day per recipient, from 07:00 in their zone, on the
-days each vehicle's `reminder_mail` names, with the points this user has no `mail` receipt for.
+At most one mail a day per recipient, from 07:00 in their zone, with the points they have no mail receipt for.
 
 ```mermaid
 sequenceDiagram
@@ -387,8 +370,8 @@ sequenceDiagram
 
 ### Reading a notice
 
-A reminder notice stores parameters. `Notifier::prepare()` words them when they are read, and drops
-one that no longer stands.
+A notice stores parameters.
+`Notifier::prepare()` words them when read, and drops a notice that no longer stands.
 
 ```mermaid
 sequenceDiagram
@@ -418,10 +401,7 @@ sequenceDiagram
 
 ## An import
 
-Another tool's CSV, picked in the caller's Files, becomes entries in two requests. Nothing is kept
-between them: the import sends the preview's body again with the file's `etag` and the file is read
-again. Every rule is in [import](../architecture.md#import); the classes are in
-[domain](domain.md#import).
+Two requests, nothing kept between them: the import sends the preview's body again with the file's `etag` ([import](../architecture.md#import), [domain](domain.md#import)).
 
 ### The preview
 
@@ -458,7 +438,8 @@ sequenceDiagram
     Sheet-->>User: the counts and the questions
 ```
 
-A file being written is a 423. Each answer the user gives previews again.
+A file being written is a 423.
+Each answer previews again.
 
 ### The import
 
@@ -511,14 +492,13 @@ sequenceDiagram
     Sheet-->>User: closes, UndoToast shows the counts and an undo
 ```
 
-An odometer row goes through `OdometerService::add()` instead. A row a service refuses stops the
-whole import with a 400 naming the row, and the cache entry goes.
-`occ nextfleet:import` sends the same two calls through `ImportService` as the user it names.
+An odometer row goes through `OdometerService::add()`.
+A refused row stops the whole import.
+`occ nextfleet:import` makes the same two calls.
 
 ## A personal data export
 
-Nextcloud's *user_migration* app exports an account through `FleetMigrator`. What is exported
-whole and what is withheld is in [personal data export](../architecture.md#personal-data-export).
+*user_migration* exports an account through `FleetMigrator` ([personal data export](../architecture.md#personal-data-export)).
 
 ```mermaid
 sequenceDiagram
@@ -546,4 +526,6 @@ sequenceDiagram
     Migrator-->>Migration: a line saying NextFleet does not restore
 ```
 
-The import reads nothing from the source and writes nothing, so another app's import runs on.
+The import reads nothing and writes nothing, so another app's import runs on.
+
+Next: [Lifecycles](lifecycles.md)

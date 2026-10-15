@@ -46,7 +46,7 @@ interface IJurisdiction {
 	 * The ruleset a vehicle under this jurisdiction keeps its logbook by, or null where the
 	 * country requires none - the generic profile's answer. Null is not an empty ruleset: Logbook
 	 * Mode still keeps trips append-only and audited under it, because that part is the core's
-	 * (docs/features.md#logbook-mode).
+	 * (docs/architecture.md#logbook-mode).
 	 */
 	public function logbookRules(): ?ILogbookRules;
 

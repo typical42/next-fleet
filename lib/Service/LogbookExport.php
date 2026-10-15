@@ -21,7 +21,7 @@ use Psr\Log\LoggerInterface;
 
 /**
  * One vehicle's logbook for one year, read by the core and printed by its jurisdiction
- * (docs/features.md#logbook-mode). Which trips, what each one lacks and when the mode was on are
+ * (docs/architecture.md#logbook-mode). Which trips, what each one lacks and when the mode was on are
  * decided here; the country only lays them out (`IReportRenderer`).
  *
  * @psalm-import-type LateChange from LogbookReport

@@ -510,7 +510,7 @@ class VehicleServiceTest extends TestCase {
 	}
 
 	/**
-	 * The switch the vehicle edit sheet carries (docs/features.md#logbook-mode), a column a
+	 * The switch the vehicle edit sheet carries (docs/architecture.md#logbook-mode), a column a
 	 * request decides like the lifecycle beside it. Switching off is a write like any other: a
 	 * mode that could only ever go on would be a trap, not a setting.
 	 */
@@ -527,7 +527,7 @@ class VehicleServiceTest extends TestCase {
 
 	/**
 	 * The flip is how the export later reconstructs the periods the mode was on
-	 * (docs/features.md#logbook-mode), so it is recorded on the vehicle itself, and between the
+	 * (docs/architecture.md#logbook-mode), so it is recorded on the vehicle itself, and between the
 	 * transaction's boundaries with the write it describes: a switch that landed without its row
 	 * would leave the export with trips it cannot place on either side of it.
 	 */

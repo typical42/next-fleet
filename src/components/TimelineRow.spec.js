@@ -267,7 +267,7 @@ describe('a timeline row', () => {
 		).text()).toContain('Still missing: Start counter')
 	})
 
-	/** docs/features.md#logbook-mode */
+	/** docs/architecture.md#logbook-mode */
 	it('says nothing about completeness off the mode, or of a complete trip', () => {
 		const incomplete = { ...journey({ distance: 82 }), missing: ['partner'] }
 

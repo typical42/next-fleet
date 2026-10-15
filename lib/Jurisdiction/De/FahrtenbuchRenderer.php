@@ -21,7 +21,7 @@ use OCA\NextFleet\Notification\VehicleWords;
  * Written in German whatever the reader's language, and not marked for translation: it is a
  * document for a German tax office, and the language of the proceedings there is German (section
  * 87 AO, https://www.gesetze-im-internet.de/ao_1977/__87.html). The words are part of the layout,
- * which is the country's (docs/features.md#logbook-mode).
+ * which is the country's (docs/architecture.md#logbook-mode).
  *
  * @psalm-import-type LateChange from LogbookReport
  */

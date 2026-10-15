@@ -22,7 +22,7 @@ class ProfileTest extends JurisdictionTestCase {
 		return new Generic\Profile(new Untranslated());
 	}
 
-	/** A plain trip listing (docs/features.md#logbook-mode): no logbook is required, but one prints. */
+	/** A plain trip listing (docs/architecture.md#logbook-mode): no logbook is required, but one prints. */
 	public function testItPrintsAPlainLogbook(): void {
 		$this->assertInstanceOf(Generic\LogbookRenderer::class, static::profile()->logbookRenderer());
 	}

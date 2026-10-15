@@ -71,7 +71,7 @@ class Version000002Date20260909000000 extends SimpleMigrationStep {
 
 	/**
 	 * What changed, on what, by whom and when - written only under Logbook Mode
-	 * (docs/features.md#logbook-mode). Who and when are `created_by` and `created_at`: an audit
+	 * (docs/architecture.md#logbook-mode). Who and when are `created_by` and `created_at`: an audit
 	 * row is written in the same transaction as the change it records, so a second author and a
 	 * second clock would only be two places for the same fact to disagree.
 	 *

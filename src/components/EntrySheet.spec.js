@@ -367,7 +367,7 @@ describe('the entry sheet', () => {
 
 	/**
 	 * What the row is missing is the server's to judge and the timeline's to ask about
-	 * (docs/features.md#logbook-mode).
+	 * (docs/architecture.md#logbook-mode).
 	 */
 	it('leaves out the counter the driver did not read', async () => {
 		const wrapper = sheet()

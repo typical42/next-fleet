@@ -1,16 +1,16 @@
 # Components
 
-The parts the app is built from and which part calls which, for someone looking for where a change
-goes. First the backend by layer and its services by area, then the frontend, then the path one
-request takes through both. [The index](README.md) explains the notation.
+Which part calls which, for someone who looks for where a change goes.
+The backend by layer and area, then the frontend, then one request through both.
+[The index](README.md) explains the notation.
 
 ## Backend
 
 ### Layers
 
-Controller → Service → QBMapper → Entity, as [stack and layers](../architecture.md#stack-and-layers)
-sets it out. Every rule lives in a service; both controller doors only translate a request into a
-call and a refusal into a status.
+Controller → Service → QBMapper → Entity ([stack and layers](../architecture.md#stack-and-layers)).
+Every rule lives in a service.
+Both controller doors only turn a request into a call and a refusal into a status.
 
 ```mermaid
 flowchart TB
@@ -42,16 +42,12 @@ flowchart TB
     Migration -->|ISchemaWrapper| db
 ```
 
-`PlaceholderMiddleware` refuses a body field named like a URL placeholder with a 400 before either
-controller runs; its docblock says why.
+`PlaceholderMiddleware` refuses a body field named like a path placeholder before either controller runs.
 
 ### Other doors into the services
 
-The controllers are one way in. Nextcloud calls the app through the interfaces `Application`
-registers, through the timed jobs, commands and repair steps in `appinfo/info.xml`, and through
-the jobs the app queues itself (`GrantNoticeJob`, `ForgetMemberJob`). Some read the
-mappers directly, as an admin or as Nextcloud, where no user's access applies. Drawn from
-[Nextcloud integration](../architecture.md#nextcloud-integration).
+Nextcloud also calls the app through the interfaces `Application` registers, the jobs, commands and repair steps in `appinfo/info.xml`, and the jobs the app queues itself.
+Some of them read the mappers directly, as an admin or as Nextcloud, where no user's access applies.
 
 ```mermaid
 flowchart LR
@@ -82,22 +78,16 @@ flowchart LR
     Jobs & Commands & Listeners & Notifier & Migrator --> Mappers
 ```
 
-`Settings\Personal` is left out: it only renders the template the settings bundle mounts on.
-
 ### Services by area
 
-An arrow is a service another one is given in its constructor, or, for `ReminderEngine`, calls
-statically. An unlabelled arrow into `VehicleService` is a call of `reach()`. Mappers, `OCP`
-interfaces and the helpers of `lib/Service` (`AfterCommit`, `Field`, `Once`, `OwnFiles`,
-`MoneyRows`, `Registration` and the like) are left out, and `Jurisdictions` is drawn only where the
-figures are read, though most services ask it. `InboxService` asks only `PreferencesService` and
-`VehicleAccess`; [the domain](domain.md#documents-and-the-inbox) draws it.
+An arrow is a service another one gets in its constructor.
+An unlabelled arrow into `VehicleService` is a call of `reach()`.
+Mappers, `OCP` interfaces and the small helpers of `lib/Service` are left out.
 
 #### Writes pass the gate
 
-Every service that writes for a user reaches the vehicle through `VehicleService::reach()`, the one
-access check ([Nextcloud integration](../architecture.md#nextcloud-integration)). An Entry that
-knows a counter settles it through `OdometerService` ([odometer rules](../architecture.md#odometer-rules)).
+Every service that writes for a user reaches the vehicle through `VehicleService::reach()`, the one access check ([access](../architecture.md#access)).
+An Entry with a counter settles it through `OdometerService` ([odometer rules](../architecture.md#odometer-rules)).
 
 ```mermaid
 flowchart LR
@@ -127,12 +117,8 @@ flowchart LR
 
 #### Reading the figures
 
-What the timeline, the KPI header and the exports compute. The five in the top row each reach the
-vehicle through `VehicleService` first, left out here. Country rules come from `Jurisdictions`.
-Drawn from [the timeline](../architecture.md#the-timeline),
-[numbers](../architecture.md#numbers-consumption-cost-emissions),
-[the Fahrtenbuch export](../architecture.md#the-fahrtenbuch-export),
-[the mileage claim](../architecture.md#the-mileage-claim) and [CSV export](../architecture.md#csv-export).
+What the timeline, the header and the exports compute.
+Country rules come from `Jurisdictions` ([numbers](../architecture.md#numbers-consumption-cost-emissions), [reports and exports](../architecture.md#reports-and-exports)).
 
 ```mermaid
 flowchart TB
@@ -161,10 +147,9 @@ flowchart TB
 
 #### Reminders and notices
 
-`ReminderEngine` is pure: it computes a reminder's state from the reminder, the day and the
-counter, and stores nothing. The `…Notices` classes write and withdraw Nextcloud notifications;
-`Notifier` words them when they are read, telling them apart by each class's `OBJECT` constant (the
-dashed arrows). Drawn from [the reminder engine](../architecture.md#reminder-engine).
+`ReminderEngine` is pure: it computes a state and stores nothing.
+The `…Notices` classes write and withdraw notifications.
+`Notifier` words them when they are read ([the reminder engine](../architecture.md#reminder-engine)).
 
 ```mermaid
 flowchart LR
@@ -197,10 +182,8 @@ flowchart LR
 
 #### Accounts, checks and sync
 
-What runs for an account rather than a vehicle: erasing and transferring, the admin's check, and
-the client's sync. `Pending` records work a failure cut short, for `PendingJob` to finish. Drawn
-from [data model](../architecture.md#data-model), [sync](../api.md#sync) and
-[ADR 0008](../adr/0008-erasing-a-driver-pseudonymises.md).
+What runs for an account, not a vehicle: erasing, transferring, the admin's check and the client's sync.
+`Pending` records work a failure cut short ([deleting and erasing](../architecture.md#deleting-and-erasing), [sync](../api.md#sync)).
 
 ```mermaid
 flowchart LR
@@ -228,18 +211,18 @@ flowchart LR
     Sync --> Grant & Booking & Document & Reminder
 ```
 
-`SyncService` reads the epoch `SyncEpoch` writes from the app config, not through the class.
+`SyncService` reads the epoch that `SyncEpoch` writes from the app config, not through the class.
 
 ## Frontend
 
-Vue 3 with Pinia, two bundles ([stack and layers](../architecture.md#stack-and-layers)). The screens
-are described in [screens](../ui.md#screens).
+Vue 3 with Pinia, two bundles.
+The screens are in [screens](../ui.md#screens).
 
 ### Pages and screens
 
-`main.js` mounts the fleet on the element `templates/main.php` renders; `settings.js` mounts the
-settings block on `templates/personal.php`'s. `App.vue` picks the view from the URL and the
-navigation.
+`main.js` mounts the fleet on `templates/main.php`.
+`settings.js` mounts the settings block on `templates/personal.php`.
+`App.vue` picks the view from the URL.
 
 ```mermaid
 flowchart TB
@@ -317,9 +300,9 @@ flowchart LR
 
 ### State and the server
 
-Three stores hold what more than one screen reads. Views and components call `services/api.js`
-themselves for the rest; nothing else in `src/` talks to the server. `src/utils/` is plain
-functions, left out here.
+Three stores hold what more than one screen reads.
+Everything else calls `services/api.js` itself.
+Nothing else in `src/` talks to the server.
 
 ```mermaid
 flowchart LR
@@ -344,10 +327,9 @@ flowchart LR
 
 ## A request
 
-Two doors, one rule ([one rule, two doors](../api.md#one-rule-two-doors)): the browser and a
-client reach the same service call through twin controllers. Logging a trip, for example; the
-answer travels back the same way, a refusal turned into its status by `EntryAnswers` or
-`OcsAnswers`.
+[One rule, two doors](../api.md#one-rule-two-doors): the browser and a client reach the same service call through twin controllers.
+Here, logging a trip.
+`EntryAnswers` or `OcsAnswers` turns a refusal into its status.
 
 ```mermaid
 flowchart TB
@@ -374,3 +356,5 @@ flowchart TB
     Trip --> TripMapper --> db
     Trip --> Odometer
 ```
+
+Next: [Domain](domain.md)

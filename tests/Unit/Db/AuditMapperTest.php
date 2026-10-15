@@ -16,7 +16,7 @@ use OCP\Security\ISecureRandom;
 use PHPUnit\Framework\TestCase;
 
 /**
- * The audit trail is append-only (docs/features.md#logbook-mode): the base mapper offers every
+ * The audit trail is append-only (docs/architecture.md#logbook-mode): the base mapper offers every
  * table a checked update, a soft delete and a restore, and an editable trail is no evidence.
  */
 class AuditMapperTest extends TestCase {

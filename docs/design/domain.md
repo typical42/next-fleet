@@ -1,20 +1,20 @@
 # Domain
 
-The classes the rules are written against and how they relate, for someone who needs to know what
-holds a fact before changing it. One diagram per area. A class shows the attributes that identify
-it or that a rule reads, spelled as their columns; [the data model](data-model.md) draws
-every column. [The index](README.md) explains the notation.
+The classes the rules are written against, and how they relate.
+One diagram per area.
+A class shows the attributes that identify it or that a rule reads.
+[The data model](data-model.md) draws every column.
+[The index](README.md) explains the notation.
 
-Every entity here extends `BaseEntity`, so each also carries `uuid`, `created_at`, `updated_at`,
-`deleted_at` and `created_by`; the diagrams leave those out.
+Every entity extends `BaseEntity`, so it also has `uuid`, `created_at`, `updated_at`, `deleted_at` and `created_by`.
+The diagrams leave those out.
 
 ## Vehicle and its entries
 
-A vehicle's counters are chains of `OdoReading`s. Each Entry that knows a counter writes the
-Reading, and the vehicle caches the newest value of each counter
-([odometer rules](../architecture.md#odometer-rules)). An Odometer Entry is a Reading with
-`source_type` `manual`. The audit trail hangs off a trip or the vehicle by `entity` and
-`entity_id`, not by a key ([data model](../architecture.md#data-model)).
+A vehicle's counters are chains of `OdoReading`s.
+Each Entry with a counter writes its Reading, and the vehicle caches the newest value ([odometer rules](../architecture.md#odometer-rules)).
+An Odometer Entry is a Reading with `source_type` `manual`.
+The audit trail points at a trip or a vehicle by `entity` and `entity_id`, not by a key.
 
 ```mermaid
 classDiagram
@@ -95,14 +95,10 @@ classDiagram
 
 ## Reminders
 
-A Reminder is created from a `ReminderTemplate` or with a title of its own. The service intervals
-come from `IServiceTemplates`, the inspection from the jurisdiction's `IInspectionScheme`.
-`ReminderEngine` is static: it reads a Reminder and the counter and answers its state and the
-newest Warning Point it has reached, and moves a Reminder on or back one Occurrence
-([reminder engine](../architecture.md#reminder-engine),
-[lifecycles](lifecycles.md#a-reminder)). A
-`ReminderReceipt` keeps each point sent, once per Occurrence, channel and Recipient. The list of
-Recipients is the vehicle's, not a reminder's.
+A reminder comes from a `ReminderTemplate` or has its own title.
+`ReminderEngine` is static: it reads a reminder and the counter and answers the state and the newest warning point, and moves an occurrence on or back ([the reminder engine](../architecture.md#reminder-engine), [lifecycles](lifecycles.md#a-reminder)).
+A `ReminderReceipt` records each point sent.
+The recipients belong to the vehicle, not to a reminder.
 
 ```mermaid
 classDiagram
@@ -163,12 +159,11 @@ classDiagram
 
 ## Access and sharing
 
-The vehicle's `user_id` is its Owner. Everyone else reaches it through an `Access` grant, to a user
-or a group, with a role. `VehicleAccess` alone turns the two into the five operations
-([Nextcloud integration](../architecture.md#nextcloud-integration),
-[authorization](../security.md#authorization)). `GrantService` grants only whom `Sharable` says
-the admin's sharing settings let the owner reach. A revoke takes Recipients who lose `view` off the
-list, since being a Recipient grants nothing. `TransferService` hands a vehicle to a new owner.
+The vehicle's `user_id` is its owner.
+Everyone else reaches it through an `Access` grant with a role.
+`VehicleAccess` alone turns the two into the five operations ([access](../architecture.md#access), [authorization](../security.md#authorization)).
+`GrantService` grants only whom `Sharable` allows.
+`TransferService` hands a vehicle to a new owner.
 
 ```mermaid
 classDiagram
@@ -207,12 +202,9 @@ classDiagram
 
 ## Bookings, handover and trips
 
-A `Booking` is a plan for one vehicle, not an Entry: it writes no Reading. The Handover is its
-`out_*` and `in_*` columns. Once returned, the driver logs the Trip from it, and `trip_id` ties
-the two; the Trip writes the Reading. The handover photos are Documents linked to the booking
-([data model](../architecture.md#data-model)). `BookingService` asks
-`VehicleAccess::mayBooking`, the Entry rule with the booker in the author's place. Its states are
-drawn in [lifecycles](lifecycles.md#a-booking).
+A `Booking` is a plan, not an Entry, and writes no Reading.
+The handover is its `out_*` and `in_*` columns.
+The driver logs the trip from a returned booking, and `trip_id` ties the two ([bookings](../architecture.md#bookings), [lifecycles](lifecycles.md#a-booking)).
 
 ```mermaid
 classDiagram
@@ -248,12 +240,9 @@ classDiagram
 
 ## Documents and the inbox
 
-A `Document` points at a Nextcloud file by `file_id` and hangs on the vehicle or, by
-`linked_type` and `linked_id`, on one fill-up, maintenance record, expense or booking
-([documents](../architecture.md#documents)). Attaching takes a file the attacher owns
-(`OwnFiles`). The Inbox is a folder chosen in the preferences; `InboxService` lists its files that
-no live Document on a live vehicle the user reaches references yet, and never moves one
-([the inbox](../architecture.md#the-inbox)).
+A `Document` points at a Nextcloud file by `file_id`.
+It hangs on the vehicle, or on one fill-up, maintenance record, expense or booking ([documents](../architecture.md#documents)).
+`InboxService` lists the inbox files that no live Document references yet ([the inbox](../architecture.md#the-inbox)).
 
 ```mermaid
 classDiagram
@@ -283,11 +272,9 @@ classDiagram
 
 ## Import
 
-An importer reads one tool's CSV export and proposes entries; it writes nothing. `ImportService`
-reads the file through `CsvReader`, has the importer turn the rows into `Proposals`, marks
-`Duplicates` among the vehicle's live entries, and writes what the user agreed to through each
-entry service's `add()` ([import](../architecture.md#import)). An importer reads each cell through
-`Cells`, which converts with `Values`.
+An importer reads one tool's CSV export and proposes entries.
+It writes nothing.
+`ImportService` reads the file through `CsvReader`, marks `Duplicates`, and writes what the user agreed to through each entry service's `add()` ([import](../architecture.md#import)).
 
 ```mermaid
 classDiagram
@@ -336,10 +323,9 @@ classDiagram
 
 ## Jurisdiction
 
-A vehicle names its Jurisdiction by key; `Jurisdictions` resolves the key, and falls back to the
-Generic Jurisdiction for one it does not know. What a jurisdiction lacks is null, and a report that
-needs it is unavailable ([contributing](../contributing.md#still-one-directory-per-country)). Germany
-(`De\Profile`) has every part; the Generic one (`Generic\Profile`) only a logbook renderer.
+A vehicle names its jurisdiction by key.
+`Jurisdictions` resolves it, and falls back to `generic` for a key it does not know.
+A part a jurisdiction lacks is null, and a report that needs it is unavailable ([contributing](../contributing.md#still-one-directory-per-country)).
 
 ```mermaid
 classDiagram
@@ -388,3 +374,5 @@ classDiagram
     IReportRenderer <|.. LogbookRenderer
     IClaimRenderer <|.. MileageClaimRenderer
 ```
+
+Next: [Data model](data-model.md)

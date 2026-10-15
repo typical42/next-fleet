@@ -17,7 +17,7 @@ import { t } from '../utils/l10n.js'
 const props = defineProps({
 	/**
 	 * The whole fleet, sold vehicles included: a logbook is kept for years after its vehicle is
-	 * gone (docs/features.md#logbook-mode).
+	 * gone (docs/architecture.md#logbook-mode).
 	 *
 	 * @type {import('vue').PropType<import('../services/api.js').Vehicle[]>}
 	 */

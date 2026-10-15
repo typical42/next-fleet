@@ -1,18 +1,16 @@
 # Lifecycles
 
-The states a row goes through and the calls that move it, for whoever adds a state or a transition.
-A state is spelled as the value stored; the line below it names the constant or the column that
-holds it. A transition names the method that makes it. [The index](README.md) explains the
-notation.
+The states a row goes through, and the calls that move it.
+A state is spelled as stored.
+The line below it names the constant that holds it.
+[The index](README.md) explains the notation.
 
 ## A reminder
 
-`state` in `fleet_reminders`. While the occurrence is open, each sweep of a vehicle not disposed of stores what
-`ReminderEngine::evaluate()` returns: where the reminder stands by date and by km, or snoozed. So a
-sweep may skip a state, say from `planned` to `overdue`, and an edit or a corrected Reading can
-move it back. Done and dismissed end the occurrence;
-a reminder that recurs starts the next one instead, evaluated afresh. The rules are in
-[the reminder engine](../architecture.md#reminder-engine).
+`state` in `fleet_reminders`.
+Each sweep stores what `ReminderEngine::evaluate()` returns, so a sweep may skip a state, and an edit or a corrected Reading may move it back.
+Done and dismissed end the occurrence.
+A recurring reminder starts the next one instead ([the reminder engine](../architecture.md#reminder-engine)).
 
 ```mermaid
 stateDiagram-v2
@@ -43,18 +41,16 @@ stateDiagram-v2
     done --> open : reopenBy, the record withdrawn
 ```
 
-`closeBy` is a maintenance record that names the reminder in its `reminder_id`. `reopenBy` takes
-it back when the record is deleted or names another reminder, and when its day or counter changes,
-which then closes it again from there; `recloseBy` closes it again when the record is restored. A
-recurring reminder taken back steps back one occurrence (`ReminderEngine::retreat`). `delete` sets
-`deleted_at`, `restore` clears it, and both leave `state` as it is.
+`closeBy` is a maintenance record that names the reminder.
+`reopenBy` takes it back when the record is deleted or changed.
+A recurring reminder taken back steps back one occurrence (`ReminderEngine::retreat`).
+Delete and restore leave `state` as it is.
 
 ## A booking
 
-`state` in `fleet_bookings`. Only `booked` and `out` hold the vehicle (`Booking::LIVE`). The
-handover writes the `out_*` and `in_*` columns; no write leaves `cancelled` or `returned`. The rules
-are in [the data model](../architecture.md#data-model), the screens in
-[the bookings section](../ui.md#the-bookings-section).
+`state` in `fleet_bookings`.
+Only `booked` and `out` hold the vehicle (`Booking::LIVE`).
+Nothing leaves `cancelled` or `returned` ([bookings](../architecture.md#bookings)).
 
 ```mermaid
 stateDiagram-v2
@@ -73,10 +69,9 @@ stateDiagram-v2
 
 ## A vehicle
 
-`lifecycle` in `fleet_vehicles`. Any state may follow any other: `update` takes the field like any
-other, and the edit sheet clears `disposed_at` with any state but `disposed`. Deleting a vehicle sets
-`deleted_at` and leaves `lifecycle` as it is. What each state stops is in
-[the data model](../architecture.md#data-model) and [the reminder engine](../architecture.md#reminder-engine).
+`lifecycle` in `fleet_vehicles`.
+Any state may follow any other.
+Deleting sets `deleted_at` and leaves `lifecycle` as it is.
 
 ```mermaid
 stateDiagram-v2
@@ -95,10 +90,8 @@ stateDiagram-v2
 
 ## A receipt in the inbox
 
-No column holds this state: `InboxService` works it out on each read. An image or PDF of the user's
-own in their inbox folder waits while no live `fleet_documents` row on a live vehicle they reach
-references it. The app never moves a file. The rules are in [the inbox](../architecture.md#the-inbox) and
-[documents](../architecture.md#documents).
+No column holds this state: `InboxService` works it out on each read.
+The app never moves a file ([the inbox](../architecture.md#the-inbox)).
 
 ```mermaid
 stateDiagram-v2
@@ -114,12 +107,9 @@ stateDiagram-v2
 
 ## A grant
 
-A row in `fleet_access`. It is live from the insert, with its `role`; a revoke sets `deleted_at`,
-and nothing restores it: granting again writes a new row. `took()` deletes a row outright when its
-grantee was gone by the commit. Erasing the grantee's account keeps a user grant live under the
-pseudonym in `grantee`. The rules are in
-[Nextcloud integration](../architecture.md#nextcloud-integration) and
-[the data model](../architecture.md#data-model).
+A row in `fleet_access`.
+A revoke sets `deleted_at`, and nothing restores it: granting again writes a new row.
+A grant whose grantee was gone by the commit is deleted outright ([access](../architecture.md#access)).
 
 ```mermaid
 stateDiagram-v2
@@ -132,3 +122,5 @@ stateDiagram-v2
     live --> revoked : transfer, the new owner's own grant
     live --> [*] : grant, the grantee gone by its commit
 ```
+
+Back to the [index](README.md).

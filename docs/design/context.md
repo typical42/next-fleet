@@ -1,20 +1,19 @@
 # Context
 
-What NextFleet does for whom, and where it runs. Read it first to see the app from the outside:
-the actors and their use cases, then the machines and the Nextcloud parts the app sits between.
+What NextFleet does for whom, and where it runs.
+Read it first: the actors and their use cases, then the machines around the app.
 [The index](README.md) explains the notation.
 
 ## Use cases
 
-An actor is a role from [CONTEXT.md](../../CONTEXT.md), an account outside any vehicle, a program
-or a timed job.
+An actor is a role from [CONTEXT.md](../../CONTEXT.md), an account, a program or a timed job.
 
 ### By role
 
-Each role does what the one it points to does, and more. The Owner holds every operation without a
-grant. Each use case names the `VehicleAccess` operation it asks for. Why each operation reaches as
-far as it does is in [Nextcloud integration](../architecture.md#nextcloud-integration); what each
-screen offers a role is in [screens follow the role](../ui.md#screens-follow-the-role).
+Each role can do all that the role it points to can, and more.
+Each use case names the operation it needs.
+Why each operation reaches that far is in [access](../architecture.md#access).
+What each screen offers is in [screens follow the role](../ui.md#screens-follow-the-role).
 
 ```mermaid
 flowchart LR
@@ -42,8 +41,8 @@ flowchart LR
 
 ### Access
 
-A grantee is a user, or each member of a group, holding a grant on a vehicle. Nextcloud is an actor
-here: deleting a group or taking a member out of one ends what it reached.
+A grantee is a user, or each member of a group, with a grant on a vehicle.
+Nextcloud is an actor too: deleting a group or a membership ends what it reached.
 
 ```mermaid
 flowchart LR
@@ -69,14 +68,11 @@ flowchart LR
     Nextcloud --- groupGone & memberGone
 ```
 
-[Vehicle Access](../../CONTEXT.md) and [Leave](../../CONTEXT.md) define the words; the
-`…/grants` and `…/access` routes are in [Nextcloud integration](../architecture.md#nextcloud-integration).
-
 ### Entries and papers
 
-Every Entry but an Expense writes a Reading. A paper stays in its owner's Files; the app only
-references it. Drawn from [odometer rules](../architecture.md#odometer-rules),
-[documents](../architecture.md#documents) and [the inbox](../architecture.md#the-inbox).
+Every Entry but an Expense writes a Reading.
+A paper stays in its owner's Files.
+The rules are in [odometer rules](../architecture.md#odometer-rules), [documents](../architecture.md#documents) and [the inbox](../architecture.md#the-inbox).
 
 ```mermaid
 flowchart LR
@@ -104,9 +100,8 @@ flowchart LR
 
 ### Pool
 
-A Booking is the booker's; a manager may change, cancel, check out and check in anybody's. Drawn from
-[the Bookings section](../ui.md#the-bookings-section) and the booking rule in
-[Nextcloud integration](../architecture.md#nextcloud-integration).
+A booking is the booker's.
+A manager may change, cancel, check out and check in anybody's ([bookings](../architecture.md#bookings), [the Bookings section](../ui.md#the-bookings-section)).
 
 ```mermaid
 flowchart LR
@@ -131,8 +126,7 @@ flowchart LR
 
 ### Reminders
 
-`ReminderJob` runs hourly from Nextcloud's cron. Drawn from
-[the reminder engine](../architecture.md#reminder-engine).
+`ReminderJob` runs hourly from Nextcloud's cron ([the reminder engine](../architecture.md#reminder-engine)).
 
 ```mermaid
 flowchart LR
@@ -162,8 +156,8 @@ flowchart LR
 
 ### Accounts and clients
 
-Any account may create a vehicle and so becomes its Owner. A client is a program acting for one
-account through the [OCS API](../api.md), signed in with an app password.
+Any account may create a vehicle and so becomes its owner.
+A client is a program that acts for one account through the [OCS API](../api.md), with an app password.
 
 ```mermaid
 flowchart LR
@@ -186,16 +180,12 @@ flowchart LR
     sync -.->|«include»| signIn
 ```
 
-Drawn from [signing in](../api.md#signing-in), [sync](../api.md#sync) and
-[personal data export](../architecture.md#personal-data-export).
-
 ### Administration
 
-The admin works through `occ` and Nextcloud's own settings. Deleting an account is Nextcloud's use
-case; the app answers it by pseudonymising the account's rows
-([ADR 0008](../adr/0008-erasing-a-driver-pseudonymises.md)). `PendingJob` finishes an erasure or
-a deleted group's revokes that a failure cut short. The commands are in
-[occ commands](../admin/occ.md).
+The admin works through `occ` and Nextcloud's settings ([occ commands](../admin/occ.md)).
+Deleting an account is Nextcloud's use case.
+The app answers it by pseudonymising the rows ([ADR 0008](../adr/0008-erasing-a-driver-pseudonymises.md)).
+`PendingJob` finishes work that a failure cut short.
 
 ```mermaid
 flowchart LR
@@ -216,10 +206,7 @@ flowchart LR
 
 ## Deployment
 
-One Nextcloud server, no service of the app's own. Drawn from
-[stack and layers](../architecture.md#stack-and-layers) and
-[Nextcloud integration](../architecture.md#nextcloud-integration); what an admin installs is in
-[administration](../admin/README.md#requirements).
+One Nextcloud server, and no service of the app's own ([stack and layers](../architecture.md#stack-and-layers), [requirements](../admin/README.md#requirements)).
 
 ```mermaid
 flowchart LR
@@ -251,3 +238,5 @@ flowchart LR
     notifications -->|push| ncApp
     app -->|"IMailer, SMTP"| smtp
 ```
+
+Next: [Components](components.md)

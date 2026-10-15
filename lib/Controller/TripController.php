@@ -55,7 +55,7 @@ class TripController extends Controller {
 
 	/**
 	 * An edit, allowed whenever it arrives: under Logbook Mode its audit row says whether it came
-	 * after the ruleset's lock delay (docs/features.md#logbook-mode), and the answer is the row as
+	 * after the ruleset's lock delay (docs/architecture.md#logbook-mode), and the answer is the row as
 	 * it now stands, with the token the next write is checked against.
 	 *
 	 * @param string $trip the trip's uuid
@@ -67,7 +67,7 @@ class TripController extends Controller {
 	}
 
 	/**
-	 * A delete voids (docs/features.md#logbook-mode), and answers with the row it left behind so
+	 * A delete voids (docs/architecture.md#logbook-mode), and answers with the row it left behind so
 	 * the undo toast holds the token the restore is checked against.
 	 *
 	 * @param string $trip the trip's uuid
@@ -88,7 +88,7 @@ class TripController extends Controller {
 	}
 
 	/**
-	 * Closes one Gap as one Reconciliation Trip (docs/features.md#logbook-mode), and answers with
+	 * Closes one Gap as one Reconciliation Trip (docs/architecture.md#logbook-mode), and answers with
 	 * that trip. The Gap is named by the trip whose claim opened it; the kilometres and the two
 	 * moments are what the driver confirmed, and the service closes nothing that no longer matches
 	 * them.

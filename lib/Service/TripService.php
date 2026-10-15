@@ -61,7 +61,7 @@ class TripService {
 	/**
 	 * The columns the database will not default. The sheet prefills every one of them (docs/ui.md),
 	 * so a request without one is a client that did not, not a driver who left a field empty - the
-	 * fields a driver leaves empty are flagged, never refused (docs/features.md#logbook-mode).
+	 * fields a driver leaves empty are flagged, never refused (docs/architecture.md#logbook-mode).
 	 */
 	private const REQUIRED = ['started_at', 'started_at_off', 'ended_at', 'ended_at_off', 'category'];
 
@@ -284,7 +284,7 @@ class TripService {
 
 	/**
 	 * Rewrites one trip in place, and the Reading with it when the journey moved. Append-only is the
-	 * audit row, not a second trip row (docs/features.md#logbook-mode): the diff is the revision.
+	 * audit row, not a second trip row (docs/architecture.md#logbook-mode): the diff is the revision.
 	 *
 	 * The request is the whole trip, as `record()` takes it: a field it leaves out is one the
 	 * driver emptied. Keeping it, as a vehicle's update does, would leave no way to turn a distance
@@ -352,7 +352,7 @@ class TripService {
 
 	/**
 	 * Voids one trip: the row survives with `deleted_at` stamped on it
-	 * (docs/features.md#logbook-mode), which is what the trash, the undo and the export read it
+	 * (docs/architecture.md#logbook-mode), which is what the trash, the undo and the export read it
 	 * back through.
 	 *
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not void this trip
@@ -427,7 +427,7 @@ class TripService {
 	/**
 	 * The audit row the write leaves behind, under Logbook Mode or about a trip that set off -
 	 * before or after the change - inside a period the mode was on: the trail follows the trip, not
-	 * the switch (docs/features.md#logbook-mode). It carries the token the change left the trip
+	 * the switch (docs/architecture.md#logbook-mode). It carries the token the change left the trip
 	 * with (docs/architecture.md#data-model).
 	 *
 	 * Inside the caller's transaction on purpose: a change without its row, or a row about a

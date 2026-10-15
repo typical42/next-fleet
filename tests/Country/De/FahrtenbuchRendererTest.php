@@ -102,7 +102,7 @@ class FahrtenbuchRendererTest extends TestCase {
 	}
 
 	/**
-	 * Every column the business trip's line is judged on (docs/features.md#logbook-mode), counters
+	 * Every column the business trip's line is judged on (docs/architecture.md#logbook-mode), counters
 	 * written the way a German reads a number, and the category in words.
 	 */
 	public function testABusinessTripReadsAsOneLineOfTheLogbook(): void {
@@ -185,7 +185,7 @@ class FahrtenbuchRendererTest extends TestCase {
 	}
 
 	/**
-	 * A voided trip stays in the logbook, as voided (docs/features.md#logbook-mode) - with the day it
+	 * A voided trip stays in the logbook, as voided (docs/architecture.md#logbook-mode) - with the day it
 	 * was voided, because a line that simply ended would say nothing about when.
 	 */
 	public function testAVoidedTripIsListedAsVoided(): void {
@@ -209,7 +209,7 @@ class FahrtenbuchRendererTest extends TestCase {
 
 	/**
 	 * A Reconciliation Trip says its kilometres were derived, not read off the counter - the honest
-	 * entry an auditor is meant to find (docs/features.md#logbook-mode).
+	 * entry an auditor is meant to find (docs/architecture.md#logbook-mode).
 	 */
 	public function testAReconciliationTripSaysItWasDerived(): void {
 		$rows = $this->rows($this->render([['trip' => $this->trip([
@@ -228,7 +228,7 @@ class FahrtenbuchRendererTest extends TestCase {
 	}
 
 	/**
-	 * A late change is documented on the line it changed (docs/features.md#logbook-mode): when, and
+	 * A late change is documented on the line it changed (docs/architecture.md#logbook-mode): when, and
 	 * what each field said before, in the words of the column headers and the way the line itself
 	 * writes the value. Free text is quoted, so an empty field cannot pass for one reading "leer".
 	 */

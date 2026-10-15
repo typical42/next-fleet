@@ -217,7 +217,7 @@ class TimelineTest extends TestCase {
 
 	/**
 	 * The container wires the vehicle's own ruleset into the page, on a vehicle not under Logbook
-	 * Mode (docs/features.md#logbook-mode). What Germany requires is tests/Country/De's; this only
+	 * Mode (docs/architecture.md#logbook-mode). What Germany requires is tests/Country/De's; this only
 	 * needs one field it requires that the trip leaves out, and one the trip states.
 	 */
 	public function testABusinessTripMissingAFieldDeRequiresIsListedAsIncomplete(): void {

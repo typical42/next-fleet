@@ -1,88 +1,55 @@
 # Administration
 
-This part is for the administrator of a Nextcloud server that runs NextFleet. It tells you how to
-install, configure and upgrade the app. Users find their manual in [docs/user/](../user/README.md).
-
-| Page | Read it to |
-|---|---|
-| This page | Install, configure, upgrade and disable the app |
-| [Data and backups](data.md) | Know where the data is, what protects it and how to restore it |
-| [occ commands](occ.md) | Look up a command and its options |
-| [Troubleshooting](troubleshooting.md) | Find the cause of a problem and correct it |
+For the administrator of a Nextcloud server that runs NextFleet.
+This page installs, configures, upgrades and removes the app.
+Users have their own [manual](../user/README.md).
 
 ## Requirements
 
-- Nextcloud 31, 32, 33 or 34.
-- PHP 8.1 or later, as your Nextcloud version requires.
+- Nextcloud 31 to 34, on the PHP version it needs.
 - A database that Nextcloud supports: MariaDB, MySQL, PostgreSQL, SQLite or Oracle.
-- Background jobs in **Cron** mode. Reminders, mails and the completion of interrupted work use
-  them.
-- An email server in the Nextcloud settings, if users want reminder mails.
+- Background jobs in **Cron** mode.
+  Reminders and the completion of interrupted work need them.
+- An email server in the Nextcloud settings, for reminder mails.
 
 ## Install the app
 
-1. Log in to Nextcloud as an administrator.
-2. Open the **Apps** page.
-3. Search for **NextFleet**.
-4. Click **Download and enable**.
+On the **Apps** page, search for **NextFleet** and click **Download and enable**.
 
-   The **NextFleet** entry shows in the top navigation bar.
-
-To install from a release archive, extract it into the `apps` or `custom_apps` folder. Then enable
-the app:
+From a release archive, extract it into `apps` or `custom_apps` and enable it:
 
 ```bash
 sudo -E -u www-data php occ app:enable nextfleet
 ```
 
-> [!NOTE]
-> All examples use `www-data` as the HTTP user. Your system can use a different user, for example
-> `apache`, `http` or `wwwrun`.
+The examples use `www-data` as the HTTP user.
+Yours can be `apache`, `http` or `wwwrun`.
 
 ## Configure the server
 
-NextFleet has no administration settings page of its own. It uses these Nextcloud settings:
+NextFleet has no admin settings page.
+It uses these Nextcloud settings:
 
-- **Background jobs.** Go to **Administration settings** > **Basic settings**. Select **Cron**.
-  An hourly job sends the reminders. Another hourly job completes account deletions and group
-  deletions that an error stopped.
-- **Email server.** Go to **Administration settings** > **Basic settings** > **Email server**.
-  NextFleet sends the reminder mails through this account. To test it for one account, use
-  [`nextfleet:mail-test`](occ.md#nextfleetmail-test).
-- **Sharing.** Go to **Administration settings** > **Sharing**. An owner can give access to a
-  vehicle only to the accounts and groups that these settings let them share with:
-  - If the sharing API is off, or the owner is excluded from sharing, nobody can get access.
-  - If group sharing is off, an owner cannot give access to a group.
-  - If accounts can share only with members of their groups, the same limit applies to vehicles.
-
-Each user sets their own defaults in **Personal settings** > **Additional settings**. The
-[user manual](../user/settings.md) describes them.
+- **Background jobs** (**Basic settings**): select **Cron**.
+  Hourly jobs send the reminders and complete account and group deletions that an error stopped.
+- **Email server** (**Basic settings**): the reminder mails use it.
+  Test it with [`nextfleet:mail-test`](occ.md#nextfleetmail-test).
+- **Sharing**: an owner can give access only to whom these settings let them share with.
+  With the sharing API off, nobody gets access.
+  With group sharing off, no group gets access.
+  "Share only with group members" limits vehicles the same way.
 
 ## Upgrade the app
 
-Make a backup of the database before you upgrade. [Data and backups](data.md#make-a-backup) tells
-you what to include.
+Back up the database first ([Data and backups](data.md#make-a-backup)).
 
-1. Upgrade the app on the **Apps** page, or with this command:
+1. Upgrade on the **Apps** page, or run `occ app:update nextfleet`.
+2. If Nextcloud asks for it, run `occ upgrade`.
+3. After an upgrade with `occ`, reload the web server or PHP-FPM.
+   Until then, opcache can serve the old code, and the app can show errors.
+   The **Apps** page resets opcache itself.
 
-   ```bash
-   sudo -E -u www-data php occ app:update nextfleet
-   ```
-
-2. If Nextcloud asks for an upgrade, run it:
-
-   ```bash
-   sudo -E -u www-data php occ upgrade
-   ```
-
-3. If you upgraded with `occ`, reload the web server or PHP-FPM. PHP's opcache can keep the code
-   of the old version until it checks the files again: 60 seconds in the Nextcloud Docker image,
-   never if `opcache.validate_timestamps` is off. Until then, the app can show errors when it reads
-   a vehicle. The **Apps** page resets the opcache itself.
-
-The upgrade changes the database automatically. Each new version can add migrations and repair
-steps. Nextcloud runs each migration one time only.
-[Data and backups](data.md#how-an-upgrade-changes-the-data) gives the details.
+The upgrade changes the database by itself ([How an upgrade changes the data](data.md#how-an-upgrade-changes-the-data)).
 
 ## Disable or remove the app
 
@@ -90,28 +57,18 @@ steps. Nextcloud runs each migration one time only.
 sudo -E -u www-data php occ app:disable nextfleet
 ```
 
-When you disable the app, the data stays in the database. Users cannot open it until you enable
-the app again.
+The data stays in the database.
 
 > [!IMPORTANT]
-> While the app is disabled, NextFleet does not see account deletions, group deletions and removals
-> from a group. Their names, their access and their places on the reminder lists stay.
+> While the app is disabled, it does not see deleted accounts and groups.
+> Their names and access stay.
+> After you enable it again, run `nextfleet:check`.
+> An `owner` or `grantee` finding shows what to clean up ([Troubleshooting](troubleshooting.md#a-vehicle-has-an-owner-that-does-not-exist)).
 
-After you enable the app again, run `nextfleet:check`. An `owner` finding shows a vehicle whose
-owner account is gone. A `grantee` finding shows access for an account or group that is gone. The
-check does not find an account that is only on a reminder list. Refer to
-[Troubleshooting](troubleshooting.md#a-vehicle-has-an-owner-that-does-not-exist).
-
-> [!WARNING]
-> If you want to keep the data, do not remove the app without `--keep-data`. Before you remove it,
-> make a database backup.
+To remove the app and keep the data, back up first and use `--keep-data`:
 
 ```bash
 sudo -E -u www-data php occ app:remove nextfleet --keep-data
 ```
 
-## Related
-
-- [Data and backups](data.md)
-- [occ commands](occ.md)
-- [Security](../security.md) and [Licensing and legal](../legal.md)
+Next: [Data and backups](data.md)

@@ -1,131 +1,104 @@
 # Contributing a country, an importer, a report
 
-Part of the [NextFleet plan](../plan.md). Terms are defined in [CONTEXT.md](../CONTEXT.md).
+New country rules, import formats and report layouts arrive like everything else: fork, add a directory, open a merge request, get it reviewed.
+There is **no plugin system, no registry and no extra app to install**.
 
-Country rules, import formats and report layouts arrive the way everything else in open source arrives: 
-fork the repository, add a directory, open a merge request, get it reviewed, ship it in the next release.
-There is **no plugin system, no registry, no separate app to install**.
+That is on purpose:
 
-That is a deliberate decision, and it costs us something. Writing it down so nobody re-litigates it
-by accident:
-
-- No plugin API to keep stable forever, no event to dispatch. Fewer moving parts than a runtime
-  seam that would carry two implementations at most. The one versioned contract is the
-  [OCS API](api.md), for clients outside the app, not for code inside it.
-- Third-party code that runs inside our app would run unsandboxed under our name and our release
-  signature. A merge request is reviewed before it gets that.
-- **The price: every merged country is ours to maintain.** See "What a country owes us" below.
+- No plugin API to keep stable forever.
+  The one versioned contract is the [OCS API](api.md), for clients outside the app.
+- Third-party code inside the app would run under our name and our release signature.
+  A merge request is reviewed first.
+- **The price: we maintain every country we merge** ([what a country owes us](#what-a-country-owes-us)).
 
 ## Still one directory per country
 
-Dropping the plugin system does not mean scattering `if ($country === 'de')` through the codebase.
-The interfaces stay — as ordinary internal seams, not as public API:
+No `if ($country === 'de')` across the code.
+The seams stay, as internal interfaces:
 
 | Seam | Interface | First implementation |
 |---|---|---|
-| Jurisdiction profile | `IJurisdiction` — key, display name, units, currency, the defaults a new vehicle takes. Plate format arrives with the feature that reads it. Document kinds are not here: registration, insurance, manual, receipt and photo are papers every country has (`Document::KINDS`) | `de`, `generic` |
-| Logbook ruleset | `ILogbookRules` — required fields per trip category, lock delay, retention period, the URL the requirement is written at. What it answers, never what follows from it: the finding a missing field produces is the core's | German Fahrtenbuch ([logbook mode](features.md#logbook-mode)) |
-| Inspection regime | `IInspectionScheme` — the inspection as a reminder template, its cadence and first-due rule by vehicle type. Reached through `IJurisdiction::inspectionScheme()` | HU/AU (24 months, 12 for trucks and tractors, 36 for new cars) |
-| Rates over time | `IRateProvider` — mileage allowance, VAT, emission factors, **each valid from a date**; and the expense categories that carry no VAT. Reached through `IJurisdiction::rates()` | German VAT (M3), 0,30 €/km by car, German grid factor |
-| Report renderer | `IReportRenderer` and `IClaimRenderer` — what the core read in, printable HTML out ([ADR 0005](adr/0005-no-pdf-library.md)) | Fahrtenbuch, mileage claim, the generic plain logbook |
-| Importer | `IImporter` in `lib/Import/` — another tool's CSV export in, proposals out; `CsvReader` reads the file for it, under the bounds in [security](security.md) | LubeLogger, Spritmonitor |
-| Service templates | `IServiceTemplates` — intervals by market or manufacturer. No law sets them, so no jurisdiction hands them out | Generic (oil, brake fluid, tyres) |
+| Jurisdiction profile | `IJurisdiction`: key, name, units, currency, defaults for a new vehicle | `de`, `generic` |
+| Logbook ruleset | `ILogbookRules`: required fields per category, lock delay, retention, source URL | German Fahrtenbuch ([Logbook mode](architecture.md#logbook-mode)) |
+| Inspection | `IInspectionScheme`: the inspection as a reminder template, by vehicle type | HU/AU |
+| Rates | `IRateProvider`: mileage rate, VAT, emission factors, **each valid from a date** | German rates |
+| Reports | `IReportRenderer`, `IClaimRenderer`: printable HTML ([ADR 0005](adr/0005-no-pdf-library.md)) | Fahrtenbuch, mileage claim, generic logbook |
+| Importer | `IImporter` in `lib/Import/` | LubeLogger, Spritmonitor |
+| Service templates | `IServiceTemplates`: intervals by market. No law sets them, so no country owns them. | Oil, brake fluid, tyres |
 
-A country is `lib/Jurisdiction/<Cc>/`, wired up in one registration list — `Jurisdictions::PROFILES`,
-one line per country, resolved through the container so a profile can take dependencies. Reviewing a
-country means reading one directory; deleting it means deleting that directory and its line — and,
-for the country `Jurisdictions::DEFAULT` names, naming another first. A key nobody has written
-resolves to `generic` rather than throwing: a vehicle registered under a country a later release
-dropped must still open.
+A country is `lib/Jurisdiction/<Cc>/` plus one line in `Jurisdictions::PROFILES`.
+Reviewing it means reading one directory.
+Removing it means deleting that directory and its line.
+A key nobody wrote resolves to `generic`, so a vehicle of a country a later release dropped still opens.
 
-Germany fills every seam. A new country fills only those its rules need. A profile reaches its country's ruleset through
-`IJurisdiction::logbookRules()`, which answers null where there is none, as every optional seam
-does; the core asks the vehicle's jurisdiction and never the class.
+Germany fills every seam.
+A new country fills only what its rules need.
+A missing seam answers null, and the core asks the vehicle's jurisdiction, never the class.
 
-**The generic profile is the other one.** Metric units, no currency, no logbook ruleset, no inspection
-scheme, no rates — but a plain logbook, in the reader's language, because a trip listing needs no
-country's law. A vehicle under it states its own currency — an instance-wide one would be a
-single number for a fleet that crosses borders. It is what an install in a country nobody has
-written gets, and it is why a report needing a rate must be *unavailable* rather than zero. Every
-seam has to tolerate a jurisdiction that answers "I don't know" — the generic profile is the test
-that it does.
+**`generic` is the other profile.**
+Metric, no currency, no ruleset, no inspection, no rates, but a plain logbook in the reader's language.
+Every seam has to cope with a country that answers "I don't know", and `generic` is the test that it does.
+That is why a report that needs a rate is *unavailable* rather than zero.
 
 ## Rules that keep the seam honest
 
-- **The core knows no country.** No `if ($country === 'de')` outside `lib/Jurisdiction/De/`. If the
-  core needs a German fact, the fact is missing from an interface — that is a review comment, not a
-  workaround.
-- **Rates are time-versioned, always.** A 2024 mileage claim must use the 2024 rate, not today's.
-  `IRateProvider::vatRateAt(DateTimeInterface $when)` and its siblings, never a constant. Same for VAT and emission
-  factors. This is the detail that quietly invalidates reports when it is skipped. The one exception
-  is the grid average (`gridFactor()`): it is published years late, so it is the newest figure with
-  its year shown, and a person can replace it with their own. The fuel factors' source names its
-  year too (`emissionSourceYear()`), or null until it is read off the publication.
-- **Store canonical, display local.** Kilometres, millilitres, cents, UTC in the database — always,
-  including for a UK vehicle. Conversion happens at the edges.
-- **Jurisdiction is per vehicle**, not per instance: a fleet crosses borders, and a leased car
-  registered abroad keeps its own rules. It is not asked for when a vehicle is created — it defaults
-  from the user's personal setting, and is changed in the vehicle's edit sheet ([interface](ui.md#details-that-decide-whether-it-feels-easy)).
-- **Validation returns findings, not exceptions** ([data model](architecture.md#data-model)). A
-  ruleset says "this trip has no purpose and your jurisdiction requires one" — the record is still
-  saved, still flagged, still fixable.
-- **A country that needs its own column adds a migration**, reviewed like any other schema change.
-  There is no escape-hatch JSON blob: a field nobody can see in the schema is a field nobody
-  maintains.
+- **The core knows no country.**
+  If the core needs a German fact, an interface is missing it.
+  That is a review comment, not a workaround.
+- **Rates are versioned by date, always.**
+  A 2024 claim uses the 2024 rate: `IRateProvider::vatRateAt($when)` and its siblings, never a constant.
+  The one exception is the grid average, which is published years late: it is the newest figure with its year shown.
+- **Store canonical, display local.**
+  Kilometres, millilitres, cents and UTC in the database, a UK vehicle included.
+  Conversion happens at the edges.
+- **The country is per vehicle**, not per instance.
+  A fleet crosses borders.
+- **Rules return findings, not exceptions.**
+  "This trip has no purpose and your country needs one": the record is still saved, flagged and fixable.
+- **A country that needs a column adds a migration**, reviewed like any schema change.
+  No JSON blob.
 
 ## What a country owes us
 
-Because we maintain what we merge:
+- A `CODEOWNERS` entry with a reachable maintainer, who answers when the law changes.
+- A green run of the shared kit in `tests/Country/`, the same for every country.
+- A source URL for every rate and deadline, linked, not quoted ([legal](legal.md)).
+  "45p per mile" without a source is a number nobody can check in three years.
+- A `Signed-off-by` on every commit (DCO).
+- A country nobody maintains is marked experimental and later removed.
+  A silent, wrong tax report is worse.
 
-- A `CODEOWNERS` entry with a reachable maintainer, and an answer when their country's law changes.
-- A passing run of the shared country test kit in `tests/Country/` — the same suite for every
-  jurisdiction, so a new one is provably wired up rather than merely present.
-- Sources for every rate and deadline, cited by URL in comments — linked, not quoted, because a
-  pasted handbook table ships in our signed release ([licensing and legal](legal.md)). "45p per
-  mile" without a citation is a number nobody can check in three years.
-- A `Signed-off-by` line on every commit (DCO). We cannot relicense what we cannot trace.
-- A country nobody maintains gets marked experimental and eventually removed. Saying so up front is
-  kinder than a silent, wrong tax report.
+## The second country is a test
 
-## The second jurisdiction is a test, not a release
+**The UK is the honest test:** miles, mpg, an MOT after three years, pence per mile.
+It breaks every unit assumption hiding in the code, before a second country ships.
+It lives in `tests/Country/`, not in `lib/` ([ADR 0002](adr/0002-uk-is-a-test-jurisdiction.md)).
+A real `uk` ships when a maintainer signs up.
 
-**The UK is the honest test**: miles, litres, mpg, MOT annually after three years, pence per mile.
-It breaks every unit assumption hiding in the code, which is exactly what we want it to do — before
-a second country ships, not after. Germany alone proves nothing, whatever the interfaces look like.
-
-But it lives in `tests/Country/`, not in `lib/`
-([ADR 0002](adr/0002-uk-is-a-test-jurisdiction.md)). Shipping it would put our signed release behind
-UK rates and deadlines nobody here can maintain, which is the failure mode the section above is
-written to prevent. A real `uk` ships when a maintainer signs up in `CODEOWNERS`.
-
-## Consequence for the interface
-
-Units stop being a "low priority setting". They are a property of the jurisdiction, resolved on
-display, and the l/100 km ↔ mpg conversion belongs in the profile — not in a checkbox. What
-`IJurisdiction` answers today is what a vehicle is *stored* under; the display units join it in the
-same interface with the first screen that converts, never as a user setting.
+Display units belong to the country profile, not to a user setting.
+They join `IJurisdiction` with the first screen that converts.
 
 ## AI assistance
 
-You can use an AI tool for a change. [Nextcloud's AI
-policy](https://github.com/nextcloud/.github/blob/master/AI_POLICY.md) applies to this repository.
-These are its rules:
+You can use an AI tool.
+[Nextcloud's AI policy](https://github.com/nextcloud/.github/blob/master/AI_POLICY.md) applies here:
 
-- **Name the tool in each commit.** Add one trailer for each AI tool and model that helped:
-  `Assisted-by: AGENT_NAME:MODEL_VERSION`, for example `Assisted-by: ClaudeCode:claude-sonnet-4-6`.
-  Git, editors and static analysis tools need no trailer.
-- **Name it in the pull request.** The
-  [pull request template](../.github/pull_request_template.md) asks for it.
-- **You are the author.** You must explain, defend and change each line. "The AI wrote it" is not
-  an answer.
-- **Write in your own words.** Write issues, pull request descriptions and review comments
-  yourself. A tool can translate them or correct the spelling.
-- **Examine security yourself.** Check each dependency, access check and authentication path by
-  hand.
-- **Only a person sends.** An AI tool does not open an issue or a pull request, write a review
-  comment or send a security report. It does not add `Signed-off-by`. Only you can certify the DCO.
-- **Copy nothing incompatible.** Add no third-party code or data that the AGPL does not admit
-  ([licensing and legal](legal.md)).
-- **Comments describe the code.** They do not tell how the code was made. Put that in the commit
-  message.
-- **Test on a live Nextcloud.** Test a new function yourself, at each place a user can reach it.
+- **Name the tool in each commit** with a trailer per tool and model: `Assisted-by: AGENT_NAME:MODEL_VERSION`, for example `Assisted-by: ClaudeCode:claude-sonnet-4-6`.
+  Git, editors and static analysis need none.
+- **Name it in the pull request.**
+  The [template](../.github/pull_request_template.md) asks.
+- **You are the author.**
+  You explain, defend and change each line.
+  "The AI wrote it" is no answer.
+- **Write issues, descriptions and review comments yourself.**
+  A tool may translate or fix spelling.
+- **Check security yourself:** each dependency, access check and login path.
+- **Only a person sends.**
+  An AI tool opens no issue or pull request, writes no review and sends no security report.
+  It never adds `Signed-off-by`.
+- **Copy nothing the AGPL does not admit** ([legal](legal.md)).
+- **Comments describe the code**, not how it was made.
+  That goes in the commit message.
+- **Test on a live Nextcloud**, at each place a user can reach the change.
+
+Next: [Development](development.md)

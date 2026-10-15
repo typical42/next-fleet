@@ -115,7 +115,7 @@ class TripMapper extends BaseMapper {
 	/**
 	 * The trips of one vehicle that set off in `[from, to)`, oldest first as findAllForVehicle()
 	 * orders them - voided ones included. This is the Fahrtenbuch export's own question
-	 * (docs/features.md#logbook-mode): a voided trip is listed there, as voided.
+	 * (docs/architecture.md#logbook-mode): a voided trip is listed there, as voided.
 	 *
 	 * @return list<Trip>
 	 * @throws \OCP\DB\Exception
