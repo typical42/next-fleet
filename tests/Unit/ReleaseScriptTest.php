@@ -220,11 +220,9 @@ class ReleaseScriptTest extends TestCase {
 		$check = $this->lineOf('integrity:check-app');
 		$this->assertGreaterThan($sign, $check);
 		$this->assertSame([
-			'upgrade-check build/artifacts/nextfleet-1.2.3.tar.gz 9056da5',
-			'upgrade-check build/artifacts/nextfleet-1.2.3.tar.gz e7bdbe1',
-			'upgrade-check --db pgsql build/artifacts/nextfleet-1.2.3.tar.gz 9056da5',
-			'upgrade-check --db pgsql build/artifacts/nextfleet-1.2.3.tar.gz e7bdbe1',
-			'upgrade-check --db oracle build/artifacts/nextfleet-1.2.3.tar.gz 9056da5',
+			'upgrade-check build/artifacts/nextfleet-1.2.3.tar.gz v0.3.1',
+			'upgrade-check --db pgsql build/artifacts/nextfleet-1.2.3.tar.gz v0.3.1',
+			'upgrade-check --db oracle build/artifacts/nextfleet-1.2.3.tar.gz v0.3.1',
 		], array_values(array_filter($log, static fn (string $line): bool => str_starts_with($line, 'upgrade-check '))));
 		$this->assertGreaterThan($check, $this->lineOf('upgrade-check '));
 
