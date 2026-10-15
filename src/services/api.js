@@ -16,6 +16,9 @@ import { t } from '../utils/l10n.js'
  * @property {string} uuid - identity; the plate is only a label
  * @property {number} updated_at - the token the next write is checked against
  * @property {string} [plate] - as registered, free to change
+ * @property {string|null} [display_name] - a second label beside the plate; the name without one
+ * @property {string|null} [eu_category] - field J of the registration certificate (src/utils/registration.js)
+ * @property {string|null} [body_type] - field 4, the EU body code with its add-on
  * @property {string} [manufacturer] - who built it
  * @property {string} [model] - what they call it
  * @property {string} [engine] - the drivetrain classification (CONTEXT.md)
@@ -141,6 +144,8 @@ import { t } from '../utils/l10n.js'
  *   measured on every vehicle
  * @property {Consumption|null} [consumption] - the segment a fill-up closes, or null when it closes
  *   none
+ * @property {Consumption|null} [consumption_per_hour] - the segment it closes against the engine
+ *   hours, or null; only on a vehicle that counts them
  * @property {string|null} [closes] - the uuid of the reminder a maintenance record closed, sent back
  *   as `closes` when the record is saved (docs/architecture.md#reminder-engine)
  * @property {string[]} [may] - what the session may do to this Entry: `edit`, `delete`, or neither
@@ -149,16 +154,16 @@ import { t } from '../utils/l10n.js'
  */
 
 /**
- * A full-to-full segment (docs/architecture.md#numbers-consumption-cost-emissions), measured on the
- * main counter.
+ * A full-to-full segment (docs/architecture.md#numbers-consumption-cost-emissions), measured on one
+ * counter: the main one, or the engine hours.
  *
  * @typedef {object} Consumption
  * @property {string} energy - the energy both ends were filled with
  * @property {string} closes - the uuid of the fill-up that closes it
  * @property {number} filled_at - when that fill-up was, seconds
  * @property {number} amount - millilitres or watt-hours that went in after the opening fill-up
- * @property {number} distance - how far the main counter moved, in its unit
- * @property {'km'|'h'} per - the main counter's unit
+ * @property {number} distance - how far the counter moved, in its unit
+ * @property {'km'|'h'} per - the counter's unit
  * @property {number} value - litres or kWh per 100 km, or per hour
  */
 
@@ -169,8 +174,8 @@ import { t } from '../utils/l10n.js'
  * @typedef {object} PeriodConsumption
  * @property {string} energy - the energy
  * @property {number} amount - millilitres or watt-hours
- * @property {number} distance - in the main counter's unit
- * @property {'km'|'h'} per - the main counter's unit
+ * @property {number} distance - in the measuring counter's unit
+ * @property {'km'|'h'} per - the measuring counter's unit
  * @property {number} value - litres or kWh per 100 km, or per hour
  */
 
@@ -184,6 +189,7 @@ import { t } from '../utils/l10n.js'
  * @property {boolean} net - whether rows count net of their VAT rate
  * @property {'km'|'h'} per - the main counter's unit
  * @property {number|null} distance - how far the main counter moved in the period
+ * @property {number|null} hours - how far the second counter moved in it; null without one
  * @property {number|null} total - every cost in the period
  * @property {number|null} energy - the fill-ups' share of it
  * @property {number|null} maintenance - the maintenance records' share of it
@@ -191,6 +197,8 @@ import { t } from '../utils/l10n.js'
  *   category in the sheet's order, then any word it does not offer, then the uncategorised
  * @property {number|null} value - total per 100 km or per hour; null without a distance
  * @property {number|null} energy_value - energy per 100 km or per hour
+ * @property {number|null} value_per_hour - total per engine hour; null without engine hours
+ * @property {number|null} energy_value_per_hour - energy per engine hour
  * @property {number|null} tco - value plus depreciation; null unless purchase and residual are set
  * @property {boolean} incomplete - a fill-up in the period has no price
  * @property {boolean} unstated - under `net`, a row without a stated rate counted gross
@@ -201,6 +209,12 @@ import { t } from '../utils/l10n.js'
  *
  * @typedef {object} Kpis
  * @property {PeriodConsumption[]} consumption - one per energy that closed a segment in it
+ * @property {PeriodConsumption[]|null} consumption_per_hour - the same against the engine hours,
+ *   from segments with engine hours at both ends; null on a vehicle that counts none, empty when
+ *   no such segment closed in the period
+ * @property {string[]} measured - the energies that ever closed a segment, in any period
+ * @property {string[]|null} measured_per_hour - the same against the engine hours; null on a vehicle
+ *   that counts none
  * @property {{amount: number, distance: number, per: 'km'|'h', value: number}|null} wall_side - the
  *   rolling electric figure, counted at the charger
  * @property {Cost} cost - what it cost
@@ -812,7 +826,7 @@ export async function updateEntry(uuid, type, entry, fields) {
 
 /**
  * Delete one Entry or Reminder - a trip under Logbook Mode is voided
- * (docs/features.md#logbook-mode). The answer carries the token the undo is checked against, as a
+ * (docs/architecture.md#logbook-mode). The answer carries the token the undo is checked against, as a
  * vehicle's does.
  *
  * @param {string} uuid - the vehicle it hangs off
@@ -1152,7 +1166,7 @@ export async function readGaps(uuid) {
 }
 
 /**
- * Close one Gap as one private trip the server marks reconciled (docs/features.md#logbook-mode). The
+ * Close one Gap as one private trip the server marks reconciled (docs/architecture.md#logbook-mode). The
  * Gap travels as the driver confirmed it, and the server closes nothing that no longer matches.
  *
  * @param {string} uuid - the vehicle the Gap is in

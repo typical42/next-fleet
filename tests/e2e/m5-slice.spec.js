@@ -325,12 +325,34 @@ for (const viewport of [{ width: 320, height: 640 }, { width: 1280, height: 800 
 				// As long as a plate may be, in wide letters: a button does not wrap its text, so the
 				// overview's hints are as wide as the longest name in them, whatever the font.
 				const longest = `${plates}${at}-`.padEnd(32, 'W')
-				await api(page, { method: 'POST', path: '/api/vehicles', body: { plate: longest } })
+				// Its display name as long as one may be, since the navigation's second line is cut to
+				// a width a phone barely has.
+				const named = 'Koffer-Lkw Tour Süd: Stuttgart, Ulm, Augsburg, München, Passau'.padEnd(64, 'W')
+				await api(page, { method: 'POST', path: '/api/vehicles', body: { plate: longest, display_name: named } })
 
 				await page.goto(appPage)
 				await expect(row(page, plate)).toBeVisible()
 				await expect(page.locator('.hint')).toContainText(longest)
 				await check(page, 'the overview')
+
+				if (folded) {
+					await page.getByRole('button', { name: 'Open navigation' }).click()
+					// It slides in, and a panel half in measures as a spill.
+					await expect(page.locator('.app-navigation')).toHaveCSS('margin-inline-start', '0px')
+				}
+				const listed = page.locator('.app-navigation .list-item').filter({ has: page.locator('strong', { hasText: longest }) })
+				const second = listed.locator('.list-item-content__subname')
+				await expect(second).toHaveText(named)
+				// fits() passes a line the stylesheet truncates, and one that wrapped instead would
+				// pass it too, so the cut and the line below the plate are measured here.
+				expect(await second.evaluate((line) => ({
+					below: line.getBoundingClientRect().top >= (line.closest('.list-item')?.querySelector('strong')?.getBoundingClientRect().bottom ?? Infinity),
+					cut: line.scrollWidth > line.clientWidth,
+				}))).toEqual({ below: true, cut: true })
+				await check(page, 'the navigation, a long display name')
+				if (folded) {
+					await page.getByRole('button', { name: 'Close navigation' }).click()
+				}
 
 				await open(page, plate)
 				await expect(page.locator('.due__row')).toHaveCount(1)

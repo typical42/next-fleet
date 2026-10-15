@@ -1,7 +1,11 @@
-# Every dated row stores a UTC instant and its originating UTC offset
+# Every dated row stores a UTC instant and its UTC offset
 
-A Fahrtenbuch is judged on local calendar dates: a trip ending 00:30 in Berlin belongs to the
-previous day in UTC. Storing the instant alone forces a timezone guess at read time, and the guess
-would be the server's rather than the driver's. So each dated row carries both facets. Reporting and
-legal views derive the local date from them; ordering and durations use the instant. `occurred_at`
-is the user's and editable, `created_at` is the server's and never accepted from a client.
+A Fahrtenbuch is judged on local dates.
+A trip that ends 00:30 in Berlin is on the day before in UTC.
+With the instant alone, the app would have to guess a time zone when it reads, and the guess would be the server's, not the driver's.
+
+So each dated row stores both: the instant and the offset where it happened.
+Reports derive the local date from them.
+Order and durations use the instant.
+The entry's own time is the user's and can be edited.
+`created_at` is the server's and never comes from a client.

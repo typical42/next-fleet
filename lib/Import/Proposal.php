@@ -10,7 +10,7 @@ namespace OCA\NextFleet\Import;
 
 /**
  * One source row as the entry it would become. Never a trip: neither format keeps a logbook a
- * ruleset would accept (docs/features.md#logbook-mode).
+ * ruleset would accept (docs/architecture.md#logbook-mode).
  */
 final class Proposal {
 	public const ENERGY = 'energy';

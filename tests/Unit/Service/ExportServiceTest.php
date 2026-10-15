@@ -18,11 +18,13 @@ use OCA\NextFleet\Service\EnteredBy;
 use OCA\NextFleet\Service\ExportService;
 use OCA\NextFleet\Service\VehicleService;
 use OCA\NextFleet\Tests\Stub\SpyLogger;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LogLevel;
 
 /**
- * What the CSV export tells the log. Which rows a file holds is tests/Integration/ExportTest's.
+ * What the CSV export tells the log and what it calls the file. Which rows a file holds is
+ * tests/Integration/ExportTest's.
  */
 class ExportServiceTest extends TestCase {
 	private const VEHICLE = '0195e2f1-0000-4000-8000-000000000001';
@@ -59,9 +61,35 @@ class ExportServiceTest extends TestCase {
 		$this->assertSame([], $logger->lines);
 	}
 
-	private function service(ExpenseMapper $expenses, SpyLogger $logger): ExportService {
+	/**
+	 * The file is called by the vehicle's name, as a notice calls it: the plate, else the display
+	 * name, else make and model. What a file system could misread goes; with nothing left, the uuid.
+	 *
+	 * @param array<string, string> $vehicle
+	 */
+	#[DataProvider('names')]
+	public function testTheFileIsCalledByTheVehiclesName(array $vehicle, string $name): void {
+		$file = $this->service($this->createMock(ExpenseMapper::class), new SpyLogger(), $vehicle)->csv('alice', self::VEHICLE, 2026, 'expenses');
+
+		$this->assertSame($name, $file['name']);
+	}
+
+	/** @return array<string, array{array<string, string>, string}> */
+	public static function names(): array {
+		return [
+			'the plate' => [['plate' => 'B-XY 123', 'display_name' => 'Family van'], 'B-XY_123-2026-expenses.csv'],
+			'the display name' => [['display_name' => 'Family van', 'manufacturer' => 'VW'], 'Family_van-2026-expenses.csv'],
+			'make and model' => [['manufacturer' => 'VW', 'model' => 'Caddy'], 'VW_Caddy-2026-expenses.csv'],
+			'a letter a file system could misread' => [['display_name' => 'Käfer'], 'K_fer-2026-expenses.csv'],
+			'nothing left of the name' => [['display_name' => '☀ ☀'], self::VEHICLE . '-2026-expenses.csv'],
+			'no name at all' => [[], self::VEHICLE . '-2026-expenses.csv'],
+		];
+	}
+
+	/** @param array<string, string> $vehicle */
+	private function service(ExpenseMapper $expenses, SpyLogger $logger, array $vehicle = ['plate' => 'B-XY 123']): ExportService {
 		$fleet = $this->createMock(VehicleService::class);
-		$fleet->method('reach')->willReturn(Vehicle::fromRow(['id' => 7, 'uuid' => self::VEHICLE, 'plate' => 'B-XY 123', 'currency' => 'EUR']));
+		$fleet->method('reach')->willReturn(Vehicle::fromRow(['id' => 7, 'uuid' => self::VEHICLE, 'currency' => 'EUR'] + $vehicle));
 
 		return new ExportService(
 			$fleet,

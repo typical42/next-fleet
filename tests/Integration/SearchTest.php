@@ -118,6 +118,23 @@ class SearchTest extends TestCase {
 		$this->assertSame('', $entries[0]['subline']);
 	}
 
+	/** A display name is how its owner calls the vehicle, so it finds it too, in any case. */
+	public function testAVehicleIsFoundByItsDisplayName(): void {
+		$this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'display_name' => 'Blue Van', 'model' => 'Transit']);
+
+		$this->assertSame(['B-XY 123'], array_column($this->search(self::OWNER, 'blue van'), 'title'));
+	}
+
+	/** Named as the screen names it: the display name stands in for a missing plate, the make below. */
+	public function testAVehicleWithoutAPlateIsNamedByItsDisplayName(): void {
+		$this->vehicles->create(self::OWNER, ['display_name' => 'Blue van', 'manufacturer' => 'Ford', 'model' => 'Transit']);
+
+		$entries = $this->search(self::OWNER, 'transit');
+
+		$this->assertSame('Blue van', $entries[0]['title']);
+		$this->assertSame('Ford Transit', $entries[0]['subline']);
+	}
+
 	/**
 	 * A plate is typed the way it is remembered, and nobody remembers where the hyphen went.
 	 *

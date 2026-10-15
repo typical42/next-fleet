@@ -26,6 +26,7 @@ use OCA\NextFleet\Service\MoneyRows;
 use OCA\NextFleet\Service\NotificationService;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
+use OCA\NextFleet\Tests\Fixture\SharedCases;
 use OCA\NextFleet\Tests\Stub\RegisteredProfiles;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\IConfig;
@@ -509,7 +510,7 @@ class VehicleServiceTest extends TestCase {
 	}
 
 	/**
-	 * The switch the vehicle edit sheet carries (docs/features.md#logbook-mode), a column a
+	 * The switch the vehicle edit sheet carries (docs/architecture.md#logbook-mode), a column a
 	 * request decides like the lifecycle beside it. Switching off is a write like any other: a
 	 * mode that could only ever go on would be a trap, not a setting.
 	 */
@@ -526,7 +527,7 @@ class VehicleServiceTest extends TestCase {
 
 	/**
 	 * The flip is how the export later reconstructs the periods the mode was on
-	 * (docs/features.md#logbook-mode), so it is recorded on the vehicle itself, and between the
+	 * (docs/architecture.md#logbook-mode), so it is recorded on the vehicle itself, and between the
 	 * transaction's boundaries with the write it describes: a switch that landed without its row
 	 * would leave the export with trips it cannot place on either side of it.
 	 */
@@ -821,6 +822,170 @@ class VehicleServiceTest extends TestCase {
 		yield 'a currency sign' => [['currency' => '€']];
 		yield 'a currency of two letters' => [['currency' => 'EU']];
 		yield 'a currency with a digit' => [['currency' => 'EU1']];
+	}
+
+	public function testADisplayNameIsWrittenTrimmed(): void {
+		$this->assertSame('Blue van', $this->service()->create('alice', ['display_name' => '  Blue van '])->getDisplayName());
+	}
+
+	/** Emptying the field clears the name: no blank label under the plate. */
+	public function testAnEmptyDisplayNameIsNone(): void {
+		$this->mapper->method('updateChecked')->willReturnArgument(0);
+		$stored = $this->stored();
+		$stored->setDisplayName('Blue van');
+		$stored->resetUpdatedFields();
+		$this->mapper->method('findByUuid')->willReturn($stored);
+
+		$this->assertNull($this->service()->update('alice', self::UUID, 1750000000, ['display_name' => '   '])->getDisplayName());
+	}
+
+	/** Sixty-four characters, counted as a person counts them, not in bytes. */
+	public function testADisplayNameFillsItsColumnAndNoMore(): void {
+		$this->assertSame(str_repeat('Ä', 64), $this->service()->create('alice', ['display_name' => str_repeat('Ä', 64)])->getDisplayName());
+
+		$this->expectException(\InvalidArgumentException::class);
+		$this->service()->create('alice', ['display_name' => str_repeat('Ä', 65)]);
+	}
+
+	/**
+	 * Field J as the certificate prints it, off-road suffix included.
+	 *
+	 * @dataProvider euCategories
+	 */
+	public function testAnEuCategoryIsWrittenAsTheCertificatePrintsIt(string $code): void {
+		$this->assertSame($code, $this->service()->create('alice', ['eu_category' => ' ' . $code . ' '])->getEuCategory());
+	}
+
+	/** @return iterable<string, array{string}> */
+	public static function euCategories(): iterable {
+		yield 'a passenger car' => ['M1'];
+		yield 'an off-road goods vehicle' => ['N3G'];
+		yield 'a heavy trailer' => ['O4'];
+		yield 'a parent L category' => ['L3e'];
+		yield 'an L sub-category' => ['L3e-A2E'];
+		yield 'a fast tractor' => ['T4.1b'];
+		yield 'a slow track-laying tractor' => ['C2a'];
+		yield 'towed equipment' => ['S2b'];
+	}
+
+	/** @dataProvider foreignCategories */
+	public function testAnEuCategoryOutsideTheRegulationsIsRefused(string $code): void {
+		$this->expectException(\InvalidArgumentException::class);
+		$this->expectExceptionMessage('eu_category is not an EU vehicle category');
+
+		$this->service()->create('alice', ['eu_category' => $code]);
+	}
+
+	/** @return iterable<string, array{string}> */
+	public static function foreignCategories(): iterable {
+		yield 'a German key' => ['01'];
+		yield 'lower case' => ['m1'];
+		yield 'a tractor without its speed' => ['T1'];
+		yield 'an off-road trailer' => ['O2G'];
+		yield 'an off-road motorcycle' => ['L3eG'];
+		yield 'the incomplete special-purpose suffix' => ['N1S'];
+		yield 'a sub-category only the KBA lists' => ['L4e-A1'];
+	}
+
+	public function testAnEmptyEuCategoryIsNone(): void {
+		$this->assertNull($this->service()->create('alice', ['eu_category' => ''])->getEuCategory());
+	}
+
+	/**
+	 * Field 4 as KBA prints it, the add-on appended.
+	 *
+	 * @dataProvider bodyTypes
+	 */
+	public function testABodyTypeIsWrittenAsTheCertificatePrintsIt(string $category, string $body): void {
+		$this->assertSame($body, $this->service()->create('alice', ['eu_category' => $category, 'body_type' => ' ' . $body . ' '])->getBodyType());
+	}
+
+	/** @return iterable<string, array{string, string}> */
+	public static function bodyTypes(): iterable {
+		foreach (self::fits(true) as $case => [$category, $body]) {
+			yield $case => [(string)$category, $body];
+		}
+	}
+
+	/** @dataProvider foreignBodyTypes */
+	public function testABodyTypeOutsideTheRegulationsIsRefused(string $body): void {
+		$this->expectException(\InvalidArgumentException::class);
+		$this->expectExceptionMessage('body_type is not an EU body code');
+
+		$this->service()->create('alice', ['eu_category' => 'N3', 'body_type' => $body]);
+	}
+
+	/** @return iterable<string, array{string}> */
+	public static function foreignBodyTypes(): iterable {
+		yield 'no such code' => ['ZZ'];
+		yield 'lower case' => ['ba'];
+		yield 'an add-on after a code that takes none' => ['BB03'];
+		yield 'no such add-on' => ['BA33'];
+		yield 'a one-digit add-on' => ['BA3'];
+		yield 'the KBA spelling of SL' => ['BCSL'];
+		yield 'a legacy bus code' => ['CK'];
+	}
+
+	/** @dataProvider misfits */
+	public function testABodyTypeOutsideItsCategoryIsRefused(?string $category, string $body): void {
+		$this->expectException(\InvalidArgumentException::class);
+		$this->expectExceptionMessage('body_type does not fit eu_category');
+
+		$this->service()->create('alice', ['eu_category' => $category, 'body_type' => $body]);
+	}
+
+	/** @return iterable<string, array{?string, string}> */
+	public static function misfits(): iterable {
+		return self::fits(false);
+	}
+
+	/**
+	 * The pairs src/utils/registration.spec.js judges too, so the sheet offers what the server takes.
+	 *
+	 * @return array<string, array{?string, string}>
+	 */
+	private static function fits(bool $fits): array {
+		$cases = [];
+		/** @var array{case: string, category: ?string, body: string, fits: bool} $pair */
+		foreach (SharedCases::read('registration-fits') as $pair) {
+			if ($pair['fits'] === $fits) {
+				$cases[$pair['case']] = [$pair['category'], $pair['body']];
+			}
+		}
+
+		return $cases;
+	}
+
+	public function testAnEmptyBodyTypeIsNone(): void {
+		$this->assertNull($this->service()->create('alice', ['eu_category' => 'M1', 'body_type' => ''])->getBodyType());
+	}
+
+	/** The pair is judged as the row ends up, so a category alone can leave the body type behind. */
+	public function testANewCategoryMustFitTheBodyTypeTheVehicleKeeps(): void {
+		$this->mapper->method('updateChecked')->willReturnArgument(0);
+		$stored = $this->stored();
+		$stored->setEuCategory('M1');
+		$stored->setBodyType('AC');
+		$stored->resetUpdatedFields();
+		$this->mapper->method('findByUuid')->willReturn($stored);
+
+		$this->expectException(\InvalidArgumentException::class);
+		$this->expectExceptionMessage('body_type does not fit eu_category');
+		$this->service()->update('alice', self::UUID, 1750000000, ['eu_category' => 'N3']);
+	}
+
+	/** A pair stored without the check, by an import or by hand, stays until somebody changes it. */
+	public function testAStoredMisfitDoesNotBlockAnEditThatKeepsIt(): void {
+		$this->mapper->method('updateChecked')->willReturnArgument(0);
+		$stored = $this->stored();
+		$stored->setEuCategory('N1');
+		$stored->setBodyType('AC');
+		$stored->resetUpdatedFields();
+		$this->mapper->method('findByUuid')->willReturn($stored);
+
+		$updated = $this->service()->update('alice', self::UUID, 1750000000, ['plate' => 'B-XY 1', 'eu_category' => 'N1', 'body_type' => 'AC']);
+
+		$this->assertSame('B-XY 1', $updated->getPlate());
 	}
 
 	/** A code typed in lower case is the code. */

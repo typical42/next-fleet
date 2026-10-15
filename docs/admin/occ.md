@@ -1,231 +1,165 @@
 # occ commands
 
-NextFleet adds commands to the Nextcloud `occ` tool. With them, you can find, check, repair and
-restore data without SQL.
+NextFleet adds commands to `occ`.
+They find, check, repair and restore data without SQL.
 
-## Before you start
+Run them as the HTTP user from the Nextcloud folder, for example `sudo -E -u www-data php occ nextfleet:check`.
+A vehicle is named by its UUID; [`nextfleet:vehicles`](#nextfleetvehicles) finds it.
+`occ help <command>` lists all options.
 
-- Run each command as the HTTP user from the Nextcloud folder. The examples use `www-data`.
-- A command identifies a vehicle by its UUID. Use [`nextfleet:vehicles`](#nextfleetvehicles) to
-  find the UUID.
-- To see all options of a command, run `occ help <command>`.
+**Output.**
+`vehicles`, `check`, `recompute`, `access`, `audit`, `pending` and `reminders` print a table.
+`--output=json` or `--output=json_pretty` prints JSON.
+Errors go to stderr, so the JSON stays valid.
 
-### Output
-
-The commands `vehicles`, `check`, `recompute`, `access`, `audit`, `pending` and `reminders` show a
-table. To get JSON, add `--output=json`. To get indented JSON, add `--output=json_pretty`. Error
-messages go to the standard error output, so the JSON output stays valid.
-
-### Exit codes
+**Exit codes.**
 
 | Code | Meaning |
 |---|---|
-| 0 | The command is complete, or it found nothing. |
-| 1 | `check` or `recompute --dry-run` found a problem, or the command refused or failed. |
-| 2 | The command refused a value that you gave. `import`, `transfer` and `seed` return 1 for this error. |
+| 0 | Done, or nothing found. |
+| 1 | `check` or `recompute --dry-run` found a problem, or the command failed or refused. |
+| 2 | A value you gave was refused. `import`, `transfer` and `seed` return 1 for this. |
 
-If an argument is missing, or an option is unknown, `occ` itself stops with exit code 1.
-
-## Commands to find data
+## Find data
 
 ### nextfleet:vehicles
 
-Shows all live vehicles with their UUID, plate, name, owner and lifecycle.
+Lists the live vehicles: UUID, plate, display name, make and model, owner, lifecycle, EU category and body type.
 
 Usage: `occ nextfleet:vehicles [--user <uid>] [--deleted] [--output <format>]`
 
 | Option | Description |
 |---|---|
-| `--user` | Show only the vehicles that this account owns. |
-| `--deleted` | Show the deleted vehicles instead of the live vehicles. |
-
-```console
-$ sudo -E -u www-data php occ nextfleet:vehicles --user alice
-+--------------------------------------+-----------+---------------------------+-------+-----------+------------+
-| uuid                                 | plate     | name                      | owner | lifecycle | deleted_at |
-+--------------------------------------+-----------+---------------------------+-------+-----------+------------+
-| e95df47f-772d-4af6-8991-76d4adfdac33 | NF-DE 100 | Volkswagen Passat Variant | alice | active    |            |
-+--------------------------------------+-----------+---------------------------+-------+-----------+------------+
-```
+| `--user` | Only the vehicles this account owns. |
+| `--deleted` | The deleted vehicles instead. |
 
 ### nextfleet:access
 
-Shows the owner of a vehicle and each account or group with access to it.
+Lists the owner of a vehicle and each account or group with access.
 
 Usage: `occ nextfleet:access <vehicle> [--all] [--output <format>]`
 
 | Option | Description |
 |---|---|
-| `--all` | Show also the revoked grants, with the date of the revocation. |
-
-```bash
-sudo -E -u www-data php occ nextfleet:access e95df47f-772d-4af6-8991-76d4adfdac33
-```
+| `--all` | Also the revoked grants, with the date. |
 
 ### nextfleet:audit
 
-Shows the audit trail of a vehicle and its trips, oldest first. Each row shows each changed field
-before and after the change.
+Lists the audit trail of a vehicle and its trips, oldest first, with each field before and after.
 
 Usage: `occ nextfleet:audit <vehicle> [--entry <uuid>] [--since <date>] [--output <format>]`
 
 | Option | Description |
 |---|---|
-| `--entry` | Show only the rows for this trip. Give the vehicle UUID to show only the rows for the vehicle. |
-| `--since` | Show only the rows from this day or later. Use the format `YYYY-MM-DD`, in UTC. |
-
-```bash
-sudo -E -u www-data php occ nextfleet:audit e95df47f-772d-4af6-8991-76d4adfdac33 --since 2026-09-01
-```
+| `--entry` | Only the rows of this trip. The vehicle UUID gives the rows of the vehicle. |
+| `--since` | Only rows from this day on, `YYYY-MM-DD` in UTC. |
 
 ### nextfleet:reminders
 
-Shows the open reminders of an account, most urgent first: overdue, due, coming up, planned and
-snoozed. The dashboard widget of that account shows only the overdue, due and coming-up reminders.
+Lists the open reminders of an account, most urgent first.
 
 Usage: `occ nextfleet:reminders [<uid>] [--send] [--output <format>]`
 
 | Option | Description |
 |---|---|
-| `--send` | Run the hourly reminder job now, for all accounts. It sends the notifications and the reminder mails. |
+| `--send` | Run the hourly reminder job now, for all accounts. |
 
-The reminder mail normally goes to each account one time per day at most. If the hourly job runs at
-the same time as `--send`, an account can get the news in two mails. If a mail to a recipient fails,
-the command writes the error to the Nextcloud log.
-
-With `--send` and `--output=json`, and without an account, the command shows
-`{"sent":true}`, or `{"sent":false}` if the job failed.
-
-```bash
-sudo -E -u www-data php occ nextfleet:reminders alice
-```
+If the hourly job runs at the same time as `--send`, an account can get the news in two mails.
+A failed mail goes to the Nextcloud log.
+With `--send --output=json` and no account, it prints `{"sent":true}` or `{"sent":false}`.
 
 ### nextfleet:pending
 
-Shows the account deletions and group deletions that an error stopped, with their start time.
-
-If an account with the same name exists again, the command shows a warning. The account deletion
-is then dropped, and the new account keeps the vehicles and rows of the deleted account.
+Lists the account and group deletions that an error stopped.
 
 Usage: `occ nextfleet:pending [--finish] [--output <format>]`
 
 | Option | Description |
 |---|---|
-| `--finish` | Complete the work now, as the hourly job does. Then show what is not complete. |
+| `--finish` | Complete them now, as the hourly job does. |
 
-```bash
-sudo -E -u www-data php occ nextfleet:pending --finish
-```
+If an account with the same name exists again, the command warns and drops that deletion.
+The new account then keeps the rows.
 
-## Commands to check and repair
+## Check and repair
 
 ### nextfleet:check
 
-Finds rows that break a rule of the data model. The command changes nothing. It finds:
+Finds rows that break a rule of the data model.
+It changes nothing.
+It finds:
 
-- Rows that link to a vehicle that does not exist.
-- A stored counter value or reading flag that does not agree with the counter readings (`cache`,
-  `flag`).
-- Counter readings of an entry that do not agree with the entry.
+- Rows that point to a vehicle that does not exist.
+- A cached counter or a reading flag that disagrees with the readings (`cache`, `flag`).
+- Readings that disagree with their entry.
 - Two live grants for the same account or group on one vehicle.
 - A grant to an account or group that does not exist (`grantee`).
-- A vehicle owner that no account has, and for whom no account deletion is pending (`owner`).
-- A name of a deleted account in the format from before 0.3.0.
-
-If a live account has a name in that old format, the command shows a warning. A warning does not
-change the exit code.
+- An owner that no account has, with no deletion pending (`owner`).
+- A deleted account's name in the format from before 0.3.0.
+  A live account with such a name gives a warning, which does not change the exit code.
 
 Usage: `occ nextfleet:check [--vehicle <uuid>] [--output <format>]`
 
 | Option | Description |
 |---|---|
-| `--vehicle` | Check only this vehicle. The checks for the full server do not run. |
-
-```console
-$ sudo -E -u www-data php occ nextfleet:check --vehicle e95df47f-772d-4af6-8991-76d4adfdac33
-No findings.
-```
+| `--vehicle` | Check only this vehicle. The server-wide checks do not run. |
 
 ### nextfleet:recompute
 
-Calculates the counter of a vehicle again, as a write does. It shows each value that it changed,
-before and after.
+Calculates the counters again, as a write does, and prints each value it changed.
 
 Usage: `occ nextfleet:recompute (--vehicle <uuid> | --all) [--dry-run] [--output <format>]`
 
 | Option | Description |
 |---|---|
-| `--vehicle` | Calculate only this vehicle. |
-| `--all` | Calculate all vehicles, also the deleted vehicles. |
-| `--dry-run` | Show what would change, but change nothing. The exit code is 1 if something would change. |
-
-Use `--vehicle` or `--all`, not both.
-
-```bash
-sudo -E -u www-data php occ nextfleet:recompute --all --dry-run
-```
+| `--vehicle` | Only this vehicle. |
+| `--all` | All vehicles, deleted ones too. |
+| `--dry-run` | Show what would change. Exit code 1 if anything would. |
 
 ### nextfleet:mail-test
 
-Sends one test mail to the address that the reminder mail of an account goes to. If the mail
-fails, the command shows the error of the mail server.
+Sends one test mail to the reminder address of an account and prints the mail server's error if it fails.
 
 Usage: `occ nextfleet:mail-test <uid>`
 
-```bash
-sudo -E -u www-data php occ nextfleet:mail-test alice
-```
-
-## Commands to restore and move data
+## Restore and move data
 
 ### nextfleet:restore
 
-Takes a deleted vehicle out of the trash, as the undo of the owner does. The command refuses a
-vehicle that is not deleted. It also refuses a vehicle whose owner account is deleted, or whose
-account deletion is pending.
+Takes a deleted vehicle out of the trash, as the owner's undo does.
+It refuses a vehicle whose owner account is deleted or pending deletion.
 
 Usage: `occ nextfleet:restore <vehicle>`
 
-```bash
-sudo -E -u www-data php occ nextfleet:restore e95df47f-772d-4af6-8991-76d4adfdac33
-```
-
 ### nextfleet:transfer
 
-Gives a live vehicle to a different owner. The grants stay. If the account of the old owner exists,
-it keeps the role **Viewer**.
+Gives a live vehicle to another owner.
+The grants stay.
+The old owner keeps **Viewer**, if the account still exists.
 
 Usage: `occ nextfleet:transfer <vehicle> <owner>`
 
-```bash
-sudo -E -u www-data php occ nextfleet:transfer e95df47f-772d-4af6-8991-76d4adfdac33 bob
-```
-
 ### nextfleet:import
 
-Imports a CSV export from the Files of an account into one of its vehicles. The import runs as
-that account. The [import](../architecture.md#import) section describes the formats.
+Imports a CSV file from an account's Files into one of its vehicles, as that account.
+The formats are in the [user manual](../user/import.md).
 
 Usage: `occ nextfleet:import <user> <vehicle> <path> [options]`
 
 | Option | Description |
 |---|---|
-| `--importer` | The format of the file: `lubelogger` or `spritmonitor`. |
-| `--record-type` | The type of records in the file, for example `fuel`. |
-| `--units` | The distance and volume units of the file, for example `km,l` or `mi,us_gal`. |
-| `--date-order` | `dmy` or `mdy`. Necessary only if each date in the file can have the two meanings. |
-| `--energy` | The energy of the energy entries, if the vehicle uses more than one energy. |
-| `--map` | Maps a cost category to a NextFleet type, for example `"Steuer:expense.tax"` or `"Wäsche:skip"`. You can give this option more than one time. |
-| `--include-duplicates` | Import also the rows that are already in NextFleet. |
+| `--importer` | `lubelogger` or `spritmonitor`. |
+| `--record-type` | The record type, for example `fuel`. |
+| `--units` | Distance and volume of the file, for example `km,l` or `mi,us_gal`. |
+| `--date-order` | `dmy` or `mdy`, when the dates can be read both ways. |
+| `--energy` | The energy, when the vehicle takes more than one. |
+| `--map` | A cost category and what it becomes, for example `"Steuer:expense.tax"` or `"Wäsche:skip"`. Repeat it as needed. |
+| `--include-duplicates` | Also import the rows already there. |
 | `--dry-run` | Show the preview and write nothing. |
-
-```bash
-sudo -E -u www-data php occ nextfleet:import alice e95df47f-772d-4af6-8991-76d4adfdac33 fuel.csv --importer=spritmonitor --record-type=fuel --units=km,l --dry-run
-```
 
 ### nextfleet:seed
 
-Adds a demonstration fleet to an account. Use it to try the app.
+Adds a demonstration fleet to an account, to try the app.
 
 Usage: `occ nextfleet:seed <user> [--grant-to <uid>]`
 
@@ -233,6 +167,4 @@ Usage: `occ nextfleet:seed <user> [--grant-to <uid>]`
 |---|---|
 | `--grant-to` | Give this account driver access to one vehicle, with one trip of its own. |
 
-```bash
-sudo -E -u www-data php occ nextfleet:seed alice
-```
+Next: [Troubleshooting](troubleshooting.md)

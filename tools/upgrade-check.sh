@@ -134,13 +134,38 @@ sql() {
 	esac
 }
 
-# Order-blind, as MariaDB's own is: the same rows in another physical order are the same table.
+# Over the columns $3 names, order-blind: the same rows in another physical order are the same
+# table.
 checksum() {
 	case $db in
-		mariadb) sql "$1" "checksum table \"$2\"" ;;
-		pgsql) sql "$1" "select md5(coalesce(string_agg(t::text, ',' order by t::text), '')) from \"$2\" t" ;;
-		oracle) sql "$1" "select checksum(json_object(*)) from \"$2\" t" ;;
+		mariadb) sql "$1" "set session group_concat_max_len = 4294967295;
+			select md5(coalesce(group_concat(r order by r separator ','), ''))
+			from (select json_array($3) r from \"$2\") t" ;;
+		pgsql) sql "$1" "select md5(coalesce(string_agg(r, ',' order by r), ''))
+			from (select row($3)::text r from \"$2\") t" ;;
+		oracle) sql "$1" "select checksum(json_array($3 null on null)) from \"$2\"" ;;
 	esac
+}
+
+# A table's columns, quoted and joined, as the first snapshot found them. The later one reads the
+# same list, so a column the upgrade adds changes no checksum: the schema check judges it.
+columns() {
+	file="$work/$1.$2.columns"
+	if [ ! -f "$file" ]; then
+		case $db in
+			mariadb | pgsql) names=$(sql "$1" "select column_name from information_schema.columns
+				where table_schema = $here and table_name = '$2' order by column_name") ;;
+			oracle) names=$(sql "$1" "select column_name from user_tab_columns
+				where table_name = '$2' order by column_name") ;;
+		esac
+		list=
+		for name in $names; do
+			list="$list${list:+, }\"$name\""
+		done
+		[ -n "$list" ] || fail "$1: $2 has no columns"
+		echo "$list" >"$file"
+	fi
+	cat "$file"
 }
 
 occ() {
@@ -149,11 +174,15 @@ occ() {
 	$compose exec -T -u www-data "$server" php occ "$@"
 }
 
-# What a user does: unpack the tarball into the apps directory, over whatever was there.
+# What a user does: unpack the tarball into the apps directory, over whatever was there. The app
+# store's installer then resets PHP's opcache (lib/private/Installer.php in the server); reloading
+# Apache does that here. Without it the image's opcache.revalidate_freq of 60 s keeps serving the
+# old entities against the new columns, and every read of them fails.
 put() {
 	$compose cp "$2" "$1:/tmp/nextfleet.tar.gz"
 	$compose exec -T -u www-data "$1" sh -c \
 		'rm -rf custom_apps/nextfleet && tar -xzf /tmp/nextfleet.tar.gz -C custom_apps'
+	$compose exec -T "$1" apachectl -k graceful 2>/dev/null || fail "$1: Apache did not reload"
 }
 
 # The Oracle image installs nothing by itself; the others have installed on start.
@@ -183,9 +212,10 @@ tables() {
 	esac
 }
 
-# One line per table: its name, its row count and a checksum over every row's content. A line
-# that differs after the upgrade is a row lost or changed. A future migration that means to
-# change rows will fail here; read the difference before trusting it.
+# One line per table: its name, its row count and a checksum over every row's content in the
+# columns it had before the upgrade. A line that differs after the upgrade is a row lost or
+# changed. A future migration that means to change rows will fail here; read the difference
+# before trusting it.
 #
 # No pipes and no command substitution in a list: sh has no pipefail, and a failed query would
 # leave an empty snapshot that nothing can be missing from.
@@ -195,7 +225,8 @@ rows() {
 	: >"$2"
 	for table in $(cat "$work/$1.names"); do
 		count=$(sql "$1" "select count(*) from \"$table\"")
-		checksum=$(checksum "$1" "$table")
+		listed=$(columns "$1" "$table")
+		checksum=$(checksum "$1" "$table" "$listed")
 		echo "$table $count ${checksum##*[[:space:]]}" >>"$2"
 	done
 	sort -o "$2" "$2"
@@ -227,10 +258,15 @@ shape() {
 				order by tablename, indexname"
 			;;
 		oracle)
-			sql "$1" "select table_name, column_name, data_type, data_length, data_precision,
+			# Oracle keeps a default as the text its DDL wrote: a CREATE leaves `NULL ` or none, an
+			# ALTER that widens a column writes `NULL`. Doctrine reads all three as no default
+			# (OracleSchemaManager), so they compare as one here. The column is a LONG, which SQL
+			# cannot trim. Captured first, so a failing query still fails the check.
+			described=$(sql "$1" "select table_name, column_name, data_type, data_length, data_precision,
 					data_scale, nullable, data_default
 				from user_tab_columns where table_name like 'oc\_fleet\_%' escape '\'
-				order by table_name, column_name"
+				order by table_name, column_name")
+			printf '%s\n' "$described" | sed 's/ *$//; s/,NULL$/,/'
 			# Oracle names the primary key itself, differently on every install.
 			sql "$1" "select i.table_name,
 					case i.generated when 'Y' then 'generated' else i.index_name end,

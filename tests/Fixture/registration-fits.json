@@ -1,0 +1,22 @@
+[
+	{ "case": "a station wagon", "category": "M1", "body": "AC", "fits": true },
+	{ "case": "an off-road station wagon", "category": "M1G", "body": "AC", "fits": true },
+	{ "case": "a box-body lorry", "category": "N3G", "body": "BA03", "fits": true },
+	{ "case": "a chassis-cab with bodywork not listed", "category": "N1", "body": "BX99", "fits": true },
+	{ "case": "a drop-side tarpaulin semi-trailer", "category": "O4", "body": "DA32", "fits": true },
+	{ "case": "a link drawbar trailer", "category": "O3", "body": "DG", "fits": true },
+	{ "case": "a double-deck bus", "category": "M3", "body": "CB", "fits": true },
+	{ "case": "an armoured trailer", "category": "O1", "body": "SB", "fits": true },
+	{ "case": "a multi-equipment carrier", "category": "N2G", "body": "SM", "fits": true },
+	{ "case": "an exceptional load motor vehicle", "category": "N3", "body": "SL", "fits": true },
+	{ "case": "an exceptional load trailer over 10 t", "category": "O4", "body": "SK", "fits": true },
+	{ "case": "no category", "category": null, "body": "AC", "fits": false },
+	{ "case": "a lorry as a passenger car", "category": "M1", "body": "BA", "fits": false },
+	{ "case": "a station wagon as a lorry", "category": "N3", "body": "AC", "fits": false },
+	{ "case": "a pick-up over 3.5 t", "category": "N2", "body": "BE", "fits": false },
+	{ "case": "a mobile crane on a light goods vehicle", "category": "N1", "body": "SF", "fits": false },
+	{ "case": "a multi-equipment carrier on the road", "category": "N2", "body": "SM", "fits": false },
+	{ "case": "an exceptional load trailer up to 10 t", "category": "O3", "body": "SK", "fits": false },
+	{ "case": "a motorcycle", "category": "L3e", "body": "SG", "fits": false },
+	{ "case": "a tractor", "category": "T1a", "body": "SG", "fits": false }
+]

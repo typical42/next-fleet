@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Command;
 
 use OCA\NextFleet\Db\Vehicle;
+use OCA\NextFleet\Notification\VehicleWords;
 use OCA\NextFleet\Service\BookingService;
 use OCA\NextFleet\Service\DocumentService;
 use OCA\NextFleet\Service\EnergyService;
@@ -65,9 +66,12 @@ class SeedCommand extends Command {
 		[
 			'vehicle' => [
 				'plate' => self::DISTRICT . 'DE 100',
+				'display_name' => 'Außendienst Stuttgart',
 				'manufacturer' => 'Volkswagen',
 				'model' => 'Passat Variant',
 				'vehicle_type' => 'car',
+				'eu_category' => 'M1',
+				'body_type' => 'AC',
 				'engine' => 'diesel',
 				'energy_types' => ['diesel'],
 				'tank_ml' => 66000,
@@ -153,9 +157,12 @@ class SeedCommand extends Command {
 		[
 			'vehicle' => [
 				'plate' => self::DISTRICT . 'PH 200',
+				'display_name' => 'Poolwagen Geschäftsleitung',
 				'manufacturer' => 'Volvo',
 				'model' => 'XC60 Recharge',
 				'vehicle_type' => 'car',
+				'eu_category' => 'M1',
+				'body_type' => 'AF',
 				'engine' => 'hybrid',
 				'energy_types' => ['petrol', 'electric'],
 				'tank_ml' => 60000,
@@ -233,6 +240,7 @@ class SeedCommand extends Command {
 				'manufacturer' => 'Fendt',
 				'model' => '313 Vario',
 				'vehicle_type' => 'tractor',
+				'eu_category' => 'T1b',
 				'engine' => 'diesel',
 				'energy_types' => ['diesel'],
 				'tank_ml' => 200000,
@@ -273,6 +281,8 @@ class SeedCommand extends Command {
 				'manufacturer' => 'Humbaur',
 				'model' => 'HA 752513',
 				'vehicle_type' => 'trailer',
+				'eu_category' => 'O1',
+				'body_type' => 'DC02',
 				'odo_unit' => 'km',
 				'first_reg' => '2015-04-20',
 				'vin' => 'W09HA752513F00400',
@@ -336,12 +346,17 @@ class SeedCommand extends Command {
 		],
 		[
 			// Kilometres and engine hours on two chains that never mix (rule 4): a fill-up reads
-			// both, and the header states the hours beside the kilometres.
+			// both, and the header states the hours beside the kilometres and a figure per engine
+			// hour beside each one per 100 km. Its display name takes all 64 characters the field
+			// allows, so the navigation has a line to truncate.
 			'vehicle' => [
 				'plate' => self::DISTRICT . 'LK 700',
+				'display_name' => 'Koffer-Lkw Tour Nord: Hamburg, Bremen, Hannover, Kiel und Lübeck',
 				'manufacturer' => 'MAN',
 				'model' => 'TGL 12.250',
 				'vehicle_type' => 'truck',
+				'eu_category' => 'N2',
+				'body_type' => 'BA03',
 				'engine' => 'diesel',
 				'energy_types' => ['diesel'],
 				'tank_ml' => 150000,
@@ -704,7 +719,7 @@ class SeedCommand extends Command {
 		return sprintf(
 			'  %-12s %-28s %2d reading(s) %2d cost(s) %d reminder(s)',
 			(string)$vehicle->getPlate(),
-			trim($vehicle->getManufacturer() . ' ' . $vehicle->getModel()),
+			VehicleWords::made($vehicle),
 			$readings,
 			$costs,
 			$reminders,

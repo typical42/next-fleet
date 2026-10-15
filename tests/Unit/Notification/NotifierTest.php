@@ -154,6 +154,46 @@ class NotifierTest extends TestCase {
 		$this->assertSame('B-XY 123: Oil change is due at 1500 h', $parsed);
 	}
 
+	/** What the notice said when it rang stays, though the plate changed and a name came since. */
+	public function testAPlatedNoticeKeepsThePlateItRangWith(): void {
+		$parsed = null;
+		$notification = $this->notification('due_date', '2031-05-31', null);
+		$notification->method('setParsedSubject')->willReturnCallback(function (string $subject) use (&$parsed, $notification) {
+			$parsed = $subject;
+
+			return $notification;
+		});
+
+		$this->notifier(plate: 'B-NEW 1', displayName: 'Harvester')->prepare($notification, 'en');
+
+		$this->assertSame('B-XY 123: Oil change is due today', $parsed);
+	}
+
+	/** @return array<string, array{?string, ?string, ?string, string}> */
+	public static function platelessVehicles(): array {
+		return [
+			'by its display name' => [null, 'Harvester', 'Fendt', 'Harvester'],
+			'by its make' => [null, null, 'Fendt', 'Fendt'],
+			'by a plate added since' => ['B-NEW 1', 'Harvester', 'Fendt', 'B-NEW 1'],
+		];
+	}
+
+	/** Rang without a plate, it names the vehicle as the screen does now. */
+	#[DataProvider('platelessVehicles')]
+	public function testAPlatelessNoticeNamesTheVehicle(?string $plate, ?string $displayName, ?string $make, string $expected): void {
+		$parsed = null;
+		$notification = $this->notification('due_date', '2031-05-31', null, plate: '');
+		$notification->method('setParsedSubject')->willReturnCallback(function (string $subject) use (&$parsed, $notification) {
+			$parsed = $subject;
+
+			return $notification;
+		});
+
+		$this->notifier(plate: $plate, displayName: $displayName, make: $make)->prepare($notification, 'en');
+
+		$this->assertSame($expected . ': Oil change is due today', $parsed);
+	}
+
 	/**
 	 * A notification list holds many notices of one vehicle, and Nextcloud prepares each on its
 	 * own: the vehicle, who may see it, its reminders and its list are read once for all of them.
@@ -359,14 +399,16 @@ class NotifierTest extends TestCase {
 		return $reminder;
 	}
 
-	private function notifier(?Access $grant = null, ?Booking $booking = null, bool $sees = true, bool $listed = true, ?Reminder $reminder = null, bool $gone = false, bool $vehicleGone = false, string $unit = 'km'): Notifier {
+	private function notifier(?Access $grant = null, ?Booking $booking = null, bool $sees = true, bool $listed = true, ?Reminder $reminder = null, bool $gone = false, bool $vehicleGone = false, string $unit = 'km', ?string $plate = 'B-XY 123', ?string $displayName = null, ?string $make = null): Notifier {
 		$l = $this->createMock(IL10N::class);
 		$l->method('t')->willReturnCallback(static fn (string $text, array $parameters = []): string => vsprintf($text, $parameters));
 		$l->method('l')->willReturnCallback(static fn (string $type, \DateTime $day): string => $day->format($type === 'time' ? 'H:i' : 'j F Y'));
 		$factory = $this->createMock(IFactory::class);
 		$factory->method('get')->willReturn($l);
 		$vehicle = new Vehicle();
-		$vehicle->setPlate('B-XY 123');
+		$vehicle->setPlate($plate);
+		$vehicle->setDisplayName($displayName);
+		$vehicle->setManufacturer($make);
 		$vehicle->setUserId('anna');
 		$vehicle->setOdoUnit($unit);
 		$vehicles = $this->createMock(VehicleMapper::class);
@@ -418,14 +460,14 @@ class NotifierTest extends TestCase {
 	}
 
 	/** @return INotification&\PHPUnit\Framework\MockObject\MockObject */
-	private function notification(string $point, ?string $dueDate, ?int $dueOdo, ?int $occurrence = 1): INotification {
+	private function notification(string $point, ?string $dueDate, ?int $dueOdo, ?int $occurrence = 1, string $plate = 'B-XY 123'): INotification {
 		$notification = $this->createMock(INotification::class);
 		$notification->method('getApp')->willReturn('nextfleet');
 		$notification->method('getUser')->willReturn('alice');
 		$notification->method('getObjectId')->willReturn('7');
 		$notification->method('getSubject')->willReturn($point);
 		$notification->method('getSubjectParameters')->willReturn([
-			'vehicle' => 'v-1', 'plate' => 'B-XY 123', 'template_key' => 'oil_change', 'title' => null,
+			'vehicle' => 'v-1', 'plate' => $plate, 'template_key' => 'oil_change', 'title' => null,
 			'due_date' => $dueDate, 'due_odo' => $dueOdo,
 		] + ($occurrence === null ? [] : ['occurrence' => $occurrence]));
 		$notification->method('setIcon')->willReturnSelf();

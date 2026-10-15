@@ -60,7 +60,8 @@ class VehicleService {
 	 * The columns a request may set, each with the setter it reaches and what it has to look
 	 * like: `text` with the column's own length, `word` and `set` against a vocabulary,
 	 * `number` and `count` (never negative) as integers, `date` as one calendar day, `currency`
-	 * as an ISO 4217 code in capitals.
+	 * as an ISO 4217 code in capitals, `category` as a field J code and `body` as a field 4 code
+	 * (Registration).
 	 *
 	 * What is missing is the point. `uuid` is the identity and `user_id`/`created_by` the
 	 * provenance, so a request cannot choose them; `odo_value` and `second_value` are caches
@@ -71,9 +72,12 @@ class VehicleService {
 	 */
 	private const WRITABLE = [
 		'plate' => ['setPlate', 'text', 32],
+		'display_name' => ['setDisplayName', 'text', 64],
 		'manufacturer' => ['setManufacturer', 'text', 64],
 		'model' => ['setModel', 'text', 64],
 		'vehicle_type' => ['setVehicleType', 'word', self::VEHICLE_TYPES],
+		'eu_category' => ['setEuCategory', 'category', null],
+		'body_type' => ['setBodyType', 'body', null],
 		'engine' => ['setEngine', 'word', self::ENGINES],
 		'energy_types' => ['setEnergyTypes', 'set', self::ENERGIES],
 		'tank_ml' => ['setTankMl', 'count', Field::CAPACITY],
@@ -302,7 +306,7 @@ class VehicleService {
 	/**
 	 * The audit row a save leaves on the vehicle when it flipped the Logbook Mode or changed one of
 	 * its `FACTS`. The export reads the mode's periods off these rows
-	 * (docs/features.md#logbook-mode); an unrecorded flip leaves trips it cannot place.
+	 * (docs/architecture.md#logbook-mode); an unrecorded flip leaves trips it cannot place.
 	 *
 	 * Only a change: a sheet sends every column on every save (docs/ui.md), and a recorded mode it
 	 * already had makes an auditor count periods that never began. `null` and `false` are both off
@@ -554,6 +558,7 @@ class VehicleService {
 	 * @throws \InvalidArgumentException if a field is not what its column holds
 	 */
 	private function apply(Vehicle $vehicle, array $fields): void {
+		$registration = [$vehicle->getEuCategory(), $vehicle->getBodyType()];
 		foreach (self::WRITABLE as $column => [$setter, $kind, $limit]) {
 			if (!array_key_exists($column, $fields)) {
 				continue;
@@ -576,6 +581,16 @@ class VehicleService {
 		// sheet never blocks on validation. Its Readings stay (docs/architecture.md).
 		if ($vehicle->getOdoUnit() !== 'km' && $vehicle->getSecondUnit() !== null) {
 			$vehicle->setSecondUnit(null);
+		}
+
+		// Refused, not dropped: unlike the hours, nothing here says which of the two was meant.
+		// Judged on the row as it ends up, so a new category cannot strand the body type it keeps.
+		// Only when the pair changes, as with the currency: a pair stored without this check, by an
+		// import or by hand, must not lock every other field.
+		$body = $vehicle->getBodyType();
+		if ($body !== null && [$vehicle->getEuCategory(), $body] !== $registration
+			&& !Registration::fits($vehicle->getEuCategory(), $body)) {
+			throw new \InvalidArgumentException('body_type does not fit eu_category');
 		}
 	}
 
@@ -605,6 +620,8 @@ class VehicleService {
 			'flag' => Field::flag($column, $value),
 			'date' => Field::day($column, $value),
 			'currency' => self::currency($column, $value),
+			'category' => Registration::category($column, $value),
+			'body' => Registration::body($column, $value),
 			default => throw new \InvalidArgumentException($column . ' has no readable kind'),
 		};
 	}

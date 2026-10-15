@@ -1,6 +1,6 @@
 {
   "name": "nextfleet",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "private": true,
   "license": "AGPL-3.0-or-later",
   "type": "module",
@@ -12,6 +12,7 @@
   ],
   "scripts": {
     "build": "vite build --mode production",
+    "docs:diagrams": "sh tools/check-diagrams.sh",
     "lint": "npm run lint:js && npm run lint:css && npm run lint:types",
     "lint:css": "stylelint \"src/**/*.{css,scss,vue}\"",
     "lint:css:fix": "npm run lint:css -- --fix",

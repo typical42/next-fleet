@@ -19,6 +19,7 @@ use OCA\NextFleet\Db\MaintenanceMapper;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
+use OCA\NextFleet\Notification\VehicleWords;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -220,9 +221,12 @@ class ExportService {
 		return gmdate('Y-m-d H:i', $at + $off * 60);
 	}
 
-	/** The plate if there is one; a filename carries nothing a file system could misread. */
+	/**
+	 * The vehicle's name, as a notice calls it; a filename carries nothing a file system could
+	 * misread. With no name, or none left, the uuid: a file is not called "Unnamed vehicle".
+	 */
 	private static function fileName(Vehicle $vehicle, int $year, string $table): string {
-		$label = trim((string)preg_replace('/[^A-Za-z0-9-]+/', '_', $vehicle->getPlate() ?? ''), '_');
+		$label = trim((string)preg_replace('/[^A-Za-z0-9-]+/', '_', VehicleWords::nameOr($vehicle, '')), '_');
 
 		return ($label === '' ? $vehicle->getUuid() : $label) . '-' . $year . '-' . $table . '.csv';
 	}

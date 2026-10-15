@@ -17,6 +17,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ConflictError, RefusedError, createVehicle, deleteVehicle, getPreferences, getVehicle, listReminders, recordReading, reminderTemplates, savePreferences, updateEntry, updateVehicle } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
 import { formatDay } from '../utils/format.js'
+import { REGISTRATION_HELP } from '../utils/registration.js'
 import InspectionSticker from './InspectionSticker.vue'
 import ReminderRecipients from './ReminderRecipients.vue'
 import VehicleGrants from './VehicleGrants.vue'
@@ -44,9 +45,12 @@ const VEHICLE = {
 	uuid: 'v-1',
 	updated_at: 1700000000,
 	plate: 'B-XY 123',
+	display_name: 'Pool van',
 	manufacturer: 'Volkswagen',
 	model: 'Caddy',
 	vehicle_type: 'van',
+	eu_category: 'N1',
+	body_type: 'BA03',
 	engine: 'hybrid',
 	energy_types: ['petrol', 'electric'],
 	tank_ml: 55000,
@@ -268,6 +272,7 @@ describe('the vehicle sheet, editing', () => {
 		const wrapper = await sheet(VEHICLE)
 
 		expect(field(wrapper, 'Registration plate').props('modelValue')).toBe('B-XY 123')
+		expect(field(wrapper, 'Display name').props('modelValue')).toBe('Pool van')
 		expect(field(wrapper, 'VIN').props('modelValue')).toBe('WVWZZZ1KZAW000001')
 		expect(formatDay(day(wrapper, 'First registration').props('modelValue'))).toBe('2019-03-07')
 		expect(field(wrapper, 'Tank size (l)').props('modelValue')).toBe('55')
@@ -293,6 +298,7 @@ describe('the vehicle sheet, editing', () => {
 		const wrapper = await sheet(VEHICLE)
 
 		await field(wrapper, 'Registration plate').vm.$emit('update:modelValue', 'B-XY 999')
+		await field(wrapper, 'Display name').vm.$emit('update:modelValue', 'Spare van')
 		await field(wrapper, 'Colour').vm.$emit('update:modelValue', '')
 		await saveButton(wrapper).vm.$emit('click')
 		await flushPromises()
@@ -301,9 +307,12 @@ describe('the vehicle sheet, editing', () => {
 			uuid: 'v-1',
 			updated_at: 1700000000,
 			plate: 'B-XY 999',
+			display_name: 'Spare van',
 			manufacturer: 'Volkswagen',
 			model: 'Caddy',
 			vehicle_type: 'van',
+			eu_category: 'N1',
+			body_type: 'BA03',
 			engine: 'hybrid',
 			energy_types: ['petrol', 'electric'],
 			tank_ml: 55000,
@@ -379,6 +388,307 @@ describe('the vehicle sheet, editing', () => {
 		await wrapper.setProps({ vehicle: { ...VEHICLE, ever_granted: true } })
 		await /** @type {any} */ (wrapper.findComponent(VehicleGrants)).vm.$emit('granted')
 		expect(getVehicle).not.toHaveBeenCalled()
+	})
+
+	describe('its EU category', () => {
+		/**
+		 * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted sheet
+		 * @return {any} the category dropdown
+		 */
+		function category(wrapper) {
+			return dropdown(wrapper, 'EU vehicle category')
+		}
+
+		/**
+		 * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted sheet
+		 * @param {string} code - the category to pick, as the dropdown offers it
+		 */
+		async function pick(wrapper, code) {
+			await category(wrapper).vm.$emit('update:modelValue', category(wrapper).props('options').find((/** @type {any} */ one) => one.id === code))
+		}
+
+		it('shows the category apart from its off-road suffix', async () => {
+			const wrapper = await sheet({ ...VEHICLE, eu_category: 'N1G' })
+
+			expect(category(wrapper).props('modelValue').id).toBe('N1')
+			expect(toggle(wrapper, 'Off-road vehicle (G)').props('modelValue')).toBe(true)
+		})
+
+		it('offers what the vehicle type most likely is first, and a header picks nothing', async () => {
+			const wrapper = await sheet(VEHICLE)
+			const options = category(wrapper).props('options')
+
+			expect(options[0]).toMatchObject({ header: true, label: 'Goods vehicles' })
+			expect(options[1]).toMatchObject({ id: 'N1', label: 'Light goods vehicle, up to 3.5 t (N1)' })
+			expect(category(wrapper).props('selectable')(options[0])).toBe(false)
+			expect(category(wrapper).props('selectable')(options[1])).toBe(true)
+		})
+
+		it('finds a category by its words or its code', async () => {
+			const wrapper = await sheet(VEHICLE)
+			const options = category(wrapper).props('options')
+
+			expect(category(wrapper).props('filter')(options, 'sidE-car').map((/** @type {any} */ one) => one.id))
+				.toEqual(['light', 'L4e'])
+			expect(category(wrapper).props('filter')(options, 'o4').map((/** @type {any} */ one) => one.id))
+				.toEqual(['trailers', 'O4'])
+		})
+
+		it('names where to find it and links to every code', async () => {
+			const wrapper = await sheet(VEHICLE)
+			const help = wrapper.find('a.sheet__help')
+
+			expect(help.text()).toBe('Field J on the registration certificate')
+			expect(help.attributes('href')).toBe(REGISTRATION_HELP)
+			expect(help.attributes('target')).toBe('_blank')
+		})
+
+		it.each([
+			['M1', 'car', 'km'],
+			['O3', 'trailer', 'km'],
+			['T1a', 'tractor', 'h'],
+		])('takes %s for a %s, counted in %s', async (code, type, unit) => {
+			const wrapper = await sheet({ ...VEHICLE, odo_value: null })
+
+			await pick(wrapper, code)
+
+			expect(dropdown(wrapper, 'Vehicle type').props('modelValue').id).toBe(type)
+			expect(dropdown(wrapper, 'Counter unit').props('modelValue').id).toBe(unit)
+		})
+
+		/** The unit was chosen with the type; a category that agrees with the type leaves both. */
+		it('keeps the unit of a tractor counted in kilometres when given a tractor category', async () => {
+			const wrapper = await sheet({ ...VEHICLE, vehicle_type: 'tractor', odo_unit: 'km', odo_value: null })
+
+			await pick(wrapper, 'T1b')
+
+			expect(dropdown(wrapper, 'Counter unit').props('modelValue').id).toBe('km')
+		})
+
+		/** Nothing flows back from the vehicle type to the category. */
+		it('leaves the vehicle type alone where the category does not decide it', async () => {
+			const wrapper = await sheet(VEHICLE)
+
+			await pick(wrapper, 'L5e')
+			expect(dropdown(wrapper, 'Vehicle type').props('modelValue').id).toBe('van')
+			await dropdown(wrapper, 'Vehicle type').vm.$emit('update:modelValue', { id: 'truck', label: 'Truck' })
+
+			expect(dropdown(wrapper, 'Vehicle type').props('modelValue').id).toBe('truck')
+			expect(category(wrapper).props('modelValue').id).toBe('L5e')
+		})
+
+		it('offers the off-road switch for cars, buses and goods vehicles only', async () => {
+			const wrapper = await sheet(VEHICLE)
+
+			expect(toggle(wrapper, 'Off-road vehicle (G)')).toBeDefined()
+			await pick(wrapper, 'O2')
+			expect(toggle(wrapper, 'Off-road vehicle (G)')).toBeUndefined()
+			await category(wrapper).vm.$emit('update:modelValue', null)
+			expect(toggle(wrapper, 'Off-road vehicle (G)')).toBeUndefined()
+		})
+
+		it('saves the code with its suffix, and an emptied one as nothing', async () => {
+			const wrapper = await sheet(VEHICLE)
+
+			await pick(wrapper, 'N3')
+			await toggle(wrapper, 'Off-road vehicle (G)').vm.$emit('update:modelValue', true)
+			await saveButton(wrapper).vm.$emit('click')
+			await flushPromises()
+			expect(updateVehicle).toHaveBeenLastCalledWith(expect.objectContaining({ eu_category: 'N3G' }))
+
+			await category(wrapper).vm.$emit('update:modelValue', null)
+			await saveButton(wrapper).vm.$emit('click')
+			await flushPromises()
+			expect(updateVehicle).toHaveBeenLastCalledWith(expect.objectContaining({ eu_category: '' }))
+		})
+
+		/** A switch nobody sees holds nothing: it comes back off. */
+		it('drops the suffix with a category that cannot carry it', async () => {
+			const wrapper = await sheet({ ...VEHICLE, eu_category: 'N1G' })
+
+			await pick(wrapper, 'O2')
+			await saveButton(wrapper).vm.$emit('click')
+			await flushPromises()
+			expect(updateVehicle).toHaveBeenLastCalledWith(expect.objectContaining({ eu_category: 'O2' }))
+
+			await pick(wrapper, 'M1')
+			expect(toggle(wrapper, 'Off-road vehicle (G)').props('modelValue')).toBe(false)
+		})
+
+		it('counts as a change the import waits for', async () => {
+			const wrapper = await sheet(MANAGED)
+
+			await toggle(wrapper, 'Off-road vehicle (G)').vm.$emit('update:modelValue', true)
+
+			expect(button(wrapper, 'Import from a file…').props('disabled')).toBe(true)
+		})
+	})
+
+	describe('its EU body type', () => {
+		/**
+		 * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted sheet
+		 * @return {any} the body type dropdown
+		 */
+		function body(wrapper) {
+			return dropdown(wrapper, 'EU body type')
+		}
+
+		/**
+		 * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted sheet
+		 * @return {any} the add-on dropdown, if offered
+		 */
+		function addOn(wrapper) {
+			return dropdown(wrapper, 'Body add-on')
+		}
+
+		/**
+		 * @param {any} select - a dropdown of the sheet
+		 * @param {string} id - the option to pick
+		 */
+		async function pick(select, id) {
+			await select.vm.$emit('update:modelValue', select.props('options').find((/** @type {any} */ one) => one.id === id))
+		}
+
+		it('shows the body code apart from its add-on', async () => {
+			const wrapper = await sheet(VEHICLE)
+
+			expect(body(wrapper).props('modelValue')).toMatchObject({ id: 'BA', label: 'Lorry (BA)' })
+			expect(addOn(wrapper).props('modelValue')).toMatchObject({ id: '03', label: 'Box body (03)' })
+		})
+
+		it('finds an add-on as it finds a category', async () => {
+			const wrapper = await sheet(VEHICLE)
+
+			expect(addOn(wrapper).props('filter')).toBe(dropdown(wrapper, 'EU vehicle category').props('filter'))
+		})
+
+		it('offers what fits the category, and a header picks nothing', async () => {
+			const wrapper = await sheet(VEHICLE)
+			const options = body(wrapper).props('options')
+
+			expect(options.filter((/** @type {any} */ one) => !one.header).map((/** @type {any} */ one) => one.id))
+				.toEqual(['BA', 'BB', 'BC', 'BD', 'BE', 'BX', 'SB', 'SG'])
+			expect(body(wrapper).props('selectable')(options[0])).toBe(false)
+			expect(body(wrapper).props('filter')(options, 'pick-up').map((/** @type {any} */ one) => one.id))
+				.toEqual(['B', 'BE'])
+		})
+
+		it.each([['L3e'], ['T1a'], ['R2b'], ['S1a']])('is closed to a vehicle of category %s', async (code) => {
+			const wrapper = await sheet(VEHICLE)
+
+			await pick(dropdown(wrapper, 'EU vehicle category'), code)
+
+			expect(body(wrapper).props('disabled')).toBe(true)
+			expect(body(wrapper).props('modelValue')).toBeNull()
+		})
+
+		it('is closed until a category is chosen', async () => {
+			const wrapper = await sheet({ ...VEHICLE, eu_category: null, body_type: null })
+
+			expect(body(wrapper).props('disabled')).toBe(true)
+			expect(addOn(wrapper)).toBeUndefined()
+		})
+
+		it('stays where the new category takes it, and goes where it does not', async () => {
+			const wrapper = await sheet(VEHICLE)
+
+			await pick(dropdown(wrapper, 'EU vehicle category'), 'N3')
+			expect(body(wrapper).props('modelValue').id).toBe('BA')
+			expect(addOn(wrapper).props('modelValue').id).toBe('03')
+
+			await pick(dropdown(wrapper, 'EU vehicle category'), 'M1')
+			expect(body(wrapper).props('modelValue')).toBeNull()
+			expect(addOn(wrapper)).toBeUndefined()
+		})
+
+		/** The off-road switch is part of the category: SM is for off-road goods vehicles only. */
+		it('goes when the off-road switch takes away what it fits', async () => {
+			const wrapper = await sheet({ ...VEHICLE, eu_category: 'N2G', body_type: 'SM' })
+
+			await toggle(wrapper, 'Off-road vehicle (G)').vm.$emit('update:modelValue', false)
+
+			expect(body(wrapper).props('modelValue')).toBeNull()
+		})
+
+		it('offers the add-on only after a code that takes one', async () => {
+			const wrapper = await sheet(VEHICLE)
+
+			await pick(body(wrapper), 'BB')
+			expect(addOn(wrapper)).toBeUndefined()
+
+			await pick(body(wrapper), 'BX')
+			expect(addOn(wrapper).props('modelValue')).toBeNull()
+			expect(addOn(wrapper).props('options').at(-1)).toEqual({ id: '99', label: 'Bodywork not included in this list (99)' })
+		})
+
+		it('saves the code with its add-on, and an emptied one as nothing', async () => {
+			const wrapper = await sheet(VEHICLE)
+
+			await pick(body(wrapper), 'BX')
+			await pick(addOn(wrapper), '10')
+			await saveButton(wrapper).vm.$emit('click')
+			await flushPromises()
+			expect(updateVehicle).toHaveBeenLastCalledWith(expect.objectContaining({ body_type: 'BX10' }))
+
+			await body(wrapper).vm.$emit('update:modelValue', null)
+			await saveButton(wrapper).vm.$emit('click')
+			await flushPromises()
+			expect(updateVehicle).toHaveBeenLastCalledWith(expect.objectContaining({ body_type: '' }))
+		})
+
+		it('names where to find it and links to every code', async () => {
+			const wrapper = await sheet(VEHICLE)
+			const help = wrapper.findAll('a.sheet__help').at(1)
+
+			expect(help?.text()).toBe('Field 4 on the registration certificate (EU body code)')
+			expect(help?.attributes('href')).toBe(REGISTRATION_HELP)
+		})
+
+		/** The server lets a stored misfit stand while other fields change; so does the sheet. */
+		it('sends back a body type it cannot show while the registration is left alone', async () => {
+			const wrapper = await sheet({ ...VEHICLE, eu_category: null, body_type: 'BA03' })
+
+			await field(wrapper, 'Colour').vm.$emit('update:modelValue', 'Red')
+			await saveButton(wrapper).vm.$emit('click')
+			await flushPromises()
+
+			expect(updateVehicle).toHaveBeenLastCalledWith(expect.objectContaining({ eu_category: '', body_type: 'BA03', color: 'Red' }))
+		})
+
+		/** Nobody saw the stored pair, so the save through a conflict keeps the one it re-read. */
+		it('sends back the registration it re-read after a conflict', async () => {
+			vi.mocked(updateVehicle).mockRejectedValueOnce(new ConflictError('Changed since you read it'))
+			vi.mocked(getVehicle).mockResolvedValue(
+				/** @type {any} */ ({ ...VEHICLE, updated_at: 1700009999, eu_category: 'N1', body_type: 'BA03' }),
+			)
+			const wrapper = await sheet({ ...VEHICLE, eu_category: 'M1', body_type: 'BA03' })
+
+			await field(wrapper, 'Colour').vm.$emit('update:modelValue', 'Red')
+			await saveButton(wrapper).vm.$emit('click')
+			await flushPromises()
+			await saveButton(wrapper).vm.$emit('click')
+			await flushPromises()
+
+			expect(updateVehicle).toHaveBeenLastCalledWith(expect.objectContaining({ updated_at: 1700009999, eu_category: 'N1', body_type: 'BA03', color: 'Red' }))
+		})
+
+		it('sends what it shows once the registration was touched', async () => {
+			const wrapper = await sheet({ ...VEHICLE, eu_category: null, body_type: 'BA03' })
+
+			await pick(dropdown(wrapper, 'EU vehicle category'), 'M1')
+			await saveButton(wrapper).vm.$emit('click')
+			await flushPromises()
+
+			expect(updateVehicle).toHaveBeenLastCalledWith(expect.objectContaining({ eu_category: 'M1', body_type: '' }))
+		})
+
+		it('counts as a change the import waits for', async () => {
+			const wrapper = await sheet(MANAGED)
+
+			await pick(addOn(wrapper), '04')
+
+			expect(button(wrapper, 'Import from a file…').props('disabled')).toBe(true)
+		})
 	})
 
 	/** The unit a Reading was counted in is what its number means, so a counted vehicle keeps it. */
@@ -624,6 +934,7 @@ describe('the vehicle sheet, editing', () => {
 
 	it.each([
 		['plate is longer than 32 characters', 'The field Registration plate takes 32 characters at most.'],
+		['display_name is longer than 64 characters', 'The field Display name takes 64 characters at most.'],
 		['manufacturer is longer than 64 characters', 'The field Manufacturer takes 64 characters at most.'],
 		['model is longer than 64 characters', 'The field Model takes 64 characters at most.'],
 		['vin is longer than 32 characters', 'The field VIN takes 32 characters at most.'],
@@ -825,11 +1136,11 @@ describe('the vehicle sheet, editing', () => {
 })
 
 describe('the vehicle sheet, creating', () => {
-	it('asks for four fields and the counter, and nothing else', async () => {
+	it('asks for five fields and the counter, and nothing else', async () => {
 		const wrapper = await sheet()
 
 		expect(wrapper.findAllComponents(NcTextField).map((one) => one.props('label')))
-			.toEqual(['Registration plate', 'Manufacturer', 'Model', 'Counter reading'])
+			.toEqual(['Registration plate', 'Display name', 'Manufacturer', 'Model', 'Counter reading'])
 		expect(wrapper.findAllComponents(NcSelect).map((/** @type {any} */ one) => one.props('inputLabel')))
 			.toEqual(['Engine', 'Vehicle type', 'Counter unit'])
 		expect(dropdown(wrapper, 'Vehicle type').props('modelValue').id).toBe('car')
@@ -880,6 +1191,7 @@ describe('the vehicle sheet, creating', () => {
 		const wrapper = await sheet()
 
 		await field(wrapper, 'Registration plate').vm.$emit('update:modelValue', 'M-EV 7')
+		await field(wrapper, 'Display name').vm.$emit('update:modelValue', 'Blue van')
 		await dropdown(wrapper, 'Engine').vm.$emit('update:modelValue', { id: 'electric', label: 'Electric' })
 		await field(wrapper, 'Counter reading').vm.$emit('update:modelValue', '148.320')
 		await saveButton(wrapper).vm.$emit('click')
@@ -888,6 +1200,7 @@ describe('the vehicle sheet, creating', () => {
 		expect(createVehicle).toHaveBeenCalledWith({
 			client_uuid: expect.any(String),
 			plate: 'M-EV 7',
+			display_name: 'Blue van',
 			manufacturer: '',
 			model: '',
 			engine: 'electric',

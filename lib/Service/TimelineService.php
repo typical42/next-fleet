@@ -281,7 +281,8 @@ class TimelineService {
 	/**
 	 * The segment each fill-up on the page closes, or null. Measured over the vehicle's whole
 	 * chain, because the fill-up that opened it may be pages away - and only when the page holds a
-	 * fill-up at all.
+	 * fill-up at all. A vehicle that also counts engine hours gets the segment per hour beside it,
+	 * from its own chain: a fill-up may close one and not the other.
 	 *
 	 * @param list<array<string, mixed>> $rows
 	 * @return list<array<string, mixed>>
@@ -292,10 +293,16 @@ class TimelineService {
 			return $rows;
 		}
 
-		$closing = array_column($this->consumption->of($vehicle), null, 'closes');
+		$chains = $this->consumption->ofEachCounter($vehicle);
+		$closing = array_column($chains[OdoReading::MAIN], null, 'closes');
+		$closingPerHour = isset($chains[OdoReading::SECOND]) ? array_column($chains[OdoReading::SECOND], null, 'closes') : null;
 		foreach ($rows as $index => $row) {
 			if ($row['type'] === self::ENERGY) {
-				$rows[$index]['consumption'] = $closing[$row[self::ENERGY]->getUuid()] ?? null;
+				$uuid = $row[self::ENERGY]->getUuid();
+				$rows[$index]['consumption'] = $closing[$uuid] ?? null;
+				if ($closingPerHour !== null) {
+					$rows[$index]['consumption_per_hour'] = $closingPerHour[$uuid] ?? null;
+				}
 			}
 		}
 
@@ -412,7 +419,7 @@ class TimelineService {
 
 	/**
 	 * What each trip on the page leaves unstated of what its jurisdiction requires. Measured on
-	 * every vehicle; the screen decides whether to say so (docs/features.md#logbook-mode).
+	 * every vehicle; the screen decides whether to say so (docs/architecture.md#logbook-mode).
 	 *
 	 * @param list<array<string, mixed>> $rows
 	 * @return list<array<string, mixed>>

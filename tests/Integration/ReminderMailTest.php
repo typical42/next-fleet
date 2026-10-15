@@ -124,6 +124,16 @@ class ReminderMailTest extends TestCase {
 		$this->assertStringContainsString('vehicle=' . $vehicle->getUuid(), $mails[0]['Text']);
 	}
 
+	/** A vehicle without a plate is named as the screen names it, not left blank above its lines. */
+	public function testAVehicleWithoutAPlateGoesByItsDisplayName(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['display_name' => 'Blue van', 'reminder_mail' => 'daily']);
+		$this->reminders->create(self::OWNER, $vehicle->getUuid(), ['template_key' => 'hu_au', 'due_date' => '2031-05-31']);
+
+		$this->runAt('2031-05-03 07:00');
+
+		$this->assertStringContainsString('Blue van – ', $this->mails(self::OWNER)[0]['Text']);
+	}
+
 	/** A reminder's line in the plain text ends at its words: the list item carries no meta info. */
 	public function testAPlainTextLineEndsAtItsWords(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'reminder_mail' => 'daily']);

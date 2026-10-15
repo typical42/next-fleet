@@ -662,6 +662,49 @@ class SeedCommandTest extends TestCase {
 		$this->fail('the demo fleet plans no ' . $key . ' on ' . $plate);
 	}
 
+	/**
+	 * The navigation's second line (docs/ui.md) has each of its sources to show: a display name, and
+	 * where there is none, make and model with the body type. One display name takes all 64
+	 * characters the field allows, so the line has something to truncate.
+	 */
+	public function testTheFleetCarriesItsRegistrationTypesAndDisplayNames(): void {
+		$tester = $this->tester();
+		$this->assertSame(0, $tester->execute(['user' => self::OWNER]), $tester->getDisplay());
+
+		$named = [];
+		$fallback = [];
+		foreach ($this->fleet() as $plate => $vehicle) {
+			if ($vehicle->getDisplayName() !== null) {
+				$named[$plate] = mb_strlen($vehicle->getDisplayName());
+			} elseif ($vehicle->getBodyType() !== null) {
+				$fallback[] = $plate;
+			}
+		}
+
+		$this->assertSame(['NF-DE 100', 'NF-PH 200', 'NF-LK 700'], array_keys($named));
+		$this->assertSame(64, $named['NF-LK 700'], 'no display name long enough to truncate');
+		// More bytes than characters: Oracle's column counts bytes, and the upgrade check seeds
+		// Oracle too.
+		$this->assertGreaterThan(64, strlen((string)$this->fleet()['NF-LK 700']->getDisplayName()), 'the longest name is all ASCII');
+		$this->assertSame(['NF-AH 400'], $fallback, 'no vehicle whose second line falls back to make, model and body type');
+		$this->assertSame('BA03', $this->fleet()['NF-LK 700']->getBodyType(), 'no body type with an add-on');
+	}
+
+	/**
+	 * The per-hour tiles need a closed segment on the hour chain in the header's default year: two
+	 * full fill-ups of the truck that carry engine hours.
+	 */
+	public function testTheTruckHasFullFillUpsWithEngineHoursInTheYearBeforeItRuns(): void {
+		$tester = $this->tester();
+		$this->assertSame(0, $tester->execute(['user' => self::OWNER]), $tester->getDisplay());
+		$fills = array_filter(
+			$this->costsOf('energy', 'NF-LK 700'),
+			static fn (array $fill): bool => $fill['full_tank'] && isset($fill['second_odo']) && $fill['filled_at'] > 1767225600 - 365 * 86400,
+		);
+
+		$this->assertGreaterThanOrEqual(2, count($fills));
+	}
+
 	/** TCO shows only when both prices are set, so one vehicle has both. */
 	public function testOneVehicleHasAPurchasePriceAndAResidual(): void {
 		$this->tester()->execute(['user' => self::OWNER]);

@@ -31,19 +31,47 @@ class ConsumptionService {
 
 	/**
 	 * Every segment one vehicle's fill-ups close, oldest first. `amount` is millilitres or
-	 * watt-hours, `distance` the main counter's advance, and `value` litres or kWh per 100 km, or
-	 * per hour when the main counter counts hours. A two-counter vehicle is measured against its
-	 * kilometres: the hours are work beside the driving, not instead of it.
+	 * watt-hours, `distance` the counter's advance, and `value` litres or kWh per 100 km, or per
+	 * hour when the counter counts hours. A two-counter vehicle is measured against its kilometres
+	 * by default: the hours are work beside the driving, not instead of it. Against its engine
+	 * hours (`SECOND`), a segment needs hours at both ends, as on the main counter.
 	 *
+	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
 	 * @return list<Segment>
 	 * @throws \OCP\DB\Exception
 	 */
-	public function of(Vehicle $vehicle): array {
-		$vehicleId = (int)$vehicle->getId();
-		$fills = $this->energy->findAllForVehicle($vehicleId);
+	public function of(Vehicle $vehicle, string $counter = OdoReading::MAIN): array {
+		return $this->chained($vehicle, $this->energy->findAllForVehicle((int)$vehicle->getId()), $counter);
+	}
 
+	/**
+	 * of() on every counter the vehicle has, its fill-ups read once for both: the history grows
+	 * with the vehicle's age, the Readings per counter do not repeat.
+	 *
+	 * @return array<OdoReading::MAIN|OdoReading::SECOND, list<Segment>> `SECOND` only on a vehicle
+	 *                                                                   that counts engine hours
+	 * @throws \OCP\DB\Exception
+	 */
+	public function ofEachCounter(Vehicle $vehicle): array {
+		$fills = $this->energy->findAllForVehicle((int)$vehicle->getId());
+		$chains = [OdoReading::MAIN => $this->chained($vehicle, $fills, OdoReading::MAIN)];
+		if ($vehicle->getSecondUnit() !== null) {
+			$chains[OdoReading::SECOND] = $this->chained($vehicle, $fills, OdoReading::SECOND);
+		}
+
+		return $chains;
+	}
+
+	/**
+	 * @param list<Energy> $fills the vehicle's fill-ups, oldest first
+	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
+	 * @return list<Segment>
+	 * @throws \OCP\DB\Exception
+	 */
+	private function chained(Vehicle $vehicle, array $fills, string $counter): array {
+		$vehicleId = (int)$vehicle->getId();
 		$counted = [];
-		foreach ($this->readings->findOfSourceType($vehicleId, OdoReading::ENERGY, OdoReading::MAIN) as $reading) {
+		foreach ($this->readings->findOfSourceType($vehicleId, OdoReading::ENERGY, $counter) as $reading) {
 			$counted[(int)$reading->getSourceId()] = $reading;
 		}
 
@@ -52,8 +80,8 @@ class ConsumptionService {
 			$chains[$fill->getEnergy()][] = $fill;
 		}
 
-		$resets = $this->readings->findResets($vehicleId, OdoReading::MAIN, PHP_INT_MIN, PHP_INT_MAX);
-		$per = self::per($vehicle);
+		$resets = $this->readings->findResets($vehicleId, $counter, PHP_INT_MIN, PHP_INT_MAX);
+		$per = self::per($vehicle, $counter);
 		$segments = [];
 		foreach ($chains as $chain) {
 			array_push($segments, ...self::segments($chain, $counted, $resets, $per));
@@ -92,16 +120,33 @@ class ConsumptionService {
 	}
 
 	/**
-	 * Each energy's consumption over the segments that close in `[from, to)`: their amounts over
-	 * their distances, so a long segment weighs more than a short one - averaging the segments'
-	 * values would not.
+	 * Per counter the vehicle has, keyed as ofEachCounter(): each energy's consumption over the
+	 * segments that close in `[from, to)` (`period`), and the energies that closed a segment at
+	 * any time (`measured`). The period sums amounts over distances, so a long segment weighs more
+	 * than a short one - averaging the segments' values would not. An energy never measured has a
+	 * reason the screen can name; a period that closed no segment has none.
 	 *
-	 * @return list<Period>
+	 * @return array<OdoReading::MAIN|OdoReading::SECOND, array{period: list<Period>, measured: list<string>}>
 	 * @throws \OCP\DB\Exception
 	 */
-	public function period(Vehicle $vehicle, int $from, int $to): array {
+	public function measuredOnEachCounter(Vehicle $vehicle, int $from, int $to): array {
+		$measured = [];
+		foreach ($this->ofEachCounter($vehicle) as $counter => $segments) {
+			$measured[$counter] = self::summed($segments, $from, $to, self::per($vehicle, $counter));
+		}
+
+		return $measured;
+	}
+
+	/**
+	 * @param list<Segment> $segments
+	 * @return array{period: list<Period>, measured: list<string>}
+	 */
+	private static function summed(array $segments, int $from, int $to, string $per): array {
 		$sums = [];
-		foreach ($this->of($vehicle) as $segment) {
+		$measured = [];
+		foreach ($segments as $segment) {
+			$measured[$segment['energy']] = true;
 			if ($segment['filled_at'] < $from || $segment['filled_at'] >= $to) {
 				continue;
 			}
@@ -112,7 +157,6 @@ class ConsumptionService {
 			];
 		}
 
-		$per = self::per($vehicle);
 		$periods = [];
 		foreach ($sums as $energy => $sum) {
 			$periods[] = [
@@ -124,7 +168,7 @@ class ConsumptionService {
 			];
 		}
 
-		return $periods;
+		return ['period' => $periods, 'measured' => array_map(strval(...), array_keys($measured))];
 	}
 
 	/**
@@ -252,12 +296,12 @@ class ConsumptionService {
 
 	/**
 	 * One energy's segments, full tank to full tank, partials summed in. A missed fill-up, an end
-	 * without an observed and unflagged Reading, or a counter replaced in between (rule 3) yields
-	 * no number: a gap must produce no number rather than a wrong one.
+	 * without an observed and unflagged Reading, a counter replaced in between (rule 3) or one that
+	 * ran backwards yields no number: a gap must produce no number rather than a wrong one.
 	 *
 	 * @param list<Energy> $chain in time order
-	 * @param array<int, OdoReading> $counted each fill-up's live main-counter Reading, by its id
-	 * @param list<OdoReading> $resets the main counter's answered resets
+	 * @param array<int, OdoReading> $counted each fill-up's live Reading on the counter measured, by its id
+	 * @param list<OdoReading> $resets that counter's answered resets
 	 * @return list<Segment>
 	 */
 	private static function segments(array $chain, array $counted, array $resets, string $per): array {
@@ -275,6 +319,11 @@ class ConsumptionService {
 			$close = self::trusted($counted[(int)$fill->getId()] ?? null);
 			if ($open !== null && $close !== null && !$missed && !self::replacedBetween($resets, $open, $close)) {
 				$distance = $close->getValue() - $open->getValue();
+				// A full tank at the opening reading measures nothing; closing on it would drop its
+				// fuel, so the segment runs on to the next full tank.
+				if ($distance === 0) {
+					continue;
+				}
 				if ($distance > 0) {
 					$segments[] = [
 						'energy' => $fill->getEnergy(),
@@ -296,9 +345,14 @@ class ConsumptionService {
 		return $segments;
 	}
 
-	/** A two-counter vehicle is measured against its kilometres (of()). */
-	public static function per(Vehicle $vehicle): string {
-		return $vehicle->getOdoUnit() === 'h' ? 'h' : 'km';
+	/**
+	 * The unit a counter counts. The second counter only ever counts hours
+	 * (VehicleService::SECOND_UNITS).
+	 *
+	 * @param OdoReading::MAIN|OdoReading::SECOND $counter
+	 */
+	public static function per(Vehicle $vehicle, string $counter = OdoReading::MAIN): string {
+		return $counter === OdoReading::SECOND || $vehicle->getOdoUnit() === 'h' ? 'h' : 'km';
 	}
 
 	/** Millilitres or watt-hours to litres or kWh, per 100 km or per hour. */

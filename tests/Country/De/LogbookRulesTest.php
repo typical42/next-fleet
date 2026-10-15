@@ -29,7 +29,7 @@ class LogbookRulesTest extends TestCase {
 	}
 
 	/**
-	 * The list docs/features.md#logbook-mode states: plate, date, both counters, the full
+	 * The list docs/architecture.md#logbook-mode states: plate, date, both counters, the full
 	 * destination, the purpose and the business partner visited.
 	 */
 	public function testABusinessTripStatesWhereItWentWhyAndToWhom(): void {
@@ -51,7 +51,7 @@ class LogbookRulesTest extends TestCase {
 	}
 
 	/**
-	 * "Private trips need only the kilometres" (docs/features.md#logbook-mode) - and a trip
+	 * "Private trips need only the kilometres" (docs/architecture.md#logbook-mode) - and a trip
 	 * stating neither a counter nor a distance is never written in the first place
 	 * (`TripService::apply()`), so the kilometres are already there. The empty list is the
 	 * answer, not a gap: a private trip is complete the moment it is saved.
@@ -62,7 +62,7 @@ class LogbookRulesTest extends TestCase {
 
 	/**
 	 * Timeliness is the point German case law turns on, and a week is the span the practice
-	 * literature reads "zeitnah" as - days, not weeks (docs/features.md#logbook-mode). A later
+	 * literature reads "zeitnah" as - days, not weeks (docs/architecture.md#logbook-mode). A later
 	 * edit is still written; it is written as a late one.
 	 */
 	public function testAnEntryStaysTimelyForAWeek(): void {

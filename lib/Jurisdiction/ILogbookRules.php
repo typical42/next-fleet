@@ -11,7 +11,7 @@ namespace OCA\NextFleet\Jurisdiction;
 
 /**
  * What one country requires of a logbook, and nothing about how it is kept: append-only storage,
- * revisions, voiding and the audit trail are the core's (docs/features.md#logbook-mode). A ruleset
+ * revisions, voiding and the audit trail are the core's (docs/architecture.md#logbook-mode). A ruleset
  * answers questions; it never writes a row and never refuses one.
  *
  * Internal seam, not a public API - see docs/contributing.md. A jurisdiction that requires no
@@ -35,7 +35,7 @@ interface ILogbookRules {
 	/**
 	 * How many days after a journey an entry about it still counts as timely. An edit arriving
 	 * later is allowed - the mode refuses no write - and its audit row says it was late
-	 * (docs/features.md#logbook-mode).
+	 * (docs/architecture.md#logbook-mode).
 	 */
 	public function lockDelayDays(): int;
 

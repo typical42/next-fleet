@@ -1,157 +1,93 @@
 # Troubleshooting
 
-Each section gives a problem, then the checks and the correction. The commands are in
-[occ commands](occ.md).
+Each section names a problem, then how to find the cause and fix it.
+The commands are in [occ commands](occ.md).
 
-## Reminders or reminder mails do not arrive
+## Reminders do not arrive
 
-1. Go to **Administration settings** > **Basic settings**.
-2. Make sure that background jobs use **Cron** mode.
-3. Ask the owner or a manager to open **Edit vehicle**. The account must be in
-   **Reminders go to**. Only the accounts on that list get notifications and mails.
-4. Show the open reminders of the account:
+1. In **Basic settings**, make sure that background jobs use **Cron**.
+2. Make sure that the account is in **Reminders go to** of the vehicle.
+   Only that list gets notifications and mails.
+3. Run `occ nextfleet:reminders <uid>`.
+   An empty list means no open reminder on a vehicle the account sees.
+4. Run `occ nextfleet:mail-test <uid>`.
+   On an error, fix the email server, or give the account an email address.
+5. Run `occ nextfleet:reminders --send`.
 
-   ```bash
-   sudo -E -u www-data php occ nextfleet:reminders alice
-   ```
+A vehicle that is laid up or disposed of sends nothing.
+Each vehicle can also turn its mails off.
 
-   If the list is empty, the account has no open reminder on a vehicle that it can see.
-5. Send a test mail to the account:
+## A user cannot give access
 
-   ```bash
-   sudo -E -u www-data php occ nextfleet:mail-test alice
-   ```
+NextFleet follows the sharing settings.
+In **Sharing**, check that the sharing API is on, that the owner is not excluded from sharing, and that group sharing is on for a group.
+With "share only with group members", the owner and the other account must share a group.
 
-   If the command shows an error, correct the email server settings. If the account has no email
-   address, add one in the account settings.
-6. Run the reminder job now:
+## A counter shows a wrong value
 
-   ```bash
-   sudo -E -u www-data php occ nextfleet:reminders --send
-   ```
+1. Find the vehicle: `occ nextfleet:vehicles --user <uid>`.
+2. Run `occ nextfleet:check --vehicle <uuid>`.
+3. For a `cache` or `flag` finding, run `occ nextfleet:recompute --vehicle <uuid>`.
 
-A vehicle that is laid up or disposed of sends no reminders. The owner or a manager of a vehicle
-can also stop its reminder mails with the **Reminder mail** setting.
-
-## A user cannot give access to an account or group
-
-NextFleet obeys the sharing settings of Nextcloud. Go to **Administration settings** > **Sharing**
-and examine these settings:
-
-- The sharing API is on.
-- The owner is not in a group that is excluded from sharing.
-- Group sharing is on, if the owner wants to give access to a group.
-- If accounts can share only with members of their own groups, the owner and the other account
-  must be in the same group.
-
-## The counter of a vehicle shows an incorrect value
-
-1. Find the UUID of the vehicle. `--user` shows only the vehicles that this account owns. To see
-   all vehicles, do not use `--user`.
-
-   ```bash
-   sudo -E -u www-data php occ nextfleet:vehicles --user alice
-   ```
-
-2. Check the vehicle:
-
-   ```bash
-   sudo -E -u www-data php occ nextfleet:check --vehicle <vehicle-uuid>
-   ```
-
-3. If the command shows a `cache` or `flag` finding, calculate the counter again:
-
-   ```bash
-   sudo -E -u www-data php occ nextfleet:recompute --vehicle <vehicle-uuid>
-   ```
-
-If the check finds nothing, the value comes from the counter readings. NextFleet flags a counter
-reading that is lower than the reading before it. The user who recorded the entry, the owner or a
-manager must answer the question on that entry in the timeline.
+If the check finds nothing, the value comes from the readings.
+A reading lower than the one before is **In question**.
+The person who recorded it, the owner or a manager answers that question in the timeline.
 
 ## A vehicle is missing
 
-1. Find the vehicle in the trash:
+1. Run `occ nextfleet:vehicles --deleted`.
+2. If it is there, run `occ nextfleet:restore <uuid>`.
 
-   ```bash
-   sudo -E -u www-data php occ nextfleet:vehicles --deleted
-   ```
-
-2. If the vehicle is there, restore it:
-
-   ```bash
-   sudo -E -u www-data php occ nextfleet:restore <vehicle-uuid>
-   ```
-
-If the vehicle is not deleted, `nextfleet:vehicles` shows its lifecycle. A vehicle that is disposed
-of is in the **Disposed of** list on the **Overview** page.
-
-If the account cannot see the vehicle at all, it possibly has no access to it now. Show who has
-access:
-
-```bash
-sudo -E -u www-data php occ nextfleet:access <vehicle-uuid> --all
-```
+If it is not deleted, it may be disposed of: it is then in the **Disposed of** list on the overview.
+If the account cannot see it at all, check who has access: `occ nextfleet:access <uuid> --all`.
 
 ## A document does not open
 
-NextFleet keeps only the ID of a file. The file stays in the Files of the account that attached
-it. If that account deleted the file or moved it out of its Files, the document cannot open.
-Restore the file from the Nextcloud trash bin of that account.
+The file is in the Files of the account that attached it.
+If that account deleted the file or moved it out of its Files, the document cannot open.
+Restore the file from that account's trash bin.
 
 ## A deleted account or group still has access
 
-NextFleet removes the access when you delete an account or a group. If an error stopped that work,
-an hourly job completes it. To see the work that is not complete, and to complete it now:
+An error stopped the deletion.
+Run `occ nextfleet:pending` to see it and `occ nextfleet:pending --finish` to complete it.
+If it fails, read the Nextcloud log.
 
-```bash
-sudo -E -u www-data php occ nextfleet:pending
-sudo -E -u www-data php occ nextfleet:pending --finish
-```
+If it warns that an account with the same name exists again, and that account is a different person, delete it.
+NextFleet then erases the name.
 
-If the command shows an error, look in the Nextcloud log for the cause.
+## Who changed a trip
 
-`nextfleet:pending` can warn that an account with the same name exists again. If that account is a
-different person, delete it. NextFleet then erases the name.
+Run `occ nextfleet:audit <vehicle-uuid> --entry <trip-uuid>`.
 
-## You must know who changed a trip
-
-Show the audit trail of the vehicle:
-
-```bash
-sudo -E -u www-data php occ nextfleet:audit <vehicle-uuid> --entry <trip-uuid>
-```
-
-NextFleet writes an audit row for each change to a trip while Logbook mode is on. It also writes
-one for each change to a trip that started in a period with Logbook mode on. For a vehicle, it
-writes one for each change to the plate, vehicle type, currency, country and Logbook mode. It also
-writes one for each transfer to a new owner.
+There is an audit row for each change to a trip under Logbook mode, or to a trip that started under it.
+A vehicle gets one for each change of plate, vehicle type, currency, country, Logbook mode and owner.
 
 ## A vehicle has an owner that does not exist
 
-`nextfleet:check` shows an `owner` finding when no account has the name of a vehicle owner. This
-happens when you delete an account while the app is disabled. If somebody makes a new account with
-that name, the new account owns the vehicle and can read all its rows.
+`nextfleet:check` shows an `owner` finding.
+This happens when an account is deleted while the app is disabled.
+A new account with that name would own the vehicle and read all its rows.
 
-Before you start, make sure that the account is really deleted. If it comes from LDAP or a
-different user backend, make sure that the backend is available. Else you erase the rows of a live
-account.
+First make sure the account is really gone.
+With LDAP or another user backend, make sure the backend is reachable, or you erase the rows of a live account.
 
-1. Make a temporary account. Use the account name from the `owner` finding.
-2. Give the account a random password.
-3. If you want to keep a vehicle in the trash, restore it with `nextfleet:restore`.
-4. If you want to keep a vehicle, give it to a different account with `nextfleet:transfer`.
-5. Delete the temporary account.
+1. Make an account with the name from the finding, with a random password.
+2. Restore the vehicles you want to keep with `nextfleet:restore`, and move them with `nextfleet:transfer`.
+3. Delete the account.
 
-   NextFleet replaces the name in the rows and moves the vehicles that the account still owns to
-   the trash.
+   NextFleet replaces the name in the rows and moves the vehicles the account still owns to the trash.
 
-Do the same for a `grantee` finding of a deleted account. For a `grantee` finding of a deleted
-group, make a temporary group with that name, then delete it.
+Do the same for a `grantee` finding of an account.
+For a deleted group, make and delete a group of that name.
 
 ## The upgrade output names an account
 
-The repair step `ErasedPseudonyms` names a live account whose name has the format of a deleted
-account from before 0.3.0. NextFleet keeps that account and its rows. If somebody made the account
-to take the rows of the deleted account, delete the account. NextFleet then erases the name in
-those rows. If not, do nothing.
+`ErasedPseudonyms` found a live account whose name looks like a deleted account from before 0.3.0.
+NextFleet keeps it.
+If someone made the account to take over those rows, delete it.
+NextFleet then erases the name.
+Otherwise, do nothing.
+
+This is the end of the admin guide.
+Back to the [start](README.md).

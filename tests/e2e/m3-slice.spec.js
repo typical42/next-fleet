@@ -57,10 +57,11 @@ test('a fill-up entered in the sheet moves the header', async ({ page }) => {
 	await page.goto(appPage)
 	await open(page, plate)
 
-	// One full fill-up opens a segment and closes none, and one Reading is no distance - so no
-	// consumption yet, and the cost is a period total (docs/architecture.md#numbers-consumption-cost-emissions).
+	// One full fill-up opens a segment and closes none, and one Reading is no distance - so the
+	// consumption tile says what it needs, and the cost is a period total
+	// (docs/architecture.md#numbers-consumption-cost-emissions).
 	await expect(tile(page, 'Cost in the period')).toContainText('€51.00')
-	await expect(tile(page, 'Diesel consumption')).toHaveCount(0)
+	await expect(tile(page, 'Diesel consumption')).toContainText('Needs two full fill-ups')
 
 	await page.getByRole('button', { name: 'New entry' }).click()
 	const entry = page.getByRole('dialog', { name: 'New entry' })
@@ -125,7 +126,7 @@ test('a fill-up is edited from its row, and deleted and brought back from the to
 	const toast = page.locator('.toast')
 	await expect(toast).toContainText('The entry was deleted.')
 	await expect(page.locator('.timeline').getByRole('listitem')).toHaveCount(1)
-	await expect(consumption).toHaveCount(0)
+	await expect(consumption).toContainText('Needs two full fill-ups')
 
 	await toast.getByRole('button', { name: 'Undo' }).click()
 	await expect(page.locator('.timeline').getByRole('listitem')).toHaveCount(2)

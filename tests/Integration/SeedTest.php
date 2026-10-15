@@ -130,6 +130,18 @@ class SeedTest extends TestCase {
 		$this->assertSame(248, self::$kpis['NF-LK 700']['hours']);
 	}
 
+	/** And what it burns and costs per engine hour, which the per-hour tiles show. */
+	public function testTheTruckStatesItsFiguresPerEngineHour(): void {
+		$perHour = self::$kpis['NF-LK 700']['consumption_per_hour'];
+
+		$this->assertNotEmpty($perHour, 'no hour segment closed in the year');
+		$this->assertSame('h', $perHour[0]['per']);
+		$this->assertGreaterThan(4.5, $perHour[0]['value']);
+		$this->assertLessThan(6.0, $perHour[0]['value']);
+		$this->assertNotNull(self::$kpis['NF-LK 700']['cost']['value_per_hour']);
+		$this->assertNotNull(self::$kpis['NF-LK 700']['cost']['energy_value_per_hour']);
+	}
+
 	/**
 	 * The inspection the due banner and the job have something to say about: three weeks out, so
 	 * it is a month past its first warning point and the demo shows an amber reminder.

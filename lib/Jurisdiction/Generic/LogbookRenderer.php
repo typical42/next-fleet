@@ -13,6 +13,7 @@ use OCA\NextFleet\Jurisdiction\IReportRenderer;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCA\NextFleet\Jurisdiction\LogbookReport;
 use OCA\NextFleet\Jurisdiction\PrintedPage;
+use OCA\NextFleet\Notification\VehicleWords;
 use OCP\IL10N;
 
 /**
@@ -30,17 +31,19 @@ class LogbookRenderer implements IReportRenderer {
 
 	public function render(LogbookReport $report): string {
 		$vehicle = $report->vehicle;
-		$name = trim(($vehicle->getManufacturer() ?? '') . ' ' . ($vehicle->getModel() ?? ''));
 
 		return '<!DOCTYPE html>'
 			. '<html lang="' . PrintedPage::text($this->l->getLanguageCode()) . '"><head><meta charset="utf-8">'
 			. '<meta name="viewport" content="width=device-width, initial-scale=1">'
-			// TRANSLATORS: the printed logbook's title: %1$s is the plate, %2$s the year
-			. '<title>' . PrintedPage::text($this->l->t('Logbook %1$s %2$s', [(string)$vehicle->getPlate(), (string)$report->year])) . '</title>'
+			// TRANSLATORS: the printed logbook's title: %1$s is the vehicle's plate or name, %2$s the year
+			. '<title>' . PrintedPage::text($this->l->t('Logbook %1$s %2$s', [VehicleWords::name($this->l, $vehicle), (string)$report->year])) . '</title>'
 			. '<style>' . PrintedPage::LOGBOOK_STYLE . '</style></head><body>'
 			. '<header><h1>' . PrintedPage::text($this->l->t('Logbook %1$s', [(string)$report->year])) . '</h1><dl>'
-			. '<dt>' . PrintedPage::text($this->l->t('Plate')) . '</dt><dd>' . PrintedPage::text($vehicle->getPlate()) . '</dd>'
-			. ($name === '' ? '' : '<dt>' . PrintedPage::text($this->l->t('Vehicle')) . '</dt><dd>' . PrintedPage::text($name) . '</dd>')
+			. PrintedPage::vehicle($vehicle, [
+				'plate' => $this->l->t('Plate'),
+				'display' => $this->l->t('Display name'),
+				'vehicle' => $this->l->t('Vehicle'),
+			], $this->l->t('Unnamed vehicle'))
 			. '</dl></header>'
 			. $this->split($report)
 			. $this->table($report)

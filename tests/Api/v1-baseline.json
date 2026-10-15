@@ -329,12 +329,15 @@
                     "net",
                     "per",
                     "distance",
+                    "hours",
                     "total",
                     "energy",
                     "maintenance",
                     "expenses",
                     "value",
                     "energy_value",
+                    "value_per_hour",
+                    "energy_value_per_hour",
                     "tco",
                     "incomplete",
                     "unstated"
@@ -352,6 +355,11 @@
                         "nullable": true
                     },
                     "distance": {
+                        "type": "integer",
+                        "format": "int64",
+                        "nullable": true
+                    },
+                    "hours": {
                         "type": "integer",
                         "format": "int64",
                         "nullable": true
@@ -384,6 +392,16 @@
                         "nullable": true
                     },
                     "energy_value": {
+                        "type": "number",
+                        "format": "double",
+                        "nullable": true
+                    },
+                    "value_per_hour": {
+                        "type": "number",
+                        "format": "double",
+                        "nullable": true
+                    },
+                    "energy_value_per_hour": {
                         "type": "number",
                         "format": "double",
                         "nullable": true
@@ -776,6 +794,9 @@
                 "type": "object",
                 "required": [
                     "consumption",
+                    "consumption_per_hour",
+                    "measured",
+                    "measured_per_hour",
                     "wall_side",
                     "cost",
                     "hours"
@@ -785,6 +806,26 @@
                         "type": "array",
                         "items": {
                             "$ref": "#/components/schemas/Period"
+                        }
+                    },
+                    "consumption_per_hour": {
+                        "type": "array",
+                        "nullable": true,
+                        "items": {
+                            "$ref": "#/components/schemas/Period"
+                        }
+                    },
+                    "measured": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "measured_per_hour": {
+                        "type": "array",
+                        "nullable": true,
+                        "items": {
+                            "type": "string"
                         }
                     },
                     "wall_side": {
@@ -2689,6 +2730,14 @@
                             }
                         ]
                     },
+                    "consumption_per_hour": {
+                        "nullable": true,
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/Segment"
+                            }
+                        ]
+                    },
                     "closes": {
                         "type": "string",
                         "nullable": true
@@ -2891,6 +2940,9 @@
                     "second_unit",
                     "second_value",
                     "reminder_mail",
+                    "display_name",
+                    "eu_category",
+                    "body_type",
                     "created_at",
                     "updated_at",
                     "deleted_at",
@@ -3017,6 +3069,18 @@
                     },
                     "reminder_mail": {
                         "type": "string"
+                    },
+                    "display_name": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "eu_category": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "body_type": {
+                        "type": "string",
+                        "nullable": true
                     },
                     "created_at": {
                         "type": "integer",
@@ -3309,6 +3373,24 @@
                                         "nullable": true,
                                         "default": null,
                                         "description": "the plate, a label and never the identity"
+                                    },
+                                    "display_name": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "a second label beside the plate, up to 64 characters"
+                                    },
+                                    "eu_category": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "field J of the registration certificate, such as M1, N3G or L3e-A2"
+                                    },
+                                    "body_type": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "field 4, the EU body code with its add-on, such as AC or BA03; it has to fit eu_category"
                                     },
                                     "manufacturer": {
                                         "type": "string",
@@ -3898,6 +3980,24 @@
                                         "nullable": true,
                                         "default": null,
                                         "description": "the plate, a label and never the identity"
+                                    },
+                                    "display_name": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "a second label beside the plate, up to 64 characters"
+                                    },
+                                    "eu_category": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "field J of the registration certificate, such as M1, N3G or L3e-A2"
+                                    },
+                                    "body_type": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "field 4, the EU body code with its add-on, such as AC or BA03; it has to fit eu_category"
                                     },
                                     "manufacturer": {
                                         "type": "string",

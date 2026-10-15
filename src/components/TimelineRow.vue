@@ -21,7 +21,7 @@ const props = defineProps({
 	vehicle: { type: Object, required: true },
 	/**
 	 * The Gap this trip's claim opened, if any; handed over only under Logbook Mode
-	 * (docs/features.md#logbook-mode).
+	 * (docs/architecture.md#logbook-mode).
 	 *
 	 * @type {import('vue').PropType<import('../services/api.js').Gap|null>}
 	 */
@@ -122,6 +122,7 @@ const tail = computed(() => {
 	if (energy.value !== undefined) {
 		return [
 			props.entry.consumption ? formatConsumption(props.entry.consumption, energy.value.energy) : '',
+			props.entry.consumption_per_hour ? formatConsumption(props.entry.consumption_per_hour, energy.value.energy) : '',
 			energy.value.station,
 			// Not flags but what the driver said; they are why a fill-up closes no consumption
 			// segment, so the row says them.
@@ -158,7 +159,7 @@ const questioned = computed(() => (may(props.entry, 'edit')
 	? ownReadings.value.find((reading) => reading.flagged === true && reading.origin === 'observed') ?? null
 	: null))
 
-/** Said only under Logbook Mode (docs/features.md#logbook-mode). */
+/** Said only under Logbook Mode (docs/architecture.md#logbook-mode). */
 const missingWords = computed(() => (props.vehicle.logbook_mode === true ? fieldWords(props.entry.missing ?? [], props.vehicle.odo_unit) : ''))
 </script>
 

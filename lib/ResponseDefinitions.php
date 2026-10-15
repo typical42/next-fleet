@@ -50,6 +50,9 @@ namespace OCA\NextFleet;
  *     second_unit: ?string,
  *     second_value: ?int,
  *     reminder_mail: string,
+ *     display_name: ?string,
+ *     eu_category: ?string,
+ *     body_type: ?string,
  *     created_at: int,
  *     updated_at: int,
  *     deleted_at: ?int,
@@ -225,6 +228,7 @@ namespace OCA\NextFleet;
  *     missing?: list<string>,
  *     flags?: list<string>,
  *     consumption?: ?NextFleetSegment,
+ *     consumption_per_hour?: ?NextFleetSegment,
  *     closes?: ?string,
  *     may: list<string>,
  *     entered_by: ?string,
@@ -247,10 +251,11 @@ namespace OCA\NextFleet;
  * @psalm-type NextFleetPeriod = array{energy: string, amount: int, distance: int, per: string, value: float}
  * @psalm-type NextFleetRolling = array{amount: int, distance: int, per: string, value: float}
  *
- * What a period cost, and the expenses by category.
+ * What a period cost, and the expenses by category. `hours` is how far the second counter moved;
+ * `value_per_hour` and `energy_value_per_hour` are over them, null without them.
  *
  * @psalm-type NextFleetItemised = array{category: ?string, total: int}
- * @psalm-type NextFleetCost = array{currency: ?string, net: bool, per: ?string, distance: ?int, total: ?int, energy: ?int, maintenance: ?int, expenses: ?list<NextFleetItemised>, value: ?float, energy_value: ?float, tco: ?float, incomplete: bool, unstated: bool}
+ * @psalm-type NextFleetCost = array{currency: ?string, net: bool, per: ?string, distance: ?int, hours: ?int, total: ?int, energy: ?int, maintenance: ?int, expenses: ?list<NextFleetItemised>, value: ?float, energy_value: ?float, value_per_hour: ?float, energy_value_per_hour: ?float, tco: ?float, incomplete: bool, unstated: bool}
  *
  * The CO₂ a period gave off, always an estimate, and the grid factor it used for charging. `source`
  * and `year` cite the fuel factors; `year` is null where the country does not state it.
@@ -258,7 +263,7 @@ namespace OCA\NextFleet;
  * @psalm-type NextFleetGrid = array{grams: int, year: ?int, source: ?string}
  * @psalm-type NextFleetCo2 = array{grams: ?int, unstated: bool, source: string, year: ?int, grid: ?NextFleetGrid}
  *
- * @psalm-type NextFleetFigures = array{consumption: list<NextFleetPeriod>, wall_side: ?NextFleetRolling, cost: NextFleetCost, hours: ?int}
+ * @psalm-type NextFleetFigures = array{consumption: list<NextFleetPeriod>, consumption_per_hour: ?list<NextFleetPeriod>, measured: list<string>, measured_per_hour: ?list<string>, wall_side: ?NextFleetRolling, cost: NextFleetCost, hours: ?int}
  *
  * @psalm-type NextFleetYear = array{year: NextFleetFigures, co2: ?NextFleetCo2, months: list<array{month: int, from: int, to: int, cost: NextFleetCost}>}
  *

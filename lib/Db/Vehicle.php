@@ -70,6 +70,12 @@ use OCP\DB\Types;
  * @method void setSecondValue(?int $secondValue)
  * @method string getReminderMail()
  * @method void setReminderMail(string $reminderMail)
+ * @method string|null getDisplayName()
+ * @method void setDisplayName(?string $displayName)
+ * @method string|null getEuCategory()
+ * @method void setEuCategory(?string $euCategory)
+ * @method string|null getBodyType()
+ * @method void setBodyType(?string $bodyType)
  *
  * @psalm-import-type NextFleetVehicle from \OCA\NextFleet\ResponseDefinitions
  */
@@ -114,6 +120,12 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 	protected ?int $secondValue = null;
 	/** How often the reminder digest covers this vehicle; the column's default. */
 	protected string $reminderMail = self::MAIL_WEEKLY;
+	/** Shown as the second label; the plate stays the name everywhere a vehicle is named. */
+	protected ?string $displayName = null;
+	/** Field J of the registration certificate, the EU vehicle category. */
+	protected ?string $euCategory = null;
+	/** Field 4, the EU body code with its add-on. */
+	protected ?string $bodyType = null;
 
 	/**
 	 * What whoever asked may do on the vehicle (VehicleAccess::operations()). Not a column:
@@ -175,6 +187,9 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 		$this->addType('secondUnit', Types::STRING);
 		$this->addType('secondValue', Types::BIGINT);
 		$this->addType('reminderMail', Types::STRING);
+		$this->addType('displayName', Types::STRING);
+		$this->addType('euCategory', Types::STRING);
+		$this->addType('bodyType', Types::STRING);
 	}
 
 	/** @return list<string> */
@@ -251,6 +266,9 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 			'second_unit' => $this->secondUnit,
 			'second_value' => $this->secondValue,
 			'reminder_mail' => $this->reminderMail,
+			'display_name' => $this->displayName,
+			'eu_category' => $this->euCategory,
+			'body_type' => $this->bodyType,
 			'created_at' => $this->createdAt,
 			'updated_at' => $this->updatedAt,
 			'deleted_at' => $this->deletedAt,

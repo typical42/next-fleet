@@ -138,7 +138,7 @@ class EnergyService {
 	/**
 	 * Rewrites one fill-up in place, and its Readings with it. The request is the whole fill-up,
 	 * as record() takes it: a field it leaves out is one the driver emptied (TripService::update()).
-	 * No audit row - Logbook Mode covers trips only (docs/features.md#logbook-mode).
+	 * No audit row - Logbook Mode covers trips only (docs/architecture.md#logbook-mode).
 	 *
 	 * @param array<string, mixed> $fields
 	 * @param int $expectedUpdatedAt the `updated_at` the client read

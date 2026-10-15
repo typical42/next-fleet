@@ -292,7 +292,7 @@ const categories = computed(() => CATEGORIES.map((id) => ({ id, label: categoryW
 /** @type {import('vue').Ref<{id: string, label: string}|null>} */
 const category = ref(null)
 
-// Under Logbook Mode a trip is voided rather than deleted (docs/features.md#logbook-mode).
+// Under Logbook Mode a trip is voided rather than deleted (docs/architecture.md#logbook-mode).
 const removal = computed(() => (kind.value === 'trip' && props.vehicle.logbook_mode === true
 	? t('nextfleet', 'Void trip')
 	: t('nextfleet', 'Delete')))

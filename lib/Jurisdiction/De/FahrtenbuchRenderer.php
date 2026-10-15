@@ -12,6 +12,7 @@ use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Jurisdiction\IReportRenderer;
 use OCA\NextFleet\Jurisdiction\LogbookReport;
 use OCA\NextFleet\Jurisdiction\PrintedPage;
+use OCA\NextFleet\Notification\VehicleWords;
 
 /**
  * A Fahrtenbuch as the browser prints it: one line per trip, voided ones included, the periods
@@ -20,7 +21,7 @@ use OCA\NextFleet\Jurisdiction\PrintedPage;
  * Written in German whatever the reader's language, and not marked for translation: it is a
  * document for a German tax office, and the language of the proceedings there is German (section
  * 87 AO, https://www.gesetze-im-internet.de/ao_1977/__87.html). The words are part of the layout,
- * which is the country's (docs/features.md#logbook-mode).
+ * which is the country's (docs/architecture.md#logbook-mode).
  *
  * @psalm-import-type LateChange from LogbookReport
  */
@@ -45,6 +46,12 @@ class FahrtenbuchRenderer implements IReportRenderer {
 		'category' => 'Art',
 	];
 
+	/** The header's terms for the vehicle (`PrintedPage::vehicle()`), here and on the mileage claim. */
+	public const VEHICLE = ['plate' => self::WORDS['plate'], 'display' => 'Anzeigename', 'vehicle' => 'Fahrzeug'];
+
+	/** A vehicle with no plate, display name, make or model; the app's German word for it. */
+	public const UNNAMED = 'Fahrzeug ohne Namen';
+
 	/** The mileage claim's terms; a commute as § 9 (1) 3 Nr. 4 EStG names it. */
 	private const CATEGORIES = [
 		Trip::BUSINESS => 'Geschäftlich',
@@ -58,16 +65,14 @@ class FahrtenbuchRenderer implements IReportRenderer {
 	public function render(LogbookReport $report): string {
 		$this->zone = $report->zone;
 		$vehicle = $report->vehicle;
-		$name = trim(($vehicle->getManufacturer() ?? '') . ' ' . ($vehicle->getModel() ?? ''));
 
 		return '<!DOCTYPE html>'
 			. '<html lang="de"><head><meta charset="utf-8">'
 			. '<meta name="viewport" content="width=device-width, initial-scale=1">'
-			. '<title>Fahrtenbuch ' . PrintedPage::text($vehicle->getPlate()) . ' ' . $report->year . '</title>'
+			. '<title>Fahrtenbuch ' . PrintedPage::text(VehicleWords::nameOr($vehicle, self::UNNAMED)) . ' ' . $report->year . '</title>'
 			. '<style>' . PrintedPage::LOGBOOK_STYLE . '</style></head><body>'
 			. '<header><h1>Fahrtenbuch ' . $report->year . '</h1><dl>'
-			. '<dt>Kennzeichen</dt><dd>' . PrintedPage::text($vehicle->getPlate()) . '</dd>'
-			. ($name === '' ? '' : '<dt>Fahrzeug</dt><dd>' . PrintedPage::text($name) . '</dd>')
+			. PrintedPage::vehicle($vehicle, self::VEHICLE, self::UNNAMED)
 			. '</dl></header>'
 			. $this->periods($report)
 			. $this->table($report)

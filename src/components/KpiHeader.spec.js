@@ -40,8 +40,11 @@ const at = (year, month, day) => new Date(year, month - 1, day).getTime() / 1000
 function answer(value) {
 	return {
 		consumption: [],
+		consumption_per_hour: null,
+		measured: ['diesel'],
+		measured_per_hour: null,
 		wall_side: null,
-		cost: { currency: 'EUR', net: false, per: 'km', distance: 1000, total: value * 10, energy: 0, maintenance: 0, expenses: [], value, energy_value: 0, tco: null, incomplete: false, unstated: false },
+		cost: { currency: 'EUR', net: false, per: 'km', distance: 1000, hours: null, total: value * 10, energy: 0, maintenance: 0, expenses: [], value, energy_value: 0, value_per_hour: null, energy_value_per_hour: null, tco: null, incomplete: false, unstated: false },
 		hours: null,
 	}
 }

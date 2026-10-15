@@ -16,6 +16,8 @@ use OCA\NextFleet\Migration\Version000004Date20260922000000;
 use OCA\NextFleet\Migration\Version000005Date20260923000000;
 use OCA\NextFleet\Migration\Version000006Date20261002000000;
 use OCA\NextFleet\Migration\Version000007Date20261003000000;
+use OCA\NextFleet\Migration\Version000008Date20261010000000;
+use OCA\NextFleet\Migration\Version000009Date20261011000000;
 use OCP\IDBConnection;
 use OCP\Migration\SimpleMigrationStep;
 
@@ -27,7 +29,8 @@ use OCP\Migration\SimpleMigrationStep;
 final class MigrationSteps {
 	/**
 	 * The fourth step writes rows after its schema change, so it is handed what it writes them
-	 * with; a schema test calls only changeSchema() and can pass stand-ins.
+	 * with; a schema test calls only changeSchema() and can pass stand-ins. The ninth asks the
+	 * connection which database it is on.
 	 *
 	 * @return list<SimpleMigrationStep>
 	 */
@@ -40,6 +43,8 @@ final class MigrationSteps {
 			new Version000005Date20260923000000(),
 			new Version000006Date20261002000000(),
 			new Version000007Date20261003000000(),
+			new Version000008Date20261010000000(),
+			new Version000009Date20261011000000($db),
 		];
 	}
 

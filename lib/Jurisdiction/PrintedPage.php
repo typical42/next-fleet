@@ -8,6 +8,9 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Jurisdiction;
 
+use OCA\NextFleet\Db\Vehicle;
+use OCA\NextFleet\Notification\VehicleWords;
+
 /**
  * What the printed pages share, so every country's escapes and lays out alike.
  */
@@ -49,5 +52,33 @@ final class PrintedPage {
 		}
 
 		return $html . '</tr>';
+	}
+
+	/**
+	 * The header's terms that name the vehicle, from the fields `VehicleWords::name()` reads: the
+	 * plate, else the display name, then make and model. Each value stands under its own term, so a
+	 * name is never passed off as a plate; `$unnamed` stands in only when all three are empty.
+	 *
+	 * @param array{plate: string, display: string, vehicle: string} $terms
+	 */
+	public static function vehicle(Vehicle $vehicle, array $terms, string $unnamed): string {
+		$plate = $vehicle->getPlate() ?? '';
+		$values = [
+			'plate' => $plate,
+			'display' => $plate === '' ? ($vehicle->getDisplayName() ?? '') : '',
+			'vehicle' => VehicleWords::made($vehicle),
+		];
+		if (implode('', $values) === '') {
+			$values['vehicle'] = $unnamed;
+		}
+
+		$html = '';
+		foreach ($values as $key => $value) {
+			if ($value !== '') {
+				$html .= '<dt>' . self::text($terms[$key]) . '</dt><dd>' . self::text($value) . '</dd>';
+			}
+		}
+
+		return $html;
 	}
 }

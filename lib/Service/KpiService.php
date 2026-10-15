@@ -31,7 +31,11 @@ class KpiService {
 	}
 
 	/**
-	 * `hours` is how far the second counter moved, and null on a vehicle that has none.
+	 * `hours` is how far the second counter moved, and `consumption_per_hour` each energy's
+	 * consumption against it; both are null on a vehicle that has none. On one that has, the list
+	 * is empty when no segment with engine hours at both ends closed in the period.
+	 * `measured` and `measured_per_hour` name the energies that ever closed a segment on each
+	 * counter, so the screen can tell an energy never measured from a quiet period.
 	 *
 	 * @param array<string, mixed> $fields `from` and `to` in unix seconds, half-open; `net` for
 	 *                                     "I reclaim VAT"
@@ -104,13 +108,19 @@ class KpiService {
 	 * @throws \OCP\DB\Exception
 	 */
 	private function figures(Vehicle $vehicle, int $from, int $to, bool $net, ?array $cost = null): array {
+		$cost ??= $this->cost->of($vehicle, $from, $to, $net);
+		$measured = $this->consumption->measuredOnEachCounter($vehicle, $from, $to);
+		$perDistance = $measured[OdoReading::MAIN];
+		$perHour = $measured[OdoReading::SECOND] ?? null;
+
 		return [
-			'consumption' => $this->consumption->period($vehicle, $from, $to),
+			'consumption' => $perDistance['period'],
+			'consumption_per_hour' => $perHour['period'] ?? null,
+			'measured' => $perDistance['measured'],
+			'measured_per_hour' => $perHour['measured'] ?? null,
 			'wall_side' => $this->consumption->wallSide($vehicle, $from, $to),
-			'cost' => $cost ?? $this->cost->of($vehicle, $from, $to, $net),
-			'hours' => $vehicle->getSecondUnit() === null
-				? null
-				: $this->consumption->distance($vehicle, $from, $to, OdoReading::SECOND),
+			'cost' => $cost,
+			'hours' => $cost['hours'],
 		];
 	}
 

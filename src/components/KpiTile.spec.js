@@ -23,4 +23,12 @@ describe('KpiTile', () => {
 
 		expect(wrapper.findAll('dd').map((dd) => dd.text())).toEqual(['–'])
 	})
+
+	it('sets a hint as a sentence, not at a figure\'s size', () => {
+		const hint = mount(KpiTile, { props: { tile: { label: 'Diesel consumption', figure: 'Needs two full fill-ups', change: null, notes: [], hint: true } } })
+		const figure = mount(KpiTile, { props: { tile: { label: 'Cost', figure: '€12.30', change: null, notes: [] } } })
+
+		expect(hint.find('dd').classes()).toContain('tile__figure--hint')
+		expect(figure.find('dd').classes()).not.toContain('tile__figure--hint')
+	})
 })

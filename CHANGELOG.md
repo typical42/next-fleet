@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.4.0 — 2026-10-15
+
+A vehicle says what it is: a display name, and the EU type codes from its registration
+certificate. A vehicle that counts kilometres and engine hours gets its figures per engine hour too.
+
+### Vehicles
+
+- A vehicle can carry a display name, such as "Blue van" or "Anna's car", up to 64 characters. It
+  is a second label: the plate stays what mails, exports and the logbook name the vehicle by.
+  Without a plate, the display name is what the vehicle is called, in reminder notifications too.
+  Search finds it and shows it under the plate.
+- A vehicle without a plate is named by its display name, else make and model, on its printed
+  logbook and mileage claim and in the names of its CSV files. These left the plate blank before,
+  and the files carried a long code.
+- The navigation shows each vehicle on two lines: the plate in bold, and under it the display name,
+  or else make and model. The overview and the vehicle page say the same under the plate.
+- The edit sheet asks for the EU vehicle category from field J of the registration certificate,
+  such as M1 or L3e-A2, with an off-road switch for M and N. The list is grouped, searchable by
+  name or code (spaces, hyphens and dots aside), and puts what suits the vehicle type first.
+  Choosing a category can set the vehicle type.
+- The edit sheet also asks for the EU body type, field 4 on a German certificate, such as AC for a
+  station wagon, with its two-digit add-on where there is one, such as BA03 for a lorry with a box
+  body. It offers only what fits the category. Without a display name, the second label reads
+  make, model and body type, such as "Volkswagen Passat · Station wagon".
+- A help link under each code field leads to the user docs, which say where the codes are on the
+  certificate and list every one of them.
+
+### Figures and costs
+
+- A vehicle that counts kilometres and engine hours shows each energy's consumption per engine hour,
+  such as 4.5 l/h, next to its figure per 100 km. It counts the full tanks that both have engine
+  hours. Its cost and energy cost per engine hour follow their per-100 km tiles, and a full
+  fill-up's timeline row states both figures. The Costs screen stays per 100 km.
+- A consumption tile that cannot have a figure yet says what it needs: "Needs two full fill-ups",
+  or, beside a figure per 100 km, "Enter engine hours on full fill-ups".
+
+### For apps, scripts and admins
+
+- The OCS API carries the new fields, and v1 now promises them: a vehicle's `display_name`,
+  `eu_category` and `body_type`, which create and update take too; in `…/kpis` and
+  `…/costs/{year}`, `consumption_per_hour`, `measured` and `measured_per_hour`, and the cost's
+  `hours`, `value_per_hour` and `energy_value_per_hour`; a timeline row's `consumption_per_hour`.
+  An unknown code, or a body type that does not fit the category, is a 400.
+- `occ nextfleet:vehicles` lists the display name, the EU category and the EU body type.
+- From 0.3.1, `occ upgrade` adds the three vehicle columns, empty, and changes no row. After an
+  update with `occ`, reload the web server or PHP-FPM, as the
+  [administration guide](https://github.com/typical42/next-fleet/blob/main/docs/admin/README.md#upgrade-the-app)
+  now says: until PHP's opcache lets go of the old code, reading a vehicle fails.
+
+### Fixed
+
+- On Oracle, a plate, name, label, title or other short text with letters such as ü or é could fail
+  to save at its full length. It now saves up to the length the form allows, as on MariaDB and
+  PostgreSQL. `occ upgrade` widens those columns on Oracle only, and changes no row.
+- Two full tanks at the same odometer reading, such as a top-up at the same stop, dropped the
+  second one's fuel from the consumption. It now counts towards the next full tank.
+
 ## 0.3.1 — 2026-10-07
 
 The first release: a logbook for your vehicles, with their fill-ups, maintenance, costs and

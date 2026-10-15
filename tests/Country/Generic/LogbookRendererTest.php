@@ -13,6 +13,7 @@ use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Jurisdiction\Generic;
 use OCA\NextFleet\Jurisdiction\LogbookReport;
 use OCA\NextFleet\Tests\Stub\Untranslated;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -53,9 +54,10 @@ class LogbookRendererTest extends TestCase {
 	/**
 	 * @param list<Trip> $trips
 	 * @param ?array<string, string> $enteredBy
+	 * @param array<string, string> $names the vehicle's plate, display name, make and model
 	 */
-	private function render(array $trips, ?array $enteredBy = null): \DOMXPath {
-		$vehicle = Vehicle::fromRow(['id' => 7, 'plate' => 'W-12345X', 'manufacturer' => 'VW', 'model' => 'Caddy', 'jurisdiction' => 'generic']);
+	private function render(array $trips, ?array $enteredBy = null, array $names = ['plate' => 'W-12345X', 'manufacturer' => 'VW', 'model' => 'Caddy']): \DOMXPath {
+		$vehicle = Vehicle::fromRow(['id' => 7, 'jurisdiction' => 'generic'] + $names);
 		$lines = array_map(static fn (Trip $trip): array => ['trip' => $trip, 'missing' => [], 'late' => []], $trips);
 		$html = (new Generic\LogbookRenderer(new Untranslated()))->render(new LogbookReport($vehicle, 2026, $lines, [], null, $enteredBy, new \DateTimeZone('Europe/Vienna')));
 
@@ -220,5 +222,57 @@ class LogbookRendererTest extends TestCase {
 		$this->assertStringContainsString('VW Caddy', $this->text($page, '//header'));
 		$this->assertStringContainsString('not a certification', $this->text($page, '//footer'));
 		$this->assertStringContainsString('Not reviewed by a lawyer.', $this->text($page, '//footer'));
+	}
+
+	/**
+	 * The title calls the vehicle by its name, as a notice does: the plate, else the display name,
+	 * else make and model. The header names it by the same fields, each under its own word; a
+	 * plated vehicle's display name stays off the page.
+	 *
+	 * @param array<string, string> $names
+	 * @param array<string, string> $header
+	 */
+	#[DataProvider('names')]
+	public function testThePageCallsTheVehicleByItsName(array $names, string $title, array $header): void {
+		$page = $this->render([], null, $names);
+
+		$this->assertSame($title, $this->text($page, '//title'));
+		$this->assertSame($header, $this->header($page));
+	}
+
+	/** @return array<string, array{array<string, string>, string, array<string, string>}> */
+	public static function names(): array {
+		return [
+			'plated' => [
+				['plate' => 'W-12345X', 'display_name' => 'Family van', 'manufacturer' => 'VW', 'model' => 'Caddy'],
+				'Logbook W-12345X 2026',
+				['Plate' => 'W-12345X', 'Vehicle' => 'VW Caddy'],
+			],
+			'with a display name' => [
+				['display_name' => 'Family van', 'manufacturer' => 'VW', 'model' => 'Caddy'],
+				'Logbook Family van 2026',
+				['Display name' => 'Family van', 'Vehicle' => 'VW Caddy'],
+			],
+			'with make and model' => [
+				['manufacturer' => 'VW', 'model' => 'Caddy'],
+				'Logbook VW Caddy 2026',
+				['Vehicle' => 'VW Caddy'],
+			],
+			'with none' => [
+				[],
+				'Logbook Unnamed vehicle 2026',
+				['Vehicle' => 'Unnamed vehicle'],
+			],
+		];
+	}
+
+	/** @return array<string, string> the header's terms and what each says */
+	private function header(\DOMXPath $page): array {
+		$header = [];
+		foreach ($page->query('//header/dl/dt') ?: [] as $dt) {
+			$header[trim($dt->textContent)] = trim((string)$dt->nextSibling?->textContent);
+		}
+
+		return $header;
 	}
 }

@@ -10,9 +10,9 @@ notifications, mail. Frontend: Nextcloud web UI. An Android client comes later, 
 |---|---|
 | [CONTEXT.md](CONTEXT.md) | The glossary. Read it first — the code, the UI and these docs use these words and no others |
 | [docs/adr/](docs/adr/) | Decisions that are hard to reverse, each with its reasoning. Where a document and an ADR disagree, the ADR wins |
-| [docs/architecture.md](docs/architecture.md) | Layers, data model, Nextcloud integration, the reminder engine, the maths |
+| [docs/architecture.md](docs/architecture.md) | Layers, data model, Logbook Mode, Nextcloud integration, the reminder engine, the maths |
 | [docs/api.md](docs/api.md) | The OCS API a client is built against: signing in, answers, tokens, sync, what v1 promises |
-| [docs/features.md](docs/features.md) | Prior art, the backlog, Logbook Mode |
+| [docs/features.md](docs/features.md) | Prior art and the backlog |
 | [docs/contributing.md](docs/contributing.md) | How someone adds a jurisdiction, an importer or a report — by merge request |
 | [docs/ui.md](docs/ui.md) | Screens, the entry flow, English and German |
 | [docs/security.md](docs/security.md) | Threat model, and the rules that follow from it |
@@ -90,7 +90,7 @@ type that does not exist yet is the wrong order.
 
 ## Decisions taken
 
-Dated 2026-09-03, revised 2026-09-04, 2026-09-23 and 2026-10-02. Where an ADR exists it carries the reasoning; this list is
+Dated 2026-09-03, revised 2026-09-04, 2026-09-23, 2026-10-02 and 2026-10-10. Where an ADR exists it carries the reasoning; this list is
 the index.
 
 **Shape of the product**
@@ -105,7 +105,7 @@ the index.
    ([contributing](docs/contributing.md)). One directory each, the core knows none of them, review
    is the gate.
 5. **The OCS API v1 is the public contract** —
-   [ADR 0009](docs/adr/0009-the-ocs-api-v1-is-the-public-contract.md), superseding ADR 0006. Two
+   [ADR 0009](docs/adr/0009-the-ocs-api-v1-is-the-public-contract.md). Two
    doors, one rule: the web UI keeps its internal routes, and both call the same services.
 6. **Reports are HTML with a print stylesheet** — [ADR 0005](docs/adr/0005-no-pdf-library.md).
 
@@ -136,7 +136,7 @@ the index.
     [ADR 0003](docs/adr/0003-logbook-mode-does-not-lock-the-past.md). A delete under it voids the
     record rather than removing it.
 15. **Gaps are closed one at a time, as private trips only**
-    ([logbook mode](docs/features.md#logbook-mode)).
+    ([logbook mode](docs/architecture.md#logbook-mode)).
 16. **No calendar** ([Nextcloud integration](docs/architecture.md#nextcloud-integration)). A
     reminder whose event cannot be changed or removed keeps ringing after it is done.
 17. **Dismissing a reminder skips one occurrence; deleting it ends the recurrence**
@@ -152,6 +152,8 @@ the index.
 21. **Erasing a driver pseudonymises** —
     [ADR 0008](docs/adr/0008-erasing-a-driver-pseudonymises.md). Retention is opt-in and off by
     default ([data protection](docs/legal.md)).
+22. **The vehicle type drives the rules; the EU registration codes are data** —
+    [ADR 0010](docs/adr/0010-the-vehicle-type-drives-rules-the-eu-codes-are-data.md).
 
 ## Risks
 

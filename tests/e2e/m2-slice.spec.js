@@ -127,7 +127,7 @@ test('a trip refused leaves the sheet open with every value in it', async ({ pag
 	await expect(entry.getByRole('button', { name: 'Try again' })).toBeVisible()
 })
 
-/** docs/features.md#logbook-mode: saved, flagged, and asked for the rest in the sheet's words. */
+/** docs/architecture.md#logbook-mode: saved, flagged, and asked for the rest in the sheet's words. */
 test('a business trip missing what the logbook requires is saved and asks for the rest', async ({ page }) => {
 	const plate = `${plates}${Date.now()}`
 	const vehicle = await api(page, { method: 'POST', path: '/api/vehicles', body: { plate, logbook_mode: true } })
@@ -154,7 +154,7 @@ test('a business trip missing what the logbook requires is saved and asks for th
 })
 
 /**
- * docs/features.md#logbook-mode: a trip that sets off above the counter before it leaves the
+ * docs/architecture.md#logbook-mode: a trip that sets off above the counter before it leaves the
  * difference unaccounted, and the month it set off in says so.
  */
 test('the month a trip set off above the counter in states the kilometres nobody accounted for', async ({ page }) => {
@@ -191,7 +191,7 @@ test('the month a trip set off above the counter in states the kilometres nobody
 
 /**
  * The switch that puts a vehicle under its jurisdiction's logbook rules
- * (docs/features.md#logbook-mode). The checkbox behind it is drawn under the toggle it looks like,
+ * (docs/architecture.md#logbook-mode). The checkbox behind it is drawn under the toggle it looks like,
  * so vitest cannot say that a finger reaches it; this is where that is proved.
  */
 test('Logbook mode is switched on with one gesture and off with an answer', async ({ page }) => {
@@ -282,7 +282,7 @@ test.describe('the month above the rows', { tag: '@nc34' }, () => {
 
 /**
  * One Gap, one confirmation, one private trip the app marks reconciled - and the month header has
- * nothing left to state (docs/features.md#logbook-mode).
+ * nothing left to state (docs/architecture.md#logbook-mode).
  */
 test('a Gap is closed by one confirmed private trip', async ({ page }) => {
 	const plate = `${plates}gap-${Date.now()}`
@@ -382,7 +382,7 @@ test.describe('at 320 x 640, in the dark', { tag: '@nc34' }, () => {
 		// `E2E-small`, which m1-slice.spec.js matches with a `hasText` filter.
 		const plate = `${plates}dark`
 		// Under Logbook Mode, so the audit covers what the mode adds to the list: a month header
-		// stating a Gap and the rows saying what they lack (docs/features.md#logbook-mode).
+		// stating a Gap and the rows saying what they lack (docs/architecture.md#logbook-mode).
 		const vehicle = await api(page, { method: 'POST', path: '/api/vehicles', body: { plate, logbook_mode: true } })
 		await api(page, {
 			method: 'POST',

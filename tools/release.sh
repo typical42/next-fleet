@@ -10,10 +10,9 @@
 
 set -eu
 
-# The versions users upgrade from, as tools/upgrade-check.sh takes them: 0.2.0's and 0.3.0's
-# source, since neither was released. Once a release is out, its tarball replaces them. Oracle
-# checks the first only.
-BASES="9056da5 e7bdbe1"
+# The versions users upgrade from, as tools/upgrade-check.sh takes them: the last release's tag.
+# Each release moves it on. Oracle checks the first only.
+BASES="v0.3.1"
 
 usage() {
 	echo "usage: $0 prepare <YYYY-MM-DD>" >&2

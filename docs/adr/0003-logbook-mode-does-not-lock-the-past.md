@@ -1,7 +1,8 @@
-# Switching Logbook Mode on locks nothing retroactively
+# Switching Logbook mode on locks nothing retroactively
 
-Turning Logbook Mode on for a vehicle makes its trips append-only from that moment. Trips recorded
-before it stay as they were, and the export states the date the mode began. Locking them too would
-be cheap to implement and would claim an integrity those records never had — the audit trail cannot
-reconstruct history that was never recorded. Admitting the gap is worth more than a plausible export
-that lies. Related: a delete under Logbook Mode voids the trip rather than removing it.
+Logbook mode makes a vehicle's trips append-only from the moment it is switched on.
+Older trips stay as they were, and the export states the date the mode began.
+
+Locking them too would be cheap.
+But it would claim an integrity those records never had: the audit trail cannot rebuild history that nobody recorded.
+Admitting the gap is worth more than an export that lies.

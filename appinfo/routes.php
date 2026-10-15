@@ -40,7 +40,7 @@ return [
 		// What the sheet completes route, purpose and partner from (docs/ui.md).
 		['name' => 'trip#prefill', 'url' => '/api/vehicles/{uuid}/trips/prefill', 'verb' => 'GET'],
 		['name' => 'trip#update', 'url' => '/api/vehicles/{uuid}/trips/{trip}', 'verb' => 'PUT'],
-		// A delete voids under Logbook Mode (docs/features.md#logbook-mode); undo has its own verb
+		// A delete voids under Logbook Mode (docs/architecture.md#logbook-mode); undo has its own verb
 		// and path for the reason a vehicle's has.
 		['name' => 'trip#delete', 'url' => '/api/vehicles/{uuid}/trips/{trip}', 'verb' => 'DELETE'],
 		['name' => 'trip#restore', 'url' => '/api/vehicles/{uuid}/trips/{trip}/restore', 'verb' => 'POST'],
@@ -142,7 +142,7 @@ return [
 		// the zone rather than twelve periods, since a month is cut at its midnight.
 		['name' => 'kpi#year', 'url' => '/api/vehicles/{uuid}/costs/{year}', 'verb' => 'GET'],
 		// A Gap is named by the trip whose claim opened it, and closing one writes a trip - so it is
-		// the trips' controller that answers (docs/features.md#logbook-mode).
+		// the trips' controller that answers (docs/architecture.md#logbook-mode).
 		['name' => 'trip#reconcile', 'url' => '/api/vehicles/{uuid}/gaps/{trip}/close', 'verb' => 'POST'],
 
 		// A page the browser prints, not an answer the app reads, so it sits outside `/api`

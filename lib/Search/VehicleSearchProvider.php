@@ -10,6 +10,7 @@ namespace OCA\NextFleet\Search;
 
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\Vehicle;
+use OCA\NextFleet\Notification\VehicleWords;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\IL10N;
 use OCP\IURLGenerator;
@@ -61,7 +62,8 @@ class VehicleSearchProvider implements IProvider {
 
 	private static function matches(Vehicle $vehicle, string $term, string $plate): bool {
 		return ($plate !== '' && str_contains(self::bare((string)$vehicle->getPlate()), $plate))
-			|| ($term !== '' && str_contains(mb_strtolower(self::madeOf($vehicle)), $term));
+			|| ($term !== '' && str_contains(mb_strtolower(VehicleWords::made($vehicle)), $term))
+			|| ($term !== '' && str_contains(mb_strtolower($vehicle->getDisplayName() ?? ''), $term));
 	}
 
 	/** A plate's letters and digits: where the hyphen and the spaces go is nobody's memory. */
@@ -69,20 +71,26 @@ class VehicleSearchProvider implements IProvider {
 		return mb_strtolower((string)preg_replace('/[^\p{L}\p{N}]/u', '', $plate));
 	}
 
-	private static function madeOf(Vehicle $vehicle): string {
-		return trim(($vehicle->getManufacturer() ?? '') . ' ' . ($vehicle->getModel() ?? ''));
-	}
-
-	/** Named as the screen names it (src/utils/format.js `nameOf`, `subtitleOf`). */
+	/**
+	 * Named as the screen names it (src/utils/format.js `nameOf`). The line under it is the
+	 * screen's second label (`secondLabelOf`) without the body type: its words live in the
+	 * frontend (Registration).
+	 */
 	private function entry(Vehicle $vehicle): SearchResultEntry {
-		$plate = $vehicle->getPlate() ?? '';
-		$made = self::madeOf($vehicle);
+		$name = VehicleWords::name($this->l, $vehicle);
+		$below = '';
+		foreach ([$vehicle->getDisplayName() ?? '', VehicleWords::made($vehicle)] as $label) {
+			if ($label !== '' && $label !== $name) {
+				$below = $label;
+				break;
+			}
+		}
 
 		// The image goes in as a thumbnail: NC 31's search reads `icon` only as a CSS class.
 		return new SearchResultEntry(
 			$this->urls->getAbsoluteURL($this->urls->imagePath(Application::APP_ID, 'vehicle-thumbnail.svg')),
-			$plate !== '' ? $plate : $made,
-			$plate !== '' ? $made : '',
+			$name,
+			$below,
 			$this->urls->linkToRouteAbsolute('nextfleet.page.index', ['vehicle' => $vehicle->getUuid()]),
 		);
 	}

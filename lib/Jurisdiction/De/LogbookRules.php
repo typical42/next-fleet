@@ -19,7 +19,7 @@ use OCA\NextFleet\Jurisdiction\ILogbookRules;
 class LogbookRules implements ILogbookRules {
 	/**
 	 * A business trip states plate, date, both counters, the full destination, the purpose and
-	 * the partner visited (docs/features.md#logbook-mode). `started_at` is the date; the app
+	 * the partner visited (docs/architecture.md#logbook-mode). `started_at` is the date; the app
 	 * writes both ends of a journey, and the requirement is met by the one it began on.
 	 */
 	private const BUSINESS = ['plate', 'started_at', 'start_odo', 'end_odo', 'to_label', 'purpose', 'partner'];

@@ -217,7 +217,7 @@ class TimelineTest extends TestCase {
 
 	/**
 	 * The container wires the vehicle's own ruleset into the page, on a vehicle not under Logbook
-	 * Mode (docs/features.md#logbook-mode). What Germany requires is tests/Country/De's; this only
+	 * Mode (docs/architecture.md#logbook-mode). What Germany requires is tests/Country/De's; this only
 	 * needs one field it requires that the trip leaves out, and one the trip states.
 	 */
 	public function testABusinessTripMissingAFieldDeRequiresIsListedAsIncomplete(): void {
@@ -341,6 +341,27 @@ class TimelineTest extends TestCase {
 
 		$this->assertSame($closing['uuid'], $row['energy']->getUuid());
 		$this->assertSame([36000, 600, 6.0], [$row['consumption']['amount'], $row['consumption']['distance'], $row['consumption']['value']]);
+	}
+
+	/** On a vehicle that also counts engine hours, the row carries the segment per hour beside it. */
+	public function testAFillUpClosingASegmentCarriesItsConsumptionPerHour(): void {
+		$vehicle = $this->vehicles->find(self::AUTHOR, $this->uuid);
+		$this->vehicles->update(self::AUTHOR, $this->uuid, $vehicle->getUpdatedAt(), ['second_unit' => 'h', 'energy_types' => ['diesel']]);
+		$energy = \OCP\Server::get(EnergyService::class);
+		$fill = fn (int $at, int $amount, int $odo, int $hours): array => $energy->record(self::AUTHOR, $this->uuid, [
+			'filled_at' => $at, 'filled_at_off' => 120, 'energy' => 'diesel', 'amount' => $amount,
+			'full_tank' => true, 'odo' => $odo, 'second_odo' => $hours,
+		]);
+		$fill(1750100000, 50000, 120000, 5100);
+		$fill(1750200000, 30000, 120500, 5105);
+
+		$row = $this->timeline->page(self::AUTHOR, $this->uuid, TimelineService::ENERGY, null)['rows'][0];
+
+		$this->assertSame([6.0, 'km'], [$row['consumption']['value'], $row['consumption']['per']]);
+		$this->assertSame([30000, 5, 6.0, 'h'], [
+			$row['consumption_per_hour']['amount'], $row['consumption_per_hour']['distance'],
+			$row['consumption_per_hour']['value'], $row['consumption_per_hour']['per'],
+		]);
 	}
 
 	/**

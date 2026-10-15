@@ -216,10 +216,10 @@ class ErasureTest extends TestCase {
 	/**
 	 * PEOPLE_COLUMNS is what the erasure tests look at, so a column that names an account and is
 	 * missing from it is one no test sees erased. Account-shaped is how the schema keeps a uid,
-	 * `string(64)`, or a name that says whose; two columns are that long for another reason.
+	 * `string(64)`, or a name that says whose; three columns are that long for another reason.
 	 */
 	public function testEveryColumnThatCanNameAnAccountIsOneThisSuiteChecks(): void {
-		$notAccounts = ['fleet_vehicles.manufacturer', 'fleet_vehicles.model'];
+		$notAccounts = ['fleet_vehicles.manufacturer', 'fleet_vehicles.model', 'fleet_vehicles.display_name'];
 		$prefix = \OCP\Server::get(IConfig::class)->getSystemValueString('dbtableprefix', 'oc_');
 		$found = [];
 		foreach (\OCP\Server::get(IDBConnection::class)->createSchema()->getTables() as $table) {

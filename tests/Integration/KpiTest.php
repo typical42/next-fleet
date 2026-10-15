@@ -71,7 +71,7 @@ class KpiTest extends TestCase {
 
 	/**
 	 * A truck that also counts engine hours: consumption and cost against its kilometres, and the
-	 * hours it ran in the period beside them.
+	 * hours it ran in the period beside them, with the consumption and cost per hour.
 	 */
 	public function testATwoCounterTruckStatesConsumptionCostAndHoursForThePeriod(): void {
 		$uuid = $this->vehicles->create(self::OWNER, [
@@ -92,6 +92,11 @@ class KpiTest extends TestCase {
 		$this->assertSame(100000, $kpis['cost']['total']);
 		$this->assertSame(10000.0, $kpis['cost']['value']);
 		$this->assertSame(40, $kpis['hours']);
+		$this->assertSame([['energy' => 'diesel', 'amount' => 250000, 'distance' => 40, 'per' => 'h', 'value' => 6.25]], $kpis['consumption_per_hour']);
+		$this->assertSame(['diesel'], $kpis['measured']);
+		$this->assertSame(['diesel'], $kpis['measured_per_hour']);
+		$this->assertSame(2500.0, $kpis['cost']['value_per_hour']);
+		$this->assertSame(2025.0, $kpis['cost']['energy_value_per_hour']);
 	}
 
 	/** A vehicle that counts no engine hours states none, rather than zero of them. */
@@ -101,7 +106,29 @@ class KpiTest extends TestCase {
 		$kpis = $this->kpis->of(self::OWNER, $uuid, ['from' => 1749900000, 'to' => 1750200000]);
 
 		$this->assertNull($kpis['hours']);
+		$this->assertNull($kpis['consumption_per_hour']);
+		$this->assertNull($kpis['cost']['value_per_hour']);
 		$this->assertSame([], $kpis['consumption']);
+		$this->assertSame([], $kpis['measured']);
+		$this->assertNull($kpis['measured_per_hour']);
+	}
+
+	/** Whether an energy was ever measured is the vehicle's, not the period's. */
+	public function testAPeriodWithoutASegmentStillNamesTheEnergiesMeasuredBefore(): void {
+		$uuid = $this->vehicles->create(self::OWNER, [
+			'plate' => 'B-XY 123',
+			'vehicle_type' => 'truck',
+			'second_unit' => 'h',
+			'energy_types' => ['diesel'],
+		])->getUuid();
+		$this->fill($uuid, 1750000000, 300000, 5100, 200000, 36000);
+		$this->fill($uuid, 1750100000, 301000, 5140, 250000, 45000);
+
+		$kpis = $this->kpis->of(self::OWNER, $uuid, ['from' => 1760000000, 'to' => 1770000000]);
+
+		$this->assertSame([], $kpis['consumption']);
+		$this->assertSame(['diesel'], $kpis['measured']);
+		$this->assertSame(['diesel'], $kpis['measured_per_hour']);
 	}
 
 	/** A period that ends before it starts is not one this route hands out. */

@@ -172,7 +172,7 @@ class OdometerService {
 
 	/**
 	 * Soft-deletes one Odometer Entry, and answers with the token the undo is checked against. No
-	 * audit row: Logbook Mode covers trips only (docs/features.md#logbook-mode).
+	 * audit row: Logbook Mode covers trips only (docs/architecture.md#logbook-mode).
 	 *
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete this Odometer Entry
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException if it is no Odometer Entry on this vehicle
