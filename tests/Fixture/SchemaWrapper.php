@@ -17,8 +17,8 @@ use OCP\DB\ISchemaWrapper;
 /**
  * What `$schemaClosure()` hands a migration, minus the server: a real Doctrine schema, with the
  * prefixing the server does, so the names a migration chooses are measured at the length the
- * database will see. Empty by default; an integration test wraps the live schema instead, which
- * is how Nextcloud's own MigrationService applies a step.
+ * database will see. Implements the oldest supported major's interface, so it serves the unit
+ * suite only; the integration suite uses the server's own wrapper.
  */
 class SchemaWrapper implements ISchemaWrapper {
 	public const PREFIX = 'oc_';
@@ -70,14 +70,5 @@ class SchemaWrapper implements ISchemaWrapper {
 
 	public function getDatabasePlatform(): AbstractPlatform {
 		return $this->platform;
-	}
-
-	/**
-	 * Not in the nextcloud/ocp stubs, which are pinned to the oldest supported major: the
-	 * interface grew this in NC 33, and a class that implements the stub version of it is
-	 * abstract - and fatal - on a newer server.
-	 */
-	public function dropAutoincrementColumn(string $table, string $column): void {
-		$this->getTable($table)->getColumn($column)->setAutoincrement(false);
 	}
 }

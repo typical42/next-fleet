@@ -81,14 +81,14 @@ docker compose -f .docker/compose.yml exec -u www-data -w /var/www/html/custom_a
 ### CI
 
 GitHub Actions (`.github/workflows/ci.yml`).
-Four Nextcloud majors times every PHP times three databases is too many jobs.
+Five Nextcloud majors times every PHP times three databases is too many jobs.
 So PHP and the database are trimmed, never Nextcloud, because that is the axis users vary.
 
 | When | Runs |
 |---|---|
-| Pull request | NC 31 with its oldest PHP and NC 34 with its newest, both on MariaDB, and NC 34 on SQLite. The oldest pair is where breakage hides. |
-| Merge to `main` | Adds PostgreSQL on NC 34 |
-| Weekly, or `gh workflow run ci.yml` | Adds *user_migration*, [Oracle](#oracle), the upgrade checks, and an E2E smoke run on NC 32 and 33 |
+| Pull request | NC 31 with its oldest PHP and NC 35 with its newest, both on MariaDB, and NC 35 on SQLite. The oldest pair is where breakage hides. |
+| Merge to `main` | Adds PostgreSQL on NC 35 |
+| Weekly, or `gh workflow run ci.yml` | Adds every major on every PHP it accepts, *user_migration*, [Oracle](#oracle) on NC 35, the upgrade checks, and an E2E smoke run on NC 32 to 34 |
 
 Static checks, the frontend checks and `reuse lint` run once each.
 Vitest also runs in `America/Los_Angeles`, because UTC is the one zone where a local date never differs from a UTC date.
@@ -125,7 +125,7 @@ The stack (`.docker/compose.yml`, project name `nextfleet`):
 
 ```
 db        mariadb:11          the real database, not SQLite
-app       nextcloud:34-apache port 8080, the repository mounted as custom_apps/nextfleet
+app       nextcloud:35-apache port 8080, the repository mounted as custom_apps/nextfleet
 app31     nextcloud:31-apache port 8081, the same mount
 cron      runs cron.php every 5 minutes for app, so reminders fire
 cron31    the same for app31
@@ -156,11 +156,11 @@ It writes through the services, so a fleet it cannot write is a fleet the app ca
 `npm run test:e2e:docker` runs the same specs in Playwright's own image, when you cannot install Chromium's packages.
 Its image tag must match `@playwright/test`; `playwright-pin.spec.js` checks it.
 
-- `m0-gate.spec.js` is the gate: one bundle mounts on NC 31 and NC 34.
+- `m0-gate.spec.js` is the gate: one bundle mounts on NC 31 and NC 35.
   Each `m<n>-slice.spec.js` drives one milestone's screens end to end, and `roles.spec.js` each role.
 - **The reminder job at a moved clock:** `tests/e2e/job.php` runs `ReminderJob` with a stopped clock.
   The job sweeps every vehicle, so reseed afterwards.
-- A test tagged `@nc34` runs on NC 34 only.
+- A test tagged `@nc35` runs on NC 35 only.
   The sweep at the end of `m5-slice.spec.js` checks every screen at 320 px and 1280 px, light and dark, with axe.
 - Each spec owns a plate prefix (`E2E-`, `M2-E2E-` …) and deletes its own vehicles first.
   Keep the prefixes disjoint: the files run at once.
@@ -195,10 +195,11 @@ Turn on private vulnerability reporting in the repository settings: [`SECURITY.m
    If a screen changed, reseed, run `npm run screenshots:docker` and commit the pictures first.
 5. **Sign.**
    `occ integrity:sign-app` reads the key from stdin, so it never lands in a container or the repository.
-   The build phase signs on a throwaway NC 34 and checks the result with `occ integrity:check-app`.
+   The build phase signs on a throwaway NC 35 and checks the result with `occ integrity:check-app`.
 6. **Check the upgrade** on that signed tarball: `npm run upgrade-check -- <tarball> [<base>]`.
-   It installs it fresh and over the last release on throwaway NC 31 and NC 34, and fails if a row is lost or the schema differs from a fresh install.
-   Run it again with `--db pgsql`, and with `--db oracle` on NC 34.
+   It takes four paths on throwaway servers: NC 31 fresh and over the last release, NC 34 the same, the last release on NC 34 with the server then upgraded to NC 35, and NC 35 fresh.
+   It fails if a row is lost, the schema differs from a fresh install, or the app ends anything but enabled at the new version with nothing in `occ nextfleet:check` or the log ([`tools/upgrade-check.sh`](../tools/upgrade-check.sh) says what it allows).
+   Run it again with `--db pgsql`, and with `--db oracle`, which takes only the two paths that end on NC 35.
 7. **Publish the source.**
    Merge into `main` by pull request.
    Tag the commit `v<x>` and push the tag.

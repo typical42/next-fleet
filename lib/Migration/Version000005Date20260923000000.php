@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Migration;
 
 use Closure;
+// Docblock types only, for the reason Version000001Date20260101000000 gives.
 use Doctrine\DBAL\Schema\Table;
 use OCP\DB\ISchemaWrapper;
 use OCP\DB\Types;
@@ -40,8 +41,10 @@ class Version000005Date20260923000000 extends SimpleMigrationStep {
 	 * One file on a vehicle, by the id Nextcloud gives it: that survives a move, where a path
 	 * would not. Signed, as `filecache.fileid` is. A document may belong to one entry of the
 	 * same vehicle - a fill-up, a maintenance record or an expense.
+	 *
+	 * @param Table $table
 	 */
-	private function documents(Table $table): void {
+	private function documents($table): void {
 		$table->addColumn('vehicle_id', Types::BIGINT, ['notnull' => true, 'unsigned' => true]);
 		$table->addColumn('file_id', Types::BIGINT, ['notnull' => true]);
 		$table->addColumn('kind', Types::STRING, ['notnull' => true, 'length' => 16]);
@@ -57,8 +60,11 @@ class Version000005Date20260923000000 extends SimpleMigrationStep {
 	/**
 	 * The row every table has. Copied, not shared, for the reason
 	 * Version000002Date20260909000000 gives.
+	 *
+	 * @param Table $table
+	 * @return Table
 	 */
-	private function common(Table $table): Table {
+	private function common($table) {
 		$table->addColumn('id', Types::BIGINT, ['autoincrement' => true, 'notnull' => true, 'unsigned' => true]);
 		$table->addColumn('uuid', Types::STRING, ['notnull' => true, 'length' => 36]);
 		$table->addColumn('created_at', Types::BIGINT, ['notnull' => true]);

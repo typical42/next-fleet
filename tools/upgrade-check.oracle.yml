@@ -1,8 +1,14 @@
 # SPDX-FileCopyrightText: 2026 Johannes Kolb
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-# Oracle under tools/upgrade-check.compose.yml, NC 34 alone (docs/development.md#release). The
-# image cannot install on Oracle by itself, so the script installs it.
+# Oracle under tools/upgrade-check.compose.yml: one schema, so only the paths that reach NC 35,
+# one server at a time (docs/development.md#release). The image cannot install on Oracle by
+# itself, so the script installs a new one; to35 upgrades the install from34 left, as elsewhere.
+
+x-oracle: &oracle
+  # Not installed yet when it is up; the script installs it.
+  healthcheck:
+    test: ["CMD-SHELL", "curl -fsS http://localhost/status.php"]
 
 services:
   db:
@@ -18,9 +24,21 @@ services:
       retries: 30
       start_period: 30s
 
-  app34:
-    build: ../.docker/oracle
+  # to35 is the same image, which the script builds with app35 and does not build again.
+  app35: &oracle35
+    <<: *oracle
+    build:
+      context: ../.docker/oracle
+      args:
+        NEXTCLOUD: 35
+    image: nextfleet-oracle-app:35
+
+  from34:
+    <<: *oracle
+    build:
+      context: ../.docker/oracle
+      args:
+        NEXTCLOUD: 34
     image: nextfleet-oracle-app:34
-    # Not installed yet when it is up; the script installs it.
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost/status.php"]
+
+  to35: *oracle35

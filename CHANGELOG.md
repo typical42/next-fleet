@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.1 — 2026-10-26
+
+Supports Nextcloud 35. NextFleet now runs on Nextcloud 31 to 35.
+
+Update NextFleet to 0.4.1 before you upgrade Nextcloud to 35. If you upgrade Nextcloud first while
+the app store is off or unreachable, the upgrade disables NextFleet 0.4.0 and logs an error and a
+warning about it; installing and enabling 0.4.1 afterwards brings it back with all its data. With
+the app store reachable, Nextcloud may fetch 0.4.1 itself during the upgrade.
+
 ## 0.4.0 — 2026-10-15
 
 A vehicle says what it is: a display name, and the EU type codes from its registration

@@ -5,10 +5,14 @@
 # volumes, no ports and no bind mount of the tree: the app arrives the way a user's does, as the
 # tarball, and the dev servers in .docker/compose.yml are never touched.
 #
+# One server per major, each its own install, and the pair from34 and to35: one install that NC 34
+# sets up and NC 35 then upgrades, as a user's image switch does. Its html volume holds config,
+# data and the app, so the NC 35 image finds the NC 34 install and runs `occ upgrade` on start.
+#
 # The database and how each server reaches it come from a second file, upgrade-check.mariadb.yml,
 # upgrade-check.pgsql.yml or upgrade-check.oracle.yml, which the script picks by its --db option.
-# The Oracle one also swaps app34's image and healthcheck; CI never runs it, so check it by hand
-# after a change here.
+# The Oracle one also swaps the images and healthchecks of the servers it runs; CI never runs it,
+# so check it by hand after a change here.
 
 name: nextfleet-upgrade-check
 
@@ -31,6 +35,11 @@ x-nextcloud-env: &nextcloud-env
   NEXTCLOUD_ADMIN_PASSWORD: admin
 
 services:
+  app35:
+    <<: *nextcloud
+    image: nextcloud:35-apache
+    environment: *nextcloud-env
+
   app34:
     <<: *nextcloud
     image: nextcloud:34-apache
@@ -40,3 +49,20 @@ services:
     <<: *nextcloud
     image: nextcloud:31-apache
     environment: *nextcloud-env
+
+  from34:
+    <<: *nextcloud
+    image: nextcloud:34-apache
+    environment: *nextcloud-env
+    volumes:
+      - html34to35:/var/www/html
+
+  to35:
+    <<: *nextcloud
+    image: nextcloud:35-apache
+    environment: *nextcloud-env
+    volumes:
+      - html34to35:/var/www/html
+
+volumes:
+  html34to35:

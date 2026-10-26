@@ -56,7 +56,7 @@ class ReleaseScriptTest extends TestCase {
 		$this->stub('docker', $logged . <<<'SH'
 			case $* in
 				*integrity:sign-app*) cat >"$RELEASE_LOG.stdin" ;;
-				*'cp app34:'*signature.json*)
+				*' cp app35:'*signature.json*)
 					for last; do :; done
 					echo '{"signed": true}' >"$last"
 					;;
@@ -66,7 +66,11 @@ class ReleaseScriptTest extends TestCase {
 							echo 'nextfleet: 1 errors found:'
 							exit 1
 							;;
-						skipped) echo 'nextfleet: App signature not found, skipping app integrity check' ;;
+						skipped)
+							echo 'nextfleet: App signature not found, skipping app integrity check'
+							echo 'No errors found'
+							;;
+						silent) ;;
 						*) echo 'No errors found' ;;
 					esac
 					;;
@@ -219,10 +223,14 @@ class ReleaseScriptTest extends TestCase {
 
 		$check = $this->lineOf('integrity:check-app');
 		$this->assertGreaterThan($sign, $check);
+		// The newest supported server signs and checks: a signature must hold on what users run.
+		$this->assertStringEndsWith(' up -d --wait --quiet-pull app35', $log[$this->lineOf(' up -d ')]);
+		$this->assertStringContainsString(' app35 php occ integrity:sign-app ', $log[$sign]);
+		$this->assertStringContainsString(' app35 php occ integrity:check-app ', $log[$check]);
 		$this->assertSame([
-			'upgrade-check build/artifacts/nextfleet-1.2.3.tar.gz v0.3.1',
-			'upgrade-check --db pgsql build/artifacts/nextfleet-1.2.3.tar.gz v0.3.1',
-			'upgrade-check --db oracle build/artifacts/nextfleet-1.2.3.tar.gz v0.3.1',
+			'upgrade-check build/artifacts/nextfleet-1.2.3.tar.gz v0.4.0',
+			'upgrade-check --db pgsql build/artifacts/nextfleet-1.2.3.tar.gz v0.4.0',
+			'upgrade-check --db oracle build/artifacts/nextfleet-1.2.3.tar.gz v0.4.0',
 		], array_values(array_filter($log, static fn (string $line): bool => str_starts_with($line, 'upgrade-check '))));
 		$this->assertGreaterThan($check, $this->lineOf('upgrade-check '));
 
@@ -235,8 +243,9 @@ class ReleaseScriptTest extends TestCase {
 	}
 
 	/**
-	 * check-app exits 0 for an app without signature.json, so its exit status alone would pass
-	 * an unsigned tarball.
+	 * check-app exits 0 for an app without signature.json and, on Nextcloud 34 and 35, still prints
+	 * "No errors found" after the skip, so neither its status nor that line alone would stop an
+	 * unsigned tarball.
 	 *
 	 * @dataProvider checksThatFail
 	 */
@@ -257,6 +266,7 @@ class ReleaseScriptTest extends TestCase {
 		return [
 			'errors found' => ['errors', 'nextfleet: 1 errors found'],
 			'no signature' => ['skipped', 'nextfleet: App signature not found'],
+			'no verdict' => ['silent', ''],
 		];
 	}
 

@@ -12,6 +12,10 @@
  * which leaves no session or app password behind on it.
  */
 
+import { chromium } from '@playwright/test'
+
+import { login } from './app.js'
+
 const admin = `Basic ${Buffer.from('admin:admin').toString('base64')}`
 
 /**
@@ -98,6 +102,22 @@ export default async function setup(config) {
 		if (home.status !== 207) {
 			throw new Error(`${uid}'s Files on ${baseURL} answered ${home.status}`)
 		}
+	}
+
+	// The sign-in form stores the browser's timezone on the account while it has none, and on NC 35
+	// two such sign-ins at once race: the loser's insert meets the winner's row and the login
+	// answers 500. Every worker signs in at once, so one sign-in goes first.
+	const browser = await chromium.launch()
+	try {
+		for (const baseURL of servers) {
+			const page = await browser.newPage({ baseURL })
+			// The test budget, not the library's 30 s: this is the cold server's first page load.
+			page.setDefaultTimeout(config.projects[0].timeout)
+			await login(page, uid, password)
+			await page.close()
+		}
+	} finally {
+		await browser.close()
 	}
 
 	return async () => {

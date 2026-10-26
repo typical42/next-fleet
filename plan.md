@@ -90,15 +90,17 @@ type that does not exist yet is the wrong order.
 
 ## Decisions taken
 
-Dated 2026-09-03, revised 2026-09-04, 2026-09-23, 2026-10-02 and 2026-10-10. Where an ADR exists it carries the reasoning; this list is
+Dated 2026-09-03, revised 2026-09-04, 2026-09-23, 2026-10-02, 2026-10-10 and 2026-10-25. Where an ADR exists it carries the reasoning; this list is
 the index.
 
 **Shape of the product**
 
 1. **A freelancer, not a fleet** — [ADR 0004](docs/adr/0004-freelancers-not-fleets.md).
-2. **Nextcloud 31–34.** Covers older installs; we pay for it with Vue compatibility shims and with
+2. **Nextcloud 31–35.** Covers older installs; we pay for it with Vue compatibility shims and with
    the M0 gate above, which is where that price becomes visible. `@nextcloud/vue` 9 spans the
-   range, so the 31 floor held.
+   range, so the 31 floor held. NC 35's own APIs (attribute-based occ commands, the typed query
+   builder, the `OCP\DB\Schema` types) wait until the floor reaches 35. 31 and 32 are end of life,
+   so raising the floor, and dropping the Vue shims it costs, is the next decision about the range.
 3. **Logbook Mode in v1 (M2).** Immutability is a property of the data model — an audit trail added
    later cannot reconstruct history that was never recorded.
 4. **No plugin system; jurisdictions arrive as merge requests**
@@ -164,7 +166,7 @@ the index.
   record that closed a reminder reopens it due at the record's own day and km
   ([reminder engine](docs/architecture.md#reminder-engine)). Keeping it would take a column, and the
   first release adds no more: its last migration adds indexes only.
-- **App store compatibility churn.** Nextcloud majors break APIs twice a year; four supported
+- **App store compatibility churn.** Nextcloud majors break APIs twice a year; five supported
   majors is a deliberate cost, paid at M0 and again at every release.
 - **Entry friction kills logbooks.** If adding a trip takes more than a few seconds, the data rots.
   Treat the [entry sheet](docs/ui.md#the-entry-sheet-in-detail) as a feature, not polish — and the

@@ -170,7 +170,7 @@ test('the period picker changes the figures, and each is compared with the perio
  * The header and the sheet hold at 320 px in the dark, as the timeline does
  * (tests/e2e/m2-slice.spec.js says why this runs on one major).
  */
-test.describe('at 320 x 640, in the dark', { tag: '@nc34' }, () => {
+test.describe('at 320 x 640, in the dark', { tag: '@nc35' }, () => {
 	test.use({ viewport: { width: 320, height: 640 }, colorScheme: 'dark' })
 
 	test('the vehicle screen and an open fill-up pass an axe audit', async ({ page }) => {

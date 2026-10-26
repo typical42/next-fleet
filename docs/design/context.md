@@ -217,7 +217,7 @@ flowchart LR
         clientApp["«artifact»<br/>client"]
         ncApp["«artifact»<br/>Nextcloud app"]
     end
-    subgraph host["«execution environment» Nextcloud 31–34 on PHP"]
+    subgraph host["«execution environment» Nextcloud 31–35 on PHP"]
         web["«component»<br/>web server"]
         cron["«component»<br/>cron.php"]
         occ["«component»<br/>occ"]

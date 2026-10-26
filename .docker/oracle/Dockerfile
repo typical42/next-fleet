@@ -1,10 +1,12 @@
 # SPDX-FileCopyrightText: 2026 Johannes Kolb
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-# Nextcloud 34 with the oci8 extension, which the official images leave out. Oracle's Instant
+# Nextcloud with the oci8 extension, which the official images leave out. Oracle's Instant
 # Client is free to download but not to redistribute, so it is fetched at build time and this
 # image is never pushed. x86_64 only: Instant Client and the libaio path are that machine's.
-FROM nextcloud:34-apache
+# Each compose file that builds it names the major and tags the image with it.
+ARG NEXTCLOUD
+FROM nextcloud:${NEXTCLOUD}-apache
 
 # Pinned and checked, as docs/security.md#supply-chain asks of anything CI runs.
 ARG INSTANT_CLIENT=https://download.oracle.com/otn_software/linux/instantclient/2326200

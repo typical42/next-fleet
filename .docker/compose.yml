@@ -65,7 +65,7 @@ services:
       retries: 12
 
   app:
-    image: nextcloud:34-apache
+    image: nextcloud:35-apache
     <<: [*fix-custom-apps-owner, *nextcloud-health]
     restart: unless-stopped
     ports:
@@ -81,7 +81,7 @@ services:
       db:
         condition: service_healthy
 
-  # The oldest supported major, to catch a component that exists in 34 and not in 31. Its own
+  # The oldest supported major, to catch a component that exists in 35 and not in 31. Its own
   # database and html volume: two majors cannot share one install.
   app31:
     image: nextcloud:31-apache
@@ -101,7 +101,7 @@ services:
 
   # Runs cron.php every five minutes on app's install, so reminders fire without a page load.
   cron:
-    image: nextcloud:34-apache
+    image: nextcloud:35-apache
     restart: unless-stopped
     entrypoint: /cron.sh
     volumes:

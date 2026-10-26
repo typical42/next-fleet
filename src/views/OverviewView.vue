@@ -144,7 +144,7 @@ useHotKey('n', () => emit('new'))
 
 /* A drawn dot rather than a ● in the text: the glyph's size is the font's, and a screen reader
    would read it out beside the word that already says the state. The element colours come first:
-   on NC 34 `--color-warning` and its kin are pale backgrounds, and NC 31 has only those, vivid. */
+   on NC 34 and 35 `--color-warning` and its kin are pale backgrounds, and NC 31 has only those, vivid. */
 .overview__light::before {
 	content: '';
 	display: inline-block;

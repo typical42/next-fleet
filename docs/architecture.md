@@ -15,7 +15,7 @@ It uses the public `OCP` API only, as the app store asks.
   Every rule lives in a service.
 - **Frontend.**
   Vue 3, Vite, Pinia and `@nextcloud/vue`.
-  One bundle runs on Nextcloud 31 to 34.
+  One bundle runs on Nextcloud 31 to 35.
   The settings block is a second bundle: mounting the fleet in a settings section would load every view for one dropdown.
 - **Two doors, one rule.**
   The web UI uses internal routes.
@@ -585,7 +585,7 @@ The strongest row wins, and no row narrows another.
 | CLI | Thin `occ` commands, no SQL ([occ commands](admin/occ.md)). `vehicles`, `access` and `audit` read the mappers directly, so trashed vehicles show too. |
 
 **No calendar.**
-The public `OCP` API on Nextcloud 31 to 34 can create an event but not change or delete one.
+The public `OCP` API on Nextcloud 31 to 35 can create an event but not change or delete one.
 A snoozed or completed reminder would leave an event that still rings.
 
 ## Documents

@@ -4,7 +4,7 @@ NextFleet is a logbook for your vehicles in Nextcloud. It records the counter, t
 charging, maintenance and costs. It reminds you of inspections and services. You can give other
 users access to a vehicle. The owner, a driver or a manager can book it, take it and return it.
 
-- Nextcloud 31 to 34.
+- Nextcloud 31 to 35.
 - English and German (formal and informal).
 - Version 0.3.1 is the first release. [CHANGELOG.md](CHANGELOG.md) lists its functions.
 

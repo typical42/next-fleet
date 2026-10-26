@@ -167,7 +167,7 @@ test('an oil change closed from the banner schedules the next one, and the overv
 	await expect.poll(oilFirst).toBe(false)
 })
 
-test.describe('at 320 x 640', { tag: '@nc34' }, () => {
+test.describe('at 320 x 640', { tag: '@nc35' }, () => {
 	test.use({ viewport: { width: 320, height: 640 } })
 
 	/** A phone's row wraps rather than cutting off what comes due, which is what it is read for. */

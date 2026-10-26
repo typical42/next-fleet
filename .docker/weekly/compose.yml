@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: 2026 Johannes Kolb
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-# NC 32 and NC 33 for the weekly E2E smoke run (docs/development.md#testing). The dev stack in
-# ../compose.yml holds 31 and 34; these are the two majors between, each with its own database,
+# NC 32 to NC 34 for the weekly E2E smoke run (docs/development.md#testing). The dev stack in
+# ../compose.yml holds 31 and 35; these are the majors between, each with its own database,
 # thrown away with `down -v`.
 #
 #   docker compose -f .docker/weekly/compose.yml up -d --wait
@@ -52,6 +52,7 @@ x-nextcloud-env: &nextcloud-env
 services:
   db32: *db
   db33: *db
+  db34: *db
 
   app32:
     <<: *nextcloud
@@ -75,4 +76,16 @@ services:
       MYSQL_HOST: db33
     depends_on:
       db33:
+        condition: service_healthy
+
+  app34:
+    <<: *nextcloud
+    image: nextcloud:34-apache
+    ports:
+      - "8034:80"
+    environment:
+      <<: *nextcloud-env
+      MYSQL_HOST: db34
+    depends_on:
+      db34:
         condition: service_healthy

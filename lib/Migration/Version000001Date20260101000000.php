@@ -9,6 +9,8 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Migration;
 
 use Closure;
+// The helpers name Table in their docblocks only: Nextcloud 31 to 34 hand them Doctrine's Table,
+// Nextcloud 35 its own OCP\DB\Schema\ITable, which the oldest supported release does not have.
 use Doctrine\DBAL\Schema\Table;
 use OCP\DB\ISchemaWrapper;
 use OCP\DB\Types;
@@ -47,8 +49,10 @@ class Version000001Date20260101000000 extends SimpleMigrationStep {
 	/**
 	 * Who may see a vehicle besides its owner, in our own table rather than a core share
 	 * (docs/adr/0001-own-access-table.md). One row per grant.
+	 *
+	 * @param Table $table
 	 */
-	private function access(Table $table): void {
+	private function access($table): void {
 		$table->addColumn('vehicle_id', Types::BIGINT, ['notnull' => true, 'unsigned' => true]);
 		$table->addColumn('grantee', Types::STRING, ['notnull' => true, 'length' => 64]);
 		$table->addColumn('grantee_type', Types::STRING, ['notnull' => true, 'length' => 8]);
@@ -63,8 +67,10 @@ class Version000001Date20260101000000 extends SimpleMigrationStep {
 	 * The odometer itself: every Entry that knows a mileage writes one of these, and the
 	 * vehicle only caches the newest (docs/architecture.md#odometer-rules). No foreign key on
 	 * `source_id`: it points into more than one table.
+	 *
+	 * @param Table $table
 	 */
-	private function odoReadings(Table $table): void {
+	private function odoReadings($table): void {
 		$table->addColumn('vehicle_id', Types::BIGINT, ['notnull' => true, 'unsigned' => true]);
 		// The user's own instant, so it carries the offset it was read at; ordering uses the
 		// instant, a legal view the local date the pair yields.
@@ -88,8 +94,10 @@ class Version000001Date20260101000000 extends SimpleMigrationStep {
 	 * Money is integer cents, volumes
 	 * millilitres, energy watt-hours; `odo_value` is a cache of the newest reading and no column
 	 * is named after a unit it might not hold.
+	 *
+	 * @param Table $table
 	 */
-	private function vehicles(Table $table): void {
+	private function vehicles($table): void {
 		$table->addColumn('user_id', Types::STRING, ['notnull' => true, 'length' => 64]);
 		$table->addColumn('plate', Types::STRING, ['notnull' => false, 'length' => 32]);
 		$table->addColumn('manufacturer', Types::STRING, ['notnull' => false, 'length' => 64]);
@@ -131,8 +139,11 @@ class Version000001Date20260101000000 extends SimpleMigrationStep {
 	 * The row every table has: a key, an identity, its dating and its author
 	 * (docs/architecture.md#data-model). Instants are unix seconds, which is what the base
 	 * mapper stamps; `created_by` is not nullable, because the entity types it `string`.
+	 *
+	 * @param Table $table
+	 * @return Table
 	 */
-	private function common(Table $table): Table {
+	private function common($table) {
 		$table->addColumn('id', Types::BIGINT, ['autoincrement' => true, 'notnull' => true, 'unsigned' => true]);
 		$table->addColumn('uuid', Types::STRING, ['notnull' => true, 'length' => 36]);
 		$table->addColumn('created_at', Types::BIGINT, ['notnull' => true]);

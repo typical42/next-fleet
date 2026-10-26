@@ -8,19 +8,19 @@ import { defineConfig } from '@playwright/test'
 // One project per Nextcloud major in .docker/compose.yml, so a failure names the
 // version that broke rather than "the E2E run". The stack has to be up already;
 // docs/development.md has the two commands.
-// A test tagged @nc34 runs on that major alone. The bundle is one bundle and its stylesheet is one
+// A test tagged @nc35 runs on that major alone. The bundle is one bundle and its stylesheet is one
 // stylesheet, so a test that measures the CSS answer - the responsive and dark-mode audit - would
 // re-measure the same file on every other major and double the slowest suite in the repo.
-const only34 = /@nc34/
+const only35 = /@nc35/
 
 /** @type {{ name: string, baseURL: string, grepInvert?: RegExp }[]} */
 const majors = [
-	{ name: 'nc34', baseURL: process.env.NEXTFLEET_URL_NC34 ?? 'http://localhost:8080' },
-	{ name: 'nc31', baseURL: process.env.NEXTFLEET_URL_NC31 ?? 'http://localhost:8081', grepInvert: only34 },
+	{ name: 'nc35', baseURL: process.env.NEXTFLEET_URL_NC35 ?? 'http://localhost:8080' },
+	{ name: 'nc31', baseURL: process.env.NEXTFLEET_URL_NC31 ?? 'http://localhost:8081', grepInvert: only35 },
 	// The weekly smoke run's majors (.docker/weekly/compose.yml), there only when given an address.
-	...['32', '33'].flatMap((major) => {
+	...['32', '33', '34'].flatMap((major) => {
 		const baseURL = process.env[`NEXTFLEET_URL_NC${major}`]
-		return baseURL ? [{ name: `nc${major}`, baseURL, grepInvert: only34 }] : []
+		return baseURL ? [{ name: `nc${major}`, baseURL, grepInvert: only35 }] : []
 	}),
 ]
 

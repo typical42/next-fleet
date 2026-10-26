@@ -92,6 +92,36 @@ class InfoXmlTest extends TestCase {
 	}
 
 	/**
+	 * Each page that names the supported range names the one info.xml enforces. The CHANGELOG is
+	 * left out: a past release keeps the range it shipped with.
+	 *
+	 * @dataProvider pagesNamingTheRange
+	 */
+	public function testTheDocsNameTheRangeInfoXmlEnforces(string $page): void {
+		$info = simplexml_load_file(self::ROOT . '/appinfo/info.xml');
+		$this->assertNotFalse($info);
+		$range = $info->dependencies->nextcloud;
+		$min = (string)$range['min-version'];
+		$max = (string)$range['max-version'];
+
+		preg_match_all('/Nextcloud ' . preg_quote($min, '/') . '(?: to |–)(\d+)/u', (string)file_get_contents(self::ROOT . $page), $named);
+
+		$this->assertNotSame([], $named[1], "$page names no range");
+		$this->assertSame([$max], array_values(array_unique($named[1])), $page);
+	}
+
+	/** @return array<string, array{string}> */
+	public static function pagesNamingTheRange(): array {
+		return array_map(static fn (string $page): array => [$page], [
+			'README' => '/README.md',
+			'admin' => '/docs/admin/README.md',
+			'architecture' => '/docs/architecture.md',
+			'deployment diagram' => '/docs/design/context.md',
+			'plan' => '/plan.md',
+		]);
+	}
+
+	/**
 	 * docs/legal.md: another project's name never stands alone, as a feature or a selling point.
 	 * It only says what a file is, as the import screen labels it.
 	 */
