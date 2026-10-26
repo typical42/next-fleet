@@ -18,7 +18,7 @@ const socketPath = '/var/run/docker.sock'
  *
  * @type {Record<string, string>}
  */
-const services = { nc34: 'app', nc31: 'app31' }
+const services = { nc35: 'app', nc31: 'app31' }
 
 /**
  * @param {string} method - the HTTP verb

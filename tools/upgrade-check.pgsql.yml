@@ -1,7 +1,12 @@
 # SPDX-FileCopyrightText: 2026 Johannes Kolb
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-# PostgreSQL under tools/upgrade-check.compose.yml: one server, a database per major.
+# PostgreSQL under tools/upgrade-check.compose.yml: one server, a database per install.
+
+x-pgsql: &pgsql
+  POSTGRES_HOST: db
+  POSTGRES_USER: nextcloud
+  POSTGRES_PASSWORD: nextcloud
 
 services:
   db:
@@ -18,16 +23,27 @@ services:
       timeout: 5s
       retries: 12
 
+  app35:
+    environment:
+      <<: *pgsql
+      POSTGRES_DB: nextcloud35
+
   app34:
     environment:
-      POSTGRES_HOST: db
-      POSTGRES_USER: nextcloud
-      POSTGRES_PASSWORD: nextcloud
+      <<: *pgsql
       POSTGRES_DB: nextcloud
 
   app31:
     environment:
-      POSTGRES_HOST: db
-      POSTGRES_USER: nextcloud
-      POSTGRES_PASSWORD: nextcloud
+      <<: *pgsql
       POSTGRES_DB: nextcloud31
+
+  from34:
+    environment:
+      <<: *pgsql
+      POSTGRES_DB: nextcloud34to35
+
+  to35:
+    environment:
+      <<: *pgsql
+      POSTGRES_DB: nextcloud34to35

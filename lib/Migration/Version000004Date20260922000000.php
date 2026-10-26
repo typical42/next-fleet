@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Migration;
 
 use Closure;
+// Docblock types only, for the reason Version000001Date20260101000000 gives.
 use Doctrine\DBAL\Schema\Table;
 use OCA\NextFleet\Db\ReminderRecipient;
 use OCA\NextFleet\Db\ReminderRecipientMapper;
@@ -93,8 +94,10 @@ class Version000004Date20260922000000 extends SimpleMigrationStep {
 	/**
 	 * One thing a vehicle is due for, by date, by the main counter, or whichever comes first.
 	 * A recurrence advances the same row and counts up `occurrence`.
+	 *
+	 * @param Table $table
 	 */
-	private function reminders(Table $table): void {
+	private function reminders($table): void {
 		$table->addColumn('vehicle_id', Types::BIGINT, ['notnull' => true, 'unsigned' => true]);
 		// Set for a template, whose title translates at read time; `title` holds a user's own.
 		$table->addColumn('template_key', Types::STRING, ['notnull' => false, 'length' => 32]);
@@ -121,8 +124,10 @@ class Version000004Date20260922000000 extends SimpleMigrationStep {
 	/**
 	 * What was sent, when, to whom and on which channel - `app` or `mail` - so one channel
 	 * failing leaves the other's record alone.
+	 *
+	 * @param Table $table
 	 */
-	private function receipts(Table $table): void {
+	private function receipts($table): void {
 		$table->addColumn('reminder_id', Types::BIGINT, ['notnull' => true, 'unsigned' => true]);
 		$table->addColumn('occurrence', Types::INTEGER, ['notnull' => true]);
 		$table->addColumn('point', Types::STRING, ['notnull' => true, 'length' => 16]);
@@ -141,8 +146,10 @@ class Version000004Date20260922000000 extends SimpleMigrationStep {
 	/**
 	 * Who a vehicle's reminders go to. The recipient service revives a removed row rather than
 	 * inserting a second one, which the unique index would refuse.
+	 *
+	 * @param Table $table
 	 */
-	private function recipients(Table $table): void {
+	private function recipients($table): void {
 		$table->addColumn('vehicle_id', Types::BIGINT, ['notnull' => true, 'unsigned' => true]);
 		$table->addColumn('user_id', Types::STRING, ['notnull' => true, 'length' => 64]);
 
@@ -155,8 +162,11 @@ class Version000004Date20260922000000 extends SimpleMigrationStep {
 	 * Version000002Date20260909000000 gives. A table name of 23 characters or more needs its key
 	 * named: PostgreSQL derives the default from the table, and Nextcloud refuses what would come
 	 * out too long.
+	 *
+	 * @param Table $table
+	 * @return Table
 	 */
-	private function common(Table $table, ?string $primaryKey): Table {
+	private function common($table, ?string $primaryKey) {
 		$table->addColumn('id', Types::BIGINT, ['autoincrement' => true, 'notnull' => true, 'unsigned' => true]);
 		$table->addColumn('uuid', Types::STRING, ['notnull' => true, 'length' => 36]);
 		$table->addColumn('created_at', Types::BIGINT, ['notnull' => true]);

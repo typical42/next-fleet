@@ -12,7 +12,7 @@ set -eu
 
 # The versions users upgrade from, as tools/upgrade-check.sh takes them: the last release's tag.
 # Each release moves it on. Oracle checks the first only.
-BASES="v0.3.1"
+BASES="v0.4.0"
 
 usage() {
 	echo "usage: $0 prepare <YYYY-MM-DD>" >&2
@@ -110,32 +110,34 @@ build() {
 	trap '$compose down -v --remove-orphans >/dev/null 2>&1 || true' EXIT
 	trap 'exit 130' INT TERM
 	$compose down -v --remove-orphans >/dev/null 2>&1
-	$compose up -d --wait --quiet-pull app34
+	$compose up -d --wait --quiet-pull app35
 
 	rm -rf build/sign
 	mkdir -p build/sign
 	tar -xzf "$tarball" -C build/sign
 	# Public, and kept beside the build; git ignores build/ and package.sh never packs it.
 	cp "$cert" build/nextfleet.crt
-	$compose cp build/sign/nextfleet app34:/tmp/nextfleet
-	$compose cp build/nextfleet.crt app34:/tmp/nextfleet.crt
-	$compose exec -T app34 chown -R www-data:www-data /tmp/nextfleet
+	$compose cp build/sign/nextfleet app35:/tmp/nextfleet
+	$compose cp build/nextfleet.crt app35:/tmp/nextfleet.crt
+	$compose exec -T app35 chown -R www-data:www-data /tmp/nextfleet
 	# The key goes over stdin only: no file in the container, the tree or build/.
-	$compose exec -T -u www-data app34 php occ integrity:sign-app --privateKey=php://stdin \
+	$compose exec -T -u www-data app35 php occ integrity:sign-app --privateKey=php://stdin \
 		--certificate=/tmp/nextfleet.crt --path=/tmp/nextfleet <"$key"
-	$compose cp app34:/tmp/nextfleet/appinfo/signature.json build/sign/nextfleet/appinfo/signature.json
+	$compose cp app35:/tmp/nextfleet/appinfo/signature.json build/sign/nextfleet/appinfo/signature.json
 	tar --sort=name --owner=0 --group=0 --numeric-owner -czf "$tarball" -C build/sign nextfleet
 
 	# Installed the way a user's server gets it. check-app passes an app with no signature.json
-	# silently, so only its verbose "No errors found" counts.
-	$compose cp "$tarball" app34:/tmp/nextfleet.tar.gz
-	$compose exec -T -u www-data app34 sh -c \
+	# and, verbose, still prints "No errors found" after the skip, so only that line without the
+	# skip counts.
+	$compose cp "$tarball" app35:/tmp/nextfleet.tar.gz
+	$compose exec -T -u www-data app35 sh -c \
 		'rm -rf custom_apps/nextfleet && tar -xzf /tmp/nextfleet.tar.gz -C custom_apps'
-	$compose exec -T -u www-data app34 php occ app:enable nextfleet
-	if ! checked=$($compose exec -T -u www-data app34 php occ integrity:check-app -v nextfleet); then
+	$compose exec -T -u www-data app35 php occ app:enable nextfleet
+	if ! checked=$($compose exec -T -u www-data app35 php occ integrity:check-app -v nextfleet); then
 		fail "the signed tarball does not check out: $checked"
 	fi
 	case $checked in
+		*'App signature not found'*) fail "the signed tarball does not check out: $checked" ;;
 		*'No errors found'*) ;;
 		*) fail "the signed tarball does not check out: $checked" ;;
 	esac

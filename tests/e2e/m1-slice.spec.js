@@ -345,8 +345,8 @@ test('the screens pass an axe audit', async ({ page }) => {
 })
 
 // One major: the answer is CSS, one copy of it, and a second run would double the slowest suite.
-// Projects other than nc34 filter the tag out (playwright.config.js).
-test.describe('at 320 x 640, in the dark', { tag: '@nc34' }, () => {
+// Projects other than nc35 filter the tag out (playwright.config.js).
+test.describe('at 320 x 640, in the dark', { tag: '@nc35' }, () => {
 	test.use({ viewport: { width: 320, height: 640 }, colorScheme: 'dark' })
 
 	test('every screen the app owns passes an axe audit', async ({ page }) => {

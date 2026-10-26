@@ -29,7 +29,10 @@ class CiWorkflowTest extends TestCase {
 		'stable32' => ['8.1', '8.2', '8.3', '8.4'],
 		'stable33' => ['8.2', '8.3', '8.4', '8.5'],
 		'stable34' => ['8.2', '8.3', '8.4', '8.5'],
+		'stable35' => ['8.3', '8.4', '8.5'],
 	];
+
+	private const SMOKE = 'npx playwright test tests/e2e/m0-gate.spec.js tests/e2e/m1-slice.spec.js --project nc32 --project nc33 --project nc34';
 
 	/** The gate of every weekly job and step: the schedule, or a run started by hand. */
 	private const WEEKLY = "github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'";
@@ -140,17 +143,17 @@ class CiWorkflowTest extends TestCase {
 		$this->assertSame(
 			[
 				['nextcloud' => 'stable31', 'php' => '8.1', 'db' => 'mariadb'],
-				['nextcloud' => 'stable34', 'php' => '8.5', 'db' => 'mariadb'],
-				['nextcloud' => 'stable34', 'php' => '8.5', 'db' => 'sqlite'],
+				['nextcloud' => 'stable35', 'php' => '8.5', 'db' => 'mariadb'],
+				['nextcloud' => 'stable35', 'php' => '8.5', 'db' => 'sqlite'],
 			],
 			$this->combinations('pull_request'),
 		);
 	}
 
-	public function testMergingToMainAddsPostgresqlOnNextcloud34(): void {
+	public function testMergingToMainAddsPostgresqlOnNextcloud35(): void {
 		$added = $this->added($this->combinations('pull_request'), $this->combinations('push'));
 
-		$this->assertSame([['nextcloud' => 'stable34', 'php' => '8.5', 'db' => 'pgsql']], $added);
+		$this->assertSame([['nextcloud' => 'stable35', 'php' => '8.5', 'db' => 'pgsql']], $added);
 	}
 
 	/**
@@ -292,7 +295,7 @@ class CiWorkflowTest extends TestCase {
 		));
 		$this->assertCount(1, $installs, 'the notifications app\'s dependencies are never installed');
 		$this->assertGreaterThan($checkouts[0], $installs[0]);
-		// The install enables it, and on 34 it fails to load without lib/Vendor.
+		// The install enables it, and from 34 it fails to load without lib/Vendor.
 		$install = array_key_first(array_filter(
 			$steps,
 			static fn (mixed $step): bool => str_contains((string)(((array)$step)['run'] ?? ''), 'php occ maintenance:install'),
@@ -419,12 +422,49 @@ class CiWorkflowTest extends TestCase {
 		}
 	}
 
+	/** The weekly integration run on Oracle meets the newest major appinfo/info.xml allows. */
+	public function testOracleRunsOnTheNewestSupportedNextcloudMajor(): void {
+		$info = (string)file_get_contents(__DIR__ . '/../../appinfo/info.xml');
+		$this->assertSame(1, preg_match('/<nextcloud [^>]*max-version="(\d+)"/', $info, $range));
+		$newest = $range[1];
+
+		$app = (array)((array)(Yaml::parseFile(__DIR__ . '/../../.docker/oracle/compose.yml')['services'] ?? []))['app'];
+		$this->assertSame($newest, (string)($app['build']['args']['NEXTCLOUD'] ?? ''), "the Oracle stack does not build NC $newest");
+		$this->assertSame("NC $newest on Oracle", $this->job('oracle')['name'] ?? null);
+	}
+
 	/**
-	 * The E2E job meets 31 and 34 only, so a component the bundle needs that 32 or 33 lacks would
-	 * reach users unseen. Weekly, a smoke run there: the app loads, and a vehicle and a reading go
-	 * in through the screen, on the stack docs/development.md#testing describes.
+	 * Two compose files build the Oracle image, each for its own major. A tag naming another major
+	 * than the build mislabels the image, and an `up` without `--build` then starts the wrong one.
+	 *
+	 * @dataProvider oracleComposeFiles
 	 */
-	public function testTheWeeklyRunSmokesTheEndToEndOnNextcloud32And33(): void {
+	public function testEveryOracleImageIsTaggedWithTheMajorItBuilds(string $file): void {
+		$built = array_filter(
+			(array)(Yaml::parseFile(__DIR__ . "/../../$file")['services'] ?? []),
+			static fn (array $service): bool => isset($service['build']),
+		);
+		$this->assertNotSame([], $built, "$file builds no Oracle image");
+
+		foreach ($built as $name => $service) {
+			$major = (string)($service['build']['args']['NEXTCLOUD'] ?? '');
+			$this->assertMatchesRegularExpression('/^\d+$/', $major, "$file: $name names no Nextcloud major");
+			$this->assertSame("nextfleet-oracle-app:$major", $service['image'] ?? null, "$file: $name is tagged for another major");
+		}
+	}
+
+	/** @return iterable<string, list<string>> */
+	public static function oracleComposeFiles(): iterable {
+		yield 'dev stack' => ['.docker/oracle/compose.yml'];
+		yield 'upgrade check' => ['tools/upgrade-check.oracle.yml'];
+	}
+
+	/**
+	 * The E2E job meets 31 and 35 only, so a component the bundle needs that a major between lacks
+	 * would reach users unseen. Weekly, a smoke run there: the app loads, and a vehicle and a reading
+	 * go in through the screen, on the stack docs/development.md#testing describes.
+	 */
+	public function testTheWeeklyRunSmokesTheEndToEndOnNextcloud32To34(): void {
 		$job = $this->job('e2e-weekly');
 		$this->assertSame(self::WEEKLY, $job['if'] ?? null);
 		$script = $this->script('e2e-weekly');
@@ -433,7 +473,7 @@ class CiWorkflowTest extends TestCase {
 			'npm run build',
 			'docker compose -f .docker/weekly/compose.yml up -d --wait',
 			'php occ app:enable nextfleet',
-			'npx playwright test tests/e2e/m0-gate.spec.js tests/e2e/m1-slice.spec.js --project nc32 --project nc33',
+			self::SMOKE,
 		];
 		$at = -1;
 		foreach ($steps as $step) {
@@ -442,7 +482,23 @@ class CiWorkflowTest extends TestCase {
 			$this->assertGreaterThan($at, $found, "'$step' runs out of order");
 			$at = $found;
 		}
-		$this->assertStringContainsString('for service in app32 app33', $script, 'the app is not enabled on both majors');
+		$this->assertStringContainsString('for service in app32 app33 app34', $script, 'the app is not enabled on every major');
+	}
+
+	/**
+	 * A project whose server is missing, or another major's, still runs: it fails on a refused
+	 * connection, or passes on the wrong version.
+	 */
+	public function testEverySmokedProjectReachesTheServerOfItsMajor(): void {
+		$services = (array)(Yaml::parseFile(__DIR__ . '/../../.docker/weekly/compose.yml')['services'] ?? []);
+		$env = $this->env('e2e-weekly', self::SMOKE);
+
+		foreach (['32', '33', '34'] as $major) {
+			$service = (array)($services["app$major"] ?? []);
+			$this->assertSame("nextcloud:$major-apache", $service['image'] ?? null, "the weekly stack runs no NC $major");
+			$port = parse_url((string)($env["NEXTFLEET_URL_NC$major"] ?? ''), PHP_URL_PORT);
+			$this->assertSame(["$port:80"], $service['ports'] ?? null, "nc$major is sent to another port than NC $major publishes");
+		}
 	}
 
 	/**
@@ -454,7 +510,7 @@ class CiWorkflowTest extends TestCase {
 		$this->assertSame(self::WEEKLY, $job['if'] ?? null);
 		$this->assertSame(['mariadb', 'pgsql'], $job['strategy']['matrix']['db'] ?? null);
 		// The last release, the version users upgrade from.
-		$this->assertSame(['v0.3.1'], $job['strategy']['matrix']['base'] ?? null);
+		$this->assertSame(['v0.4.0'], $job['strategy']['matrix']['base'] ?? null);
 
 		$checkout = $job['steps'][0] ?? [];
 		$this->assertStringStartsWith('actions/checkout@', (string)($checkout['uses'] ?? ''));
@@ -564,7 +620,7 @@ class CiWorkflowTest extends TestCase {
 		$names = [];
 		foreach ([
 			'e2e' => 'npm run test:e2e',
-			'e2e-weekly' => 'npx playwright test tests/e2e/m0-gate.spec.js tests/e2e/m1-slice.spec.js --project nc32 --project nc33',
+			'e2e-weekly' => self::SMOKE,
 		] as $job => $command) {
 			$steps = array_values((array)$this->job($job)['steps']);
 			$run = array_search($command, array_map(static fn (mixed $step): string => (string)(((array)$step)['run'] ?? ''), $steps), true);

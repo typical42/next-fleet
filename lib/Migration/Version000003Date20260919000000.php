@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Migration;
 
 use Closure;
+// Docblock types only, for the reason Version000001Date20260101000000 gives.
 use Doctrine\DBAL\Schema\Table;
 use OCP\DB\ISchemaWrapper;
 use OCP\DB\Types;
@@ -59,8 +60,10 @@ class Version000003Date20260919000000 extends SimpleMigrationStep {
 	/**
 	 * One fill-up or charging session. Either counter is optional and never prefilled; without
 	 * one the row writes no Reading and closes no consumption segment.
+	 *
+	 * @param Table $table
 	 */
-	private function energy(Table $table): void {
+	private function energy($table): void {
 		$table->addColumn('vehicle_id', Types::BIGINT, ['notnull' => true, 'unsigned' => true]);
 		$table->addColumn('filled_at', Types::BIGINT, ['notnull' => true]);
 		$table->addColumn('filled_at_off', Types::INTEGER, ['notnull' => true]);
@@ -88,8 +91,10 @@ class Version000003Date20260919000000 extends SimpleMigrationStep {
 	/**
 	 * One service, repair, inspection, tyre change or upgrade. Its `reminder_id` is
 	 * Version000004Date20260922000000's, with the table it points into.
+	 *
+	 * @param Table $table
 	 */
-	private function maintenance(Table $table): void {
+	private function maintenance($table): void {
 		$table->addColumn('vehicle_id', Types::BIGINT, ['notnull' => true, 'unsigned' => true]);
 		$table->addColumn('type', Types::STRING, ['notnull' => false, 'length' => 16]);
 		$table->addColumn('done_at', Types::BIGINT, ['notnull' => true]);
@@ -108,8 +113,10 @@ class Version000003Date20260919000000 extends SimpleMigrationStep {
 
 	/**
 	 * Any other cost - insurance, tax, toll, parking, a fine, a lease. It knows no counter.
+	 *
+	 * @param Table $table
 	 */
-	private function expenses(Table $table): void {
+	private function expenses($table): void {
 		$table->addColumn('vehicle_id', Types::BIGINT, ['notnull' => true, 'unsigned' => true]);
 		$table->addColumn('spent_at', Types::BIGINT, ['notnull' => true]);
 		$table->addColumn('spent_at_off', Types::INTEGER, ['notnull' => true]);
@@ -125,8 +132,11 @@ class Version000003Date20260919000000 extends SimpleMigrationStep {
 	/**
 	 * The row every table has. Copied, not shared, for the reason
 	 * Version000002Date20260909000000 gives.
+	 *
+	 * @param Table $table
+	 * @return Table
 	 */
-	private function common(Table $table): Table {
+	private function common($table) {
 		$table->addColumn('id', Types::BIGINT, ['autoincrement' => true, 'notnull' => true, 'unsigned' => true]);
 		$table->addColumn('uuid', Types::STRING, ['notnull' => true, 'length' => 36]);
 		$table->addColumn('created_at', Types::BIGINT, ['notnull' => true]);

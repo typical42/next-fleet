@@ -8,17 +8,12 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Integration;
 
-use Doctrine\DBAL\Platforms\MySQLPlatform;
-use Doctrine\DBAL\Platforms\OraclePlatform;
-use Doctrine\DBAL\Platforms\PostgreSQLPlatform;
-use Doctrine\DBAL\Platforms\SqlitePlatform;
 use Doctrine\DBAL\Schema\Column;
 use Doctrine\DBAL\Schema\Schema;
 use Doctrine\DBAL\Schema\Table;
 use OCA\NextFleet\Db\BaseMapper;
 use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\VehicleTables;
-use OCA\NextFleet\Tests\Fixture\SchemaWrapper;
 use OCA\NextFleet\Tests\MigrationSteps as Steps;
 use OCA\NextFleet\Tests\SchemaExpectations;
 use OCP\DB\ISchemaWrapper;
@@ -57,17 +52,7 @@ class SchemaTest extends TestCase {
 		// Each step is handed the database as it now is, and the diff between that and what it
 		// leaves behind is the migration.
 		$schema = $db->createSchema();
-		$wrapper = new SchemaWrapper(
-			$schema,
-			Server::get(IConfig::class)->getSystemValueString('dbtableprefix', SchemaWrapper::PREFIX),
-			match ($db->getDatabaseProvider()) {
-				IDBConnection::PLATFORM_ORACLE => new OraclePlatform(),
-				IDBConnection::PLATFORM_POSTGRES => new PostgreSQLPlatform(),
-				IDBConnection::PLATFORM_SQLITE => new SqlitePlatform(),
-				default => new MySQLPlatform(),
-			},
-		);
-
+		$wrapper = $this->serverWrapper($schema);
 		foreach (Steps::inOrder($db, Server::get(ReminderRecipientMapper::class)) as $step) {
 			$step->changeSchema(
 				$this->createMock(IOutput::class),
@@ -80,12 +65,22 @@ class SchemaTest extends TestCase {
 		self::$live = $db->createSchema();
 	}
 
+	/**
+	 * The wrapper MigrationService itself hands a step. OCP has none to build, and a fixture
+	 * cannot stand in: the interface's signatures and the table type it returns differ by major.
+	 *
+	 * @psalm-suppress UndefinedClass, InvalidReturnType, InvalidReturnStatement
+	 */
+	private function serverWrapper(Schema $schema): ISchemaWrapper {
+		return new \OC\DB\SchemaWrapper(Server::get(\OC\DB\Connection::class), $schema);
+	}
+
 	public static function tearDownAfterClass(): void {
 		self::$live = null;
 	}
 
 	private function prefixed(string $name): string {
-		return Server::get(IConfig::class)->getSystemValueString('dbtableprefix', SchemaWrapper::PREFIX) . $name;
+		return Server::get(IConfig::class)->getSystemValueString('dbtableprefix', 'oc_') . $name;
 	}
 
 	protected function fleetTableNames(): array {

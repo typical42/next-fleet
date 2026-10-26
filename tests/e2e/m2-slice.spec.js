@@ -237,7 +237,7 @@ test('Logbook mode is switched on with one gesture and off with an answer', asyn
  * the list moves under it - so it is measured rather than looked at. One major: the answer is CSS
  * and there is one copy of it.
  */
-test.describe('the month above the rows', { tag: '@nc34' }, () => {
+test.describe('the month above the rows', { tag: '@nc35' }, () => {
 	// Short, so the list is longer than the window it is read through without writing enough rows
 	// to spend the route's own rate limit (lib/Controller/TripController.php).
 	test.use({ viewport: { width: 900, height: 420 } })
@@ -374,7 +374,7 @@ test('the navigation leads back to the overview', async ({ page }) => {
  * The timeline is rows rather than cards to survive dark mode and 320 px (docs/ui.md). One major:
  * the answer is CSS and there is one copy of it.
  */
-test.describe('at 320 x 640, in the dark', { tag: '@nc34' }, () => {
+test.describe('at 320 x 640, in the dark', { tag: '@nc35' }, () => {
 	test.use({ viewport: { width: 320, height: 640 }, colorScheme: 'dark' })
 
 	test('the timeline passes an axe audit with entries in it', async ({ page }) => {

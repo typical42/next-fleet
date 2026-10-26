@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Migration;
 
 use Closure;
+// Docblock types only, for the reason Version000001Date20260101000000 gives.
 use Doctrine\DBAL\Schema\Table;
 use OCP\DB\ISchemaWrapper;
 use OCP\DB\Types;
@@ -43,8 +44,10 @@ class Version000002Date20260909000000 extends SimpleMigrationStep {
 	 * One journey. Either end odometer or distance is what the driver entered and the other is
 	 * derived, so both are nullable; `start_odo` is nullable for a third reason - it is a claim
 	 * about the counter, never a Reading (docs/architecture.md#odometer-rules).
+	 *
+	 * @param Table $table
 	 */
-	private function trips(Table $table): void {
+	private function trips($table): void {
 		$table->addColumn('vehicle_id', Types::BIGINT, ['notnull' => true, 'unsigned' => true]);
 		// Both ends are the user's own instants, so each carries the offset it was entered at:
 		// a Fahrtenbuch is judged on local calendar dates.
@@ -77,8 +80,10 @@ class Version000002Date20260909000000 extends SimpleMigrationStep {
 	 *
 	 * No foreign key on `entity_id`: the trail has to outlive an erasure of what it describes,
 	 * and it points into more than one table.
+	 *
+	 * @param Table $table
 	 */
-	private function audit(Table $table): void {
+	private function audit($table): void {
 		$table->addColumn('entity', Types::STRING, ['notnull' => true, 'length' => 32]);
 		$table->addColumn('entity_id', Types::BIGINT, ['notnull' => true, 'unsigned' => true]);
 		// The changed fields, plus any fact the change itself carried - that an edit was late,
@@ -93,8 +98,11 @@ class Version000002Date20260909000000 extends SimpleMigrationStep {
 	/**
 	 * The row every table has (docs/architecture.md#data-model). Copied, not shared: a migration
 	 * records what one version did, and a shared helper would rewrite it when edited.
+	 *
+	 * @param Table $table
+	 * @return Table
 	 */
-	private function common(Table $table): Table {
+	private function common($table) {
 		$table->addColumn('id', Types::BIGINT, ['autoincrement' => true, 'notnull' => true, 'unsigned' => true]);
 		$table->addColumn('uuid', Types::STRING, ['notnull' => true, 'length' => 36]);
 		$table->addColumn('created_at', Types::BIGINT, ['notnull' => true]);

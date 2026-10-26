@@ -1,7 +1,12 @@
 # SPDX-FileCopyrightText: 2026 Johannes Kolb
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-# MariaDB under tools/upgrade-check.compose.yml: one server, a schema per major.
+# MariaDB under tools/upgrade-check.compose.yml: one server, a schema per install.
+
+x-mariadb: &mariadb
+  MYSQL_HOST: db
+  MYSQL_USER: nextcloud
+  MYSQL_PASSWORD: nextcloud
 
 services:
   db:
@@ -13,23 +18,35 @@ services:
       MARIADB_USER: nextcloud
       MARIADB_PASSWORD: nextcloud
     volumes:
-      - ../.docker/db-init:/docker-entrypoint-initdb.d:ro
+      - ../.docker/db-init/10-app31.sql:/docker-entrypoint-initdb.d/10-app31.sql:ro
+      - ./upgrade-check.mariadb.sql:/docker-entrypoint-initdb.d/20-nextcloud35.sql:ro
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 10s
       timeout: 5s
       retries: 12
 
+  app35:
+    environment:
+      <<: *mariadb
+      MYSQL_DATABASE: nextcloud35
+
   app34:
     environment:
-      MYSQL_HOST: db
-      MYSQL_USER: nextcloud
-      MYSQL_PASSWORD: nextcloud
+      <<: *mariadb
       MYSQL_DATABASE: nextcloud
 
   app31:
     environment:
-      MYSQL_HOST: db
-      MYSQL_USER: nextcloud
-      MYSQL_PASSWORD: nextcloud
+      <<: *mariadb
       MYSQL_DATABASE: nextcloud31
+
+  from34:
+    environment:
+      <<: *mariadb
+      MYSQL_DATABASE: nextcloud34to35
+
+  to35:
+    environment:
+      <<: *mariadb
+      MYSQL_DATABASE: nextcloud34to35

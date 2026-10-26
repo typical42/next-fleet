@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Johannes Kolb
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-# The matrix docs/development.md#testing describes. Four supported Nextcloud majors times
+# The matrix docs/development.md#testing describes. Five supported Nextcloud majors times
 # every PHP version times three databases is dozens of jobs, so the trim happens on the PHP
 # and database axes - never on Nextcloud, because that is the axis users actually vary.
 
@@ -94,7 +94,7 @@ jobs:
       - run: npm audit --omit=dev --audit-level moderate
 
   e2e:
-    name: Playwright and axe, NC 31 and NC 34
+    name: Playwright and axe, NC 31 and NC 35
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -143,13 +143,13 @@ jobs:
           path: test-results/
           retention-days: 5
 
-  # The job above meets 31 and 34. A component the bundle needs that 32 or 33 lacks would reach
-  # users unseen, so weekly the two majors between load the app and take a vehicle and a reading.
+  # The job above meets 31 and 35. A component the bundle needs that a major between lacks would
+  # reach users unseen, so weekly those majors load the app and take a vehicle and a reading.
   e2e-weekly:
-    name: Playwright smoke, NC 32 and NC 33
+    name: Playwright smoke, NC 32 to NC 34
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
-    # Three minutes of specs after a cold install; a stalled one should not hold the runner.
+    # About seven minutes of specs after a cold install; a stalled one should not hold the runner.
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -163,12 +163,12 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium
 
-      - name: Start both majors
+      - name: Start the majors
         run: docker compose -f .docker/weekly/compose.yml up -d --wait
 
-      - name: Enable the app on both majors
+      - name: Enable the app on every major
         run: |
-          for service in app32 app33; do
+          for service in app32 app33 app34; do
             docker compose -f .docker/weekly/compose.yml exec -T -u www-data "$service" php occ app:enable nextfleet
             docker compose -f .docker/weekly/compose.yml exec -T -u www-data "$service" php occ app:disable firstrunwizard
           done
@@ -177,8 +177,9 @@ jobs:
         env:
           NEXTFLEET_URL_NC32: http://localhost:8032
           NEXTFLEET_URL_NC33: http://localhost:8033
+          NEXTFLEET_URL_NC34: http://localhost:8034
         # The files first: `--project` takes every word after it as a project name.
-        run: npx playwright test tests/e2e/m0-gate.spec.js tests/e2e/m1-slice.spec.js --project nc32 --project nc33
+        run: npx playwright test tests/e2e/m0-gate.spec.js tests/e2e/m1-slice.spec.js --project nc32 --project nc33 --project nc34
 
       # As in the e2e job; the name differs because one run holds both.
       - name: Keep Playwright's evidence
@@ -201,7 +202,7 @@ jobs:
       matrix:
         db: [mariadb, pgsql]
         # The last release, the version users upgrade from. Each release moves it on.
-        base: [v0.3.1]
+        base: [v0.4.0]
     steps:
       # The base version is a commit, and the script builds it in a worktree.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -224,7 +225,7 @@ jobs:
   # Oracle needs oci8, which no official image carries, so it runs on its own stack
   # (docs/development.md#oracle) and weekly only: the build fetches Oracle's client.
   oracle:
-    name: NC 34 on Oracle
+    name: NC 35 on Oracle
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     # A cold run builds, starts Oracle and runs the suite in about 15 minutes; a stalled start
@@ -280,15 +281,15 @@ jobs:
       # accepts the least.
       ON_PULL_REQUEST: >-
         [{"nextcloud": "stable31", "php": "8.1", "db": "mariadb"},
-         {"nextcloud": "stable34", "php": "8.5", "db": "mariadb"},
-         {"nextcloud": "stable34", "php": "8.5", "db": "sqlite"}]
+         {"nextcloud": "stable35", "php": "8.5", "db": "mariadb"},
+         {"nextcloud": "stable35", "php": "8.5", "db": "sqlite"}]
 
       # Merging adds the database a pull request skips.
       ON_PUSH: >-
         [{"nextcloud": "stable31", "php": "8.1", "db": "mariadb"},
-         {"nextcloud": "stable34", "php": "8.5", "db": "mariadb"},
-         {"nextcloud": "stable34", "php": "8.5", "db": "pgsql"},
-         {"nextcloud": "stable34", "php": "8.5", "db": "sqlite"}]
+         {"nextcloud": "stable35", "php": "8.5", "db": "mariadb"},
+         {"nextcloud": "stable35", "php": "8.5", "db": "pgsql"},
+         {"nextcloud": "stable35", "php": "8.5", "db": "sqlite"}]
 
       # Every major against every PHP it accepts, plus both ends of the range on the other
       # two databases. Allowed to fail loudly - see continue-on-error below.
@@ -309,10 +310,13 @@ jobs:
          {"nextcloud": "stable34", "php": "8.3", "db": "mariadb"},
          {"nextcloud": "stable34", "php": "8.4", "db": "mariadb"},
          {"nextcloud": "stable34", "php": "8.5", "db": "mariadb"},
+         {"nextcloud": "stable35", "php": "8.3", "db": "mariadb"},
+         {"nextcloud": "stable35", "php": "8.4", "db": "mariadb"},
+         {"nextcloud": "stable35", "php": "8.5", "db": "mariadb"},
          {"nextcloud": "stable31", "php": "8.1", "db": "pgsql"},
          {"nextcloud": "stable31", "php": "8.1", "db": "sqlite"},
-         {"nextcloud": "stable34", "php": "8.5", "db": "pgsql"},
-         {"nextcloud": "stable34", "php": "8.5", "db": "sqlite"}]
+         {"nextcloud": "stable35", "php": "8.5", "db": "pgsql"},
+         {"nextcloud": "stable35", "php": "8.5", "db": "sqlite"}]
     outputs:
       matrix: ${{ steps.select.outputs.matrix }}
     steps:
@@ -408,7 +412,7 @@ jobs:
         working-directory: apps/nextfleet
         run: composer install --no-progress
 
-      # On 34 its lib/ uses web-push classes this builds into lib/Vendor, and without them the
+      # From 34 its lib/ uses web-push classes this builds into lib/Vendor, and without them the
       # app fails to load; before 34 it installs nothing. Before the install, which enables the
       # app by default.
       - name: Install the notifications app's dependencies

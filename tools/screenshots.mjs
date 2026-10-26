@@ -25,7 +25,7 @@ import { chromium } from '@playwright/test'
 
 import { appPage, login, logout } from '../tests/e2e/app.js'
 
-const baseURL = process.env.NEXTFLEET_URL_NC34 ?? 'http://localhost:8080'
+const baseURL = process.env.NEXTFLEET_URL_NC35 ?? 'http://localhost:8080'
 const out = 'design/screenshots'
 
 // The store's listing is narrow and a wide shot reads as whitespace; at this width the navigation

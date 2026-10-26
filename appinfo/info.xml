@@ -88,7 +88,7 @@ dass das Ergebnis von einem Finanzamt, einer Prüferin oder einem Gericht anerka
 und Sätze stammen aus öffentlichen Quellen, können falsch sein und veralten. Fragen Sie Ihre eigene
 Beraterin oder Ihren Berater, bevor Sie sich darauf verlassen.
   ]]></description>
-  <version>0.4.0</version>
+  <version>0.4.1</version>
   <licence>AGPL-3.0-or-later</licence>
   <author>Johannes Kolb</author>
   <namespace>NextFleet</namespace>
@@ -112,7 +112,7 @@ Beraterin oder Ihren Berater, bevor Sie sich darauf verlassen.
   <screenshot>https://raw.githubusercontent.com/typical42/next-fleet/main/design/screenshots/costs.png</screenshot>
   <screenshot>https://raw.githubusercontent.com/typical42/next-fleet/main/design/screenshots/reports.png</screenshot>
   <dependencies>
-    <nextcloud min-version="31" max-version="34"/>
+    <nextcloud min-version="31" max-version="35"/>
   </dependencies>
   <background-jobs>
     <job>OCA\NextFleet\BackgroundJob\PendingJob</job>

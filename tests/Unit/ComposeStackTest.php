@@ -75,7 +75,7 @@ class ComposeStackTest extends TestCase {
 	 * The E2E reaches each major by its port, so a typo here silently swaps the majors.
 	 */
 	public function testBothNextcloudMajorsArePublishedOnTheirOwnPort(): void {
-		$this->assertSame('nextcloud:34-apache', $this->service('app')['image']);
+		$this->assertSame('nextcloud:35-apache', $this->service('app')['image']);
 		$this->assertSame([8080], $this->publishedPorts('app'));
 
 		$this->assertSame('nextcloud:31-apache', $this->service('app31')['image']);

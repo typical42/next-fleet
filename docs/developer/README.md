@@ -24,13 +24,13 @@ You need PHP 8.1+ with Composer, Node.js 22.22+ or 24+, and Docker with Compose.
    npm run build
    ```
 
-2. Start Nextcloud 34 and 31:
+2. Start Nextcloud 35 and 31:
 
    ```bash
    docker compose -f .docker/compose.yml up -d
    ```
 
-3. Enable the app and add the demo fleet, on `app` (NC 34) and `app31` (NC 31):
+3. Enable the app and add the demo fleet, on `app` (NC 35) and `app31` (NC 31):
 
    ```bash
    docker compose -f .docker/compose.yml exec -u www-data app php occ app:enable nextfleet
@@ -39,7 +39,7 @@ You need PHP 8.1+ with Composer, Node.js 22.22+ or 24+, and Docker with Compose.
    docker compose -f .docker/compose.yml exec -u www-data app31 php occ nextfleet:seed admin
    ```
 
-4. Open <http://localhost:8080> (NC 34) or <http://localhost:8081> (NC 31) and log in as `admin` with the password `admin`.
+4. Open <http://localhost:8080> (NC 35) or <http://localhost:8081> (NC 31) and log in as `admin` with the password `admin`.
 
 The servers run your working copy.
 A PHP change shows on reload, after up to a minute.

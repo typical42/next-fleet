@@ -30,8 +30,11 @@ services:
       start_period: 30s
 
   app:
-    build: .
-    image: nextfleet-oracle-app:34
+    build:
+      context: .
+      args:
+        NEXTCLOUD: 35
+    image: nextfleet-oracle-app:35
     # The ownership fix .docker/compose.yml explains.
     entrypoint:
       - /bin/sh

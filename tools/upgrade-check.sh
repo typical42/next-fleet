@@ -2,19 +2,29 @@
 # SPDX-FileCopyrightText: 2026 Johannes Kolb
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
-# Installs a package on throwaway NC 31 and NC 34 servers, first fresh, then as an upgrade over
-# the version users have today, and fails unless every row that version wrote survives in every
-# table, and the upgraded schema is the fresh install's to the last column and index.
+# Installs a package every way a user reaches it, on throwaway servers:
+#
+#   NC 31        fresh, and over the version users have today
+#   NC 34        fresh, and over that version, the server staying on 34
+#   NC 34 -> 35  that version on NC 34, the server upgraded to 35 under it, then the package
+#   NC 35        fresh
+#
+# After every path the app is enabled at the package's version, has run exactly the package's
+# migrations, and `occ nextfleet:check` finds nothing; nextcloud.log holds no warning that names
+# the app. The one exception is an old version that allows no NC 35: the server upgrade disables
+# it, logs that, and logs failing to replay its migrations, which the package cannot prevent. An
+# upgrade also keeps every row the old version wrote, and ends in the schema a fresh install has,
+# to the last column and index.
 #
 #   tools/upgrade-check.sh [--db mariadb|pgsql|oracle] <tarball> [<base>]
 #
 # <tarball> is the package to check: pass the file you are about to sign, not a rebuild of it.
-# <base> is the version users have, as a git ref or a tarball. It defaults to 9056da5, the 0.2.0
-# commit, because no release is tagged yet; once one is, pass its tag.
+# <base> is the version users have, as a git ref or a tarball. It defaults to v0.4.0, the last
+# release; each release moves it on.
 #
 # The servers are tools/upgrade-check.compose.yml, its own project with its own volumes. They are
 # removed at the end, pass or fail. The dev servers in .docker/compose.yml are never touched.
-# --db picks their database, MariaDB by default; Oracle checks NC 34 alone
+# --db picks their database, MariaDB by default; Oracle checks only NC 34 -> 35 and NC 35 fresh
 # (docs/development.md#release).
 
 set -eu
@@ -30,9 +40,10 @@ if [ "${1:-}" = --db ]; then
 	db=$2
 	shift 2
 fi
+# $fresh installs the package on nothing; $paths start from the base, each on its first server.
 case $db in
-	mariadb | pgsql) servers="app34 app31" ;;
-	oracle) servers=app34 ;;
+	mariadb | pgsql) fresh="app31 app34 app35" paths="app31 app34 from34" ;;
+	oracle) fresh=app35 paths=from34 ;;
 	*) usage ;;
 esac
 
@@ -40,7 +51,7 @@ if [ $# -lt 1 ] || [ ! -f "$1" ]; then
 	usage
 fi
 tarball=$(realpath "$1")
-base=${2:-9056da5}
+base=${2:-v0.4.0}
 # --db goes first; after the tarball it would be taken for the base.
 case $base in -*) usage ;; esac
 if [ -f "$base" ]; then
@@ -71,6 +82,11 @@ version() {
 	tar -xOzf "$1" nextfleet/appinfo/info.xml | sed -n 's:.*<version>\(.*\)</version>.*:\1:p'
 }
 
+# The newest Nextcloud major a package allows.
+max_version() {
+	tar -xOzf "$1" nextfleet/appinfo/info.xml | sed -n 's:.*<nextcloud [^>]*max-version="\([0-9]*\)".*:\1:p'
+}
+
 # The base is built the way it was released: by its own package script, from its own tree, in a
 # worktree outside this one so nothing here leaks into it.
 if [ -f "$base" ]; then
@@ -84,13 +100,33 @@ fi
 
 new=$(version "$tarball")
 old=$(version "$work/base.tar.gz")
+base_max=$(max_version "$work/base.tar.gz")
+# Anything but one number would make the test in the 34 -> 35 path fail into its other branch.
+case $base_max in
+	'' | *[!0-9]*) fail "$old names no single newest Nextcloud major: $base_max" ;;
+esac
 echo "Checking $new, fresh and over $old, on $db"
 
 schema() {
 	case $1 in
 		app34) echo nextcloud ;;
 		app31) echo nextcloud31 ;;
+		app35) echo nextcloud35 ;;
+		from34 | to35) echo nextcloud34to35 ;;
 	esac
+}
+
+# The fresh install a path's schema must end as: the one on the major it ends on.
+fresh_of() {
+	case $1 in
+		from34) echo app35 ;;
+		*) echo "$1" ;;
+	esac
+}
+
+# A package's migrations by version, as oc_migrations names them.
+migrations() {
+	tar -tzf "$1" | sed -n 's:^nextfleet/lib/Migration/Version\(.*\)\.php$:\1:p' | sort
 }
 
 # What differs between the databases. Everything else below is SQL all three accept. Identifiers
@@ -125,7 +161,7 @@ sql() {
 		mariadb) $compose exec -T db mariadb -uroot -proot -N "$(schema "$1")" \
 			-e "set session sql_mode = concat(@@sql_mode, ',ANSI_QUOTES'); $2" ;;
 		pgsql) $compose exec -T db psql -U postgres -d "$(schema "$1")" -AtqX -v ON_ERROR_STOP=1 -c "$2" ;;
-		# One schema, NC 34's. CSV prints a value without sqlplus's padding; define off keeps an &
+		# One schema, the server's that runs. CSV prints a value without sqlplus's padding; define off keeps an &
 		# from prompting.
 		oracle) printf '%s\n' 'set markup csv on quote off' \
 			'set heading off feedback off pagesize 0 long 100000 sqlblanklines on numwidth 40 define off' \
@@ -148,9 +184,10 @@ checksum() {
 }
 
 # A table's columns, quoted and joined, as the first snapshot found them. The later one reads the
-# same list, so a column the upgrade adds changes no checksum: the schema check judges it.
+# same list, so a column the upgrade adds changes no checksum: the schema check judges it. Kept by
+# database, which 34 -> 35's two servers share.
 columns() {
-	file="$work/$1.$2.columns"
+	file="$work/$(schema "$1").$2.columns"
 	if [ ! -f "$file" ]; then
 		case $db in
 			mariadb | pgsql) names=$(sql "$1" "select column_name from information_schema.columns
@@ -185,11 +222,16 @@ put() {
 	$compose exec -T "$1" apachectl -k graceful 2>/dev/null || fail "$1: Apache did not reload"
 }
 
-# The Oracle image installs nothing by itself; the others have installed on start.
+# The Oracle image installs nothing by itself; the others have installed on start. The app store
+# goes off: a server upgrade asks it for a newer nextfleet (Updater::upgradeAppStoreApps) and
+# installs that over custom_apps, so a release in the store would be checked in place of the
+# package.
 install() {
-	[ "$db" = oracle ] || return 0
-	occ "$1" maintenance:install --database=oci --database-host=db --database-name=FREEPDB1 \
-		--database-user=nextcloud --database-pass=nextcloud --admin-user=admin --admin-pass=admin
+	if [ "$db" = oracle ]; then
+		occ "$1" maintenance:install --database=oci --database-host=db --database-name=FREEPDB1 \
+			--database-user=nextcloud --database-pass=nextcloud --admin-user=admin --admin-pass=admin
+	fi
+	occ "$1" config:system:set appstoreenabled --type=boolean --value=false >/dev/null
 }
 
 # Why an older base needs the synonym is in docs/development.md#oracle. It is dropped before the
@@ -283,6 +325,58 @@ shape() {
 	esac
 }
 
+# Which of the app's migrations the server has run, in migrations()'s order.
+ran() {
+	sql "$1" "select \"version\" from \"oc_migrations\" where \"app\" = 'nextfleet'" >"$2"
+	sort -o "$2" "$2"
+}
+
+# Every line of nextcloud.log at warning or above that names the app: its own, and the server's
+# about it. A line that is no JSON counts as an error. The arguments after the server are pairs
+# of patterns for the lines the path expects: one for the message and one for its exception's
+# message, which an empty pattern leaves unchecked.
+# shellcheck disable=SC2016 # the dollars are PHP's
+complaints() {
+	server=$1
+	shift
+	$compose exec -T -u www-data "$server" php -r '
+		$log = "data/nextcloud.log";
+		$expected = array_chunk(array_slice($argv, 1), 2);
+		foreach (is_file($log) ? file($log, FILE_IGNORE_NEW_LINES) : [] as $line) {
+			$entry = json_decode($line, true);
+			$level = is_array($entry) ? (int)($entry["level"] ?? 4) : 4;
+			if ($level < 2 || stripos($line, "nextfleet") === false) {
+				continue;
+			}
+			$exception = is_array($entry) && is_array($entry["exception"] ?? null) ? $entry["exception"] : [];
+			foreach ($expected as [$message, $thrown]) {
+				if (preg_match($message, (string)($entry["message"] ?? ""))
+					&& ($thrown === "" || preg_match($thrown, (string)($exception["Message"] ?? "")))) {
+					continue 2;
+				}
+			}
+			echo $line, PHP_EOL;
+		}' -- "$@"
+}
+
+# What must hold after every path: the package enabled at its version, all its migrations and no
+# other run, no finding, no complaint but those the further arguments expect (complaints()).
+flawless() {
+	installed=$(occ "$1" config:app:get nextfleet installed_version)
+	[ "$installed" = "$new" ] || fail "$1: $installed is installed, not $new"
+	enabled=$(occ "$1" config:app:get nextfleet enabled)
+	[ "$enabled" = yes ] || fail "$1: the app is not enabled ($enabled)"
+
+	ran "$1" "$work/$1.ran"
+	diff "$work/new.migrations" "$work/$1.ran" || fail "$1: the migrations run are not the package's"
+
+	found=$(occ "$1" nextfleet:check) || fail "$1: nextfleet:check found: $found"
+	[ "$found" = 'No findings.' ] || fail "$1: nextfleet:check reports: $found"
+
+	said=$(complaints "$@")
+	[ -z "$said" ] || fail "$1: nextcloud.log names the app: $said"
+}
+
 get() {
 	$compose exec -T "$1" curl -s -u admin:admin -H 'OCS-APIRequest: true' -w '\n%{http_code}' \
 		"http://localhost/index.php/apps/nextfleet/$2"
@@ -366,55 +460,100 @@ history() {
 # A run that was interrupted leaves its servers behind; start from nothing.
 $compose down -v --remove-orphans >/dev/null 2>&1
 
-migrations=$(tar -tzf "$tarball" | grep -c '^nextfleet/lib/Migration/Version.*\.php$')
+migrations "$tarball" >"$work/new.migrations"
+migrations "$work/base.tar.gz" >"$work/base.migrations"
+[ -s "$work/new.migrations" ] || fail "$new has no migrations"
+[ -s "$work/base.migrations" ] || fail "$old has no migrations"
 
-# Word splitting is the point: $servers is a list. --build because Oracle's app34 is built from
-# .docker/oracle/ under a fixed tag, which would otherwise keep whatever image was built last.
+# Word splitting is the point: $fresh and $paths are lists. --build because Oracle's servers are
+# built from .docker/oracle/ under a fixed tag, which would otherwise keep whatever image was
+# built last.
 # shellcheck disable=SC2086
-$compose up -d --wait --quiet-pull --build $servers
-for server in $servers; do
+$compose up -d --wait --quiet-pull --build $fresh
+for server in $fresh; do
 	install "$server"
 	put "$server" "$tarball"
 	occ "$server" app:enable nextfleet
-	ran=$(sql "$server" "select count(*) from \"oc_migrations\" where \"app\" = 'nextfleet'")
-	[ "$ran" = "$migrations" ] || fail "$server: $ran of $migrations migrations ran"
 	shape "$server" >"$work/$server.fresh"
 	loads "$server"
 	occ "$server" nextfleet:seed admin
-	echo "$server: $new installs fresh, $ran migrations ran, the page loads, the seed runs"
+	flawless "$server"
+	echo "$server: $new installs fresh, the page loads, the seed runs, nothing to find or complain about"
 done
 $compose down -v
 
 # shellcheck disable=SC2086
-$compose up -d --wait --quiet-pull $servers
-for server in $servers; do
+$compose up -d --wait --quiet-pull --build $paths
+for path in $paths; do
+	server=$path
 	install "$server"
 	put "$server" "$work/base.tar.gz"
 	occ "$server" app:enable nextfleet
 	alias_sequence "$server" create
 	loads "$server"
 	history "$server"
-	rows "$server" "$work/$server.before"
-	empty=$(awk '$2 == 0 { print $1 }' "$work/$server.before")
+	rows "$server" "$work/$path.before"
+	empty=$(awk '$2 == 0 { print $1 }' "$work/$path.before")
 	[ -z "$empty" ] || fail "$server: empty before the upgrade, so unproven: $(echo "$empty" | tr '\n' ' ')"
 	plate=$(sql "$server" "select \"plate\" from \"oc_fleet_vehicles\" where \"deleted_at\" is null
 		order by \"id\" fetch first 1 rows only")
 	[ -n "$plate" ] || fail "$server: the $old seed wrote no vehicle"
-
 	alias_sequence "$server" drop
-	put "$server" "$tarball"
-	occ "$server" upgrade
-	installed=$(occ "$server" config:app:get nextfleet installed_version)
-	[ "$installed" = "$new" ] || fail "$server: $installed is installed after the upgrade, not $new"
 
-	rows "$server" "$work/$server.after"
-	lost=$(comm -23 "$work/$server.before" "$work/$server.after")
-	[ -z "$lost" ] || fail "$server: rows lost or changed in: $(echo "$lost" | cut -d' ' -f1 | tr '\n' ' ')"
-	shape "$server" >"$work/$server.upgraded"
-	diff "$work/$server.fresh" "$work/$server.upgraded" ||
-		fail "$server: the upgraded schema is not the fresh install's"
+	# The log lines the path expects, for flawless(): none unless the case sets them.
+	set --
+	case $path in
+		# The image switch: NC 35 starts on NC 34's install and upgrades it, the app's migrations
+		# untouched.
+		from34)
+			$compose stop "$server"
+			server=to35
+			$compose up -d --wait --quiet-pull "$server"
+			ran "$server" "$work/$path.base-ran"
+			diff "$work/base.migrations" "$work/$path.base-ran" ||
+				fail "$server: the server upgrade changed which of the app's migrations ran"
+			if [ "$base_max" -lt 35 ]; then
+				# A base that allows no NC 35 comes out disabled, and enabling the package must run
+				# the rest. The server logs the disabling as an error, naming the app by its
+				# info.xml name, which it reads as an array. Its schema check then replays the
+				# migrations of the disabled app on NC 35's own Table class, which a base with
+				# Doctrine's in its type hints cannot take.
+				listed=$(occ "$server" app:list --disabled)
+				case $listed in
+					*"- nextfleet:"*) ;;
+					*) fail "$server: the server upgrade left the app not listed as disabled: $listed" ;;
+				esac
+				put "$server" "$tarball"
+				occ "$server" app:enable nextfleet
+				set -- \
+					"/^App \"[^\"]*\" cannot be installed because the following dependencies are not fulfilled: Server version $base_max or lower is required\\.\$/" '' \
+					'/^Could not replay migrations for disabled app \{app\}$/' \
+					'/^OCA\\NextFleet\\Migration\\Version\w+::\w+\(\): Argument #\d+ \([$]table\) must be of type Doctrine\\DBAL\\Schema\\Table, OC\\DB\\Schema\\Table given\b/'
+			else
+				# A base that allows NC 35 stays enabled, and the package is an update like any other.
+				enabled=$(occ "$server" config:app:get nextfleet enabled)
+				[ "$enabled" = yes ] || fail "$server: the server upgrade disabled the app ($enabled)"
+				put "$server" "$tarball"
+				occ "$server" upgrade
+			fi
+			;;
+		*)
+			put "$server" "$tarball"
+			occ "$server" upgrade
+			;;
+	esac
+	# The log is read after the path's last request, so what the upgraded app logs on its first
+	# ones counts too.
 	loads "$server" "$plate"
-	echo "$server: $old upgrades to $new, all $(wc -l <"$work/$server.before") tables' rows intact, the schema the fresh one's, the overview loads"
+	flawless "$server" "$@"
+
+	rows "$server" "$work/$path.after"
+	lost=$(comm -23 "$work/$path.before" "$work/$path.after")
+	[ -z "$lost" ] || fail "$server: rows lost or changed in: $(echo "$lost" | cut -d' ' -f1 | tr '\n' ' ')"
+	shape "$server" >"$work/$path.upgraded"
+	diff "$work/$(fresh_of "$path").fresh" "$work/$path.upgraded" ||
+		fail "$server: the upgraded schema is not the fresh install's"
+	echo "$server: $old upgrades to $new, all $(wc -l <"$work/$path.before") tables' rows intact, the schema the fresh one's, nothing to find or complain about, the overview loads"
 done
 
 echo "Upgrade check passed"

@@ -314,7 +314,7 @@ for (const viewport of [{ width: 320, height: 640 }, { width: 1280, height: 800 
 	const folded = viewport.width < 1024
 	for (const colorScheme of /** @type {const} */ (['light', 'dark'])) {
 		const at = `${viewport.width}-${colorScheme}`
-		test.describe(`at ${viewport.width} x ${viewport.height}, ${colorScheme}`, { tag: '@nc34' }, () => {
+		test.describe(`at ${viewport.width} x ${viewport.height}, ${colorScheme}`, { tag: '@nc35' }, () => {
 			test.use({ viewport, colorScheme })
 
 			test('every screen fits the width and passes an axe audit', async ({ page }) => {
