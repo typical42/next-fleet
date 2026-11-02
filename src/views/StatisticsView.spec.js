@@ -434,9 +434,12 @@ describe('the Statistics screen', () => {
 		})
 
 		await button(wrapper, 'Export')?.trigger('click')
-		await flushPromises()
-		const items = [...document.body.querySelectorAll('[role="menuitem"]')]
-		expect(items.map((one) => one.textContent?.trim())).toEqual(['Trips', 'Fill-ups', 'Maintenance', 'Expenses'])
+		// The menu's popover renders after more than one tick on a busy runner.
+		const items = await vi.waitFor(() => {
+			const shown = [...document.body.querySelectorAll('[role="menuitem"]')]
+			expect(shown.map((one) => one.textContent?.trim())).toEqual(['Trips', 'Fill-ups', 'Maintenance', 'Expenses'])
+			return shown
+		})
 		for (const item of items) {
 			item.dispatchEvent(new MouseEvent('click', { bubbles: true }))
 		}
