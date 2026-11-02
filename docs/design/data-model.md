@@ -201,6 +201,7 @@ A grant names a user or a group in `grantee`.
 There is one live row per grantee, and a revoke soft-deletes it.
 A booking's handover is its own columns, and `trip_id` points at the trip logged from it ([bookings](../architecture.md#bookings)).
 Its answer is its own columns too: `approval`, the comment, and who gave it in `approval_by` ([booking approval](../architecture.md#booking-approval)).
+`fleet_bkg_wait_end_idx` on `(approval, ends_at)` serves the hourly search across vehicles for requests whose end came unanswered.
 `announced` marks that the booking notice list has heard of it, so a booking moved back to a request is "changed" once approved again, not "booked".
 A booking notice recipient names a user in `user_id` or a group in `group_id`, never both ([booking notices](../architecture.md#booking-notices)).
 

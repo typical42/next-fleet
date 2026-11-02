@@ -154,8 +154,11 @@ class Booking extends BaseEntity {
 		return $this->approval === null || $this->announced === true;
 	}
 
-	/** Whether an approver still has to answer it: until then it holds its span, but is not taken. */
+	/**
+	 * Whether an approver still has to answer it: until then it holds its span, but is not taken.
+	 * A cancel keeps the approval it stood at, so the state is read with it.
+	 */
 	public function waits(): bool {
-		return in_array($this->approval, self::OPEN, true);
+		return $this->state === self::BOOKED && in_array($this->approval, self::OPEN, true);
 	}
 }

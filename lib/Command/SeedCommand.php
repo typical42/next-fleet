@@ -117,7 +117,7 @@ class SeedCommand extends Command {
 				['days' => 150, 'odo' => 109400, 'amount' => 52200, 'total' => 8770, 'station' => 'Aral Hauptstraße'],
 				['days' => 125, 'odo' => 110300, 'amount' => 53900, 'total' => 9163, 'station' => 'Shell Ringstraße'],
 				['days' => 100, 'odo' => 111100, 'amount' => 46400, 'total' => 7888, 'station' => 'Aral Hauptstraße'],
-				// The newest month has a bar too (SeedTest, the Costs screen).
+				// The newest month has a bar too (SeedTest, Statistics).
 				['days' => 20, 'odo' => 112050, 'amount' => 57000, 'total' => 9690, 'station' => 'Aral Hauptstraße'],
 			],
 			'maintenance' => [
@@ -468,7 +468,7 @@ class SeedCommand extends Command {
 		$this->setName('nextfleet:seed')
 			->setDescription('Write a demo fleet into one user\'s account')
 			->addArgument('user', InputArgument::REQUIRED, 'the uid the fleet belongs to')
-			->addOption('grant-to', null, InputOption::VALUE_REQUIRED, 'a uid to give the Passat to as a driver, with one trip of theirs');
+			->addOption('grant-to', null, InputOption::VALUE_REQUIRED, 'a uid to give two vehicles to as a driver: the Passat, with a trip and a booking of theirs, and the Volvo, whose costs drivers do not see, with a booking of theirs waiting for approval');
 	}
 
 	protected function execute(InputInterface $input, OutputInterface $output): int {
@@ -590,8 +590,8 @@ class SeedCommand extends Command {
 	/**
 	 * The fleet an earlier run left, deleted the way the app deletes: the rows stay for the
 	 * trash, and only the plates this command writes are touched, so a real vehicle parked next
-	 * to the demo one survives. Only the account's own: the list holds the Passat another run
-	 * gave it access to, which is that owner's to keep.
+	 * to the demo one survives. Only the account's own: the list holds the vehicles another run
+	 * gave it access to, which are that owner's to keep.
 	 *
 	 * @throws \OCP\DB\Exception
 	 */

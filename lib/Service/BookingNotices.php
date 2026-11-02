@@ -16,7 +16,6 @@ use OCA\NextFleet\Db\BookingMapper;
 use OCA\NextFleet\Db\BookingRecipientMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCP\AppFramework\Utility\ITimeFactory;
-use OCP\IGroupManager;
 use OCP\Notification\IManager;
 use Psr\Log\LoggerInterface;
 
@@ -41,7 +40,7 @@ class BookingNotices {
 		private BookingMapper $bookings,
 		private AccessMapper $grants,
 		private BookingRecipientMapper $recipients,
-		private IGroupManager $groups,
+		private Names $names,
 		private VehicleAccess $access,
 		private IManager $notifications,
 		private ITimeFactory $time,
@@ -153,17 +152,87 @@ class BookingNotices {
 	}
 
 	/**
-	 * Tells the booker the answer the booking just got, unless they gave it. Who answered is read
-	 * off the booking when the notice is read, for the reason tellCancelled() gives.
+	 * Asks accounts that just came to answer the vehicle's bookings - a new owner, a new manager -
+	 * the requests that wait already: tellRequested() asked only who answered then. A question
+	 * waits for its booker, not for them. Only those who answer now are asked, for after the
+	 * commit, logged on failure, as tell() is.
+	 *
+	 * @param list<string> $uids
+	 */
+	public function tellWaiting(Vehicle $vehicle, array $uids): void {
+		if ($uids === []) {
+			return;
+		}
+		try {
+			$requests = array_filter(
+				$this->bookings->findWaiting((int)$vehicle->getId(), $this->time->getTime()),
+				static fn (Booking $booking): bool => $booking->getApproval() === Booking::REQUESTED,
+			);
+			if ($requests === []) {
+				return;
+			}
+			$approvers = array_values(array_filter($uids, fn (string $uid): bool => $this->access->may($uid, VehicleAccess::EDIT, $vehicle)));
+			foreach ($requests as $booking) {
+				foreach ($approvers as $uid) {
+					if ($uid === $booking->getUserId()) {
+						continue;
+					}
+					// A manager made a driver and a manager again may hold the request still.
+					$this->notifications->markProcessed($this->notifications->createNotification()
+						->setApp(Application::APP_ID)
+						->setUser($uid)
+						->setObject(self::APPROVAL, $booking->getUuid()));
+					$this->send($uid, $vehicle, $booking, Booking::REQUESTED);
+				}
+			}
+		} catch (\Throwable $e) {
+			$this->logger->error('The waiting booking requests of vehicle ' . $vehicle->getUuid() . ' were not sent', ['exception' => $e]);
+		}
+	}
+
+	/**
+	 * Tells the booker the answer the booking just got, unless they gave it, in place of any
+	 * earlier answer: a second question is the one to answer. Who answered is read off the
+	 * booking when the notice is read, for the reason tellCancelled() gives.
 	 */
 	public function tellAnswered(Vehicle $vehicle, Booking $booking, string $actor): void {
 		if ($booking->getUserId() === $actor) {
 			return;
 		}
 		try {
+			$this->notifications->markProcessed($this->notifications->createNotification()
+				->setApp(Application::APP_ID)
+				->setUser($booking->getUserId())
+				->setObject(self::APPROVAL, $booking->getUuid()));
 			$this->send($booking->getUserId(), $vehicle, $booking, (string)$booking->getApproval());
 		} catch (\Throwable $e) {
 			$this->logger->error('A booking answer of vehicle ' . $vehicle->getUuid() . ' was not sent', ['exception' => $e]);
+		}
+	}
+
+	/**
+	 * Asks again what withdrawAll() took back and still waits for an answer: each request of the
+	 * approvers, each question of its booker. Nothing else would: a request has no next round, only
+	 * its end. For a vehicle brought back, after the commit, logged on failure, as tell() is.
+	 */
+	public function tellRestored(Vehicle $vehicle): void {
+		try {
+			$waiting = $this->bookings->findWaiting((int)$vehicle->getId(), $this->time->getTime());
+		} catch (\Throwable $e) {
+			$this->logger->error('The waiting bookings of vehicle ' . $vehicle->getUuid() . ' were not asked again', ['exception' => $e]);
+
+			return;
+		}
+		foreach ($waiting as $booking) {
+			if ($booking->getApproval() === Booking::REQUESTED) {
+				$this->tellRequested($vehicle, $booking);
+				continue;
+			}
+			try {
+				$this->send($booking->getUserId(), $vehicle, $booking, Booking::ASKED);
+			} catch (\Throwable $e) {
+				$this->logger->error('A booking question of vehicle ' . $vehicle->getUuid() . ' was not sent', ['exception' => $e]);
+			}
 		}
 	}
 
@@ -195,9 +264,7 @@ class BookingNotices {
 				$uids[] = $grant->getGrantee();
 				continue;
 			}
-			foreach ($this->groups->get($grant->getGrantee())?->getUsers() ?? [] as $member) {
-				$uids[] = $member->getUID();
-			}
+			array_push($uids, ...$this->names->members($grant->getGrantee()));
 		}
 
 		return array_values(array_filter(
@@ -255,9 +322,7 @@ class BookingNotices {
 				$uids[] = (string)$row->getUserId();
 				continue;
 			}
-			foreach ($this->groups->get($groupId)?->getUsers() ?? [] as $member) {
-				$uids[] = $member->getUID();
-			}
+			array_push($uids, ...$this->names->members($groupId));
 		}
 
 		return array_values(array_unique($uids));

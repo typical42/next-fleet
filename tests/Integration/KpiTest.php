@@ -140,7 +140,7 @@ class KpiTest extends TestCase {
 	}
 
 	/**
-	 * The Costs screen's year: twelve months cut at midnight where the person is, each with its
+	 * The year route: twelve months cut at midnight where the person is, each with its
 	 * three bands and its categories, and the header's figures for the whole year.
 	 */
 	public function testAYearOfCostsIsTwelveLocalMonthsAndTheYearsFigures(): void {
@@ -250,7 +250,7 @@ class KpiTest extends TestCase {
 	}
 
 	/**
-	 * The Costs screen opens on a vehicle with years behind it as fast as on a new one: thirteen
+	 * The year route answers for a vehicle with years behind it as fast as for a new one: thirteen
 	 * period edges and a handful of lookups, never a pass over the whole chain.
 	 */
 	public function testAYearReadsAsManyQueriesForALongHistoryAsForAShortOne(): void {

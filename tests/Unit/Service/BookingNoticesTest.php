@@ -15,11 +15,13 @@ use OCA\NextFleet\Db\BookingRecipient;
 use OCA\NextFleet\Db\BookingRecipientMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Service\BookingNotices;
+use OCA\NextFleet\Service\Names;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\IGroup;
 use OCP\IGroupManager;
 use OCP\IUser;
+use OCP\IUserManager;
 use OCP\Notification\IManager;
 use OCP\Notification\INotification;
 use PHPUnit\Framework\TestCase;
@@ -27,8 +29,20 @@ use Psr\Log\LoggerInterface;
 
 /** Who of a vehicle's booking notice list hears of one event (docs/architecture.md#booking-notices). */
 class BookingNoticesTest extends TestCase {
-	/** @var list<array{user: string, subject: string, parameters: array<string, mixed>, object: string}> */
+	/** @var list<array{user: string, subject: string, parameters: array<string, mixed>, object: string, id: string}> */
 	private array $sent = [];
+	/** @var list<array<string, string>> what each markProcessed() named */
+	private array $processed = [];
+	/** @var array<int, \Closure(): array<string, string>> each notification's fields so far, by spl_object_id() */
+	private array $drafts = [];
+	/** @var list<string> who may answer the vehicle's bookings */
+	private array $approving = [];
+	/** How often `edit` was asked of VehicleAccess. */
+	private int $approvalsAsked = 0;
+	/** @var list<Booking> what waits for an answer */
+	private array $waiting = [];
+	/** How often what waits was read. */
+	private int $waitingRead = 0;
 	/** @var list<BookingRecipient>|null null for a list that cannot be read */
 	private ?array $listed = [];
 	/** @var list<string> who sees the vehicle */
@@ -106,6 +120,75 @@ class BookingNoticesTest extends TestCase {
 		$this->assertSame([], $this->sent);
 	}
 
+	/** A second question replaces the first: the booker's earlier answers to it go before it is sent. */
+	public function testAnAnswerTakesTheBookersEarlierAnswersBack(): void {
+		$booking = $this->booking('ann');
+		$booking->setApproval(Booking::ASKED);
+
+		$this->notices()->tellAnswered($this->vehicle(), $booking, 'owner');
+
+		$this->assertSame([['user' => 'ann', 'object' => BookingNotices::APPROVAL, 'id' => 'b-1']], $this->processed);
+		$this->assertSame([['ann', Booking::ASKED]], array_map(static fn (array $one): array => [$one['user'], $one['subject']], $this->sent));
+	}
+
+	/**
+	 * Whoever just came to answer is asked what waits for an answer from them, each request once.
+	 * Not of their own booking, not of a question, and not if they answer nothing after all.
+	 */
+	public function testANewApproverIsAskedWhatWaits(): void {
+		$this->approving = ['dora', 'cem'];
+		$this->waiting = [$this->waiting('b-1', 'ann', Booking::REQUESTED), $this->waiting('b-2', 'bea', Booking::ASKED), $this->waiting('b-3', 'cem', Booking::REQUESTED)];
+
+		$this->notices()->tellWaiting($this->vehicle(), ['dora', 'cem', 'eve']);
+
+		$this->assertSame(
+			[['dora', 'b-1'], ['cem', 'b-1'], ['dora', 'b-3']],
+			array_map(static fn (array $one): array => [$one['user'], $one['id']], $this->sent),
+		);
+		$this->assertSame([Booking::REQUESTED], array_values(array_unique(array_column($this->sent, 'subject'))));
+		// A manager made a driver and a manager again may still hold the first request.
+		$this->assertSame(
+			[['user' => 'dora', 'object' => BookingNotices::APPROVAL, 'id' => 'b-1'], ['user' => 'cem', 'object' => BookingNotices::APPROVAL, 'id' => 'b-1'], ['user' => 'dora', 'object' => BookingNotices::APPROVAL, 'id' => 'b-3']],
+			$this->processed,
+		);
+	}
+
+	/**
+	 * A vehicle brought back asks again what waits for an answer: a request of its approvers, a
+	 * question of its booker.
+	 */
+	public function testARestoredVehicleAsksAgainWhatWaits(): void {
+		$this->approving = ['owner'];
+		$this->waiting = [$this->waiting('b-1', 'ann', Booking::REQUESTED), $this->waiting('b-2', 'bea', Booking::ASKED)];
+
+		$this->notices()->tellRestored($this->vehicle());
+
+		$this->assertSame(
+			[['owner', 'b-1', Booking::REQUESTED], ['bea', 'b-2', Booking::ASKED]],
+			array_map(static fn (array $one): array => [$one['user'], $one['id'], $one['subject']], $this->sent),
+		);
+	}
+
+	/** With nothing to ask, nobody's access is asked either. */
+	public function testNothingWaitingAsksNothing(): void {
+		$this->waiting = [$this->waiting('b-2', 'bea', Booking::ASKED)];
+
+		$this->notices()->tellWaiting($this->vehicle(), ['dora', 'cem']);
+
+		$this->assertSame([], $this->sent);
+		$this->assertSame(0, $this->approvalsAsked);
+	}
+
+	/** A grant that makes nobody an approver, the most of them, reads nothing. */
+	public function testNobodyToAskReadsNothing(): void {
+		$this->waiting = [$this->waiting('b-1', 'ann', Booking::REQUESTED)];
+
+		$this->notices()->tellWaiting($this->vehicle(), []);
+
+		$this->assertSame([], $this->sent);
+		$this->assertSame(0, $this->waitingRead);
+	}
+
 	private function notices(int $errors = 0): BookingNotices {
 		$recipients = $this->createMock(BookingRecipientMapper::class);
 		$recipients->method('findByVehicle')->willReturnCallback(fn (): array => $this->listed ?? throw new \RuntimeException('the database went away'));
@@ -117,9 +200,26 @@ class BookingNoticesTest extends TestCase {
 			return $group;
 		});
 		$access = $this->createMock(VehicleAccess::class);
-		$access->method('may')->willReturnCallback(fn (string $uid, string $operation): bool => $operation === VehicleAccess::VIEW && in_array($uid, $this->seeing, true));
+		$access->method('may')->willReturnCallback(function (string $uid, string $operation): bool {
+			if ($operation === VehicleAccess::EDIT) {
+				$this->approvalsAsked++;
+
+				return in_array($uid, $this->approving, true);
+			}
+
+			return in_array($uid, $this->seeing, true);
+		});
+		$bookings = $this->createMock(BookingMapper::class);
+		$bookings->method('findWaiting')->willReturnCallback(function (): array {
+			$this->waitingRead++;
+
+			return $this->waiting;
+		});
 		$notifications = $this->createMock(IManager::class);
 		$notifications->method('createNotification')->willReturnCallback(fn (): INotification => $this->notification());
+		$notifications->method('markProcessed')->willReturnCallback(function (INotification $notification): void {
+			$this->processed[] = $this->drafts[spl_object_id($notification)]();
+		});
 		$notifications->method('notify')->willReturnCallback(function (): void {
 			if (end($this->sent)['user'] === $this->failFor) {
 				throw new \RuntimeException('the push server broke');
@@ -130,12 +230,12 @@ class BookingNoticesTest extends TestCase {
 		$logger = $this->createMock(LoggerInterface::class);
 		$logger->expects($this->exactly($errors))->method('error');
 
-		return new BookingNotices($this->createMock(BookingMapper::class), $this->createMock(AccessMapper::class), $recipients, $groups, $access, $notifications, $clock, $logger);
+		return new BookingNotices($bookings, $this->createMock(AccessMapper::class), $recipients, new Names($this->createMock(IUserManager::class), $groups), $access, $notifications, $clock, $logger);
 	}
 
-	/** A notification that records itself in `sent` once it names its user. */
+	/** A notification that records itself in `sent` once it names its subject, and in `drafts` for markProcessed(). */
 	private function notification(): INotification {
-		$draft = ['user' => '', 'subject' => '', 'parameters' => [], 'object' => ''];
+		$draft = ['user' => '', 'subject' => '', 'parameters' => [], 'object' => '', 'id' => ''];
 		$notification = $this->createMock(INotification::class);
 		foreach (['setApp', 'setDateTime'] as $setter) {
 			$notification->method($setter)->willReturnSelf();
@@ -145,11 +245,15 @@ class BookingNoticesTest extends TestCase {
 
 			return $notification;
 		});
-		$notification->method('setObject')->willReturnCallback(function (string $type) use ($notification, &$draft): INotification {
+		$notification->method('setObject')->willReturnCallback(function (string $type, string $id) use ($notification, &$draft): INotification {
 			$draft['object'] = $type;
+			$draft['id'] = $id;
 
 			return $notification;
 		});
+		$this->drafts[spl_object_id($notification)] = static function () use (&$draft): array {
+			return array_filter(['user' => $draft['user'], 'object' => $draft['object'], 'id' => $draft['id']], static fn (string $set): bool => $set !== '');
+		};
 		$notification->method('setSubject')->willReturnCallback(function (string $subject, array $parameters) use ($notification, &$draft): INotification {
 			$draft['subject'] = $subject;
 			$draft['parameters'] = $parameters;
@@ -171,6 +275,14 @@ class BookingNoticesTest extends TestCase {
 			'id' => '9', 'uuid' => 'b-1', 'vehicle_id' => '4', 'user_id' => $booker, 'state' => Booking::BOOKED,
 			'starts_at' => '1750003600', 'starts_at_off' => '120', 'ends_at' => '1750014400', 'ends_at_off' => '120',
 		]);
+	}
+
+	private function waiting(string $uuid, string $booker, string $approval): Booking {
+		$booking = $this->booking($booker);
+		$booking->setUuid($uuid);
+		$booking->setApproval($approval);
+
+		return $booking;
 	}
 
 	private function returned(string $booker): Booking {

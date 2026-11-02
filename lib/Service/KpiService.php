@@ -88,9 +88,10 @@ class KpiService {
 		for ($i = 0; $i < 12; $i++) {
 			$periods[] = [$starts[$i], $starts[$i + 1]];
 		}
-		// The year last, so its edges are the months' and cost no lookup of their own.
-		$costs = $this->cost->periods($vehicle, [...$periods, [$starts[0], $starts[12]]], $net);
-		if (!CostsShown::all($vehicle)) {
+		// The year last, so its edges are the months' and cost no lookup of their own. It is rated
+		// over its months, so it has the rate the Statistics screen gives it read by month.
+		$costs = $this->cost->periods($vehicle, [...$periods, [$starts[0], $starts[12]]], $net, whole: true);
+		if (!$vehicle->showsCosts()) {
 			$costs = array_map(CostService::withheld(...), $costs);
 		}
 		$months = [];
@@ -115,7 +116,7 @@ class KpiService {
 	 */
 	private function figures(Vehicle $vehicle, int $from, int $to, bool $net, ?array $cost = null): array {
 		$cost ??= $this->cost->of($vehicle, $from, $to, $net);
-		if (!CostsShown::all($vehicle)) {
+		if (!$vehicle->showsCosts()) {
 			$cost = CostService::withheld($cost);
 		}
 		$measured = $this->consumption->measuredOnEachCounter($vehicle, $from, $to);

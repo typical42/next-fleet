@@ -10,6 +10,7 @@ namespace OCA\NextFleet\Tests\Integration;
 
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\BackgroundJob\ForgetMemberJob;
+use OCA\NextFleet\Db\ExpenseMapper;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Exception\AccessDeniedException;
@@ -150,7 +151,8 @@ class HiddenCostsTest extends TestCase {
 	/**
 	 * On a vehicle that keeps its costs, a new role changes which amounts of rows already synced
 	 * the grantee may read, and none of those rows changed: every sync starts over. On one that
-	 * shares them, every role reads the same, and no sync is disturbed.
+	 * shares them, every role below `edit` reads the same, and no sync is disturbed (SyncTest for
+	 * a change across `edit`).
 	 */
 	public function testANewRoleOnAVehicleThatKeepsItsCostsStartsEverySyncOver(): void {
 		$config = \OCP\Server::get(IAppConfig::class);
@@ -160,7 +162,7 @@ class HiddenCostsTest extends TestCase {
 
 		$shared = $this->vehicle(shared: true);
 		$before = $epoch();
-		$grants->change(self::OWNER, $shared->getUuid(), $driverGrant($shared), ['role' => 'manager']);
+		$grants->change(self::OWNER, $shared->getUuid(), $driverGrant($shared), ['role' => 'viewer']);
 		$this->assertSame($before, $epoch());
 
 		$kept = $this->vehicle(shared: false);
@@ -307,6 +309,36 @@ class HiddenCostsTest extends TestCase {
 		// Refused as every row this create would not have written is: whose it is stays unsaid.
 		$this->expectException(\InvalidArgumentException::class);
 		\OCP\Server::get(ExpenseService::class)->record(self::DRIVER, $vehicle->getUuid(), ['spent_at' => self::AT, 'spent_at_off' => 120, 'amount' => 1, 'client_uuid' => $rows['their expense']]);
+	}
+
+	/**
+	 * An expense kept from the driver is not there to change, delete or bring back: not found, as
+	 * the timeline answers, rather than refused, so its uuid tells nothing. The manager's go through.
+	 */
+	public function testADriverFindsNoExpenseKeptFromThemToWriteOn(): void {
+		$vehicle = $this->vehicle(shared: false);
+		$theirs = $this->costs($vehicle)['their expense'];
+		$expenses = \OCP\Server::get(ExpenseService::class);
+		$token = static fn (): int => \OCP\Server::get(ExpenseMapper::class)->findAnyOnVehicle((int)$vehicle->getId(), $theirs)->getUpdatedAt();
+		$fields = ['spent_at' => self::AT, 'spent_at_off' => 120, 'amount' => 1, 'category' => 'parking'];
+
+		foreach ([
+			'update' => fn () => $expenses->update(self::DRIVER, $vehicle->getUuid(), $theirs, $token(), $fields),
+			'delete' => fn () => $expenses->delete(self::DRIVER, $vehicle->getUuid(), $theirs, $token()),
+		] as $what => $call) {
+			try {
+				$call();
+				$this->fail('a driver could ' . $what . ' an expense kept from them');
+			} catch (DoesNotExistException) {
+			}
+		}
+		$expenses->delete(self::MANAGER, $vehicle->getUuid(), $theirs, $token());
+		try {
+			$expenses->restore(self::DRIVER, $vehicle->getUuid(), $theirs, $token());
+			$this->fail('a driver could restore an expense kept from them');
+		} catch (DoesNotExistException) {
+		}
+		$this->assertSame(1600, $expenses->restore(self::MANAGER, $vehicle->getUuid(), $theirs, $token())['amount']);
 	}
 
 	/** The mileage claim puts money on the trips, so it is the costs' too. */

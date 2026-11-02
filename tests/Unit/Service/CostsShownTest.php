@@ -11,6 +11,7 @@ namespace OCA\NextFleet\Tests\Unit\Service;
 use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\BaseEntity;
 use OCA\NextFleet\Db\Booking;
+use OCA\NextFleet\Db\Document;
 use OCA\NextFleet\Db\Energy;
 use OCA\NextFleet\Db\Expense;
 use OCA\NextFleet\Db\Maintenance;
@@ -22,30 +23,36 @@ use OCP\IUserManager;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
-/** Which papers follow the money of the row they hang on (CostsShown::showsPaper()). */
+/** Which papers follow the money: of the row they hang on, or of the vehicle for its receipts (CostsShown::showsPaper()). */
 class CostsShownTest extends TestCase {
 	private const READER = 'carol';
 	private const OTHER = 'alice';
 
-	/** @return iterable<string, array{BaseEntity|null, bool}> */
+	/** @return iterable<string, array{BaseEntity|null, string, bool}> */
 	public static function papers(): iterable {
-		yield 'somebody else\'s fill-up' => [Energy::fromRow(['created_by' => self::OTHER]), false];
-		yield 'somebody else\'s record' => [Maintenance::fromRow(['created_by' => self::OTHER]), false];
-		yield 'somebody else\'s expense' => [Expense::fromRow(['created_by' => self::OTHER]), false];
-		yield 'the reader\'s own fill-up' => [Energy::fromRow(['created_by' => self::READER]), true];
-		yield 'the reader\'s own expense' => [Expense::fromRow(['created_by' => self::READER]), true];
-		yield 'somebody else\'s booking' => [Booking::fromRow(['user_id' => self::OTHER, 'created_by' => self::OTHER]), true];
-		yield 'the vehicle itself' => [null, true];
+		yield 'somebody else\'s fill-up' => [Energy::fromRow(['created_by' => self::OTHER]), Document::RECEIPT, false];
+		yield 'somebody else\'s record' => [Maintenance::fromRow(['created_by' => self::OTHER]), Document::RECEIPT, false];
+		yield 'somebody else\'s expense' => [Expense::fromRow(['created_by' => self::OTHER]), Document::RECEIPT, false];
+		yield 'the reader\'s own fill-up' => [Energy::fromRow(['created_by' => self::READER]), Document::RECEIPT, true];
+		yield 'the reader\'s own expense' => [Expense::fromRow(['created_by' => self::READER]), Document::RECEIPT, true];
+		yield 'somebody else\'s booking' => [Booking::fromRow(['user_id' => self::OTHER, 'created_by' => self::OTHER]), Document::PHOTO, true];
+		yield 'a receipt on somebody else\'s booking' => [Booking::fromRow(['user_id' => self::OTHER, 'created_by' => self::OTHER]), Document::RECEIPT, false];
+		// The booker decides, whoever the row names as its author.
+		yield 'a receipt on a booking whose booker is somebody else' => [Booking::fromRow(['user_id' => self::OTHER, 'created_by' => self::READER]), Document::RECEIPT, false];
+		yield 'a receipt on the reader\'s own booking' => [Booking::fromRow(['user_id' => self::READER, 'created_by' => self::OTHER]), Document::RECEIPT, true];
+		yield 'the vehicle\'s registration' => [null, Document::REGISTRATION, true];
+		yield 'the vehicle\'s insurance' => [null, Document::INSURANCE, true];
+		yield 'a receipt on the vehicle' => [null, Document::RECEIPT, false];
 	}
 
 	#[DataProvider('papers')]
-	public function testAPaperIsKeptWhereTheAmountOfItsRowIs(?BaseEntity $row, bool $shown): void {
-		$this->assertSame($shown, $this->costs()->showsPaper(self::READER, $this->vehicle(['view', 'log']), $row));
+	public function testAPaperIsKeptWhereTheAmountOfItsRowIs(?BaseEntity $row, string $kind, bool $shown): void {
+		$this->assertSame($shown, $this->costs()->showsPaper(self::READER, $this->vehicle(['view', 'log']), $kind, $row));
 	}
 
 	#[DataProvider('papers')]
-	public function testAReaderWhoSeesTheCostsSeesEveryPaper(?BaseEntity $row): void {
-		$this->assertTrue($this->costs()->showsPaper(self::READER, $this->vehicle(['view', 'log', 'costs']), $row));
+	public function testAReaderWhoSeesTheCostsSeesEveryPaper(?BaseEntity $row, string $kind): void {
+		$this->assertTrue($this->costs()->showsPaper(self::READER, $this->vehicle(['view', 'log', 'costs']), $kind, $row));
 	}
 
 	private function costs(): CostsShown {

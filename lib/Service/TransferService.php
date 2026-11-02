@@ -38,15 +38,19 @@ class TransferService {
 		private ReminderRecipientMapper $recipients,
 		private AuditMapper $audit,
 		private GrantNotices $notices,
+		private BookingNotices $bookingNotices,
+		private VehicleAccess $access,
 		private SyncEpoch $epoch,
 		private IUserManager $users,
+		private Names $names,
 		private IDBConnection $db,
 	) {
 	}
 
 	/**
 	 * Every grant stands but the new owner's own, which owning makes spent. The former owner keeps a
-	 * viewer grant while their account exists, so what they entered stays readable to them.
+	 * viewer grant while their account exists, so what they entered stays readable to them. The new
+	 * owner answers the bookings now, and is asked those that wait (BookingNotices::tellWaiting()).
 	 *
 	 * @return array{vehicle: Vehicle, from: string} the vehicle as it now stands, and whose it was
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException if no live vehicle has this uuid
@@ -55,9 +59,9 @@ class TransferService {
 	 */
 	public function transfer(string $vehicleUuid, string $newOwner): array {
 		// As the instance spells it, for the reason GrantService::grantee() gives.
-		$newOwner = $this->users->get($newOwner)?->getUID() ?? throw new \InvalidArgumentException('No such user: ' . $newOwner);
+		$newOwner = $this->names->spelled(Access::USER, $newOwner) ?? throw new \InvalidArgumentException('No such user: ' . $newOwner);
 
-		/** @var array{vehicle: Vehicle, from: string, spent: list<string>} $done */
+		/** @var array{vehicle: Vehicle, from: string, spent: list<string>, answered: bool} $done */
 		$done = $this->atomicRetry(function () use ($vehicleUuid, $newOwner): array {
 			$id = (int)$this->vehicles->findByUuid($vehicleUuid)->getId();
 			$this->vehicles->hold($id);
@@ -67,6 +71,8 @@ class TransferService {
 			if ($from === $newOwner) {
 				throw new \InvalidArgumentException($newOwner . ' owns this vehicle already');
 			}
+			// A manager was asked of every request already.
+			$answered = $this->access->may($newOwner, VehicleAccess::EDIT, $vehicle);
 
 			$spent = [];
 			foreach ($this->grants->findByVehicle($id) as $grant) {
@@ -89,13 +95,16 @@ class TransferService {
 			$row->setDiffJson(['change' => self::TRANSFERRED, 'fields' => ['user_id' => [$from, $newOwner]]]);
 			$this->audit->insert($row);
 
-			return ['vehicle' => $vehicle, 'from' => $from, 'spent' => $spent];
+			return ['vehicle' => $vehicle, 'from' => $from, 'spent' => $spent, 'answered' => $answered];
 		}, $this->db);
 
 		// After the commit, the reason GrantService::grant() gives. The new owner's client read no
 		// grants of a vehicle it did not own, and none of them moved.
 		foreach ($done['spent'] as $grantUuid) {
 			$this->notices->withdraw($grantUuid);
+		}
+		if (!$done['answered']) {
+			$this->bookingNotices->tellWaiting($done['vehicle'], [$newOwner]);
 		}
 		$this->epoch->reset();
 

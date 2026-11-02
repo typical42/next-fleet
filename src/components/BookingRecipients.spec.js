@@ -79,13 +79,15 @@ describe('who hears of the bookings', () => {
 		expect(wrapper.text()).toContain('With nobody on the list, the notices go to you.')
 	})
 
-	it('shows nothing to somebody the list is refused to', async () => {
-		vi.mocked(listBookingRecipients).mockRejectedValue(new Error('Not yours'))
+	/** The events are the vehicle's, saved with it: a list that cannot be read does not hide them. */
+	it('keeps the events when the list cannot be read, and says so in place of the picker', async () => {
+		vi.mocked(listBookingRecipients).mockRejectedValue(new Error('Service unavailable'))
 
 		const wrapper = await section()
 
 		expect(picker(wrapper).exists()).toBe(false)
-		expect(boxes(wrapper)).toHaveLength(0)
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('The list could not be read: Service unavailable')
+		expect(boxes(wrapper)).toHaveLength(5)
 	})
 
 	it('adds a group the picker found', async () => {

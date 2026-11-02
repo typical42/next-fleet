@@ -181,6 +181,20 @@ class VehicleAccessTest extends TestCase {
 	}
 
 	/**
+	 * Who answers a booking that waits: the same owner and managers, by the same rule.
+	 *
+	 * @dataProvider driverFigures
+	 * @param list<string> $held
+	 */
+	public function testABookingIsAnsweredByTheOwnerAndTheManagers(array $held, bool $expected): void {
+		$this->grants->expects($this->never())->method('findGrants');
+		$vehicle = $this->vehicle();
+		$vehicle->setMay($held);
+
+		$this->assertSame($expected, $this->access()->mayApprove(self::STRANGER, $vehicle));
+	}
+
+	/**
 	 * @return iterable<string, array{list<string>, bool}>
 	 */
 	public static function driverFigures(): iterable {
@@ -354,6 +368,7 @@ class VehicleAccessTest extends TestCase {
 		$this->assertFalse($access->mayBooking($erased, $granted, $erased));
 		$this->assertFalse($access->mayCost($erased, $granted, $erased));
 		$this->assertFalse($access->mayCompareDrivers($erased, $owned));
+		$this->assertFalse($access->mayApprove($erased, $owned));
 		$this->assertSame([], $access->listed($erased, $owned, [self::VEHICLE_ID => ['view']]));
 		$this->assertSame([], $access->reachable($erased));
 	}

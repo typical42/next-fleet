@@ -248,13 +248,13 @@ import { t } from '../utils/l10n.js'
  */
 
 /**
- * A period's costs over its distance. The sums count every vehicle; the rate only those that both
- * cost and moved in the period.
+ * A period's costs over its distance. The sums count everything; the rate only what had a
+ * distance, and what moved without a cost at 0 (docs/api.md#statistics).
  *
  * @typedef {object} DistanceCost
  * @property {number|null} total - cents, null where nothing was recorded
  * @property {number|null} distance - in the series' unit, null where no counter moved
- * @property {number|null} value - cents per 100 km or per hour; null without both
+ * @property {number|null} value - cents per 100 km or per hour; null without a distance
  */
 
 /**
@@ -1095,7 +1095,10 @@ export async function addBookingRecipient(uuid, whom) {
  * @return {Promise<BookingRecipient[]>} the list as it now stands
  */
 export async function removeBookingRecipient(uuid, whom) {
-	return request('DELETE', `/api/vehicles/${uuid}/booking-recipients/${whom.recipient_type}/${encodeURIComponent(whom.recipient)}`)
+	// A group id may hold a slash. Sent encoded, a web server refuses it by default; the route
+	// takes the rest of the path as the name.
+	const name = whom.recipient.split('/').map(encodeURIComponent).join('/')
+	return request('DELETE', `/api/vehicles/${uuid}/booking-recipients/${whom.recipient_type}/${name}`)
 }
 
 /**

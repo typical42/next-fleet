@@ -151,7 +151,8 @@ class BookingService {
 	}
 
 	/**
-	 * Moves the span or rewrites the purpose, while the car is not yet taken.
+	 * Moves the span or rewrites the purpose, while the car is not yet taken. The booker's change to
+	 * a booking asked back is their answer, a new purpose too: it asks its approvers again.
 	 *
 	 * @param array<string, mixed> $fields
 	 * @param int $expectedUpdatedAt the `updated_at` the client read
@@ -166,26 +167,31 @@ class BookingService {
 	public function change(string $userId, string $vehicleUuid, string $bookingUuid, int $expectedUpdatedAt, array $fields): array {
 		$vehicle = $this->bookable($userId, $vehicleUuid);
 
-		/** @var array{Booking, bool, bool, bool} $result */
+		/** @var array{Booking, bool, bool, bool, bool} $result */
 		$result = $this->atomicRetry(function () use ($userId, $vehicle, $bookingUuid, $expectedUpdatedAt, $fields): array {
 			$booking = $this->inState($userId, $vehicle, $bookingUuid, $expectedUpdatedAt, Booking::BOOKED);
 			$was = [$booking->getStartsAt(), $booking->getEndsAt()];
+			$wasPurpose = $booking->getPurpose();
 			[$heard, $waited] = [$booking->heard(), $booking->waits()];
 			$this->apply($booking, $fields);
 			$moved = $was !== [$booking->getStartsAt(), $booking->getEndsAt()];
-			// An answer was given to a span; a new purpose leaves the span as it was answered.
-			if ($moved && $this->asksApproval($vehicle)) {
+			// The booker has no other way to answer than this; a save that changes nothing says nothing.
+			$replies = $booking->getApproval() === Booking::ASKED && $booking->getUserId() === $userId
+				&& ($moved || $booking->getPurpose() !== $wasPurpose);
+			// An answer was given to a span, so a new purpose keeps it, unless it is the booker's reply.
+			if (($moved || $replies) && $this->asksApproval($vehicle)) {
 				// A booking from before the switch was heard of by its list when it was made.
 				$booking->setAnnounced($heard);
 				$this->approvalFor($userId, $vehicle, $booking);
 			}
 			$this->claim($booking);
 
-			return [$this->bookings->updateChecked($booking, $expectedUpdatedAt), $moved, $heard, $waited];
+			return [$this->bookings->updateChecked($booking, $expectedUpdatedAt), $moved, $replies, $heard, $waited];
 		}, $this->db);
-		[$changed, $moved, $heard, $waited] = $result;
-		// A new purpose alone is no news to anybody.
-		if ($moved) {
+		[$changed, $moved, $replies, $heard, $waited] = $result;
+		// A new purpose alone is no news to anybody, unless it is the booker's reply: that asks every
+		// approver again.
+		if ($moved || $replies) {
 			if ($changed->waits()) {
 				$this->notices->tellRequested($vehicle, $changed);
 			} else {
@@ -286,9 +292,9 @@ class BookingService {
 
 	/**
 	 * Declines every booking still waiting for an answer at its end (Booking::waits()), by nobody
-	 * and with no comment: the span
-	 * it held is over. The booker is told, and the list only if it had heard of it. For the hourly
-	 * PendingJob. A booking that fails is logged and left for the next hour; the rest still go.
+	 * and with no comment: the span it held is over. The booker is told, and the list only if it
+	 * had heard of it. For the hourly PendingJob. A booking that fails is logged and left for the
+	 * next hour; the rest still go.
 	 *
 	 * @throws \OCP\DB\Exception if the requests cannot be found
 	 */

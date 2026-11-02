@@ -107,7 +107,7 @@ The year is last year's until the end of February, when people print for the tax
 Reviewing, at a desk: what did the fleet cost this year, and who drove it where.
 It reads every vehicle the person sees, or one, picked in *Vehicle*.
 
-**Ranges:** *Calendar year* (the default, with arrows), *Last 12 months*, *All time* and *Between two days*.
+**Ranges:** *Calendar year* (the default, with arrows), *Last 12 calendar months* (this month and the eleven before it), *All time* and *Between two days*.
 Up to 24 months are cut into months, a longer range into years.
 *All time* is always years side by side: that is the year-over-year comparison.
 
@@ -115,6 +115,7 @@ Up to 24 months are cut into months, a longer range into years.
 
 - *Costs in {currency}*: energy, maintenance and expenses stacked, and each category's share of the range.
 - *Cost per 100 km* or *per hour*: a line, the vehicle's own or the fleet's; under the fleet's, a table compares the vehicles by cost, distance and rate.
+  A note says when a cost in a period without a distance is left out of the rate.
 - *Distance by trip category* (*Hours by …* on an hour meter): business, private and commute stacked.
 - *Distance by driver* (or *Hours by driver*): trips, distance and business share over the range.
   The owner and managers of a vehicle see every driver, anyone else only themselves, and the screen says so ([legal](legal.md)).
@@ -192,7 +193,7 @@ The code is no credential ([security](security.md#things-that-are-visible-in-the
 ### The Access section
 
 The last section of the edit sheet, for the owner alone.
-Above it sit what is about the people with access: *Drivers and viewers see costs*, *Bookings need approval*, and the booking notices with their events.
+Above it are the settings about the people with access: *Drivers and viewers see costs*, *Bookings need approval*, and the booking notices with their events.
 The two switches and the events save with the vehicle; the notice list, like the grants below, saves on each pick.
 It lists each grant with a role picker and *Remove*.
 A search finds accounts and groups through core's autocomplete, which applies the instance's rules on who may find whom.
@@ -217,11 +218,13 @@ It shows only once anybody else has or had access (`ever_granted`): alone with a
   *Answer* opens a comment and *Approve*, *Ask back* and *Decline* in the row, as *Cancel booking* opens its question.
   The answer's comment shows on the row, to the booker and the approvers only.
   A waiting booking offers no *Take the car*.
-  *Take it now* kept past midnight is a request: the sheet leaves it booked and closes, and the row says it waits.
+  *Take it now* kept past midnight is a request: before the save the sheet says so and its button reads *Request*; after it, the sheet stays open with the alert "The booking waits for approval." and focus on *Close*.
 - *Take the car* and *Return the car* ask the counter, the tank or battery level, and a note.
   On return the counter starts empty, because a prefilled one would be saved unread.
   On someone else's booking *Take the car* reads "Hand over to Anna", in the button and its sheet: the owner or a manager is not the one who drives.
 - *Take it now* books from now and checks out in one step.
+  Before it books, it checks that the counter is a whole number, the level a percentage and the note within its length, so these refusals book nothing.
+  A counter the check-out refuses on the server's side still leaves the booking.
 - Returning opens the entry sheet on a trip filled in from the handover.
   The category stays empty: only the driver knows whether the drive was business.
 
@@ -268,7 +271,7 @@ Drawn in [design/context.md#by-role](design/context.md#by-role).
 | A timeline row that opens | the row's `edit` |
 | *Delete* or *Void trip* | the row's `delete` |
 | *Delete vehicle*, the Access section, *Drivers and viewers see costs*, *Bookings need approval*, the booking notices | `own` |
-| *Costs*, the header's cost tiles, the *Expenses* chip, *Open mileage claim* | `costs` |
+| *Costs*, the header's cost tiles, *Open mileage claim* | `costs` |
 
 A row the reader may not change still says everything, and opens nothing.
 Without `costs`, a row somebody else entered comes without its amount, and their expenses not at all ([API](api.md#costs)).

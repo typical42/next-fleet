@@ -472,8 +472,9 @@ class DocumentTest extends TestCase {
 
 	/**
 	 * Where the owner keeps the costs, a driver or viewer lists no paper on an entry somebody else
-	 * made, and the list a write answers keeps the same rule. Papers on the driver's own entries,
-	 * and the vehicle's own, stay.
+	 * made, nor a receipt on somebody else's booking or on the vehicle itself, and the list a write
+	 * answers keeps the same rule. Papers on the driver's own entries and bookings, and the
+	 * vehicle's other papers, stay.
 	 */
 	public function testADriverTheCostsAreKeptFromListsNoPaperOnSomebodyElsesEntry(): void {
 		$vehicle = $this->vehicle(self::OWNER, costsShared: false);
@@ -481,11 +482,11 @@ class DocumentTest extends TestCase {
 		$this->grant($vehicle, self::VIEWER, 'viewer');
 		$papers = $this->papersOnEveryEntry($vehicle);
 
-		$shown = [$papers['vehicle'], $papers['on my fill-up']];
+		$shown = [$papers['vehicle'], $papers['on my fill-up'], $papers['on my booking']];
 		$this->assertEqualsCanonicalizing($shown, array_column($this->documents->list(self::DRIVER, $vehicle->getUuid()), 'uuid'));
 		$this->assertSame([$papers['vehicle']], array_column($this->documents->list(self::VIEWER, $vehicle->getUuid()), 'uuid'));
 		$this->assertEqualsCanonicalizing(array_values($papers), array_column($this->documents->list(self::OWNER, $vehicle->getUuid()), 'uuid'));
-		$this->assertSame([$papers['vehicle']], array_column($this->documents->detach(self::DRIVER, $vehicle->getUuid(), $papers['on my fill-up']), 'uuid'));
+		$this->assertEqualsCanonicalizing([$papers['vehicle'], $papers['on my booking']], array_column($this->documents->detach(self::DRIVER, $vehicle->getUuid(), $papers['on my fill-up']), 'uuid'));
 	}
 
 	/** A paper the list keeps from the driver is no paper to download either: the route says so as for a removed one. */
@@ -495,8 +496,9 @@ class DocumentTest extends TestCase {
 		$papers = $this->papersOnEveryEntry($vehicle);
 
 		$this->assertSame('Beleg.pdf', $this->documents->download(self::DRIVER, $vehicle->getUuid(), $papers['on my fill-up'])->getName());
+		$this->assertSame('Beleg.pdf', $this->documents->download(self::DRIVER, $vehicle->getUuid(), $papers['on my booking'])->getName());
 		$this->assertSame('Beleg.pdf', $this->documents->download(self::OWNER, $vehicle->getUuid(), $papers['on their expense'])->getName());
-		foreach (['on their fill-up', 'on their record', 'on their expense'] as $where) {
+		foreach (['on their fill-up', 'on their record', 'on their expense', 'on their booking', 'vehicle receipt'] as $where) {
 			$response = $this->door(self::DRIVER)->download($vehicle->getUuid(), $papers[$where]);
 			$this->assertInstanceOf(DataResponse::class, $response, $where);
 			$this->assertSame([Http::STATUS_NOT_FOUND, ['message' => 'No such document']], [$response->getStatus(), $response->getData()], $where);
@@ -516,8 +518,8 @@ class DocumentTest extends TestCase {
 		$qb->delete('fleet_energy')->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter((int)$vehicle->getId(), $qb::PARAM_INT)));
 		$qb->executeStatement();
 
-		$this->assertSame([$papers['vehicle']], array_column($this->documents->list(self::DRIVER, $vehicle->getUuid()), 'uuid'));
-		$this->assertCount(5, $this->documents->list(self::OWNER, $vehicle->getUuid()));
+		$this->assertEqualsCanonicalizing([$papers['vehicle'], $papers['on my booking']], array_column($this->documents->list(self::DRIVER, $vehicle->getUuid()), 'uuid'));
+		$this->assertCount(8, $this->documents->list(self::OWNER, $vehicle->getUuid()));
 	}
 
 	/** Sync keeps what the list keeps, a detached paper's tombstone too. */
@@ -529,15 +531,47 @@ class DocumentTest extends TestCase {
 		$sync = \OCP\Server::get(SyncService::class);
 
 		$first = $sync->sync(self::DRIVER, '', 500);
-		$this->assertEqualsCanonicalizing([$papers['vehicle'], $papers['on my fill-up']], array_column($first['changes']['documents'], 'uuid'));
+		$shown = [$papers['vehicle'], $papers['on my fill-up'], $papers['on my booking']];
+		$this->assertEqualsCanonicalizing($shown, array_column($first['changes']['documents'], 'uuid'));
 
 		$this->documents->detach(self::OWNER, $vehicle->getUuid(), $papers['on their fill-up']);
+		$this->documents->detach(self::OWNER, $vehicle->getUuid(), $papers['on their booking']);
 		$this->documents->detach(self::OWNER, $vehicle->getUuid(), $papers['vehicle']);
 		// The cursor's mark lies SyncService::SETTLE behind its answer, so every paper of this test is
-		// a change again: the driver's live one, and the tombstones.
+		// a change again: the driver's live ones, and the tombstones.
 		$later = $sync->sync(self::DRIVER, $first['cursor'], 500);
 		$this->assertNull(array_column($later['changes']['documents'], 'row', 'uuid')[$papers['vehicle']], 'a tombstone');
-		$this->assertEqualsCanonicalizing([$papers['vehicle'], $papers['on my fill-up']], array_column($later['changes']['documents'], 'uuid'));
+		$this->assertEqualsCanonicalizing($shown, array_column($later['changes']['documents'], 'uuid'));
+	}
+
+	/**
+	 * A paper the list keeps from the driver is no paper to take off or bring back, and an expense
+	 * kept from them is no row to file a paper on: not found rather than refused, so a uuid tells
+	 * nothing of what is there.
+	 */
+	public function testADriverTheCostsAreKeptFromWritesOnNoPaperOrExpenseKeptFromThem(): void {
+		$vehicle = $this->vehicle(self::OWNER, costsShared: false);
+		$this->grant($vehicle, self::DRIVER, 'driver');
+		$papers = $this->papersOnEveryEntry($vehicle);
+		$expense = array_column($this->documents->list(self::OWNER, $vehicle->getUuid()), 'linked_uuid', 'uuid')[$papers['on their expense']];
+		$this->documents->detach(self::OWNER, $vehicle->getUuid(), $papers['on their record']);
+
+		foreach ([
+			'detach a vehicle receipt' => fn () => $this->documents->detach(self::DRIVER, $vehicle->getUuid(), $papers['vehicle receipt']),
+			'detach a paper on their expense' => fn () => $this->documents->detach(self::DRIVER, $vehicle->getUuid(), $papers['on their expense']),
+			'detach a receipt on their booking' => fn () => $this->documents->detach(self::DRIVER, $vehicle->getUuid(), $papers['on their booking']),
+			'restore a paper on their record' => fn () => $this->documents->restore(self::DRIVER, $vehicle->getUuid(), $papers['on their record']),
+			'attach to their expense' => fn () => $this->documents->attach(self::DRIVER, $vehicle->getUuid(), [
+				'file_id' => $this->file(self::DRIVER, 'Quittung.pdf'), 'kind' => 'receipt', 'linked_type' => 'expense', 'linked_uuid' => $expense,
+			]),
+		] as $what => $call) {
+			try {
+				$call();
+				$this->fail($what . ' went through');
+			} catch (DoesNotExistException) {
+			}
+		}
+		$this->assertCount(7, $this->documents->list(self::OWNER, $vehicle->getUuid()));
 	}
 
 	/** Under the booking's rule: the booker's own booking takes a photo, somebody else's none. */
@@ -817,8 +851,8 @@ class DocumentTest extends TestCase {
 	}
 
 	/**
-	 * A receipt the owner files on each kind of their own costed entry and on the driver's fill-up,
-	 * and one of the vehicle's own papers.
+	 * A receipt the owner files on each kind of their own costed entry, on their own booking, on the
+	 * driver's fill-up and booking and on the vehicle itself, and one of the vehicle's other papers.
 	 *
 	 * @return array<string, string> paper uuids by where they hang, "my" and "their" as the driver says it
 	 */
@@ -832,11 +866,14 @@ class DocumentTest extends TestCase {
 			'on their record' => ['maintenance', $this->maintenance($vehicle)],
 			'on their expense' => ['expense', $expense],
 			'on my fill-up' => ['energy', $this->fillUp($vehicle, self::DRIVER)],
+			'on their booking' => ['booking', $this->pool->book(self::OWNER, $vehicle->getUuid(), self::tomorrow())['uuid']],
+			'on my booking' => ['booking', $this->pool->book(self::DRIVER, $vehicle->getUuid(), self::tomorrow(2))['uuid']],
 		] as $where => [$type, $uuid]) {
 			$papers[$where] = array_column($this->documents->attach(self::OWNER, $vehicle->getUuid(), [
 				'file_id' => $this->file(self::OWNER, 'Beleg.pdf'), 'kind' => 'receipt', 'linked_type' => $type, 'linked_uuid' => $uuid,
 			]), 'uuid', 'linked_uuid')[$uuid];
 		}
+		$papers['vehicle receipt'] = array_column($this->documents->attach(self::OWNER, $vehicle->getUuid(), ['file_id' => $this->file(self::OWNER, 'Kaufvertrag.pdf'), 'kind' => 'receipt']), 'uuid', 'name')['Kaufvertrag.pdf'];
 		$papers['vehicle'] = array_column($this->documents->attach(self::OWNER, $vehicle->getUuid(), ['file_id' => $this->file(self::OWNER, 'Schein.pdf'), 'kind' => 'registration']), 'uuid', 'kind')['registration'];
 
 		return $papers;

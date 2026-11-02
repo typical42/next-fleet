@@ -27,7 +27,7 @@ const events = defineModel('events', { type: Array, required: true })
 
 /**
  * The list as the server last answered, or null while unread or refused. The sheet mounts this for
- * the owner only.
+ * the owner only; a refusal is a fault then, so it is said, and the events stay.
  *
  * @type {import('vue').Ref<import('../services/api.js').BookingRecipient[]|null>}
  */
@@ -35,6 +35,8 @@ const recipients = ref(null)
 const { found, search } = latestSearch(searchGrantees)
 const writing = ref(false)
 const failure = ref('')
+/** Why the list could not be read, or '' while it is read or once it was. */
+const unread = ref('')
 
 /**
  * @param {import('../services/api.js').BookingRecipient} one - an account or a group
@@ -61,8 +63,8 @@ const choices = computed(() => [
 onMounted(async () => {
 	try {
 		recipients.value = await listBookingRecipients(props.vehicle)
-	} catch {
-		recipients.value = null
+	} catch (error) {
+		unread.value = t('nextfleet', 'The list could not be read: {reason}', { reason: error.message })
 	}
 })
 
@@ -114,19 +116,22 @@ async function pick(selection) {
 </script>
 
 <template>
-	<div v-if="recipients !== null" class="notices">
-		<NcNoteCard v-if="failure" type="error" :text="failure" />
-		<NcSelectUsers :model-value="chosen"
-			:options="options"
-			:input-label="t('nextfleet', 'Booking notices go to')"
-			:disabled="disabled || writing"
-			:loading="writing"
-			multiple
-			@search="search"
-			@update:model-value="pick" />
-		<p v-if="recipients.length === 0" class="notices__hint">
-			{{ t('nextfleet', 'With nobody on the list, the notices go to you.') }}
-		</p>
+	<div class="notices">
+		<NcNoteCard v-if="unread" type="error" :text="unread" />
+		<template v-if="recipients !== null">
+			<NcNoteCard v-if="failure" type="error" :text="failure" />
+			<NcSelectUsers :model-value="chosen"
+				:options="options"
+				:input-label="t('nextfleet', 'Booking notices go to')"
+				:disabled="disabled || writing"
+				:loading="writing"
+				multiple
+				@search="search"
+				@update:model-value="pick" />
+			<p v-if="recipients.length === 0" class="notices__hint">
+				{{ t('nextfleet', 'With nobody on the list, the notices go to you.') }}
+			</p>
+		</template>
 		<fieldset class="notices__events">
 			<legend>{{ t('nextfleet', 'What they hear of') }}</legend>
 			<NcCheckboxRadioSwitch v-for="one in choices"

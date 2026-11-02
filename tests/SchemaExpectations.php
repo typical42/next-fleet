@@ -536,13 +536,15 @@ trait SchemaExpectations {
 			'fleet_doc_veh_upd_idx' => 'index(vehicle_id, updated_at, id)',
 		], $this->indexes('fleet_documents'));
 
-		// A vehicle's bookings by time, and the overlap check before each one.
+		// A vehicle's bookings by time, the overlap check before each one, and the hourly search
+		// across vehicles for the requests whose end came unanswered.
 		$this->assertSame([
 			'fleet_bkg_creator_idx' => 'index(created_by)',
 			'fleet_bkg_uuid_uniq' => 'unique(uuid)',
 			'fleet_bkg_veh_start_idx' => 'index(vehicle_id, starts_at)',
 			'fleet_bkg_veh_state_idx' => 'index(vehicle_id, state)',
 			'fleet_bkg_veh_upd_idx' => 'index(vehicle_id, updated_at, id)',
+			'fleet_bkg_wait_end_idx' => 'index(approval, ends_at)',
 		], $this->indexes('fleet_bookings'));
 	}
 

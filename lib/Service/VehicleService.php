@@ -293,6 +293,10 @@ class VehicleService {
 		$ticked = self::sorted($was->bookingNotices()) !== self::sorted($vehicle->bookingNotices());
 		$gated = $was->needsApproval() !== $vehicle->needsApproval();
 		if (($flipped || $ticked || $gated) && !in_array(VehicleAccess::OWN, $vehicle->getMay(), true)) {
+			// Read before the owner flipped it, the sheet only sends it back: stale, so it reads again.
+			if ($was->getUpdatedAt() !== $expectedUpdatedAt) {
+				throw new StaleUpdateException('fleet_vehicles row ' . (string)$vehicle->getId() . ' has changed since it was read');
+			}
 			throw new AccessDeniedException();
 		}
 
@@ -409,8 +413,8 @@ class VehicleService {
 	}
 
 	/**
-	 * A restore sends nothing back that withdraw() took; the next round tells whatever is still
-	 * due.
+	 * withdraw() takes the vehicle's notices back. A restore asks again only what waits for an
+	 * answer (restore()); the reminders' next round tells whatever else is still due.
 	 *
 	 * @param int $expectedUpdatedAt the `updated_at` the client read
 	 * @throws DoesNotExistException
@@ -447,7 +451,8 @@ class VehicleService {
 	/**
 	 * Undo, and it takes the right the delete took: only the owner brings a vehicle back. The
 	 * lookup ignores `deleted_at`, so a stranger gets the same refusal as on every other route, not
-	 * a 404 that would tell which uuids are in somebody's trash.
+	 * a 404 that would tell which uuids are in somebody's trash. After the commit, the bookings that
+	 * wait for an answer are asked again (BookingNotices::tellRestored()).
 	 *
 	 * @param int $expectedUpdatedAt the `updated_at` the delete answered with
 	 * @throws DoesNotExistException
@@ -467,6 +472,7 @@ class VehicleService {
 				$expectedUpdatedAt,
 			);
 		}, $this->db);
+		$this->bookingNotices->tellRestored($restored);
 		$this->pool($userId, [$restored]);
 
 		return $restored;

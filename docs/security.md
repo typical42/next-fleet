@@ -34,13 +34,14 @@ Drawn in [design/flows.md#the-access-check](design/flows.md#the-access-check).
 - **A grant reaches only whom a share could.**
   A grant hands over a movement profile, more than most shares do.
   The picker offering no one else is not the check: the server applies the sharing settings.
-  A reminder recipient follows the same rule, because a reminder names the plate.
+  A reminder recipient and a booking notice recipient follow the same rule, because both notices name the plate.
 - **A grant does not outlive its grantee.**
   Nextcloud lets a deleted uid or group id be taken again.
   So a deleted account's grants are pseudonymised and a deleted group's are revoked ([deleting and erasing](architecture.md#deleting-and-erasing)).
 - **A refusal is a 403, an unknown uuid a 404.**
   That tells a caller that a uuid exists.
   We accept it: a v4 uuid is not guessed but leaked, and whoever leaked it leaked the answer too.
+  The exception is a row the cost switch keeps from the reader: it is a 404, so its uuid tells nothing ([costs](api.md#costs)).
 - **Downloads are proxied, so attaching is the gate.**
   The app's access decides, not the file's.
   So only a file in the attacher's own home storage can be attached, and the download checks that again ([documents](architecture.md#documents)).

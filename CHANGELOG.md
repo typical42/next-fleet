@@ -6,8 +6,9 @@
 
 - The owner can keep a vehicle's costs from its drivers and viewers: switch off **Drivers and
   viewers see costs** in the vehicle sheet. They then see no sums, no prices and no expenses of
-  others, no receipts on others' entries, and no mileage claim. They still enter amounts and see
-  the ones they entered. The owner and managers always see the costs.
+  others, no receipts on others' entries or bookings or on the vehicle itself, and no mileage
+  claim. They still enter amounts and see the ones they entered. The owner and managers always see
+  the costs.
 - On someone else's booking, the button reads **Hand over to** and the driver's name.
 
 ### Bookings
@@ -20,13 +21,15 @@
   **Ask back** or **Decline**, with a comment if they like; the driver gets a notification of the
   answer. A booking that waits holds its time, and others see it as **Requested**. It cannot be
   taken until it is approved, and if it is not approved by its end, it is declined. A new start or end
-  makes it wait again. **Take it now** needs no approval while the car is back by midnight. The
-  booking notices list hears of a booking once it is approved.
+  set by the driver makes it wait again. The driver answers **Ask back** by changing the booking; it
+  then waits again. A new manager or a new owner gets a notification for each request that waits.
+  **Take it now** needs no approval while the car is back by midnight. The booking notices list
+  hears of a booking once it is approved.
 
 ### Statistics
 
 - **Statistics** in the navigation replaces the Costs page. It shows all your vehicles or one,
-  over a calendar year, the last 12 months, all time or two days you choose. **Costs** on a vehicle
+  over a calendar year, the last 12 calendar months, all time or two days you choose. **Costs** on a vehicle
   opens it on that vehicle.
 - It shows the costs by category and each one's share, the cost per 100 km over time with the
   vehicles side by side, the consumption, the distance by business, private and commute trips, and
@@ -42,9 +45,16 @@
   and update take too; a booking's `approval`, `approval_comment` and `approval_by`, and its
   `approval` in a 409 and in the vehicle's `my_next_booking`; `costs`, `approve`, `ask` and `decline` in `may`.
 - Where a reader may not see a vehicle's costs, the money fields they may not read are null, the
-  mileage claim is a 403, and somebody else's expense or receipt is a 404
+  mileage claim is a 403, and somebody else's expense, a document on their entry, a receipt on
+  their booking or a receipt on the vehicle is a 404
   ([API](https://github.com/typical42/next-fleet/blob/main/docs/api.md#costs)).
-- `occ upgrade` adds the new columns and the booking notices table, and changes no row.
+- `…/costs/{year}` rates the year's cost per distance over its months, as Statistics does: a month
+  driven without a cost counts at 0, and a cost in a month without a distance is not in the rate.
+- Sync answers `reset` also after a change of `costs_shared`, after a change of access to a
+  vehicle that keeps its costs, and after a role change that gives or takes `edit`.
+- `occ upgrade` adds the new columns and the booking notices table, and changes no row. Every
+  vehicle hears of a booking ahead and the car taken now from then on, so its owner gets these
+  notifications without choosing them.
 
 ## 0.4.1 — 2026-10-26
 

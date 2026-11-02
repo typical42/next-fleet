@@ -3571,7 +3571,8 @@
                             "starts_at",
                             "starts_at_off",
                             "ends_at",
-                            "ends_at_off"
+                            "ends_at_off",
+                            "approval"
                         ],
                         "properties": {
                             "uuid": {
@@ -3592,6 +3593,10 @@
                             "ends_at_off": {
                                 "type": "integer",
                                 "format": "int64"
+                            },
+                            "approval": {
+                                "type": "string",
+                                "nullable": true
                             }
                         }
                     },
@@ -16887,10 +16892,11 @@
                     {
                         "name": "recipient",
                         "in": "path",
-                        "description": "the account or the group to take off the list",
+                        "description": "the account or the group to take off the list; a slash in a group id is sent as it is, not as `%2F`, which a web server refuses by default",
                         "required": true,
                         "schema": {
-                            "type": "string"
+                            "type": "string",
+                            "pattern": "^.+$"
                         }
                     },
                     {
@@ -23270,7 +23276,7 @@
         },
         {
             "name": "kpi",
-            "description": "The figures in a vehicle's header and on its Costs screen. Every rule lives in KpiService, including the access check."
+            "description": "The figures in a vehicle's header. Every rule lives in KpiService, including the access check."
         },
         {
             "name": "statistics",
@@ -23318,7 +23324,7 @@
         },
         {
             "name": "ocs_kpi",
-            "description": "A vehicle's figures through the OCS door: the twin of the internal KpiController (docs/api.md, docs/architecture.md#numbers-consumption-cost-emissions)."
+            "description": "A vehicle's figures through the OCS door: the period's are the twin of the internal KpiController, the year's are v1's alone (docs/api.md, docs/architecture.md#numbers-consumption-cost-emissions)."
         },
         {
             "name": "ocs_statistics",

@@ -26,18 +26,18 @@ export function rateWord(per) {
 }
 
 /**
- * Whether a period's rate is not its costs over its distance: the server rates only the vehicles
- * that both cost and moved, and adds up every vehicle (docs/api.md#statistics). Half a cent is
- * the rounding a written figure hides.
+ * Whether a period's rate leaves out some of its costs: the server rates only what had a distance,
+ * but adds up everything (docs/api.md#statistics). Half a cent is the rounding a written figure
+ * hides.
  *
  * @param {import('../services/api.js').PerDistance} series - one currency's and unit's
- * @return {boolean} whether some period's rate leaves a vehicle out
+ * @return {boolean} whether some period's rate leaves a cost out
  */
 export function bentOf(series) {
 	const scale = series.per === 'h' ? 1 : 100
 
-	return [...series.buckets, series.range].some(({ total, distance, value }) => total !== null && distance !== null
-		&& (value === null || Math.abs(total * scale / distance - value) > 0.5))
+	return [...series.buckets, series.range].some(({ total, distance, value }) => total !== null
+		&& (distance === null || value === null || Math.abs(total * scale / distance - value) > 0.5))
 }
 
 /**

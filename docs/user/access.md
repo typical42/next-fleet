@@ -10,7 +10,7 @@ With access, a driver can book the vehicle, take it and return it.
 | **Viewer** | See the vehicle, its entries, figures, reminders and documents. Export CSV files. See the costs, unless the owner keeps them from drivers and viewers. |
 | **Driver** | All a viewer can. Add entries, and change or delete their own. Book the vehicle. Attach documents to their own entries and bookings. |
 | **Manager** | All a driver can. Always see the costs. Change and delete all entries and bookings, and answer the ones that wait for approval. Edit the vehicle, its reminders and who gets them. Attach documents to the vehicle. Import. |
-| Owner | All a manager can. Give and remove access. Decide whether drivers and viewers see the costs, and whether bookings need approval. Delete the vehicle. |
+| Owner | All a manager can. Give and remove access. Decide whether drivers and viewers see the costs, whether bookings need approval, and who hears of bookings. Delete the vehicle. |
 
 The owner is the user who added the vehicle.
 Only an administrator can give it to another owner.
@@ -28,9 +28,12 @@ You must be the owner.
 
 Drivers and viewers then see no sums, no prices and no expenses of other users, and no mileage claim.
 They still enter amounts, and see the amounts they entered.
+On the timeline, **Expenses** shows the expenses they entered.
 A receipt shows the price, so they see no document on another user's fill-up, maintenance or expense either.
-A document on the vehicle itself stays visible.
-To hide a purchase invoice or a leasing contract, attach it to an expense.
+They also see no receipt on the booking of another user and no receipt on the vehicle itself.
+The other documents on the vehicle stay visible, for example the registration and the insurance.
+To hide a purchase invoice or a leasing contract, file it as a receipt on the vehicle.
+If it is already on the vehicle as a different kind, remove it first and attach it again.
 The owner and managers always see the costs.
 
 ## Give access
@@ -79,23 +82,40 @@ If someone else cancels your booking, you get a notification.
 The owner can make a driver's booking wait for an answer: in **Edit vehicle**, switch on **Bookings need approval**.
 Bookings by the owner and the managers are approved at once.
 
-A booking that waits holds its time all the same: you see **Waiting for approval**, others see **Requested**.
+A booking that waits also holds its time: you see **Waiting for approval**, others see **Requested**.
 The owner and the managers get a notification, and the booking shows **Answer**.
 
 1. Click **Answer**.
 2. Type a comment for the driver, if you like.
 3. Click **Approve**, **Ask back** or **Decline**.
 
-The driver gets a notification and sees the comment on the booking; nobody else sees it.
+The driver gets a notification and sees the comment on the booking.
+Only the driver, the owner and the managers see the comment.
+**Decline** cancels the booking.
+In the list, the booking then reads **Declined**.
+
 **Ask back** keeps the booking waiting, for the driver to change or cancel it.
-**Decline** cancels it.
+In the list, it reads **Asked back**.
+The driver sees the question in the notification and in **Change booking**.
+Under the vehicle's name, it reads **Your booking, asked back**.
+When the driver saves a change, the question is answered and the booking waits for approval again.
+On a booking that is asked back, a new purpose alone is also an answer.
 
 - A waiting booking cannot be taken, even once its time has come.
-  The owner and the managers can still answer it; if it is not approved by its end, it is declined.
-- A new start or end makes an answered booking wait again. A new purpose does not.
-- **Take it now** waits for nobody, as long as the car is back by midnight.
+  The owner and the managers can still answer it.
+  If it is not approved by its end, it is declined.
+- When the driver sets a new start or end, the booking waits again, also when it was approved.
+  When the owner or a manager sets it, the booking is approved.
+  A new purpose alone changes nothing on an approved booking.
+- **Take it now** needs no approval if the car is back by midnight.
   Kept longer, it is a booking that waits like any other.
+  The sheet then says so and the button reads **Request**.
+  You type the counter when you take the car.
 - Switching **Bookings need approval** off approves every booking that waits.
+- When the owner makes a user or a group a manager, each new manager gets a notification for each request that waits.
+  A new owner gets them too.
+  A booking that is asked back waits for the driver, so it sends no notification to them.
+  A user who joins a group that is a manager already gets them only for bookings made after that.
 - The people on the booking notices list hear of a booking only once it is approved.
 
 ### Hear of bookings
@@ -104,9 +124,12 @@ The owner decides who gets a notification when a vehicle is booked or taken.
 
 1. In **Edit vehicle**, add accounts or groups to **Booking notices go to**.
    With nobody on the list, the notices go to you, the owner.
+   The list saves at once.
 2. Under **What they hear of**, tick the events: **Booked ahead** and **Taken now** are ticked for a new vehicle.
-   **Returned** names the counter and the level, **Moved to another start or end** a change of the times.
-3. Click **Save**.
+   **Returned, with the counter and the level** tells of a return.
+   **Cancelled** tells of a cancelled booking.
+   **Moved to another start or end** tells of a change of the times.
+3. Click **Save** to keep the events.
 
 Only people who can see the vehicle get the notices, and nobody hears of what they did themselves.
 

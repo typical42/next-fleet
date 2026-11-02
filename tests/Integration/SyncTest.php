@@ -384,6 +384,56 @@ class SyncTest extends TestCase {
 		$this->assertNotNull($this->item($this->sync(self::OWNER, $cursor), 'grants', $grant)['deleted_at']);
 	}
 
+	/**
+	 * A role that gains or loses `edit` changes a booking's approval comment for its reader, and no
+	 * row (docs/api.md#booking-approval): every client starts over, where the costs are shared too.
+	 */
+	public function testARoleChangeAcrossEditStartsEveryClientOver(): void {
+		$vehicle = $this->vehicle();
+		$grant = $this->grant($vehicle, self::DRIVER, 'user');
+		$cursor = $this->sync(self::DRIVER)['cursor'];
+		$grants = \OCP\Server::get(GrantService::class);
+
+		$grants->change(self::OWNER, $vehicle->getUuid(), $grant, ['role' => 'manager']);
+		$promoted = $this->sync(self::DRIVER, $cursor);
+		$this->assertTrue($promoted['reset'], 'made a manager');
+
+		$grants->change(self::OWNER, $vehicle->getUuid(), $grant, ['role' => 'viewer']);
+		$this->assertTrue($this->sync(self::DRIVER, $promoted['cursor'])['reset'], 'made a viewer');
+	}
+
+	/** Below `edit`, every role reads a vehicle that shares its costs alike. */
+	public function testARoleChangeBelowEditLeavesEveryCursorStanding(): void {
+		$vehicle = $this->vehicle();
+		$grant = $this->grant($vehicle, self::DRIVER, 'user');
+		$cursor = $this->sync(self::DRIVER)['cursor'];
+
+		\OCP\Server::get(GrantService::class)->change(self::OWNER, $vehicle->getUuid(), $grant, ['role' => 'viewer']);
+
+		$this->assertFalse($this->sync(self::DRIVER, $cursor)['reset']);
+	}
+
+	/** A group made manager makes its members approvers, and one who leaves it stops being one. */
+	public function testAManagerGroupsMembersStartOverWhenTheyJoinOrLeave(): void {
+		$vehicle = $this->vehicle();
+		$cursor = $this->sync(self::MEMBER)['cursor'];
+
+		$this->grant($vehicle, self::GROUP, 'group', 'manager');
+		$granted = $this->sync(self::MEMBER, $cursor);
+		$this->assertTrue($granted['reset'], 'granted');
+
+		$crew = \OCP\Server::get(IGroupManager::class)->get(self::GROUP) ?? throw new \RuntimeException('no ' . self::GROUP);
+		$member = \OCP\Server::get(IUserManager::class)->get(self::MEMBER) ?? throw new \RuntimeException('no ' . self::MEMBER);
+		$crew->removeUser($member);
+		try {
+			// What ForgetMemberJob runs once the member is out.
+			\OCP\Server::get(GrantService::class)->forgetMember(self::GROUP, self::MEMBER, time());
+			$this->assertTrue($this->sync(self::MEMBER, $granted['cursor'])['reset'], 'left the group');
+		} finally {
+			$crew->addUser($member);
+		}
+	}
+
 	/** Pseudonymised rows keep their `updated_at`, so an erasure resets every client. */
 	public function testAnErasureResetsEveryCursorHandedOutBeforeIt(): void {
 		$vehicle = $this->vehicle();
@@ -481,8 +531,8 @@ class SyncTest extends TestCase {
 	}
 
 	/** @return string the grant's uuid */
-	private function grant(Vehicle $vehicle, string $grantee, string $type): string {
-		$list = \OCP\Server::get(GrantService::class)->grant(self::OWNER, $vehicle->getUuid(), ['grantee' => $grantee, 'grantee_type' => $type, 'role' => 'driver']);
+	private function grant(Vehicle $vehicle, string $grantee, string $type, string $role = 'driver'): string {
+		$list = \OCP\Server::get(GrantService::class)->grant(self::OWNER, $vehicle->getUuid(), ['grantee' => $grantee, 'grantee_type' => $type, 'role' => $role]);
 
 		return (string)$list[array_search($grantee, array_column($list, 'grantee'), true)]['uuid'];
 	}

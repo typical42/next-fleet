@@ -11,6 +11,7 @@ namespace OCA\NextFleet\Service;
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
+use OCA\NextFleet\Db\BookingRecipientMapper;
 use OCA\NextFleet\Db\ReminderRecipient;
 use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\Vehicle;
@@ -45,11 +46,14 @@ class GrantService {
 		private VehicleAccess $access,
 		private VehicleMapper $vehicles,
 		private ReminderRecipientMapper $recipients,
+		private BookingRecipientMapper $bookingRecipients,
 		private IUserManager $users,
 		private IGroupManager $groups,
+		private Names $names,
 		private Sharable $sharable,
 		private GrantNotices $notices,
 		private NotificationService $reminderNotices,
+		private BookingNotices $bookingNotices,
 		private IDBConnection $db,
 		private Pending $pending,
 		private LoggerInterface $logger,
@@ -58,14 +62,25 @@ class GrantService {
 	}
 
 	/**
-	 * After a grant's role changed on a vehicle that keeps its costs: what a grantee may read of
-	 * rows already synced changed with it, and no row did (VehicleAccess::COSTS). Where the
-	 * costs are shared, every role reads the same, and no client is sent back to the start.
+	 * After a grant changed: what a grantee may read of rows already synced may have changed with
+	 * it, and no row did. On a vehicle that keeps its costs, every role reads the amounts its own
+	 * way (VehicleAccess::COSTS). Where they are shared, a change across `edit` resets too: a
+	 * booking shows its approval comment to the approvers (BookingService). A change between
+	 * `log` and `view` alters a booking's `may` as well; that waits for the row's next change, as
+	 * the server checks each act anyway.
+	 *
+	 * @param ?string $was the grant's role before, null for no grant
+	 * @param ?string $is its role after, null for none
 	 */
-	private function resync(Vehicle $vehicle): void {
-		if (!$vehicle->sharesCosts()) {
+	private function resync(Vehicle $vehicle, ?string $was, ?string $is): void {
+		if (!$vehicle->sharesCosts() || self::approves($was) !== self::approves($is)) {
 			$this->epoch->reset();
 		}
+	}
+
+	/** Whether a grant of this role, null for none, makes its grantees approvers. */
+	private static function approves(?string $role): bool {
+		return $role !== null && in_array($role, VehicleAccess::rolesCovering(VehicleAccess::EDIT), true);
 	}
 
 	/**
@@ -119,14 +134,16 @@ class GrantService {
 		}
 
 		// Retried for the reason TripService::record() gives.
-		/** @var Access|null $new */
-		$new = $this->atomicRetry(function () use ($userId, $vehicle, $grantee, $type, $role, $once): ?Access {
+		/** @var array{?Access, list<string>, ?string} $done */
+		$done = $this->atomicRetry(function () use ($userId, $vehicle, $grantee, $type, $role, $once): array {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$once->check();
+			$answering = $this->answering($vehicle, $grantee, $type, $role);
 			foreach ($this->grants->findByVehicle((int)$vehicle->getId()) as $one) {
 				if ($one->getGrantee() === $grantee && $one->getGranteeType() === $type) {
+					$was = $one->getRole();
 					$this->recast($one, $role);
-					return null;
+					return [null, $answering, $was];
 				}
 			}
 
@@ -138,8 +155,9 @@ class GrantService {
 			$row->setRole($role);
 			$row->setCreatedBy($userId);
 
-			return $this->grants->insert($row);
+			return [$this->grants->insert($row), $answering, null];
 		}, $this->db);
+		[$new, $answering, $was] = $done;
 		// After the commit: a notification out before a rollback would go out again.
 		if ($new !== null) {
 			if (!$this->took($new)) {
@@ -147,7 +165,8 @@ class GrantService {
 			}
 			$this->notices->tell($vehicle, $new);
 		}
-		$this->resync($vehicle);
+		$this->bookingNotices->tellWaiting($vehicle, $answering);
+		$this->resync($vehicle, $was, $role);
 
 		return $this->of($vehicle);
 	}
@@ -167,11 +186,19 @@ class GrantService {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::OWN, $vehicleUuid);
 		$role = Field::word('role', $fields['role'] ?? null, VehicleAccess::roles());
 
-		$this->atomicRetry(function () use ($vehicle, $grantUuid, $role): void {
+		/** @var list<string> $answering */
+		/** @var string $was */
+		[$answering, $was] = $this->atomicRetry(function () use ($vehicle, $grantUuid, $role): array {
 			$this->vehicles->hold((int)$vehicle->getId());
-			$this->recast($this->grants->findOnVehicle((int)$vehicle->getId(), $grantUuid), $role);
+			$grant = $this->grants->findOnVehicle((int)$vehicle->getId(), $grantUuid);
+			$answering = $this->answering($vehicle, $grant->getGrantee(), $grant->getGranteeType(), $role);
+			$was = $grant->getRole();
+			$this->recast($grant, $role);
+
+			return [$answering, $was];
 		}, $this->db);
-		$this->resync($vehicle);
+		$this->bookingNotices->tellWaiting($vehicle, $answering);
+		$this->resync($vehicle, $was, $role);
 
 		return $this->of($vehicle);
 	}
@@ -189,17 +216,18 @@ class GrantService {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::OWN, $vehicleUuid);
 
 		/** @var list<string> $pruned */
-		$pruned = $this->atomicRetry(function () use ($vehicle, $grantUuid): array {
+		/** @var string $was */
+		[$pruned, $was] = $this->atomicRetry(function () use ($vehicle, $grantUuid): array {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$grant = $this->grants->findOnVehicle((int)$vehicle->getId(), $grantUuid);
 			$saw = $this->seeing($vehicle);
 			$this->grants->softDelete($grant, $grant->getUpdatedAt());
 
-			return $this->prune($vehicle, $saw);
+			return [$this->prune($vehicle, $saw), $grant->getRole()];
 		}, $this->db);
 		$this->notices->withdraw($grantUuid);
 		$this->unremind((int)$vehicle->getId(), $pruned);
-		$this->resync($vehicle);
+		$this->resync($vehicle, $was, null);
 
 		return $this->of($vehicle);
 	}
@@ -231,7 +259,7 @@ class GrantService {
 		}, $this->db);
 		$this->notices->withdraw($grant->getUuid());
 		$this->unremind((int)$vehicle->getId(), $pruned);
-		$this->resync($vehicle);
+		$this->resync($vehicle, $grant->getRole(), null);
 
 		return $this->holding($userId, $vehicle);
 	}
@@ -275,18 +303,21 @@ class GrantService {
 	}
 
 	/**
-	 * Revokes a deleted group's grants: a group made later under the same id would otherwise
-	 * inherit every car the old one reached. Revoking's rules apply, one vehicle per transaction
-	 * under its hold. The members noteGroup() found count as having seen the car; without it, every
-	 * recipient who no longer sees the car comes off. Run once the group is gone, and pending until
-	 * done (docs/architecture.md#data-model, "Both finish, whatever fails").
+	 * Revokes a deleted group's grants and takes it off every booking list: a group made later
+	 * under the same id would otherwise inherit every car the old one reached, and its place on the
+	 * lists. Revoking's rules apply, one vehicle per transaction under its hold. The members
+	 * noteGroup() found count as having seen the car; without it, every recipient who no longer
+	 * sees the car comes off. Run once the group is gone, and pending until done
+	 * (docs/architecture.md#data-model, "Both finish, whatever fails").
 	 *
-	 * @param int|null $since when the group went, for a finish: a grant made or changed later
-	 *                        is the owner's for a group made again under the same id
+	 * @param int|null $since when the group went, for a finish: a grant made or changed later, or
+	 *                        a place on a list given later, is the owner's for a group made again
+	 *                        under the same id
 	 * @throws \OCP\DB\Exception
 	 */
 	public function forgetGroup(string $groupId, ?int $since = null): void {
 		$this->pending->begin(Pending::GROUP, $groupId);
+		$this->bookingRecipients->deleteEverywhere(Access::GROUP, $groupId, $since);
 		$members = $this->members[$groupId] ?? null;
 		unset($this->members[$groupId]);
 		foreach ($this->grants->findByGroup($groupId) as $grant) {
@@ -341,7 +372,8 @@ class GrantService {
 					return [$vehicle, $this->prune($vehicle, [$userId])];
 				}, $this->db);
 				$this->unremind($grant->getVehicleId(), $pruned);
-				$this->resync($vehicle);
+				// The group's grant stands, but no longer for this member.
+				$this->resync($vehicle, $grant->getRole(), null);
 			} catch (\Throwable $e) {
 				$failed ??= $e;
 			}
@@ -361,14 +393,15 @@ class GrantService {
 	private function revokeGone(Access $grant, ?array $members): void {
 		/** @var Vehicle|null $vehicle */
 		/** @var list<string> $pruned */
-		[$vehicle, $pruned] = $this->atomicRetry(function () use ($grant, $members): array {
+		/** @var ?string $was */
+		[$vehicle, $pruned, $was] = $this->atomicRetry(function () use ($grant, $members): array {
 			$vehicleId = $grant->getVehicleId();
 			$this->vehicles->hold($vehicleId);
 			// Read again under the hold, for a token no owner's revoke has moved since.
 			try {
 				$grant = $this->grants->findOnVehicle($vehicleId, $grant->getUuid());
 			} catch (DoesNotExistException) {
-				return [null, []];
+				return [null, [], null];
 			}
 			$vehicle = $this->vehicles->findAnyById($vehicleId);
 			$saw = $members === null
@@ -376,12 +409,12 @@ class GrantService {
 				: [...$this->seeing($vehicle), ...$members];
 			$this->grants->softDelete($grant, $grant->getUpdatedAt());
 
-			return [$vehicle, $this->prune($vehicle, $saw)];
+			return [$vehicle, $this->prune($vehicle, $saw), $grant->getRole()];
 		}, $this->db);
 		$this->notices->withdraw($grant->getUuid());
 		$this->unremind($grant->getVehicleId(), $pruned);
 		if ($vehicle !== null) {
-			$this->resync($vehicle);
+			$this->resync($vehicle, $was, null);
 		}
 	}
 
@@ -540,8 +573,7 @@ class GrantService {
 	}
 
 	/**
-	 * A user or a group as the instance spells it. The backends find a name in any case, and a
-	 * row stored as sent would let `Anna` and `anna` be two grants on one person.
+	 * A user or a group as the instance spells it (Names::spelled()), one the caller may grant to.
 	 *
 	 * @return array{string, string} the grantee and its type
 	 * @throws \InvalidArgumentException
@@ -551,7 +583,7 @@ class GrantService {
 		if (!is_string($name) || $name === '') {
 			throw new \InvalidArgumentException('grantee names a user or a group');
 		}
-		$grantee = $type === Access::USER ? $this->users->get($name)?->getUID() : $this->groups->get($name)?->getGID();
+		$grantee = $this->names->spelled($type, $name);
 		// One answer for both: under "members only", whether somebody outside the owner's groups
 		// exists is not the owner's to learn.
 		if ($grantee === null || !$this->sharable->reaches($userId, $grantee, $type)) {
@@ -559,6 +591,23 @@ class GrantService {
 		}
 
 		return [$grantee, $type];
+	}
+
+	/**
+	 * Whom a grant about to be written makes an approver (VehicleAccess::mayApprove()): the
+	 * accounts it names, a group by its members, that hold no `edit` yet. Asked before the write,
+	 * so BookingNotices::tellWaiting() asks nobody twice.
+	 *
+	 * @return list<string>
+	 * @throws \OCP\DB\Exception
+	 */
+	private function answering(Vehicle $vehicle, string $grantee, string $type, string $role): array {
+		if (!self::approves($role)) {
+			return [];
+		}
+		$uids = $type === Access::USER ? [$grantee] : $this->names->members($grantee);
+
+		return array_values(array_filter($uids, fn (string $uid): bool => !$this->access->may($uid, VehicleAccess::EDIT, $vehicle)));
 	}
 
 	/**

@@ -70,7 +70,12 @@ export function tripTableOf(series, labels, locale = getCanonicalLocale()) {
 	]
 
 	return {
-		columns: [...labels, t('nextfleet', 'Whole period'), t('nextfleet', 'Share')],
+		columns: [
+			...labels,
+			t('nextfleet', 'Whole period'),
+			// TRANSLATORS: "Share" is a proportion of the whole, not sharing.
+			t('nextfleet', 'Share'),
+		],
 		rows: [
 			...TRIP_BANDS.map((band) => ({ key: band, label: categoryWord(band), cells: cells((sum) => sum[band], '–', true) })),
 			{ key: 'total', label: t('nextfleet', 'Total'), cells: cells(totalOf, t('nextfleet', 'No entries'), false), total: true },

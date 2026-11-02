@@ -14,7 +14,9 @@ use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\ExpenseService;
 use OCA\NextFleet\Service\GrantService;
+use OCA\NextFleet\Service\KpiService;
 use OCA\NextFleet\Service\MaintenanceService;
+use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\StatisticsService;
 use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleService;
@@ -27,9 +29,12 @@ use PHPUnit\Framework\TestCase;
  * the real database and real accounts (docs/api.md#statistics).
  *
  * It writes to the instance it runs against (docs/development.md#testing).
+ *
+ * @psalm-import-type NextFleetPerDistance from \OCA\NextFleet\ResponseDefinitions as PerDistance
  */
 class StatisticsTest extends TestCase {
 	use Accounts;
+	use CountsQueries;
 
 	private const OWNER = 'nextfleet-test-stats-owner';
 	private const DRIVER = 'nextfleet-test-stats-driver';
@@ -148,7 +153,8 @@ class StatisticsTest extends TestCase {
 
 	/**
 	 * One vehicle's cost per 100 km in each bucket and over the range: its costs over the distance
-	 * its counter moved. A month the counter stood still has no figure, whatever it cost.
+	 * its counter moved. A month the counter stood still has no figure, whatever it cost, and the
+	 * range rates only the months that have one: 6.25 and 8.75 make 7.50, not 11.25.
 	 */
 	public function testOneVehicleCostsPerDistanceInEachBucketAndOverTheRange(): void {
 		$vehicle = $this->vehicle('EUR');
@@ -166,14 +172,15 @@ class StatisticsTest extends TestCase {
 		$this->assertSame(['total' => 5000, 'distance' => 800, 'value' => 625.0], $euro['buckets'][1]);
 		$this->assertSame(['total' => 7000, 'distance' => 800, 'value' => 875.0], $euro['buckets'][2]);
 		$this->assertSame(['total' => null, 'distance' => null, 'value' => null], $euro['buckets'][3]);
-		$this->assertSame(['total' => 18000, 'distance' => 1600, 'value' => 1125.0], $euro['range']);
+		$this->assertSame(['total' => 18000, 'distance' => 1600, 'value' => 750.0], $euro['range']);
 		$this->assertSame([['uuid' => $vehicle->getUuid(), 'range' => $euro['range']]], $euro['vehicles']);
+		self::assertBetweenTheBuckets($euro);
 	}
 
 	/**
 	 * Every vehicle: one rate per currency and unit, never across them, from the vehicles whose
-	 * costs the reader sees. The fleet's rate counts the vehicles that both cost and moved; its
-	 * sums count them all. Each vehicle's range stands beside it.
+	 * costs the reader sees. The fleet's rate counts the vehicles that moved; its sums count them
+	 * all. Each vehicle's range stands beside it.
 	 */
 	public function testAllVehiclesCostPerDistanceByCurrencyAndUnit(): void {
 		$moved = $this->vehicle('EUR', plate: 'S-TA 1');
@@ -199,6 +206,90 @@ class StatisticsTest extends TestCase {
 			['uuid' => $moved->getUuid(), 'range' => ['total' => 9000, 'distance' => 500, 'value' => 1800.0]],
 			['uuid' => $standing->getUuid(), 'range' => ['total' => 3000, 'distance' => null, 'value' => null]],
 		], $perKm['vehicles']);
+	}
+
+	/**
+	 * A month driven between fill-ups rates 0, and the range counts its distance: 70 € over
+	 * 1,600 km is 4.38 €/100 km, between February's 0 and March's 8.75.
+	 */
+	public function testAMonthDrivenWithoutACostRatesZero(): void {
+		$vehicle = $this->vehicle('EUR');
+		$this->odoFill($vehicle, 1736935200, 10000, 40000, 6000);
+		$this->reading($vehicle, 1739613600, 10800);
+		$this->odoFill($vehicle, 1742032800, 11600, 80000, 7000);
+
+		$read = $this->statistics->of(self::OWNER, ['vehicle' => $vehicle->getUuid(), 'from' => '2025-01-01', 'to' => '2025-04-01', 'tz' => 'Europe/Berlin']);
+
+		[$euro] = $read['per_distance'];
+		$this->assertSame(['total' => null, 'distance' => 800, 'value' => 0.0], $euro['buckets'][1]);
+		$this->assertSame(['total' => 13000, 'distance' => 1600, 'value' => 437.5], $euro['range']);
+		self::assertBetweenTheBuckets($euro);
+	}
+
+	/**
+	 * The fleet's range is the vehicles' ranges added up: 120 € over 1,600 km and 20 € over
+	 * 800 km make 5.83 €/100 km. The second vehicle's February moved without a cost.
+	 */
+	public function testTheFleetsRangeRatesTheVehiclesBuckets(): void {
+		$first = $this->vehicle('EUR', plate: 'S-TA 1');
+		$this->odoFill($first, 1736935200, 10000, 40000, 6000);
+		$this->odoFill($first, 1739613600, 10800, 40000, 5000);
+		$this->odoFill($first, 1742032800, 11600, 48000, 7000);
+		$second = $this->vehicle('EUR', plate: 'S-TA 2');
+		$this->odoFill($second, 1736935200, 600, 40000, 4000);
+		$this->reading($second, 1739613600, 1000);
+		$this->odoFill($second, 1742032800, 1400, 20000, 2000);
+
+		$read = $this->statistics->of(self::OWNER, ['from' => '2025-01-01', 'to' => '2025-04-01', 'tz' => 'Europe/Berlin']);
+
+		[$euro] = $read['per_distance'];
+		$this->assertSame([24000, 2400], [$euro['range']['total'], $euro['range']['distance']]);
+		$this->assertEqualsWithDelta(14000 / 24, $euro['range']['value'], 0.001);
+		$this->assertSame(['total' => 6000, 'distance' => 800, 'value' => 250.0], $euro['vehicles'][1]['range']);
+		self::assertBetweenTheBuckets($euro);
+	}
+
+	/**
+	 * The year route rates a year as Statistics rates it read by month: a month that moved
+	 * without a cost counts at 0, a cost where the counter stood still does not count.
+	 */
+	public function testTheYearRouteRatesAYearAsStatisticsDoes(): void {
+		$vehicle = $this->vehicle('EUR');
+		$this->odoFill($vehicle, 1736935200, 10000, 40000, 6000);
+		$this->reading($vehicle, 1739613600, 10800);
+		$this->odoFill($vehicle, 1742032800, 11600, 80000, 7000);
+		$this->expense($vehicle, 1750000000, 30000, 'insurance');
+
+		$statistics = $this->statistics->of(self::OWNER, ['vehicle' => $vehicle->getUuid(), 'from' => '2025-01-01', 'to' => '2026-01-01', 'tz' => 'Europe/Berlin']);
+		$year = \OCP\Server::get(KpiService::class)->year(self::OWNER, $vehicle->getUuid(), '2025', ['tz' => 'Europe/Berlin']);
+
+		$this->assertSame(437.5, $statistics['per_distance'][0]['range']['value']);
+		$this->assertSame(437.5, $year['year']['cost']['value']);
+	}
+
+	/**
+	 * Two years of months read as many queries as three months: each vehicle's counter and
+	 * fill-ups are read once, and the bucket edges found among them. Neither engine hours nor the
+	 * TCO is asked, though the vehicle has both.
+	 */
+	public function testTheQueriesDoNotGrowWithTheBuckets(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, [
+			'plate' => 'S-TA 1', 'jurisdiction' => 'de', 'currency' => 'EUR', 'energy_types' => ['diesel'],
+			'second_unit' => 'h', 'purchase_price' => 2000000, 'residual_est' => 500000,
+		]);
+		$this->vehicleIds[] = (int)$vehicle->getId();
+		for ($month = 0; $month < 24; $month++) {
+			$this->odoFill($vehicle, 1705000000 + $month * 2629800, 10000 + $month * 1000, 40000, 6000);
+		}
+		$range = ['vehicle' => $vehicle->getUuid(), 'tz' => 'Europe/Berlin'];
+
+		$this->statistics->of(self::OWNER, $range + ['from' => '2024-01-01', 'to' => '2024-04-01']);
+		$few = self::queriesOf(fn () => $this->statistics->of(self::OWNER, $range + ['from' => '2024-01-01', 'to' => '2024-04-01']));
+		$many = self::queriesOf(fn () => $this->statistics->of(self::OWNER, $range + ['from' => '2024-01-01', 'to' => '2026-01-01']));
+
+		$this->assertSame($few, $many, '24 buckets cost what 3 do');
+		// 10 for one vehicle: a query or two per table, none per bucket.
+		$this->assertLessThanOrEqual(10, $many);
 	}
 
 	/**
@@ -379,6 +470,34 @@ class StatisticsTest extends TestCase {
 		$this->assertSame(6000, $all['costs'][0]['range']['total']);
 	}
 
+	/**
+	 * All of it starts at no expense the reader may not see: its year would tell it is there. Their
+	 * own counts, as they see it.
+	 */
+	public function testAllOfItStartsAtNoExpenseKeptFromTheReader(): void {
+		$vehicle = $this->vehicle('EUR', shared: false);
+		$this->expense($vehicle, 1654041600, 1000);
+		$this->expense($vehicle, 1685620800, 500, by: self::DRIVER);
+		$this->fill($vehicle, 1750000000, 5000);
+		$range = ['vehicle' => $vehicle->getUuid(), 'tz' => 'Europe/Berlin'];
+
+		$this->assertSame(1640991600, $this->statistics->of(self::OWNER, $range)['from'], 'midnight of 1 January 2022 in Berlin');
+		$this->assertSame(1672527600, $this->statistics->of(self::DRIVER, $range)['from'], 'midnight of 1 January 2023 in Berlin');
+	}
+
+	/** All of it starts no later than this year, though every entry is dated in a later one. */
+	public function testAllOfItStartsThisYearBeforeAnEntryAhead(): void {
+		$vehicle = $this->vehicle('EUR');
+		$zone = new \DateTimeZone('Europe/Berlin');
+		$thisYear = (int)(new \DateTimeImmutable('now', $zone))->format('Y');
+		$this->expense($vehicle, (new \DateTimeImmutable(($thisYear + 1) . '-01-01', $zone))->getTimestamp(), 30000, 'insurance');
+
+		$all = $this->statistics->of(self::OWNER, ['vehicle' => $vehicle->getUuid(), 'tz' => 'Europe/Berlin']);
+
+		$this->assertSame((new \DateTimeImmutable($thisYear . '-01-01', $zone))->getTimestamp(), $all['from']);
+		$this->assertCount(1, $all['buckets']);
+	}
+
 	/** A fleet with nothing in it yet has this year, empty. */
 	public function testAllOfNothingIsThisYear(): void {
 		$vehicle = $this->vehicle('EUR');
@@ -463,7 +582,25 @@ class StatisticsTest extends TestCase {
 		]);
 	}
 
-	private function expense(Vehicle $vehicle, int $at, int $amount, ?string $category = null): void {
-		\OCP\Server::get(ExpenseService::class)->record(self::OWNER, $vehicle->getUuid(), ['spent_at' => $at, 'spent_at_off' => 60, 'amount' => $amount, 'category' => $category]);
+	/** A Reading of the counter alone, with no cost beside it. */
+	private function reading(Vehicle $vehicle, int $at, int $odo): void {
+		\OCP\Server::get(OdometerService::class)->record(self::OWNER, $vehicle->getUuid(), ['read_at' => $at, 'read_at_off' => 60, 'value' => $odo]);
+	}
+
+	/**
+	 * The range's rate lies between its lowest and highest bucket's.
+	 *
+	 * @param PerDistance $series
+	 */
+	private static function assertBetweenTheBuckets(array $series): void {
+		$values = array_values(array_filter(array_column($series['buckets'], 'value'), is_float(...)));
+		self::assertNotSame([], $values);
+		self::assertNotNull($series['range']['value']);
+		self::assertGreaterThanOrEqual(min($values), $series['range']['value']);
+		self::assertLessThanOrEqual(max($values), $series['range']['value']);
+	}
+
+	private function expense(Vehicle $vehicle, int $at, int $amount, ?string $category = null, string $by = self::OWNER): void {
+		\OCP\Server::get(ExpenseService::class)->record($by, $vehicle->getUuid(), ['spent_at' => $at, 'spent_at_off' => 60, 'amount' => $amount, 'category' => $category]);
 	}
 }

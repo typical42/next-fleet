@@ -15,7 +15,8 @@ export const RANGES = ['year', 'last-12', 'all', 'between']
 export function rangeWord(range) {
 	return {
 		year: t('nextfleet', 'Calendar year'),
-		'last-12': t('nextfleet', 'Last 12 months'),
+		// TRANSLATORS: this month and the eleven before it, each whole.
+		'last-12': t('nextfleet', 'Last 12 calendar months'),
 		all: t('nextfleet', 'All time'),
 		between: t('nextfleet', 'Between two days'),
 	}[range] ?? range
@@ -48,6 +49,22 @@ export function daysOf(range, now, { year = now.getFullYear(), from = null, to =
 	default:
 		return {}
 	}
+}
+
+/**
+ * A route answer with no figure in it. A cost series comes for every priced vehicle, recorded or
+ * not, and one vehicle's CO₂ comes always (docs/api.md#statistics), so their presence says nothing.
+ * A rate's totals are those costs again; only its distance adds a figure.
+ *
+ * @param {import('../services/api.js').Statistics} answer - as the route answers it
+ * @return {boolean} whether the answer has nothing to show
+ */
+export function blank(answer) {
+	return answer.costs.every(({ range }) => range.total === null && !range.incomplete)
+		&& answer.per_distance.every(({ range }) => range.distance === null)
+		&& answer.consumption.length === 0
+		&& answer.distance.length === 0
+		&& (answer.co2 === null || (answer.co2.grams === null && !answer.co2.unstated))
 }
 
 /**

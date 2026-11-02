@@ -34,17 +34,20 @@ class OcsRoutesTest extends TestCase {
 	 */
 	private const OCS_ONLY = ['Ocs\Sync#index'];
 
-	/** @return list<array{name: string, url: string, verb: string}> */
+	/** Reads only v1 serves: the web UI makes none, so they have no internal twin (docs/api.md#what-v1-promises). */
+	private const KEPT_FOR_V1 = ['Ocs\Kpi#year'];
+
+	/** @return list<array{name: string, url: string, verb: string, requirements?: array<string, string>}> */
 	private static function ocs(): array {
 		return (require __DIR__ . '/../../appinfo/routes.php')['ocs'] ?? [];
 	}
 
-	/** @return list<array{name: string, url: string, verb: string}> every OCS route with a twin */
+	/** @return list<array{name: string, url: string, verb: string, requirements?: array<string, string>}> every OCS route with a twin */
 	private static function twinned(): array {
-		return array_values(array_filter(self::ocs(), static fn (array $route): bool => !in_array($route['name'], self::OCS_ONLY, true)));
+		return array_values(array_filter(self::ocs(), static fn (array $route): bool => !in_array($route['name'], [...self::OCS_ONLY, ...self::KEPT_FOR_V1], true)));
 	}
 
-	/** @return array<string, array{name: string, url: string, verb: string}> by name */
+	/** @return array<string, array{name: string, url: string, verb: string, requirements?: array<string, string>}> by name */
 	private static function internal(): array {
 		$routes = (require __DIR__ . '/../../appinfo/routes.php')['routes'];
 
@@ -162,6 +165,20 @@ class OcsRoutesTest extends TestCase {
 			$method = new ReflectionMethod($class, $action);
 			$this->assertNotEmpty($method->getAttributes(NoAdminRequired::class), $name . ' is admin-only');
 			$this->assertNotEmpty($method->getAttributes(UserRateLimit::class), $name . ' carries no #[UserRateLimit]');
+		}
+	}
+
+	/** A read kept for v1 still answers, open to every user, and no internal route drifts beside it. */
+	public function testEveryReadKeptForV1HasNoTwinAndStillAnswers(): void {
+		$internal = self::internal();
+		$names = array_column(self::ocs(), null, 'name');
+		foreach (self::KEPT_FOR_V1 as $name) {
+			$this->assertSame('GET', $names[$name]['verb'] ?? null, $name);
+			$this->assertArrayNotHasKey(self::twinName($name), $internal, $name . ' has a twin again');
+			[$class, $action] = self::target($name);
+			$this->assertTrue(is_subclass_of($class, OCSController::class), $class . ' is no OCSController');
+			$method = new ReflectionMethod($class, $action);
+			$this->assertNotEmpty($method->getAttributes(NoAdminRequired::class), $name . ' is admin-only');
 		}
 	}
 

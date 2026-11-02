@@ -30,10 +30,12 @@ class ExpenseMapper extends BaseMapper {
 
 	/**
 	 * @param list<int> $vehicleIds
+	 * @param ?string $createdBy only this author's, for a reader the others' are kept from
+	 *                           (CostsShown::expensesBy())
 	 * @throws \OCP\DB\Exception
 	 */
-	public function firstAmong(array $vehicleIds): ?int {
-		return $this->earliest('spent_at', $vehicleIds);
+	public function firstAmong(array $vehicleIds, ?string $createdBy = null): ?int {
+		return $this->earliest('spent_at', $vehicleIds, $createdBy);
 	}
 
 	/** @throws \OCP\DB\Exception */

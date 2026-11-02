@@ -87,7 +87,7 @@ class BookingRecipientController extends OCSController {
 	 *
 	 * @param string $uuid the vehicle's uuid
 	 * @param string $type `user` or `group`
-	 * @param string $recipient the account or the group to take off the list
+	 * @param string $recipient the account or the group to take off the list; a slash in a group id is sent as it is, not as `%2F`, which a web server refuses by default
 	 * @return DataResponse<Http::STATUS_OK, list<NextFleetBookingRecipient>, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
 	 * @throws OCSForbiddenException the caller does not own this vehicle
 	 * @throws OCSNotFoundException no such vehicle

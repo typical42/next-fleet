@@ -172,8 +172,22 @@ async function load() {
 	}
 }
 
-// The screen reads the list again once the trip of a booking is saved, so the row links it.
-defineExpose({ reload: load })
+/**
+ * The screen reads the list again after a write elsewhere: a trip saved, so the row links it, or
+ * the vehicle saved, whose approval switch may have answered the bookings that waited. A refusal
+ * and the answers open on such a booking are about the list as it was.
+ *
+ * @return {Promise<void>} when the list is in, or the failure is on screen
+ */
+async function reload() {
+	refusal.value = ''
+	await load()
+	if (!bookings.value?.find((one) => one.uuid === answering.value)?.may.includes('approve')) {
+		answering.value = ''
+	}
+}
+
+defineExpose({ reload })
 
 // The undo toast has no vehicle screen to tell; a trip it brings back is linked on its row again.
 const store = useVehiclesStore()
@@ -363,7 +377,11 @@ async function sendAnswer(booking, answer) {
 		</div>
 
 		<NcNoteCard v-if="failure" type="error" :text="failure" />
-		<NcNoteCard v-if="refusal" type="warning" :text="refusal" />
+		<!-- An alert: it shows above the list, away from the row button that was pressed. -->
+		<NcNoteCard v-if="refusal"
+			type="warning"
+			:text="refusal"
+			show-alert />
 		<NcLoadingIcon v-if="bookings === null && failure === ''" :name="t('nextfleet', 'Loading…')" />
 		<p v-else-if="bookings !== null && bookings.length === 0" class="bookings__empty">
 			{{ books

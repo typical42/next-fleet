@@ -16,6 +16,7 @@ A driver attaches only to their own entries and bookings.
 The owner and the managers also attach to the vehicle itself.
 
 Everyone who sees the vehicle can download its documents.
+If the owner keeps the costs from drivers and viewers, they do not see the documents on the entries of other users, the receipts on the bookings of other users or the receipts on the vehicle itself ([keep the costs](access.md#keep-the-costs-from-drivers-and-viewers)).
 NextFleet does not copy the file.
 It stays in your Files.
 

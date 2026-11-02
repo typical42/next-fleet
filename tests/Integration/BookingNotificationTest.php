@@ -11,13 +11,16 @@ namespace OCA\NextFleet\Tests\Integration;
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
+use OCA\NextFleet\Db\Audit;
 use OCA\NextFleet\Db\Booking;
 use OCA\NextFleet\Db\BookingMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Exception\AccessDeniedException;
 use OCA\NextFleet\Service\BookingNotices;
 use OCA\NextFleet\Service\BookingService;
+use OCA\NextFleet\Service\GrantService;
 use OCA\NextFleet\Service\RecipientService;
+use OCA\NextFleet\Service\TransferService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\App\IAppManager;
 use OCP\Http\Client\IClientService;
@@ -54,6 +57,8 @@ class BookingNotificationTest extends TestCase {
 	private BookingService $bookings;
 	private VehicleService $vehicles;
 	private RecipientService $recipients;
+	/** @var list<int> the vehicles a case transferred, whose audit rows forget() takes */
+	private array $transferred = [];
 
 	public static function setUpBeforeClass(): void {
 		self::deleteAccounts(array_keys(self::LANGUAGES));
@@ -99,10 +104,18 @@ class BookingNotificationTest extends TestCase {
 	private function forget(): void {
 		$db = \OCP\Server::get(IDBConnection::class);
 		$people = array_keys(self::LANGUAGES);
-		foreach (['fleet_vehicles' => 'user_id', 'fleet_access' => 'created_by', 'fleet_bookings' => 'created_by', 'fleet_booking_recipients' => 'created_by'] as $table => $column) {
+		// A transfer writes its rows as `occ:transfer`: the former owner's grant, the new owner's reminders.
+		foreach ([['fleet_vehicles', 'user_id'], ['fleet_access', 'created_by'], ['fleet_access', 'grantee'], ['fleet_bookings', 'created_by'], ['fleet_booking_recipients', 'created_by'], ['fleet_reminder_recipients', 'user_id']] as [$table, $column]) {
 			$qb = $db->getQueryBuilder();
 			$qb->delete($table)->where($qb->expr()->in($column, $qb->createNamedParameter($people, $qb::PARAM_STR_ARRAY)));
 			$qb->executeStatement();
+		}
+		if ($this->transferred !== []) {
+			$qb = $db->getQueryBuilder();
+			$qb->delete('fleet_audit')->where($qb->expr()->eq('created_by', $qb->createNamedParameter(Audit::TRANSFERRED_BY)))
+				->andWhere($qb->expr()->in('entity_id', $qb->createNamedParameter($this->transferred, $qb::PARAM_INT_ARRAY)));
+			$qb->executeStatement();
+			$this->transferred = [];
 		}
 		$manager = \OCP\Server::get(IManager::class);
 		foreach ($people as $uid) {
@@ -289,6 +302,14 @@ class BookingNotificationTest extends TestCase {
 		$this->assertSame([], $this->recipients->removeBooking(self::OWNER, $vehicle->getUuid(), 'user', self::BEN));
 	}
 
+	/** addBooking() takes any spelling, so removeBooking() does too. */
+	public function testAnAccountLeavesTheListInAnySpelling(): void {
+		$vehicle = $this->vehicle();
+		$this->recipients->addBooking(self::OWNER, $vehicle->getUuid(), self::BEN, 'user');
+
+		$this->assertSame([], $this->recipients->removeBooking(self::OWNER, $vehicle->getUuid(), 'user', strtoupper(self::BEN)));
+	}
+
 	public function testAGroupGoneLeavesTheList(): void {
 		$vehicle = $this->vehicle();
 		$groups = \OCP\Server::get(IGroupManager::class);
@@ -400,6 +421,89 @@ class BookingNotificationTest extends TestCase {
 		$this->assertSame([], $this->notifications(self::CLEO));
 	}
 
+	/**
+	 * The question rides in the booker's notice; the booker's change answers it, which takes the
+	 * question back and asks the approvers again.
+	 */
+	public function testTheBookersChangeAnswersTheQuestionAndAsksAgain(): void {
+		$vehicle = $this->vehicle([], self::CLEO, approval: true);
+		$asked = $this->bookings->book(self::BEN, $vehicle->getUuid(), $this->span());
+		$back = $this->bookings->answer(self::OWNER, $vehicle->getUuid(), $asked['uuid'], $asked['updated_at'], Booking::ASKED, ['comment' => 'Den Transporter?']);
+		$this->assertSame(['Den Transporter?'], array_column($this->notifications(self::BEN), 'message'));
+		$this->assertSame([], $this->notifications(self::OWNER));
+
+		$this->bookings->change(self::BEN, $vehicle->getUuid(), $asked['uuid'], $back['updated_at'], $this->span() + ['purpose' => 'Der Transporter ist weg']);
+
+		$this->assertSame([], $this->notifications(self::BEN));
+		foreach ([self::OWNER, self::CLEO] as $approver) {
+			$subjects = array_column($this->notifications($approver), 'subject');
+			$this->assertCount(1, $subjects);
+			$this->assertStringStartsWith('Ben asks to book NF-DE 100 from ', $subjects[0]);
+		}
+	}
+
+	/** Asked back twice, the booker reads the latest question only. */
+	public function testAskingBackTwiceLeavesOneNotice(): void {
+		$vehicle = $this->vehicle([], approval: true);
+		$asked = $this->bookings->book(self::BEN, $vehicle->getUuid(), $this->span());
+		$back = $this->bookings->answer(self::OWNER, $vehicle->getUuid(), $asked['uuid'], $asked['updated_at'], Booking::ASKED, ['comment' => 'Wohin?']);
+
+		$this->bookings->answer(self::OWNER, $vehicle->getUuid(), $asked['uuid'], $back['updated_at'], Booking::ASKED, ['comment' => 'Und wie lange?']);
+
+		$this->assertSame(['Und wie lange?'], array_column($this->notifications(self::BEN), 'message'));
+	}
+
+	/**
+	 * Whoever comes to answer the vehicle's bookings is asked what waits already: a new manager, a
+	 * viewer made one. A question waits for the booker, not for them.
+	 */
+	public function testANewApproverIsAskedWhatWaits(): void {
+		$vehicle = $this->vehicle([], approval: true);
+		$this->bookings->book(self::BEN, $vehicle->getUuid(), $this->span());
+		$asked = $this->bookings->book(self::BEN, $vehicle->getUuid(), ['ends_at' => $this->span()['ends_at'] + 3 * self::HOUR, 'starts_at' => $this->span()['ends_at']] + $this->span());
+		$this->bookings->answer(self::OWNER, $vehicle->getUuid(), $asked['uuid'], $asked['updated_at'], Booking::ASKED, []);
+		$grants = \OCP\Server::get(GrantService::class);
+
+		$grants->grant(self::OWNER, $vehicle->getUuid(), ['grantee' => self::DORA, 'grantee_type' => Access::USER, 'role' => 'manager']);
+		$cleo = array_values(array_filter($grants->list(self::OWNER, $vehicle->getUuid()), static fn (array $grant): bool => $grant['grantee'] === self::CLEO))[0];
+		$grants->change(self::OWNER, $vehicle->getUuid(), $cleo['uuid'], ['role' => 'manager']);
+
+		foreach ([self::DORA, self::CLEO] as $approver) {
+			$this->assertCount(1, $this->requests($approver), $approver);
+		}
+	}
+
+	/**
+	 * A group made manager asks the members it makes approvers what waits, and only them: a member
+	 * who answered already was asked before.
+	 */
+	public function testAGroupMadeManagerAsksTheMembersItMakesApprovers(): void {
+		$vehicle = $this->vehicle([], approval: true);
+		$this->bookings->book(self::BEN, $vehicle->getUuid(), $this->span());
+		$grants = \OCP\Server::get(GrantService::class);
+		$grants->grant(self::OWNER, $vehicle->getUuid(), ['grantee' => self::DORA, 'grantee_type' => Access::USER, 'role' => 'manager']);
+		$this->assertSame([], $this->requests(self::CLEO));
+
+		$grants->grant(self::OWNER, $vehicle->getUuid(), ['grantee' => self::CREW, 'grantee_type' => Access::GROUP, 'role' => 'manager']);
+
+		foreach ([self::DORA, self::CLEO] as $approver) {
+			$this->assertCount(1, $this->requests($approver), $approver);
+		}
+	}
+
+	/** A new owner answers the vehicle's bookings, and is asked what waits already. */
+	public function testANewOwnerIsAskedWhatWaits(): void {
+		$vehicle = $this->vehicle([], approval: true);
+		$this->bookings->book(self::BEN, $vehicle->getUuid(), $this->span());
+		$this->transferred[] = (int)$vehicle->getId();
+
+		\OCP\Server::get(TransferService::class)->transfer($vehicle->getUuid(), self::CLEO);
+
+		$subjects = array_column($this->notifications(self::CLEO), 'subject');
+		$this->assertCount(1, $subjects);
+		$this->assertStringStartsWith('Ben asks to book NF-DE 100 from ', $subjects[0]);
+	}
+
 	/** A request moved before its answer is asked again with the new span, and only that. */
 	public function testAMovedRequestIsAskedAgainWithItsNewSpan(): void {
 		$vehicle = $this->vehicle([], approval: true);
@@ -459,6 +563,30 @@ class BookingNotificationTest extends TestCase {
 
 		$manager = \OCP\Server::get(IManager::class);
 		$this->assertSame(0, $manager->getCount($manager->createNotification()->setApp(Application::APP_ID)->setObject(BookingNotices::EVENT, $booking['uuid'])));
+	}
+
+	/**
+	 * Undoing the delete asks again what waits for an answer: the request of its approvers, the
+	 * question of its booker. Nothing else would before the request ends.
+	 */
+	public function testRestoringTheVehicleAsksAgainWhatWaits(): void {
+		$vehicle = $this->vehicle([], self::CLEO, approval: true);
+		$this->bookings->book(self::BEN, $vehicle->getUuid(), $this->span());
+		$asked = $this->bookings->book(self::BEN, $vehicle->getUuid(), ['ends_at' => $this->span()['ends_at'] + 3 * self::HOUR, 'starts_at' => $this->span()['ends_at']] + $this->span());
+		$this->bookings->answer(self::OWNER, $vehicle->getUuid(), $asked['uuid'], $asked['updated_at'], Booking::ASKED, ['comment' => 'Wohin?']);
+		$read = $this->vehicles->find(self::OWNER, $vehicle->getUuid());
+		$deleted = $this->vehicles->delete(self::OWNER, $vehicle->getUuid(), $read->getUpdatedAt());
+		$this->assertSame([], $this->notifications(self::CLEO));
+		$this->assertSame([], $this->notifications(self::BEN));
+
+		$this->vehicles->restore(self::OWNER, $vehicle->getUuid(), $deleted->getUpdatedAt());
+
+		foreach ([self::OWNER, self::CLEO] as $approver) {
+			$subjects = array_column($this->notifications($approver), 'subject');
+			$this->assertCount(1, $subjects, $approver);
+			$this->assertStringStartsWith('Ben asks to book NF-DE 100 from ', $subjects[0]);
+		}
+		$this->assertSame(['Wohin?'], array_column($this->notifications(self::BEN), 'message'));
 	}
 
 	/** @return array<string, int> */
@@ -522,9 +650,18 @@ class BookingNotificationTest extends TestCase {
 	}
 
 	/**
+	 * The requests of Ben's bookings the user was asked to answer.
+	 *
+	 * @return list<string>
+	 */
+	private function requests(string $uid): array {
+		return array_values(array_filter(array_column($this->notifications($uid), 'subject'), static fn (string $subject): bool => str_starts_with($subject, 'Ben asks to book ')));
+	}
+
+	/**
 	 * The user's notifications of this app, prepared in their language by the notifier.
 	 *
-	 * @return list<array{subject: string, link: string}>
+	 * @return list<array{subject: string, message: string, link: string}>
 	 */
 	private function notifications(string $uid): array {
 		$response = \OCP\Server::get(IClientService::class)->newClient()->get(

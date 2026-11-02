@@ -395,11 +395,12 @@ describe('the timeline', () => {
 		expect(wrapper.findAllComponents(TimelineRow)).toHaveLength(1)
 	})
 
-	it('offers no Expenses chip to a reader the owner keeps the costs from', async () => {
+	/** The server narrows the expenses to their own, so the chip finds those. */
+	it('offers the Expenses chip to a reader the owner keeps the costs from', async () => {
 		const wrapper = await timeline({ ...VEHICLE, may: ['view', 'log'] })
 
 		expect(wrapper.findAllComponents(NcRadioGroupButton).map((one) => String(one.props('label'))))
-			.toEqual(['All', 'Trips', 'Odometer', 'Energy', 'Maintenance'])
+			.toEqual(['All', 'Trips', 'Odometer', 'Energy', 'Maintenance', 'Expenses'])
 	})
 
 	it('asks for the expenses under Expenses, and lists the cost kinds each as a row', async () => {

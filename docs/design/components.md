@@ -169,6 +169,7 @@ flowchart LR
     BookingNotices["BookingNotices"]
     Lookalike["LookalikeNotices"]
     Sharable["Sharable"]
+    Names["Names"]
     Zone["UserZone"]
     Access["VehicleAccess"]
     Job --> Notification & Mail
@@ -176,9 +177,11 @@ flowchart LR
     Notification & Mail & Reminder --> Engine
     Mail --> Zone
     Grant & Vehicle --> GrantNotices
+    Grant --> BookingNotices
     Booking & Vehicle --> BookingNotices
     Recipient & Grant --> Sharable
-    Mail & Notifier --> Access
+    Recipient & Grant & GrantNotices & BookingNotices & Lookalike --> Names
+    Mail & Notifier & BookingNotices --> Access
     Notifier -.->|OBJECT| GrantNotices & BookingNotices & Lookalike
 ```
 
@@ -196,6 +199,8 @@ flowchart LR
     PendingJob["PendingJob"]
     Grant["GrantService"]
     GrantNotices["GrantNotices"]
+    BookingNotices["BookingNotices"]
+    Names["Names"]
     Pending["Pending"]
     Epoch["SyncEpoch"]
     Vehicle["VehicleService"]
@@ -205,10 +210,10 @@ flowchart LR
     Reminder["ReminderService"]
     Erasure --> Grant & GrantNotices & Pending & Epoch
     Erasure -->|"withdraw()"| Vehicle
-    Transfer --> GrantNotices & Epoch
+    Transfer --> GrantNotices & BookingNotices & Names & Epoch
     Check --> Erasure & Odometer & Pending
     Grant --> Pending
-    PendingJob --> Erasure & Grant
+    PendingJob --> Erasure & Grant & Booking
     Sync -->|"list()"| Vehicle
     Sync --> Grant & Booking & Document & Reminder
 ```

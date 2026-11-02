@@ -414,6 +414,43 @@ class NotifierTest extends TestCase {
 		$this->notifier(null, $booking)->prepare($this->eventNotice('crashed', []), 'en');
 	}
 
+	/** @return array<string, array{?string, ?string}> */
+	public static function questions(): array {
+		return [
+			'a short one' => ['Could you take the van?', 'Could you take the van?'],
+			'a long one' => [str_repeat('ä', 250), str_repeat('ä', 199) . '…'],
+			'none' => [null, null],
+		];
+	}
+
+	/** The question rides along for the booker to read, shortened to a notice's length. */
+	#[DataProvider('questions')]
+	public function testAQuestionRidesInTheBookersNotice(?string $comment, ?string $expected): void {
+		$booking = new Booking();
+		$booking->setUserId('erin');
+		$booking->setState(Booking::BOOKED);
+		$booking->setApproval(Booking::ASKED);
+		$booking->setApprovalBy('anna');
+		$booking->setApprovalComment($comment);
+		[$subject, $message] = [null, null];
+		$notification = $this->approvalNotice(Booking::ASKED);
+		$notification->method('setParsedSubject')->willReturnCallback(function (string $parsed) use (&$subject, $notification) {
+			$subject = $parsed;
+
+			return $notification;
+		});
+		$notification->method('setParsedMessage')->willReturnCallback(function (string $parsed) use (&$message, $notification) {
+			$message = $parsed;
+
+			return $notification;
+		});
+
+		$this->notifier(null, $booking)->prepare($notification, 'en');
+
+		$this->assertSame('Anna has a question about your booking of B-XY 123 from 1 May 2036, 09:00', $subject);
+		$this->assertSame($expected, $message);
+	}
+
 	/** The upgrade kept an account named like an erased driver; the admin is told which to look at. */
 	public function testALookalikeNoticeNamesTheAccount(): void {
 		$parsed = null;
@@ -474,6 +511,20 @@ class NotifierTest extends TestCase {
 		$notification->method('getObjectId')->willReturn('b-1');
 		$notification->method('getSubject')->willReturn($event);
 		$notification->method('getSubjectParameters')->willReturn(['vehicle' => 'v-1'] + $p);
+		$notification->method('setIcon')->willReturnSelf();
+
+		return $notification;
+	}
+
+	/** @return INotification&\PHPUnit\Framework\MockObject\MockObject */
+	private function approvalNotice(string $subject): INotification {
+		$notification = $this->createMock(INotification::class);
+		$notification->method('getApp')->willReturn('nextfleet');
+		$notification->method('getUser')->willReturn('erin');
+		$notification->method('getObjectType')->willReturn(BookingNotices::APPROVAL);
+		$notification->method('getObjectId')->willReturn('b-1');
+		$notification->method('getSubject')->willReturn($subject);
+		$notification->method('getSubjectParameters')->willReturn(['vehicle' => 'v-1', 'starts_at' => 2093238000, 'starts_at_off' => 120, 'ends_at' => 2093248800, 'ends_at_off' => 120]);
 		$notification->method('setIcon')->willReturnSelf();
 
 		return $notification;

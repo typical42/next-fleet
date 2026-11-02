@@ -5,6 +5,7 @@
 
 import NcDateTimePickerNative from '@nextcloud/vue/components/NcDateTimePickerNative'
 import NcEmptyContent from '@nextcloud/vue/components/NcEmptyContent'
+import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
 import NcSelect from '@nextcloud/vue/components/NcSelect'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
@@ -284,8 +285,22 @@ describe('the Statistics screen', () => {
 		expect(cells(wrapper, 'Cost per 100 km in EUR, by vehicle', 'All vehicles')).toEqual(['€120.00', '800 km', '€15.00'])
 	})
 
-	it('says when the fleet\'s rate leaves out a vehicle that cost without moving', async () => {
-		const NOTE = 'Cost per distance counts only the vehicles that both cost and moved in each period.'
+	it('says when the rate leaves out a price or counts gross, and when it is net', async () => {
+		const short = { ...series(), range: sum({ total: 500, energy: 500, incomplete: true, unstated: true }) }
+		vi.mocked(readStatistics).mockResolvedValue(answer({ costs: [short], per_distance: [RATE] }))
+		vi.mocked(getPreferences).mockResolvedValue(/** @type {any} */ ({
+			preferences: { dismissed_hints: [], dismissed_logbook_hints: [], inbox_folder: null, reclaim_vat: true, kpi_period: 'last-12' },
+			jurisdictions: [],
+		}))
+		await usePreferencesStore().load()
+		const wrapper = await screen()
+
+		expect(wrapper.findAll('section.statistics__rate .statistics__note').map((note) => note.text()))
+			.toEqual(['Net of VAT', 'Incomplete: a fill-up in the period has no price', 'Entries without a VAT rate count gross'])
+	})
+
+	it('says when the rate leaves out a cost without a distance', async () => {
+		const NOTE = 'Costs in a period without a distance are not in the cost per distance.'
 		vi.mocked(readStatistics).mockResolvedValue(answer({ per_distance: [RATE], co2: null }))
 		const even = await screen({ vehicle: '' })
 		expect(even.find('section.statistics__rate').text()).not.toContain(NOTE)
@@ -304,6 +319,7 @@ describe('the Statistics screen', () => {
 		expect(section.find('h3').text()).toBe('Consumption')
 		expect(section.find('h4').text()).toBe('Diesel consumption')
 		expect(section.findAll('svg.statistics__line .statistics__dot')).toHaveLength(2)
+		expect(section.findAll('svg.statistics__line title').map((one) => one.text())).toEqual(['Feb 2, 2026: 5.0 l/100 km', 'Mar 2, 2026: 6.0 l/100 km'])
 		const rows = wrapper.findAll('[role="region"][aria-label="Diesel consumption"] tbody tr')
 		expect(rows.map((one) => one.find('th').text())).toEqual([expect.stringMatching(/Feb/), expect.stringMatching(/Mar/)])
 		expect(rows[1].findAll('td').map((one) => one.text())).toEqual(['800 km', '48 l', '6.0 l/100 km'])
@@ -329,6 +345,15 @@ describe('the Statistics screen', () => {
 		expect(section.find('svg.statistics__bars').attributes('aria-hidden')).toBe('true')
 		expect(cells(wrapper, 'Distance by trip category, by month', 'Business')).toEqual([...Array(2).fill('–'), '120 km', ...Array(9).fill('–'), '120 km', '80%'])
 		expect(cells(wrapper, 'Distance by trip category, by month', 'Total')[12]).toBe('150 km')
+		expect(section.find('.statistics__note').text()).toBe('Only the trips in the logbook count, so this can differ from the distance on the counter.')
+	})
+
+	it('says the trips\' hours can differ from the hour counter', async () => {
+		vi.mocked(readStatistics).mockResolvedValue(answer({ distance: [{ ...TRIPS, per: 'h' }] }))
+
+		const wrapper = await screen()
+
+		expect(wrapper.find('section.statistics__trips .statistics__note').text()).toBe('Only the trips in the logbook count, so this can differ from the hours on the counter.')
 	})
 
 	it('lists each driver\'s trips, distance and business share', async () => {
@@ -381,6 +406,21 @@ describe('the Statistics screen', () => {
 		expect(readStatistics).toHaveBeenLastCalledWith(expect.objectContaining({ from: '2026-02-03', to: '2026-03-01' }))
 	})
 
+	it('asks for both days, and for a last one not before the first, instead of reading', async () => {
+		const wrapper = await screen()
+		await picker(wrapper, 'Range').vm.$emit('update:modelValue', { id: 'between', label: 'Between two days' })
+		await flushPromises()
+		expect(wrapper.text()).toContain('Pick the first and the last day.')
+		expect(wrapper.findComponent(NcLoadingIcon).exists()).toBe(false)
+
+		const [first, last] = wrapper.findAllComponents(NcDateTimePickerNative)
+		await first.vm.$emit('update:modelValue', new Date(2026, 1, 28))
+		await last.vm.$emit('update:modelValue', new Date(2026, 1, 3))
+		await flushPromises()
+		expect(wrapper.text()).toContain('The last day is before the first.')
+		expect(readStatistics).toHaveBeenCalledTimes(1)
+	})
+
 	/** A spreadsheet's year is the one on screen, one file per table (docs/architecture.md#csv-export). */
 	it('offers one vehicle\'s calendar year as four CSV files', async () => {
 		const wrapper = await screen()
@@ -430,6 +470,38 @@ describe('the Statistics screen', () => {
 		expect(wrapper.find('.statistics__co2').text()).toContain('≈ 110 kg')
 	})
 
+	it('says so when the range has no figure for the reader, instead of empty charts', async () => {
+		const blank = { currency: 'EUR', buckets: MONTHS.map(() => EMPTY), range: EMPTY }
+		const still = { ...RATE, buckets: MONTHS.map(() => ({ total: null, distance: null, value: null })), range: { total: null, distance: null, value: null } }
+		vi.mocked(readStatistics).mockResolvedValue(answer({ costs: [blank], per_distance: [still], co2: { ...answer().co2, grams: null } }))
+
+		const wrapper = await screen()
+
+		expect(wrapper.findComponent(NcEmptyContent).props('name')).toBe('Nothing to show in this range')
+		expect(wrapper.find('table').exists()).toBe(false)
+		expect(wrapper.find('.statistics__co2').exists()).toBe(false)
+	})
+
+	/** Its records add no cost series, so a blank answer does not mean none were made. */
+	it('asks for a currency, not another range, on a vehicle without one', async () => {
+		vi.mocked(readStatistics).mockResolvedValue(answer({ costs: [], co2: { ...answer().co2, grams: null } }))
+
+		const wrapper = await screen({ vehicles: [{ ...VEHICLE, currency: null }] })
+
+		expect(wrapper.findAllComponents(NcEmptyContent).map((one) => one.props('name'))).toEqual(['No currency'])
+	})
+
+	it('draws the range when only the counter moved in it', async () => {
+		const blank = { currency: 'EUR', buckets: MONTHS.map(() => EMPTY), range: EMPTY }
+		const moved = { ...RATE, buckets: MONTHS.map(() => ({ total: null, distance: null, value: null })), range: { total: null, distance: 800, value: null } }
+		vi.mocked(readStatistics).mockResolvedValue(answer({ costs: [blank], per_distance: [moved], co2: { ...answer().co2, grams: null } }))
+
+		const wrapper = await screen()
+
+		expect(wrapper.findComponent(NcEmptyContent).exists()).toBe(false)
+		expect(cells(wrapper, 'Cost per 100 km in EUR, by month', 'Distance')[12]).toBe('800 km')
+	})
+
 	it('says the owner keeps the costs, on a vehicle whose costs the reader may not see', async () => {
 		vi.mocked(readStatistics).mockResolvedValue(answer({ vehicles: [{ uuid: 'v-1', costs: false }], costs: [] }))
 
@@ -459,6 +531,22 @@ describe('the Statistics screen', () => {
 		vi.mocked(readStatistics).mockResolvedValue(answer({ co2: null }))
 		const all = await screen({ vehicle: '' })
 		expect(all.find('.statistics__co2').exists()).toBe(false)
+	})
+
+	it('turns a spinner while the range is read', async () => {
+		/** @type {(read: import('../services/api.js').Statistics) => void} */
+		let answered = () => {}
+		vi.mocked(readStatistics).mockReturnValue(new Promise((resolve) => {
+			answered = resolve
+		}))
+
+		const wrapper = await screen()
+		expect(wrapper.findComponent(NcLoadingIcon).exists()).toBe(true)
+
+		answered(answer())
+		await flushPromises()
+		expect(wrapper.findComponent(NcLoadingIcon).exists()).toBe(false)
+		expect(wrapper.find('section.statistics__costs').exists()).toBe(true)
 	})
 
 	it('says when the range could not be read', async () => {

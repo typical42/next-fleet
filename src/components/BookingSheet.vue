@@ -3,6 +3,7 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
+import { getCurrentUser } from '@nextcloud/auth'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcDateTimePickerNative from '@nextcloud/vue/components/NcDateTimePickerNative'
 import NcDialog from '@nextcloud/vue/components/NcDialog'
@@ -52,6 +53,19 @@ const clash = ref(null)
 const stale = ref(false)
 /** The booking the next write is checked against: the prop, until a refused write reads a newer one. */
 const held = ref(props.booking)
+
+/**
+ * Asked back, the booker answers by changing the booking (BookingService::change()). Only the
+ * booker's change answers, so only the booker is told; of the booking the save is checked
+ * against, which an approver may have answered meanwhile.
+ */
+const asked = computed(() => held.value !== null
+	&& held.value.state === 'booked'
+	&& held.value.approval === 'asked'
+	&& held.value.user_id === getCurrentUser()?.uid)
+const question = computed(() => held.value?.approval_comment
+	? t('nextfleet', 'Question: {comment}', { comment: held.value.approval_comment })
+	: undefined)
 
 const action = computed(() => {
 	if (stale.value) {
@@ -216,6 +230,10 @@ function requestClose() {
 				:label="t('nextfleet', 'End')"
 				:disabled="saving"
 				@keydown.esc.stop="keepPicker" />
+			<NcNoteCard v-if="asked"
+				type="info"
+				:heading="question"
+				:text="t('nextfleet', 'Saving a change answers the question, and the booking waits for approval again.')" />
 			<NcTextField v-model="purpose"
 				:label="t('nextfleet', 'Purpose')"
 				:disabled="saving" />

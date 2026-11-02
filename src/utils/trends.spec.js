@@ -47,11 +47,13 @@ describe('the rate table', () => {
 		})
 	})
 
-	it('knows when a rate leaves out a vehicle that cost without moving, or moved without a cost', () => {
+	it('knows when a rate leaves out a cost without a distance', () => {
 		expect(bentOf(EUROS_PER_KM)).toBe(true)
+		expect(bentOf({ ...EUROS_PER_KM, buckets: [EUROS_PER_KM.buckets[0]], range: EUROS_PER_KM.buckets[0] })).toBe(true)
 		expect(bentOf({ ...EUROS_PER_KM, buckets: [EUROS_PER_KM.buckets[1]], range: EUROS_PER_KM.buckets[1] })).toBe(false)
 		expect(bentOf({ ...EUROS_PER_KM, per: 'h', buckets: [], range: { total: 4000, distance: 10, value: 400 } })).toBe(false)
-		expect(bentOf({ ...EUROS_PER_KM, buckets: [], range: { total: 4000, distance: 10, value: null } })).toBe(true)
+		// A vehicle that moved without a cost is in the rate at 0.
+		expect(bentOf({ ...EUROS_PER_KM, buckets: [{ total: null, distance: 400, value: 0 }], range: { total: 5000, distance: 1200, value: 5000 * 100 / 1200 } })).toBe(false)
 	})
 
 	it('rates a counter of hours per hour', () => {

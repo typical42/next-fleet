@@ -154,8 +154,8 @@ class TimelineService {
 			throw new DoesNotExistException('reading ' . $entryUuid . ' is not an Odometer Entry');
 		}
 		// The page leaves it out, so the row is not there either.
-		if ($entry instanceof Expense && !$this->costs->showsExpense($userId, $vehicle, $entry)) {
-			throw new DoesNotExistException('expense ' . $entryUuid . ' is not there for this reader');
+		if ($entry instanceof Expense) {
+			$this->costs->expense($userId, $vehicle, $entry);
 		}
 
 		return $this->dressed($userId, $vehicle, [$this->row($type, $entry)['row']])[0];

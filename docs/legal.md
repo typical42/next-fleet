@@ -87,6 +87,7 @@ With a pooled car, an employer processes employee data.
   They are counted on each read and stored nowhere.
 - **Access shows the whole vehicle.**
   Every role, viewer included, reads every trip and document.
+  One exception: where the owner keeps the costs from drivers and viewers, they read no document on another user's fill-up, maintenance or expense, no receipt on another user's booking, and no receipt on the vehicle itself ([costs](api.md#costs)).
   The owner decides whom to grant.
 - **Imported entries name the person who imported them.**
   Neither format says who drove.

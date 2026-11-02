@@ -103,19 +103,21 @@ class VehicleAccess {
 		return $this->mayChange($userId, self::EDIT, $vehicle, $bookerId);
 	}
 
-	/**
-	 * Whether the user answers the bookings of a vehicle that asks for approval: the owner and
-	 * the managers, who change anybody's booking anyway.
-	 */
+	/** Whether the user answers the bookings of a vehicle that asks for approval. */
 	public function mayApprove(string $userId, Vehicle $vehicle): bool {
-		return $this->mayChange($userId, self::EDIT, $vehicle, null);
+		return $this->oversees($userId, $vehicle);
+	}
+
+	/** Whether the user sees every driver's figures on the Statistics screen, not only their own. */
+	public function mayCompareDrivers(string $userId, Vehicle $vehicle): bool {
+		return $this->oversees($userId, $vehicle);
 	}
 
 	/**
-	 * Whether the user sees every driver's figures on the Statistics screen, not only their own:
-	 * the owner and the managers, who change anybody's trip anyway.
+	 * The owner and the managers: who change anybody's trip and booking anyway, so answering one
+	 * or comparing drivers needs no operation of its own.
 	 */
-	public function mayCompareDrivers(string $userId, Vehicle $vehicle): bool {
+	private function oversees(string $userId, Vehicle $vehicle): bool {
 		return $this->mayChange($userId, self::EDIT, $vehicle, null);
 	}
 

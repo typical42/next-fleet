@@ -276,6 +276,19 @@ describe('the vehicle screen', () => {
 		expect(sheet(wrapper).exists()).toBe(false)
 	})
 
+	/** Approval switched off answers the waiting bookings (docs/api.md#booking-approval). */
+	it('reads the bookings back once the vehicle is saved, and not when the sheet is closed', async () => {
+		const wrapper = screen()
+		await button(wrapper, 'Edit vehicle').vm.$emit('click')
+		await sheet(wrapper).vm.$emit('close')
+		expect(reload).not.toHaveBeenCalled()
+
+		await button(wrapper, 'Edit vehicle').vm.$emit('click')
+		await sheet(wrapper).vm.$emit('saved', VEHICLE)
+
+		expect(reload).toHaveBeenCalledOnce()
+	})
+
 	/** One dialog at a time (docs/ui.md#importing). */
 	it('swaps the vehicle sheet for the import, and reads back what it wrote', async () => {
 		const wrapper = screen()
@@ -375,10 +388,10 @@ describe('who has the car', () => {
 		const next = { uuid: 'b-1', starts_at: FRIDAY_SIX_PM + 86400, starts_at_off: 120, ends_at: FRIDAY_SIX_PM + 86400 + 7200, ends_at_off: 120 }
 
 		// \s for the thin spaces Intl sets, as the case above says.
-		for (const approval of ['requested', 'asked']) {
-			const wrapper = screen({ vehicle: { ...VEHICLE, out_with: null, my_next_booking: { ...next, approval } } })
-			expect(wrapper.find('.vehicle__next').text()).toMatch(/^Your booking, waiting for approval: Sat, 10\/03, 6:00\s–\s8:00\sPM$/)
-		}
+		const requested = screen({ vehicle: { ...VEHICLE, out_with: null, my_next_booking: { ...next, approval: 'requested' } } })
+		expect(requested.find('.vehicle__next').text()).toMatch(/^Your booking, waiting for approval: Sat, 10\/03, 6:00\s–\s8:00\sPM$/)
+		const asked = screen({ vehicle: { ...VEHICLE, out_with: null, my_next_booking: { ...next, approval: 'asked' } } })
+		expect(asked.find('.vehicle__next').text()).toMatch(/^Your booking, asked back: Sat, 10\/03, 6:00\s–\s8:00\sPM$/)
 		const approved = screen({ vehicle: { ...VEHICLE, out_with: null, my_next_booking: { ...next, approval: 'approved' } } })
 		expect(approved.find('.vehicle__next').text()).toMatch(/^Your booking: Sat, 10\/03, 6:00\s–\s8:00\sPM$/)
 	})

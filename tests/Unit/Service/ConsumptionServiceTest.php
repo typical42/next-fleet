@@ -184,7 +184,7 @@ class ConsumptionServiceTest extends TestCase {
 	}
 
 	/**
-	 * Many periods at once, as the Costs screen's months and year ask, each measured as it would
+	 * Many periods at once, as the year route's months and year ask, each measured as it would
 	 * be alone: one before any Reading, one after the vehicle's first, one over the swap, and the
 	 * whole span.
 	 */

@@ -20,6 +20,11 @@ vi.mock('../services/api.js', async (original) => ({
 	listBookings: vi.fn(),
 }))
 
+vi.mock('@nextcloud/auth', async (original) => ({
+	...await original(),
+	getCurrentUser: () => ({ uid: 'me' }),
+}))
+
 vi.mock('@nextcloud/l10n', async (original) => ({
 	...await original(),
 	getCanonicalLocale: () => 'en-GB',
@@ -311,6 +316,37 @@ describe('changing a booking', () => {
 
 		expect(changeBooking).toHaveBeenLastCalledWith('v-1', expect.objectContaining({ updated_at: 1790000999 }), expect.anything())
 		expect(wrapper.emitted('saved')).toHaveLength(1)
+	})
+
+	/** The booker answers a question by changing the booking (docs/api.md#booking-approval). */
+	it('shows the booker the question, and that saving answers it', () => {
+		const wrapper = sheet({ ...MINE, approval: 'asked', approval_comment: 'Could you take the van?' })
+
+		const cards = wrapper.findAllComponents(NcNoteCard).map((card) => [card.props('heading'), card.props('text')])
+		expect(cards).toEqual([['Question: Could you take the van?', 'Saving a change answers the question, and the booking waits for approval again.']])
+	})
+
+	it('shows the hint without a question, and nothing to anyone but the booker', () => {
+		const asked = { ...MINE, approval: 'asked', approval_comment: null }
+		expect(sheet(asked).findAllComponents(NcNoteCard).map((card) => [card.props('heading'), card.props('text')]))
+			.toEqual([[undefined, 'Saving a change answers the question, and the booking waits for approval again.']])
+
+		expect(sheet({ ...asked, user_id: 'ben' }).findAllComponents(NcNoteCard)).toHaveLength(0)
+		expect(sheet({ ...MINE, approval: 'requested' }).findAllComponents(NcNoteCard)).toHaveLength(0)
+	})
+
+	/** Answered meanwhile, a save answers nothing more, and the sheet says so no longer. */
+	it('drops the hint once the booking read back is no longer asked', async () => {
+		const asked = { ...MINE, approval: 'asked', approval_comment: 'Why?' }
+		vi.mocked(changeBooking).mockRejectedValueOnce(new ConflictError('Changed since you read it'))
+		vi.mocked(listBookings).mockResolvedValue([{ ...asked, approval: 'approved', updated_at: 1790000999 }])
+		const wrapper = sheet(asked)
+
+		await press(wrapper, 'Save')
+		vi.mocked(changeBooking).mockReturnValueOnce(new Promise(() => {}))
+		await press(wrapper, 'Save anyway')
+
+		expect(wrapper.findAllComponents(NcNoteCard).filter((card) => card.props('type') === 'info')).toHaveLength(0)
 	})
 
 	/** BookingService keeps a span that predates its bounds, so the sheet sends it too. */

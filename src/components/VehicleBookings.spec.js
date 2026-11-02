@@ -345,6 +345,7 @@ describe('changing and cancelling', () => {
 		await flushPromises()
 
 		expect(wrapper.getComponent(NcNoteCard).props('text')).toBe('This booking was taken, returned or cancelled meanwhile.')
+		expect(wrapper.getComponent(NcNoteCard).props('showAlert')).toBe(true)
 	})
 
 	/** What the booking now is decides whether a cancel still makes sense. */
@@ -416,6 +417,26 @@ describe('approval', () => {
 		expect(wrapper.findComponent(NcNoteCard).props('text')).toContain('offline')
 		expect(wrapper.findComponent(NcTextArea).props('modelValue')).toBe('Fill it up after')
 		expect(button(row(wrapper, 'b-3'), 'Decline')).toBeDefined()
+	})
+
+	/** Approval switched off in the vehicle sheet approves every booking that waits. */
+	it('closes the answers and the refusal once the screen reads the list again after a write elsewhere', async () => {
+		const waiting = booking({ ...ANNAS, approval: 'requested', may: ['edit', 'approve', 'ask', 'decline'] })
+		vi.mocked(listBookings).mockResolvedValue([waiting])
+		vi.mocked(answerBooking).mockRejectedValue(new Error('offline'))
+		const wrapper = await section()
+		await button(row(wrapper, 'b-3'), 'Answer').vm.$emit('click')
+		await button(row(wrapper, 'b-3'), 'Decline').vm.$emit('click')
+		await flushPromises()
+
+		vi.mocked(listBookings).mockResolvedValue([booking({ ...waiting, approval: 'approved', may: ['edit'] })])
+		await /** @type {any} */ (wrapper.vm).reload()
+		await flushPromises()
+
+		expect(wrapper.findComponent(NcNoteCard).exists()).toBe(false)
+		expect(wrapper.findComponent(NcTextArea).exists()).toBe(false)
+		expect(button(row(wrapper, 'b-3'), 'Answer')).toBeUndefined()
+		expect(button(row(wrapper, 'b-3'), 'Change')).toBeDefined()
 	})
 
 	it('offers ask back and decline beside approve, and no answer without the right', async () => {

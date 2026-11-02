@@ -18,6 +18,7 @@ use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Exception\AccessDeniedException;
 use OCA\NextFleet\Repair\StrangerRecipients;
+use OCA\NextFleet\Service\Names;
 use OCA\NextFleet\Service\NotificationService;
 use OCA\NextFleet\Service\RecipientService;
 use OCA\NextFleet\Service\Sharable;
@@ -204,6 +205,7 @@ class RecipientTest extends TestCase {
 			\OCP\Server::get(VehicleMapper::class),
 			$users,
 			\OCP\Server::get(IGroupManager::class),
+			new Names($users, \OCP\Server::get(IGroupManager::class)),
 			\OCP\Server::get(Sharable::class),
 			\OCP\Server::get(VehicleAccess::class),
 			\OCP\Server::get(NotificationService::class),

@@ -118,6 +118,15 @@ class BookingApprovalTest extends TestCase {
 		$this->assertFalse($off->needsApproval());
 	}
 
+	/** A manager's sheet read before the owner's switch sends it back as it was: a stale save, no refusal. */
+	public function testAManagersStaleSaveIsStaleNotRefused(): void {
+		$read = $this->vehicles->find(self::MANAGER, $this->vehicle->getUuid());
+		$this->vehicles->update(self::OWNER, $this->vehicle->getUuid(), $read->getUpdatedAt(), ['booking_approval' => false]);
+
+		$this->expectException(StaleUpdateException::class);
+		$this->vehicles->update(self::MANAGER, $this->vehicle->getUuid(), $read->getUpdatedAt(), ['booking_approval' => true, 'color' => 'red']);
+	}
+
 	public function testAnApproverApprovesWithAComment(): void {
 		$asked = $this->bookings->book(self::DRIVER, $this->vehicle->getUuid(), $this->span($this->tomorrow, 3));
 		$this->assertSame(['edit', 'cancel', 'approve', 'ask', 'decline'], $this->listed(self::MANAGER, $asked['uuid'])['may']);
@@ -286,6 +295,25 @@ class BookingApprovalTest extends TestCase {
 		$back = $this->bookings->answer(self::OWNER, $this->vehicle->getUuid(), $asked['uuid'], $moved['updated_at'], Booking::ASKED, ['comment' => 'Shorter?']);
 		$shorter = $this->bookings->change(self::DRIVER, $this->vehicle->getUuid(), $asked['uuid'], $back['updated_at'], $this->span($this->tomorrow, 2));
 		$this->assertSame([Booking::REQUESTED, null], [$shorter['approval'], $shorter['approval_comment']]);
+	}
+
+	/**
+	 * Asked back, the booker answers by changing the booking, a new purpose as much as a new span:
+	 * it is a request again. An approver's new purpose answers nothing, nor does a save that
+	 * changes nothing.
+	 */
+	public function testTheBookersChangeAnswersTheQuestion(): void {
+		$asked = $this->bookings->book(self::DRIVER, $this->vehicle->getUuid(), $this->span($this->tomorrow, 3));
+		$back = $this->bookings->answer(self::OWNER, $this->vehicle->getUuid(), $asked['uuid'], $asked['updated_at'], Booking::ASKED, ['comment' => 'What for?']);
+
+		$noted = $this->bookings->change(self::MANAGER, $this->vehicle->getUuid(), $asked['uuid'], $back['updated_at'], $this->span($this->tomorrow, 3, ['purpose' => 'Ask Ben']));
+		$this->assertSame([Booking::ASKED, 'What for?', self::OWNER], [$noted['approval'], $noted['approval_comment'], $noted['approval_by']]);
+
+		$saved = $this->bookings->change(self::DRIVER, $this->vehicle->getUuid(), $asked['uuid'], $noted['updated_at'], $this->span($this->tomorrow, 3, ['purpose' => 'Ask Ben']));
+		$this->assertSame(Booking::ASKED, $saved['approval'], 'a save that changes nothing answers nothing');
+
+		$answered = $this->bookings->change(self::DRIVER, $this->vehicle->getUuid(), $asked['uuid'], $saved['updated_at'], $this->span($this->tomorrow, 3, ['purpose' => 'The fair in Hall 3']));
+		$this->assertSame([Booking::REQUESTED, null, null], [$answered['approval'], $answered['approval_comment'], $answered['approval_by']]);
 	}
 
 	/** An approver moving a booking answers it by doing so, as one booking does. */

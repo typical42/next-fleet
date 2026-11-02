@@ -34,6 +34,9 @@ classDiagram
         jurisdiction
         logbook_mode
         lifecycle
+        costs_shared
+        booking_approval
+        booking_notices
     }
     class OdoReading {
         read_at
@@ -161,7 +164,8 @@ classDiagram
 
 The vehicle's `user_id` is its owner.
 Everyone else reaches it through an `Access` grant with a role.
-`VehicleAccess` alone turns the two into the five operations ([access](../architecture.md#access), [authorization](../security.md#authorization)).
+`VehicleAccess` alone turns the two into the six operations ([access](../architecture.md#access), [authorization](../security.md#authorization)).
+`costs` also follows the vehicle's `costs_shared`.
 `GrantService` grants only whom `Sharable` allows.
 `TransferService` hands a vehicle to a new owner.
 
@@ -176,6 +180,9 @@ classDiagram
         may(userId, operation, vehicle)
         mayChange(userId, operation, vehicle, createdBy)
         mayBooking(userId, vehicle, bookerId)
+        mayCost(userId, vehicle, createdBy)
+        mayApprove(userId, vehicle)
+        mayCompareDrivers(userId, vehicle)
         reachable(userId)
     }
     class Sharable {
@@ -189,7 +196,7 @@ classDiagram
     }
     Vehicle "1" --> "*" Access : one live grant per grantee
     Vehicle "1" --> "*" ReminderRecipient
-    VehicleAccess ..> Vehicle : owner
+    VehicleAccess ..> Vehicle : owner, costs_shared
     VehicleAccess ..> Access : role
     GrantService --> Access : grants, re-roles, revokes
     GrantService ..> Sharable : may the owner reach the grantee
@@ -205,6 +212,8 @@ classDiagram
 A `Booking` is a plan, not an Entry, and writes no Reading.
 The handover is its `out_*` and `in_*` columns.
 The driver logs the trip from a returned booking, and `trip_id` ties the two ([bookings](../architecture.md#bookings), [lifecycles](lifecycles.md#a-booking)).
+Where the vehicle asks for approval, the owner and the managers answer it ([booking approval](../architecture.md#booking-approval), [lifecycles](lifecycles.md#a-bookings-approval)).
+`BookingNotices` tells the approvers, the booker, and the vehicle's `BookingRecipient`s, each account or group ([booking notices](../architecture.md#booking-notices)).
 
 ```mermaid
 classDiagram
@@ -214,6 +223,10 @@ classDiagram
         ends_at
         purpose
         state
+        approval
+        approval_by
+        approval_comment
+        announced
         out_at
         out_odo
         out_level
@@ -229,13 +242,22 @@ classDiagram
         end_odo
         category
     }
+    class BookingRecipient {
+        user_id
+        group_id
+    }
     class BookingService
+    class BookingNotices
     Vehicle "1" --> "*" Booking
+    Vehicle "1" --> "*" BookingRecipient : booking notices go to
     Booking "0..1" --> "0..1" Trip : becomes
     Trip "1" --> "1" OdoReading : writes
     Booking "1" --> "*" Document : handover photos
-    BookingService --> Booking
-    BookingService ..> VehicleAccess : mayBooking
+    BookingService --> Booking : books, answers, hands over
+    BookingService ..> VehicleAccess : mayBooking, mayApprove
+    BookingService ..> BookingNotices : after the commit
+    BookingNotices ..> BookingRecipient : the list, for the ticked events
+    BookingNotices ..> VehicleAccess : view, edit
 ```
 
 ## Documents and the inbox

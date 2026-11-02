@@ -9,10 +9,13 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Service;
 
 use OCA\NextFleet\Db\BaseEntity;
+use OCA\NextFleet\Db\Booking;
+use OCA\NextFleet\Db\Document;
 use OCA\NextFleet\Db\Energy;
 use OCA\NextFleet\Db\Expense;
 use OCA\NextFleet\Db\Maintenance;
 use OCA\NextFleet\Db\Vehicle;
+use OCP\AppFramework\Db\DoesNotExistException;
 
 /**
  * An Entry's money as the reader may see it (VehicleAccess::COSTS), for every door an Entry or its
@@ -25,18 +28,13 @@ class CostsShown {
 	) {
 	}
 
-	/** Whether the reader sees every amount on the vehicle, its sums included. */
-	public static function all(Vehicle $vehicle): bool {
-		return $vehicle->showsCosts();
-	}
-
 	/**
 	 * Whose expenses the reader may read, null for everybody's. An expense is nothing but its
 	 * amount, so one kept from the reader is no row at all; a query narrowed to the author keeps
 	 * a page the length it says.
 	 */
 	public static function expensesBy(string $userId, Vehicle $vehicle): ?string {
-		return self::all($vehicle) ? null : $userId;
+		return $vehicle->showsCosts() ? null : $userId;
 	}
 
 	/**
@@ -56,11 +54,31 @@ class CostsShown {
 	}
 
 	/**
-	 * Whether the reader may see a paper on `$row`, null for one of the vehicle's own. A receipt
-	 * shows what the entry cost, so a paper on an Entry follows that Entry's amounts; a handover
-	 * photo or the vehicle's own papers carry no cost.
+	 * The expense, for a door that looked it up by uuid. One kept from the reader is not found
+	 * rather than refused, so its uuid tells nothing of what is there.
+	 *
+	 * @throws DoesNotExistException
 	 */
-	public function showsPaper(string $userId, Vehicle $vehicle, ?BaseEntity $row): bool {
+	public function expense(string $userId, Vehicle $vehicle, Expense $expense): Expense {
+		return $this->showsExpense($userId, $vehicle, $expense) ? $expense
+			: throw new DoesNotExistException('No expense ' . $expense->getUuid() . ' for this user');
+	}
+
+	/**
+	 * Whether the reader may see a paper of `$kind` on `$row`, null for one of the vehicle's own. A
+	 * receipt shows what the entry cost, so a paper on an Entry follows that Entry's amounts. A
+	 * receipt on the vehicle itself, the purchase say, follows the vehicle's costs. A receipt on a
+	 * booking, a toll say, is its booker's, who drove and paid. A handover photo or the vehicle's
+	 * other papers carry no cost: drivers need the registration and the insurance.
+	 */
+	public function showsPaper(string $userId, Vehicle $vehicle, string $kind, ?BaseEntity $row): bool {
+		if ($row === null) {
+			return $kind !== Document::RECEIPT || $this->access->mayCost($userId, $vehicle, null);
+		}
+		if ($row instanceof Booking) {
+			return $kind !== Document::RECEIPT || $this->access->mayCost($userId, $vehicle, $row->getUserId());
+		}
+
 		return !($row instanceof Energy || $row instanceof Maintenance || $row instanceof Expense)
 			|| $this->access->mayCost($userId, $vehicle, $row->getCreatedBy());
 	}

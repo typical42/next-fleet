@@ -43,6 +43,9 @@ use OCP\Notification\UnknownNotificationException;
  * @psalm-type ReminderNotice = array{vehicle: string, plate: string, template_key: ?string, title: ?string, due_date: ?string, due_odo: ?int, occurrence?: int}
  */
 class Notifier implements INotifier {
+	/** The most characters of free text a notice carries (shortened()). */
+	private const LONGEST = 200;
+
 	/**
 	 * What prepare() read, for the next notice: Nextcloud prepares a list of many notices of one
 	 * vehicle one at a time. Kept for the notifier's life - a request, or one cron run, in which a
@@ -115,7 +118,7 @@ class Notifier implements INotifier {
 			GrantNotices::OBJECT => $this->granted($l, $user, $vehicle, $notification->getObjectId()),
 			BookingNotices::OBJECT => $this->cancelled($l, $user, $vehicle, $notification->getObjectId()),
 			BookingNotices::EVENT => $this->bookingEvent($l, $user, $vehicle, $notification->getObjectId(), $notification->getSubject(), $p),
-			BookingNotices::APPROVAL => $this->approval($l, $user, $vehicle, $notification->getObjectId(), $notification->getSubject(), $p),
+			BookingNotices::APPROVAL => $this->approval($l, $user, $vehicle, $notification, $p),
 			default => $this->reminded($l, $user, $vehicle, (int)$notification->getObjectId(), $notification->getSubject(), $p),
 		};
 		$notification->setParsedSubject($subject)->setIcon($icon);
@@ -311,19 +314,21 @@ class Notifier implements INotifier {
 	 * now. Shown only while the booking's approval is still the one sent, so an answer takes the
 	 * request off every approver's list and a later answer the earlier one off the booker's; a
 	 * request or a question only while the booking is not cancelled, and a request only while the
-	 * reader may still answer it.
+	 * reader may still answer it. A question carries the comment as its message, read off the
+	 * booking like the names, and for the booker only, who may read it.
 	 *
 	 * @param array<string, mixed> $p
 	 * @throws UnknownNotificationException for a subject this app does not send
 	 * @throws AlreadyProcessedException if the booking is gone or answered since, or the reader lost the vehicle
 	 * @throws \OCP\DB\Exception
 	 */
-	private function approval(IL10N $l, string $user, Vehicle $vehicle, string $bookingUuid, string $subject, array $p): string {
+	private function approval(IL10N $l, string $user, Vehicle $vehicle, INotification $notification, array $p): string {
+		$subject = $notification->getSubject();
 		if (!$this->sees($user, $vehicle)) {
 			throw new AlreadyProcessedException();
 		}
 		try {
-			$booking = $this->bookings->findOnVehicle((int)$vehicle->getId(), $bookingUuid);
+			$booking = $this->bookings->findOnVehicle((int)$vehicle->getId(), $notification->getObjectId());
 		} catch (DoesNotExistException) {
 			throw new AlreadyProcessedException();
 		}
@@ -338,6 +343,10 @@ class Notifier implements INotifier {
 		$at = self::at($l, $p);
 		$nameOf = fn (?string $uid): string => $uid === null ? '' : ($this->users->getDisplayName($uid) ?? $uid);
 		$by = $nameOf($booking->getApprovalBy());
+		$question = (string)$booking->getApprovalComment();
+		if ($subject === Booking::ASKED && $question !== '' && $user === $booking->getUserId()) {
+			$notification->setParsedMessage(self::shortened($question));
+		}
 
 		return match ($subject) {
 			Booking::REQUESTED => $l->t('%1$s asks to book %2$s from %3$s to %4$s', [$nameOf($booking->getUserId()), $name, $at('starts_at'), $at('ends_at')]),
@@ -349,6 +358,11 @@ class Notifier implements INotifier {
 				: $l->t('%1$s declined your booking of %2$s from %3$s', [$by, $name, $at('starts_at')]),
 			default => throw new UnknownNotificationException(),
 		};
+	}
+
+	/** A notice is a line, not a letter: the booking shows the whole text. */
+	private static function shortened(string $text): string {
+		return mb_strlen($text) > self::LONGEST ? mb_substr($text, 0, self::LONGEST - 1) . '…' : $text;
 	}
 
 	/**

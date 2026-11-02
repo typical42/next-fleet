@@ -341,12 +341,12 @@ abstract class BaseMapper extends QBMapper {
 
 	/**
 	 * The earliest `$instant` among the live rows of `$vehicleIds`, null when they have none:
-	 * where "all of it" starts.
+	 * where "all of it" starts. With `$createdBy`, only that author's rows.
 	 *
 	 * @param list<int> $vehicleIds
 	 * @throws \OCP\DB\Exception
 	 */
-	protected function earliest(string $instant, array $vehicleIds): ?int {
+	protected function earliest(string $instant, array $vehicleIds, ?string $createdBy = null): ?int {
 		if ($vehicleIds === []) {
 			return null;
 		}
@@ -355,6 +355,9 @@ abstract class BaseMapper extends QBMapper {
 			->from($this->tableName)
 			->where(InList::in($qb, 'vehicle_id', $vehicleIds, IQueryBuilder::PARAM_INT_ARRAY))
 			->andWhere($qb->expr()->isNull('deleted_at'));
+		if ($createdBy !== null) {
+			$qb->andWhere($qb->expr()->eq('created_by', $qb->createNamedParameter($createdBy)));
+		}
 		$result = $qb->executeQuery();
 		try {
 			$value = $result->fetchOne();

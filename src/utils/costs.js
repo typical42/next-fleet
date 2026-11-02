@@ -103,7 +103,12 @@ export function labelsOf(answer, locale = getCanonicalLocale(), timeZone = undef
  * @return {{columns: string[], rows: Row[]}} the column heads and the rows
  */
 export function tableOf(series, labels, locale = getCanonicalLocale()) {
-	const columns = [...labels, t('nextfleet', 'Whole period'), t('nextfleet', 'Share')]
+	const columns = [
+		...labels,
+		t('nextfleet', 'Whole period'),
+		// TRANSLATORS: "Share" is a proportion of the whole, not sharing.
+		t('nextfleet', 'Share'),
+	]
 	const costs = [...series.buckets, series.range]
 	const whole = series.range.total
 	const percent = new Intl.NumberFormat(locale, { style: 'percent', maximumFractionDigits: 0 })
@@ -156,10 +161,10 @@ export function tableOf(series, labels, locale = getCanonicalLocale()) {
  */
 
 /**
- * The year's CO₂ as the Costs screen states it: always an estimate, with each factor's year and
+ * A range's CO₂ as Statistics states it: always an estimate, with each factor's year and
  * source. Null from the server is "unavailable", which is not a zero.
  *
- * @param {import('../services/api.js').Co2|null} co2 - the year's, as the route answers it
+ * @param {import('../services/api.js').Co2|null} co2 - the range's, as the route answers it
  * @param {string} [locale] - defaults to the one Nextcloud resolved for this session
  * @return {Co2Text} what the screen says
  */

@@ -19,8 +19,10 @@ use OCP\Migration\SimpleMigrationStep;
 /**
  * Whether drivers and viewers see what a vehicle costs (docs/architecture.md#access), who hears of
  * its bookings (docs/architecture.md#booking-notices), and whether a booking waits for an answer
- * (docs/architecture.md#booking-approval). Each defaults to what a vehicle did before it, so the
- * rows already there need no backfill.
+ * (docs/architecture.md#booking-approval). No row needs a backfill: costs stay shared and no
+ * booking waits. Booking notices start, though: a null `booking_notices` reads as
+ * Vehicle::DEFAULT_NOTICES, and a vehicle with no booking recipients tells its owner, so every
+ * owner hears of a booking ahead and the car taken now.
  */
 class Version000010Date20261101000000 extends SimpleMigrationStep {
 	/**
@@ -58,6 +60,10 @@ class Version000010Date20261101000000 extends SimpleMigrationStep {
 		// Booking::heard(): a booking from before reads as heard of by its null approval.
 		if (!$bookings->hasColumn('announced')) {
 			$bookings->addColumn('announced', Types::BOOLEAN, ['notnull' => false, 'default' => false]);
+		}
+		// BookingMapper::findWaitingEnded() searches every vehicle each hour.
+		if (!$bookings->hasIndex('fleet_bkg_wait_end_idx')) {
+			$bookings->addIndex(['approval', 'ends_at'], 'fleet_bkg_wait_end_idx');
 		}
 		// Not `fleet_booking_notice_recipients`: Nextcloud refuses a table name over 27 characters.
 		if (!$schema->hasTable('fleet_booking_recipients')) {

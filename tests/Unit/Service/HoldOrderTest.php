@@ -12,6 +12,7 @@ use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\Booking;
 use OCA\NextFleet\Db\BookingMapper;
+use OCA\NextFleet\Db\BookingRecipientMapper;
 use OCA\NextFleet\Db\Document;
 use OCA\NextFleet\Db\DocumentMapper;
 use OCA\NextFleet\Db\Energy;
@@ -36,6 +37,7 @@ use OCA\NextFleet\Service\ExpenseService;
 use OCA\NextFleet\Service\GrantNotices;
 use OCA\NextFleet\Service\GrantService;
 use OCA\NextFleet\Service\MaintenanceService;
+use OCA\NextFleet\Service\Names;
 use OCA\NextFleet\Service\NotificationService;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\OwnFiles;
@@ -85,6 +87,8 @@ class HoldOrderTest extends TestCase {
 		$this->vehicle->setLifecycle(Vehicle::ACTIVE);
 		$this->vehicle->setEnergyTypes(['diesel']);
 		$this->vehicle->setJurisdiction('generic');
+		// What the gate leaves for the owner, who sees every row and paper.
+		$this->vehicle->setMay(['view', 'log', 'edit', 'delete', 'own', 'costs']);
 
 		$this->fleet = $this->createMock(VehicleService::class);
 		$this->fleet->method('reach')->willReturn($this->vehicle);
@@ -186,7 +190,7 @@ class HoldOrderTest extends TestCase {
 		$this->calls = [];
 		$service = match ($kind) {
 			'energy' => new EnergyService($this->rows(EnergyMapper::class, $this->row(new Energy())), $this->odometer, $this->fleet, $this->vehicles, $this->createMock(Jurisdictions::class), $this->db, $this->createMock(CostsShown::class)),
-			'expense' => new ExpenseService($this->rows(ExpenseMapper::class, $this->row(new Expense())), $this->fleet, $this->vehicles, $this->createMock(Jurisdictions::class), $this->db, $this->createMock(CostsShown::class)),
+			'expense' => new ExpenseService($this->rows(ExpenseMapper::class, $this->row(new Expense())), $this->fleet, $this->vehicles, $this->createMock(Jurisdictions::class), $this->db, $this->shownExpenses()),
 			'maintenance' => $this->workshop(),
 		};
 		match ($action) {
@@ -195,6 +199,11 @@ class HoldOrderTest extends TestCase {
 			'delete' => $service->delete(self::OWNER, self::VEHICLE, self::ROW, self::TOKEN),
 			'restore' => $service->restore(self::OWNER, self::VEHICLE, self::ROW, self::TOKEN),
 		};
+	}
+
+	/** The real rule, read off the owner's `may`: every expense is there for them. */
+	private function shownExpenses(): CostsShown {
+		return new CostsShown(new VehicleAccess($this->createMock(AccessMapper::class), $this->createMock(IUserManager::class), $this->createMock(IGroupManager::class)));
 	}
 
 	private function workshop(): MaintenanceService {
@@ -421,11 +430,14 @@ class HoldOrderTest extends TestCase {
 			$this->createMock(VehicleAccess::class),
 			$this->vehicles,
 			$recipients,
+			$this->createMock(BookingRecipientMapper::class),
 			$users,
 			$this->createMock(IGroupManager::class),
+			new Names($users, $this->createMock(IGroupManager::class)),
 			$sharable,
 			$this->createMock(GrantNotices::class),
 			$this->createMock(NotificationService::class),
+			$this->createMock(BookingNotices::class),
 			$this->db,
 			$this->createMock(Pending::class),
 			$this->createMock(LoggerInterface::class),

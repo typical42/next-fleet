@@ -558,7 +558,8 @@ class VehicleIdorTest extends TestCase {
 			'timeline#gaps' => $this->timeline(self::STRANGER, $params)->gaps($uuid),
 			'timeline#show' => $this->timeline(self::STRANGER, $params)->show($uuid, 'trip', self::NO_SUCH_ENTRY),
 			'kpi#index' => $this->kpis(self::STRANGER, $params + ['from' => 1749900000, 'to' => 1750200000])->index($uuid),
-			'kpi#year' => $this->kpis(self::STRANGER, $params + ['tz' => 'Europe/Berlin'])->year($uuid, '2025'),
+			// Kept for v1 alone, so only through OCS.
+			'kpi#year' => (new Ocs\KpiController(Application::APP_ID, $this->request($params + ['tz' => 'Europe/Berlin']), $this->figures, $this->session(self::STRANGER)))->year($uuid, '2025'),
 			// Names its vehicle in the query; without one it is the stranger's own fleet.
 			'statistics#index' => $this->statisticsRoute(self::STRANGER, $params + ['vehicle' => $uuid, 'tz' => 'Europe/Berlin'])->index(),
 			'report#logbook' => $this->report(self::STRANGER, $params)->logbook($uuid, '2026'),

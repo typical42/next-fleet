@@ -4,7 +4,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { addGrant, addRecipient, attachDocument, BookingConflictError, cancelBooking, ChangedError, changeBooking, changeGrant, checkIn, checkOut, closeGap, createBooking, ImportRefusedError, listBookings, ConflictError, previewImport, runImport, undoImport, createReminder, createVehicle, csvUrl, deleteEntry, deleteVehicle, detachDocument, dismissReminder, documentUrl, energyPrefill, expensePrefill, fetchDocument, getPreferences, getVehicle, leaveVehicle, LockedError, maintenancePrefill, readHeld, recordEnergy, recordExpense, recordMaintenance, tripPrefill, restoreDocument, listDocuments, listFleetReminders, listGrants, listRecipients, listReminders, listVehicles, logbookUrl, mileageClaimUrl, NotFoundError, OfflineError, readEntry, readGaps, readInbox, readKpis, readStatistics, readTimeline, recordReading, recordTrip, RefusedError, reminderTemplates, removeRecipient, resetReading, restoreEntry, revokeGrant, searchGrantees, searchUsers, restoreVehicle, savePreferences, snoozeReminder, stickerUrl, thumbnailUrl, updateEntry, updateVehicle } from './api.js'
+import { addGrant, addRecipient, attachDocument, BookingConflictError, cancelBooking, ChangedError, changeBooking, changeGrant, checkIn, checkOut, closeGap, createBooking, ImportRefusedError, listBookings, ConflictError, previewImport, runImport, undoImport, createReminder, createVehicle, csvUrl, deleteEntry, deleteVehicle, detachDocument, dismissReminder, documentUrl, energyPrefill, expensePrefill, fetchDocument, getPreferences, getVehicle, leaveVehicle, LockedError, maintenancePrefill, readHeld, recordEnergy, recordExpense, recordMaintenance, tripPrefill, restoreDocument, listDocuments, listFleetReminders, listGrants, listRecipients, listReminders, listVehicles, logbookUrl, mileageClaimUrl, NotFoundError, OfflineError, readEntry, readGaps, readInbox, readKpis, readStatistics, readTimeline, recordReading, recordTrip, RefusedError, reminderTemplates, removeBookingRecipient, removeRecipient, resetReading, restoreEntry, revokeGrant, searchGrantees, searchUsers, restoreVehicle, savePreferences, snoozeReminder, stickerUrl, thumbnailUrl, updateEntry, updateVehicle } from './api.js'
 
 vi.mock('@nextcloud/router', () => ({
 	generateUrl: (/** @type {string} */ path) => `/index.php${path}`,
@@ -604,6 +604,16 @@ describe('the recipient calls', () => {
 		expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ user_id: 'jane doe@example.org' })
 		expect(fetch.mock.calls[2][0]).toBe(`${base}/jane%20doe%40example.org`)
 		expect(fetch.mock.calls[2][1].method).toBe('DELETE')
+	})
+
+	// A web server refuses an encoded slash in a path by default, and the route takes a plain one.
+	it('removes a booking recipient whose group id holds a slash with the slash as it is', async () => {
+		const fetch = answers(200, [])
+
+		await removeBookingRecipient(vehicle.uuid, { recipient: 'pool/north west', recipient_type: 'group' })
+
+		expect(fetch.mock.calls[0][0]).toBe(`/index.php/apps/nextfleet/api/vehicles/${vehicle.uuid}/booking-recipients/group/pool/north%20west`)
+		expect(fetch.mock.calls[0][1].method).toBe('DELETE')
 	})
 
 	it('searches accounts through the core autocomplete and hands back id and name', async () => {

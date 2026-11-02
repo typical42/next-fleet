@@ -118,7 +118,11 @@ class DocumentService {
 		$vehicleId = (int)$vehicle->getId();
 		// Before the file: whether a file id exists is nothing to tell somebody the rule refuses.
 		// The row's author never changes, so the lookup under the hold below cannot change the answer.
-		$this->permit($userId, $vehicle, $linkedType === null ? null : $this->linked($linkedType)->findOnVehicle($vehicleId, (string)$linkedUuid));
+		$linked = $linkedType === null ? null : $this->linked($linkedType)->findOnVehicle($vehicleId, (string)$linkedUuid);
+		if ($linked instanceof Expense) {
+			$this->costs->expense($userId, $vehicle, $linked);
+		}
+		$this->permit($userId, $vehicle, $linked);
 
 		$this->files->find($userId, $fileId);
 
@@ -153,7 +157,7 @@ class DocumentService {
 	 *
 	 * @return list<Listed> the list as it now stands
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not keep this paper
-	 * @throws \OCP\AppFramework\Db\DoesNotExistException if the vehicle has no such document
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException if the vehicle has no such document for this user
 	 * @throws \OCP\DB\Exception
 	 */
 	public function detach(string $userId, string $vehicleUuid, string $documentUuid): array {
@@ -161,7 +165,9 @@ class DocumentService {
 		$this->atomicRetry(function () use ($userId, $vehicle, $documentUuid): void {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$document = $this->documents->findOnVehicle((int)$vehicle->getId(), $documentUuid);
-			$this->permit($userId, $vehicle, $this->owners($vehicle, [$document])[(int)$document->getId()]);
+			$owner = $this->owners($vehicle, [$document])[(int)$document->getId()];
+			$this->found($userId, $vehicle, $document, $owner);
+			$this->permit($userId, $vehicle, $owner);
 			// Nothing edits a document, so the row's own token is the one read: the hold orders
 			// two detaches, and the second finds nothing.
 			$this->documents->softDelete($document, $document->getUpdatedAt());
@@ -177,7 +183,7 @@ class DocumentService {
 	 *
 	 * @return list<Listed> the list as it now stands
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not keep this paper
-	 * @throws \OCP\AppFramework\Db\DoesNotExistException if the vehicle has no such document, live or detached, or the row it belonged to is deleted
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException if the vehicle has no such document for this user, live or detached, or the row it belonged to is deleted
 	 * @throws \OCP\DB\Exception
 	 */
 	public function restore(string $userId, string $vehicleUuid, string $documentUuid): array {
@@ -186,6 +192,7 @@ class DocumentService {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$document = $this->documents->findAnyOnVehicle((int)$vehicle->getId(), $documentUuid);
 			$owner = $this->owners($vehicle, [$document])[(int)$document->getId()];
+			$this->found($userId, $vehicle, $document, $owner);
 			$this->permit($userId, $vehicle, $owner);
 			if ($document->getDeletedAt() === null
 				|| $this->holds((int)$vehicle->getId(), $document->getFileId(), $document->getLinkedType(), $document->getLinkedId())) {
@@ -330,7 +337,8 @@ class DocumentService {
 
 	/**
 	 * The papers of one vehicle the reader may see, in their order: none on an entry whose amounts
-	 * are kept from them (CostsShown::showsPaper()).
+	 * are kept from them, nor a receipt on the vehicle whose costs are or on somebody else's
+	 * booking (CostsShown::showsPaper()).
 	 *
 	 * @param list<Document> $documents
 	 * @return list<Document>
@@ -338,17 +346,30 @@ class DocumentService {
 	 */
 	public function shown(string $userId, Vehicle $vehicle, array $documents): array {
 		// A reader who sees every amount sees every paper, and needs no look-up of whose entry it is.
-		if (CostsShown::all($vehicle)) {
+		if ($vehicle->showsCosts()) {
 			return $documents;
 		}
 		$owners = $this->owners($vehicle, $documents);
 
-		return array_values(array_filter($documents, function (Document $document) use ($userId, $vehicle, $owners): bool {
-			$owner = $owners[(int)$document->getId()];
-			// A link whose row cannot be found says nothing of whose it was: kept, not shown.
-			return ($owner !== null || $document->getLinkedType() === null)
-				&& $this->costs->showsPaper($userId, $vehicle, $owner);
-		}));
+		return array_values(array_filter($documents, fn (Document $document): bool => $this->sees($userId, $vehicle, $document, $owners[(int)$document->getId()])));
+	}
+
+	private function sees(string $userId, Vehicle $vehicle, Document $document, ?BaseEntity $owner): bool {
+		// A link whose row cannot be found says nothing of whose it was: kept, not shown.
+		return $vehicle->showsCosts() || (($owner !== null || $document->getLinkedType() === null)
+			&& $this->costs->showsPaper($userId, $vehicle, $document->getKind(), $owner));
+	}
+
+	/**
+	 * Not found rather than refused, as download() answers: what the reader may not see is not
+	 * there for them to write on either.
+	 *
+	 * @throws DoesNotExistException
+	 */
+	private function found(string $userId, Vehicle $vehicle, Document $document, ?BaseEntity $owner): void {
+		if (!$this->sees($userId, $vehicle, $document, $owner)) {
+			throw new DoesNotExistException('No document ' . $document->getUuid() . ' for this user');
+		}
 	}
 
 	/**

@@ -88,10 +88,11 @@ return [
 		['name' => 'recipient#index', 'url' => '/api/vehicles/{uuid}/recipients', 'verb' => 'GET'],
 		['name' => 'recipient#create', 'url' => '/api/vehicles/{uuid}/recipients', 'verb' => 'POST'],
 		['name' => 'recipient#delete', 'url' => '/api/vehicles/{uuid}/recipients/{recipient}', 'verb' => 'DELETE'],
-		// Who hears of the bookings: an account or a group, named by its type and its name.
+		// Who hears of the bookings: an account or a group, named by its type and its name. A group
+		// id may hold a slash, so the name is the rest of the path.
 		['name' => 'bookingRecipient#index', 'url' => '/api/vehicles/{uuid}/booking-recipients', 'verb' => 'GET'],
 		['name' => 'bookingRecipient#create', 'url' => '/api/vehicles/{uuid}/booking-recipients', 'verb' => 'POST'],
-		['name' => 'bookingRecipient#delete', 'url' => '/api/vehicles/{uuid}/booking-recipients/{type}/{recipient}', 'verb' => 'DELETE'],
+		['name' => 'bookingRecipient#delete', 'url' => '/api/vehicles/{uuid}/booking-recipients/{type}/{recipient}', 'verb' => 'DELETE', 'requirements' => ['recipient' => '.+']],
 
 		// Who else may use the vehicle, and in which role - the owner's alone to read and write
 		// (CONTEXT.md, Vehicle Access). A grant is named by its uuid, since a user and a group may
@@ -146,11 +147,9 @@ return [
 		// The header's figures for one period the client names, since where a year starts is the
 		// person's midnight, not the server's (docs/ui.md).
 		['name' => 'kpi#index', 'url' => '/api/vehicles/{uuid}/kpis', 'verb' => 'GET'],
-		// Those figures for one year, and each month's cost; v1 serves it, the app reads Statistics.
-		// The client names the zone rather than twelve periods, since a month is cut at its midnight.
-		['name' => 'kpi#year', 'url' => '/api/vehicles/{uuid}/costs/{year}', 'verb' => 'GET'],
 		// The Statistics screen's: one vehicle or all, so the vehicle is a filter in the query
-		// rather than a path. The client names the range's days and its zone, for the reason above.
+		// rather than a path. The client names the range's days and its zone, since a day is cut
+		// at its midnight.
 		['name' => 'statistics#index', 'url' => '/api/statistics', 'verb' => 'GET'],
 		// A Gap is named by the trip whose claim opened it, and closing one writes a trip - so it is
 		// the trips' controller that answers (docs/architecture.md#logbook-mode).
@@ -220,6 +219,8 @@ return [
 		['name' => 'Ocs\Timeline#gaps', 'url' => '/api/v1/vehicles/{uuid}/gaps', 'verb' => 'GET'],
 		['name' => 'Ocs\Timeline#show', 'url' => '/api/v1/vehicles/{uuid}/timeline/{type}/{entry}', 'verb' => 'GET'],
 		['name' => 'Ocs\Kpi#index', 'url' => '/api/v1/vehicles/{uuid}/kpis', 'verb' => 'GET'],
+		// A year's figures and each month's cost. v1 promised it; the web UI reads Statistics, so it
+		// has no internal twin. The client names the zone, since a month is cut at its midnight.
 		['name' => 'Ocs\Kpi#year', 'url' => '/api/v1/vehicles/{uuid}/costs/{year}', 'verb' => 'GET'],
 		['name' => 'Ocs\Statistics#index', 'url' => '/api/v1/statistics', 'verb' => 'GET'],
 
@@ -237,7 +238,7 @@ return [
 		['name' => 'Ocs\Recipient#delete', 'url' => '/api/v1/vehicles/{uuid}/recipients/{recipient}', 'verb' => 'DELETE'],
 		['name' => 'Ocs\BookingRecipient#index', 'url' => '/api/v1/vehicles/{uuid}/booking-recipients', 'verb' => 'GET'],
 		['name' => 'Ocs\BookingRecipient#create', 'url' => '/api/v1/vehicles/{uuid}/booking-recipients', 'verb' => 'POST'],
-		['name' => 'Ocs\BookingRecipient#delete', 'url' => '/api/v1/vehicles/{uuid}/booking-recipients/{type}/{recipient}', 'verb' => 'DELETE'],
+		['name' => 'Ocs\BookingRecipient#delete', 'url' => '/api/v1/vehicles/{uuid}/booking-recipients/{type}/{recipient}', 'verb' => 'DELETE', 'requirements' => ['recipient' => '.+']],
 
 		['name' => 'Ocs\Grant#index', 'url' => '/api/v1/vehicles/{uuid}/grants', 'verb' => 'GET'],
 		['name' => 'Ocs\Grant#create', 'url' => '/api/v1/vehicles/{uuid}/grants', 'verb' => 'POST'],

@@ -61,11 +61,49 @@ stateDiagram-v2
     state "cancelled<br/>Booking::CANCELLED" as cancelled
     [*] --> booked : book
     booked --> booked : change
-    booked --> cancelled : cancel
-    booked --> out : checkOut
+    booked --> cancelled : cancel, decline, or PendingJob at ends_at while it waits
+    booked --> out : checkOut, not while it waits for approval
     out --> returned : checkIn
     returned --> returned : tie, trip_id set by TripService
 ```
+
+## A booking's approval
+
+`approval` in `fleet_bookings`, beside `state`.
+`requested`, `asked` and `approved` mean something only while the state is `booked`; `declined` stays on the booking it cancelled, and the list shows it as **Declined**.
+A cancel keeps the last one as history ([booking approval](../architecture.md#booking-approval)).
+`requested` and `asked` wait (`Booking::OPEN`): the booking holds its span, but `checkOut` refuses it.
+An approver is the owner or a manager (`VehicleAccess::mayApprove`).
+
+```mermaid
+stateDiagram-v2
+    state "null<br/>nobody asked" as none
+    state "requested<br/>Booking::REQUESTED" as requested
+    state "asked<br/>Booking::ASKED<br/>with approval_comment" as asked
+    state "approved<br/>Booking::APPROVED" as approved
+    state "declined<br/>Booking::DECLINED<br/>state cancelled" as declined
+    [*] --> none : book, no approval asked, or take it now back by midnight
+    [*] --> requested : book, approval on, by anyone but an approver
+    [*] --> approved : book, approval on, by an approver
+    none --> requested : change of span, the switch turned on since
+    none --> approved : the same, by an approver
+    requested --> approved : approve, or a change of span by an approver
+    requested --> asked : ask back
+    requested --> requested : change of span by the booker
+    asked --> asked : ask back again
+    asked --> approved : approve, or a change of span by an approver
+    asked --> requested : change by the booker, a new purpose too
+    requested --> declined : decline, or PendingJob at ends_at
+    asked --> declined : decline, or PendingJob at ends_at
+    approved --> requested : change of span, by anyone but an approver
+    approved --> approved : change of span by an approver
+    requested --> approved : the switch turned off
+    asked --> approved : the switch turned off
+```
+
+A new purpose alone leaves `approved` as it is.
+`PendingJob` declines by nobody and with no comment.
+`declined` is the end: the booking is `cancelled`, so nothing changes it again.
 
 ## A vehicle
 

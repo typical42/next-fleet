@@ -11,7 +11,7 @@ Read them in this order: from the outside in, then from structure to behaviour.
 | [domain.md](domain.md) | The domain classes by area, with their relations |
 | [data-model.md](data-model.md) | Every `fleet_*` table with its columns |
 | [flows.md](flows.md) | The key requests and jobs, step by step |
-| [lifecycles.md](lifecycles.md) | The states of a reminder, a booking, a vehicle, an inbox receipt and a grant |
+| [lifecycles.md](lifecycles.md) | The states of a reminder, a booking and its approval, a vehicle, an inbox receipt and a grant |
 
 ## Notation
 
@@ -29,5 +29,6 @@ A diagram shows about 15 nodes at most; a larger area is split.
 - `DesignDiagramsTest` in `composer test` holds three files to the code.
   It fails when a class in [domain.md](domain.md) does not exist under `lib/`, when [data-model.md](data-model.md) differs from the schema the migrations declare, and when a state in [lifecycles.md](lifecycles.md) differs from its constant.
   Write such a state as `state "value<br/>Class::NAME" as value`: Mermaid refuses `::` in a plain description.
+  A column left null is `state "null<br/>…" as none`.
 
 Next: [Context](context.md)

@@ -67,12 +67,16 @@ class BookingRecipientMapper extends BaseMapper {
 	 * removed rather than renamed.
 	 *
 	 * @param Access::USER|Access::GROUP $type
+	 * @param int|null $until only the places given by then, as GrantService::forgetGroup() takes
 	 * @throws \OCP\DB\Exception
 	 */
-	public function deleteEverywhere(string $type, string $name): void {
+	public function deleteEverywhere(string $type, string $name, ?int $until = null): void {
 		$qb = $this->db->getQueryBuilder();
 		$qb->delete($this->tableName)
 			->where($qb->expr()->eq($type === Access::GROUP ? 'group_id' : 'user_id', $qb->createNamedParameter($name)));
+		if ($until !== null) {
+			$qb->andWhere($qb->expr()->lte('created_at', $qb->createNamedParameter($until, IQueryBuilder::PARAM_INT)));
+		}
 		$qb->executeStatement();
 	}
 }

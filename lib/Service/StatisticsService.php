@@ -8,6 +8,7 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Service;
 
+use OCA\NextFleet\Db\Energy;
 use OCA\NextFleet\Db\EnergyMapper;
 use OCA\NextFleet\Db\ExpenseMapper;
 use OCA\NextFleet\Db\MaintenanceMapper;
@@ -30,6 +31,7 @@ use OCP\AppFramework\Utility\ITimeFactory;
  * @psalm-import-type NextFleetDistanceCost from \OCA\NextFleet\ResponseDefinitions as DistanceCost
  * @psalm-import-type NextFleetPerDistance from \OCA\NextFleet\ResponseDefinitions as PerDistance
  * @psalm-import-type NextFleetStatistics from \OCA\NextFleet\ResponseDefinitions as Statistics
+ * @psalm-type Part = array{?int, ?int, int, int}
  */
 class StatisticsService {
 	/** Months as buckets up to this many, years beyond. */
@@ -70,12 +72,14 @@ class StatisticsService {
 			? $this->fleet->list($userId)
 			: [$this->fleet->reach($userId, VehicleAccess::VIEW, Field::text('vehicle', $uuid, 64))];
 
-		[$from, $to, $all] = $this->range($vehicles, $fields, $zone);
+		[$from, $to, $all] = $this->range($userId, $vehicles, $fields, $zone);
 		// All of it is years side by side however short: that is the year-over-year comparison.
 		$bucket = !$all && count(self::cut($from, $to, 'month')) <= self::MONTHS ? 'month' : 'year';
 		$periods = self::cut($from, $to, $bucket);
 
-		$costs = $this->priced($vehicles, $periods, $from->getTimestamp(), $to->getTimestamp(), $net);
+		// Read once for the costs and the consumption both.
+		$fills = array_map(fn (Vehicle $vehicle): array => $this->energy->findAllForVehicle((int)$vehicle->getId()), $vehicles);
+		$costs = $this->priced($vehicles, $fills, $periods, $from->getTimestamp(), $to->getTimestamp(), $net);
 		// Nobody drove a Reconciliation Trip: it is the counter's word for distance no trip claims.
 		$trips = array_map(fn (Vehicle $vehicle): array => array_values(array_filter(
 			$this->trips->findBetween((int)$vehicle->getId(), $from->getTimestamp(), $to->getTimestamp()),
@@ -89,12 +93,12 @@ class StatisticsService {
 			'buckets' => array_map(static fn (array $period): array => ['from' => $period[0], 'to' => $period[1]], $periods),
 			'vehicles' => array_map(fn (Vehicle $vehicle): array => [
 				'uuid' => $vehicle->getUuid(),
-				'costs' => CostsShown::all($vehicle),
+				'costs' => $vehicle->showsCosts(),
 				'drivers' => $this->access->mayCompareDrivers($userId, $vehicle),
 			], $vehicles),
 			'costs' => self::costs($costs),
 			'per_distance' => self::perDistance($vehicles, $costs),
-			'consumption' => $this->consumption($vehicles, $from->getTimestamp(), $to->getTimestamp(), $uuid !== null),
+			'consumption' => $this->consumption($vehicles, $fills, $from->getTimestamp(), $to->getTimestamp(), $uuid !== null),
 			'distance' => self::distance($vehicles, $trips, $periods),
 			'by_driver' => $this->byDriver($userId, $vehicles, $trips),
 			// At the reader's own grid factor, as KpiService::year() reads it.
@@ -109,16 +113,17 @@ class StatisticsService {
 	 * without a currency has no sum to add.
 	 *
 	 * @param list<Vehicle> $vehicles
+	 * @param list<list<Energy>> $fills each vehicle's, by its index in `$vehicles`
 	 * @param non-empty-list<array{int, int}> $periods
 	 * @return array<int, non-empty-list<Cost>> by the vehicle's index in `$vehicles`
 	 * @throws \OCP\DB\Exception
 	 */
-	private function priced(array $vehicles, array $periods, int $from, int $to, bool $net): array {
+	private function priced(array $vehicles, array $fills, array $periods, int $from, int $to, bool $net): array {
 		$costs = [];
 		foreach ($vehicles as $i => $vehicle) {
-			if ($vehicle->getCurrency() !== null && CostsShown::all($vehicle)) {
+			if ($vehicle->getCurrency() !== null && $vehicle->showsCosts()) {
 				/** @var non-empty-list<Cost> one per period, as asked */
-				$costs[$i] = $this->cost->periods($vehicle, [...$periods, [$from, $to]], $net);
+				$costs[$i] = $this->cost->lean($vehicle, [...$periods, [$from, $to]], $net, $fills[$i]);
 			}
 		}
 
@@ -189,34 +194,55 @@ class StatisticsService {
 
 	/**
 	 * Cost per 100 km, or per hour, in one series per currency and unit, and each vehicle's over
-	 * the range beside it.
+	 * the range beside it (whole()).
 	 *
 	 * @param list<Vehicle> $vehicles
 	 * @param array<int, non-empty-list<Cost>> $priced as priced() reads them
 	 * @return list<PerDistance> by currency code, then unit
 	 */
 	private static function perDistance(array $vehicles, array $priced): array {
-		/** @var array<string, array{currency: string, per: string, periods: list<list<Cost>>, vehicles: list<array{uuid: string, range: DistanceCost}>}> $series */
+		/** @var array<string, array{currency: string, per: string, buckets: list<list<Part>>, ranges: list<Part>, vehicles: list<array{uuid: string, range: DistanceCost}>}> $series */
 		$series = [];
 		foreach ($priced as $i => $costs) {
-			$range = $costs[count($costs) - 1];
-			$key = $range['currency'] . ' ' . (string)$range['per'];
-			$series[$key] ??= ['currency' => (string)$range['currency'], 'per' => (string)$range['per'], 'periods' => [], 'vehicles' => []];
+			$range = array_pop($costs);
+			$per = (string)$range['per'];
+			$key = $range['currency'] . ' ' . $per;
+			$series[$key] ??= ['currency' => (string)$range['currency'], 'per' => $per, 'buckets' => [], 'ranges' => [], 'vehicles' => []];
 			foreach ($costs as $j => $cost) {
-				$series[$key]['periods'][$j][] = $cost;
+				$series[$key]['buckets'][$j][] = self::whole($cost, [$cost]);
 			}
-			$series[$key]['vehicles'][] = ['uuid' => $vehicles[$i]->getUuid(), 'range' => self::rate([$range], (string)$range['per'])];
+			$whole = self::whole($range, $costs);
+			$series[$key]['ranges'][] = $whole;
+			$series[$key]['vehicles'][] = ['uuid' => $vehicles[$i]->getUuid(), 'range' => self::rate([$whole], $per)];
 		}
 		ksort($series);
 
 		$answer = [];
 		foreach ($series as $one) {
-			$rates = array_map(static fn (array $costs): array => self::rate($costs, $one['per']), $one['periods']);
-			$range = array_pop($rates);
-			$answer[] = ['currency' => $one['currency'], 'per' => $one['per'], 'buckets' => $rates, 'range' => $range, 'vehicles' => $one['vehicles']];
+			$answer[] = [
+				'currency' => $one['currency'],
+				'per' => $one['per'],
+				'buckets' => array_map(static fn (array $parts): array => self::rate($parts, $one['per']), $one['buckets']),
+				'range' => self::rate($one['ranges'], $one['per']),
+				'vehicles' => $one['vehicles'],
+			];
 		}
 
 		return $answer;
+	}
+
+	/**
+	 * One vehicle's range or bucket as rate() adds it up: what it cost and moved, and what of that
+	 * rates (CostService::rated()) over its buckets, a bucket over itself. A bucket that moved
+	 * without a cost rates 0. So a range lies between its lowest and highest bucket; a fill-up in
+	 * a month the counter stood still would raise it above every month's.
+	 *
+	 * @param Cost $range
+	 * @param list<Cost> $buckets
+	 * @return Part
+	 */
+	private static function whole(array $range, array $buckets): array {
+		return [$range['total'], $range['distance'], ...CostService::rated($buckets)];
 	}
 
 	/**
@@ -225,14 +251,15 @@ class StatisticsService {
 	 * segment in the range has no line.
 	 *
 	 * @param list<Vehicle> $vehicles
+	 * @param list<list<Energy>> $fills each vehicle's, by its index in `$vehicles`
 	 * @param bool $segments whether each line carries its segments, which only one vehicle's draws
 	 * @return list<ConsumptionLine> by vehicle, then the energy's first segment in the range
 	 * @throws \OCP\DB\Exception
 	 */
-	private function consumption(array $vehicles, int $from, int $to, bool $segments): array {
+	private function consumption(array $vehicles, array $fills, int $from, int $to, bool $segments): array {
 		$lines = [];
-		foreach ($vehicles as $vehicle) {
-			$all = $this->consumption->of($vehicle);
+		foreach ($vehicles as $i => $vehicle) {
+			$all = $this->consumption->ofFills($vehicle, $fills[$i]);
 			foreach (ConsumptionService::summed($all, $from, $to, ConsumptionService::per($vehicle))['period'] as $period) {
 				$lines[] = [
 					'uuid' => $vehicle->getUuid(),
@@ -346,28 +373,26 @@ class StatisticsService {
 	}
 
 	/**
-	 * One period's costs and distances added up, and the rate over the vehicles that have both:
-	 * one that cost without moving, or moved without a cost, would bend it.
+	 * Parts added up: their costs and distances, and the rate over what of them rates.
 	 *
-	 * @param list<Cost> $costs one period's, a vehicle each, all in one currency and in `$per`
+	 * @param list<Part> $parts each the cents and distance, then the cents and distance that rate,
+	 *                          all in one currency and in `$per`
 	 * @return DistanceCost
 	 */
-	private static function rate(array $costs, string $per): array {
+	private static function rate(array $parts, string $per): array {
 		$total = null;
 		$distance = null;
 		$ratedCents = 0;
 		$ratedDistance = 0;
-		foreach ($costs as $cost) {
-			if ($cost['total'] !== null) {
-				$total = (int)$total + $cost['total'];
+		foreach ($parts as [$cents, $moved, $rated, $ratedMoved]) {
+			if ($cents !== null) {
+				$total = (int)$total + $cents;
 			}
-			if ($cost['distance'] !== null) {
-				$distance = (int)$distance + $cost['distance'];
+			if ($moved !== null) {
+				$distance = (int)$distance + $moved;
 			}
-			if ($cost['total'] !== null && $cost['distance'] !== null) {
-				$ratedCents += $cost['total'];
-				$ratedDistance += $cost['distance'];
-			}
+			$ratedCents += $rated;
+			$ratedDistance += $ratedMoved;
 		}
 
 		return [
@@ -379,8 +404,9 @@ class StatisticsService {
 
 	/**
 	 * The range's two midnights and whether it is all of it. All of it runs from the first
-	 * January of the earliest entry on any of the vehicles to the end of the reader's year, or is
-	 * the reader's year alone when there is none.
+	 * January of the earliest entry the reader sees on any of the vehicles to the end of the
+	 * reader's year. It starts no later than the reader's year: with no entry, or only ones dated
+	 * ahead, such as next year's insurance, it is that year alone.
 	 *
 	 * @param list<Vehicle> $vehicles
 	 * @param array<string, mixed> $fields
@@ -388,13 +414,13 @@ class StatisticsService {
 	 * @throws \InvalidArgumentException
 	 * @throws \OCP\DB\Exception
 	 */
-	private function range(array $vehicles, array $fields, \DateTimeZone $zone): array {
+	private function range(string $userId, array $vehicles, array $fields, \DateTimeZone $zone): array {
 		$fromDay = self::given($fields, 'from');
 		$toDay = self::given($fields, 'to');
 		if ($fromDay === null && $toDay === null) {
 			$now = (new \DateTimeImmutable('@' . $this->time->getTime()))->setTimezone($zone);
-			$first = $this->firstAt(array_map(static fn (Vehicle $vehicle): int => (int)$vehicle->getId(), $vehicles));
-			$start = $first === null ? $now : (new \DateTimeImmutable('@' . $first))->setTimezone($zone);
+			$first = min($this->firstAt($userId, $vehicles) ?? PHP_INT_MAX, $now->getTimestamp());
+			$start = (new \DateTimeImmutable('@' . $first))->setTimezone($zone);
 			$from = self::january((int)$start->format('Y'), $zone);
 			$to = self::january((int)$now->format('Y') + 1, $zone);
 		} else {
@@ -413,15 +439,30 @@ class StatisticsService {
 	}
 
 	/**
-	 * @param list<int> $vehicleIds
+	 * Only the expenses the reader sees count: the year of one kept from them would tell it is
+	 * there.
+	 *
+	 * @param list<Vehicle> $vehicles
 	 * @throws \OCP\DB\Exception
 	 */
-	private function firstAt(array $vehicleIds): ?int {
+	private function firstAt(string $userId, array $vehicles): ?int {
+		$all = [];
+		$shown = [];
+		$kept = [];
+		foreach ($vehicles as $vehicle) {
+			$all[] = (int)$vehicle->getId();
+			if (CostsShown::expensesBy($userId, $vehicle) === null) {
+				$shown[] = (int)$vehicle->getId();
+			} else {
+				$kept[] = (int)$vehicle->getId();
+			}
+		}
 		$firsts = array_filter([
-			$this->energy->firstAmong($vehicleIds),
-			$this->maintenance->firstAmong($vehicleIds),
-			$this->expenses->firstAmong($vehicleIds),
-			$this->trips->firstAmong($vehicleIds),
+			$this->energy->firstAmong($all),
+			$this->maintenance->firstAmong($all),
+			$this->expenses->firstAmong($shown),
+			$this->expenses->firstAmong($kept, $userId),
+			$this->trips->firstAmong($all),
 		], is_int(...));
 
 		return $firsts === [] ? null : min($firsts);

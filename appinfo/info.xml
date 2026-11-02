@@ -16,20 +16,24 @@ service and inspection dates, a trip log, and who has the car when.
 
 - **Odometer that adds up.** Readings are kept as history, not as a running total. Enter a distance
   and NextFleet derives the reading; enter what the dashboard actually says and that wins.
-- **Costs and consumption** in cents, millilitres and watt-hours — never rounded floats. A year per
-  vehicle as monthly bars and a table, with the total cost of ownership and a CO₂ estimate. Trips,
-  fill-ups, maintenance and expenses export as CSV.
+- **Costs and consumption** in cents, millilitres and watt-hours — never rounded floats. The vehicle
+  page shows the cost per 100 km and the total cost of ownership.
+- **Statistics** for all your vehicles or one, over a year, all time or the days you choose: the
+  costs by category, the cost per 100 km over time, the consumption, a CO₂ estimate, and the
+  distance by trip type and by driver. Trips, fill-ups, maintenance and expenses export as CSV.
 - **Reminders** for HU/AU, service or anything you name, by date or by distance, as notifications,
   a mail digest and a dashboard widget.
 - **Trip log** with the fields a German Fahrtenbuch needs, and the mileage claim for business
   trips, both printed from the browser. Other countries get a plain logbook.
 - **Give others access to a vehicle.** Let a user or a group in as viewer, driver or manager, as
   far as your admin's settings allow. A driver enters their own trips and costs, and each entry says who
-  entered it.
+  entered it. You can keep the costs from drivers and viewers.
 - **Bookings and handover.** Book the car for a time, take it and give it back with the counter,
-  the tank or battery level and a note. Giving it back fills in the trip.
+  the tank or battery level and a note. Giving it back fills in the trip. Bookings can wait for
+  approval by the owner or a manager, and you choose who gets a notification of them.
 - **Papers from Files.** Attach the registration or a workshop invoice to the vehicle, or to the
-  entry it belongs to. Everyone who may see the vehicle can open it.
+  entry it belongs to. Everyone who may see the vehicle can open it, except receipts while the
+  costs are kept from them.
 - **A receipt inbox.** Choose a folder in Files. A receipt saved there waits to be attached to its
   fill-up, maintenance or expense, or starts a new one.
 - **Import your history** from a CSV (LubeLogger format) or CSV (Spritmonitor format) file in your
@@ -54,8 +58,12 @@ hat.
 - **Kilometerstände, die stimmen.** Ablesungen werden als Verlauf gespeichert, nicht als laufende
   Summe. Wer eine Strecke einträgt, bekommt einen abgeleiteten Stand; ein abgelesener Stand hat
   Vorrang.
-- **Kosten und Verbrauch** ohne Rundungsfehler. Ein Jahr je Fahrzeug als Monatsbalken und
-  Tabelle, mit den Gesamtbetriebskosten und einer CO₂-Schätzung. Fahrten, Tankvorgänge, Wartung und Ausgaben lassen sich als CSV exportieren.
+- **Kosten und Verbrauch** ohne Rundungsfehler. Die Fahrzeugseite zeigt die Kosten je 100 km und
+  die Gesamtbetriebskosten.
+- **Statistik** für alle Ihre Fahrzeuge oder eines, über ein Jahr, die ganze Zeit oder Tage Ihrer
+  Wahl: die Kosten nach Kategorie, die Kosten je 100 km im Verlauf, den Verbrauch, eine
+  CO₂-Schätzung und die Strecke nach Fahrtart und nach Fahrer. Fahrten, Tankvorgänge, Wartung und
+  Ausgaben lassen sich als CSV exportieren.
 - **Erinnerungen** an HU/AU, Wartung oder was Sie selbst benennen, nach Datum oder nach Strecke,
   als Benachrichtigung, Mail-Zusammenfassung und Dashboard-Widget.
 - **Fahrtenbuch** mit den Feldern, die es in Deutschland braucht, und die Aufstellung der
@@ -63,12 +71,15 @@ hat.
   ein schlichtes Fahrtenbuch.
 - **Zugriff auf ein Fahrzeug gewähren.** Geben Sie einer Person oder einer Gruppe Zugriff als Betrachter, Fahrer
   oder Verwalter, im Rahmen der Freigabe-Einstellungen Ihrer Administration. Fahrer tragen ihre
-  eigenen Fahrten und Kosten ein, und jeder Eintrag zeigt, wer ihn eingetragen hat.
+  eigenen Fahrten und Kosten ein, und jeder Eintrag zeigt, wer ihn eingetragen hat. Die Kosten
+  können Sie vor Fahrern und Betrachtern verbergen.
 - **Buchungen und Übergabe.** Buchen Sie das Fahrzeug für eine Zeit, übernehmen Sie es und geben
   Sie es zurück, mit Kilometerstand, Tank- oder Akkustand und einer Notiz. Die Rückgabe füllt die
-  Fahrt aus.
+  Fahrt aus. Buchungen können auf die Genehmigung durch den Besitzer oder einen Verwalter warten, und
+  Sie wählen, wer zu ihnen benachrichtigt wird.
 - **Unterlagen aus Dateien.** Fahrzeugschein oder Werkstattrechnung hängen am Fahrzeug oder am
-  Eintrag, zu dem sie gehören. Alle, die das Fahrzeug sehen dürfen, können sie öffnen.
+  Eintrag, zu dem sie gehören. Alle, die das Fahrzeug sehen dürfen, können sie öffnen, außer Belegen,
+  solange die Kosten vor ihnen verborgen sind.
 - **Ein Eingang für Belege.** Wählen Sie einen Ordner in Dateien. Ein Beleg, der dort landet,
   wartet darauf, an seinen Tankvorgang, seine Wartung oder seine Ausgabe gehängt zu werden, oder
   legt einen neuen Eintrag an.

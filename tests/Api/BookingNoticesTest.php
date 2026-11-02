@@ -83,4 +83,24 @@ class BookingNoticesTest extends TestCase {
 		$this->assertSame(200, $removed->status, $removed->body);
 		$this->assertSame([], $removed->data());
 	}
+
+	/** A group id may hold a slash, and the path then holds it too. */
+	#[Depends('testTheOwnerTakesOneOffTheList')]
+	public function testTheOwnerTakesOffAGroupWhoseIdHoldsASlash(): void {
+		$uuid = self::$vehicle['uuid'];
+		$gid = self::PREFIX . 'pool/' . bin2hex(random_bytes(4));
+		self::$server->occ('group:add', $gid);
+		try {
+			$added = self::$server->ocs(self::$owner, 'POST', "/vehicles/$uuid/booking-recipients", ['recipient' => $gid, 'recipient_type' => 'group']);
+			$this->assertSame(200, $added->status, $added->body);
+			$this->assertSame([$gid], array_column($added->data(), 'recipient'));
+
+			$path = implode('/', array_map('rawurlencode', explode('/', $gid)));
+			$removed = self::$server->ocs(self::$owner, 'DELETE', "/vehicles/$uuid/booking-recipients/group/$path");
+			$this->assertSame(200, $removed->status, $removed->body);
+			$this->assertSame([], $removed->data());
+		} finally {
+			self::$server->occ('group:delete', $gid);
+		}
+	}
 }

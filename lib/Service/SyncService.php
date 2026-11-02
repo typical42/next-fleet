@@ -221,8 +221,9 @@ class SyncService {
 	}
 
 	/**
-	 * The page without the rows kept from the reader (CostsShown): somebody else's expenses, and
-	 * the papers on entries whose amounts are kept. Their tombstones too, for rows never handed out.
+	 * The page without the rows kept from the reader (CostsShown): somebody else's expenses, the
+	 * papers on entries whose amounts are kept, and the receipts on the vehicle or on somebody
+	 * else's booking. Their tombstones too, for rows never handed out.
 	 *
 	 * @param array<int, Vehicle> $byId
 	 * @param list<array{int, int, int, Row}> $page

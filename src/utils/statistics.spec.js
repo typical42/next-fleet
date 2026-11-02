@@ -5,13 +5,14 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { daysOf, RANGES, rangeWord } from './statistics.js'
+import { blank, daysOf, RANGES, rangeWord } from './statistics.js'
 
 const NOW = new Date(2026, 8, 19, 15, 30)
 
 describe('the ranges', () => {
+	/** The vehicle page's "Last 12 months" is rolling (period.js); these are whole months. */
 	it('offers the calendar year first, as the screen opens on it', () => {
-		expect(RANGES.map(rangeWord)).toEqual(['Calendar year', 'Last 12 months', 'All time', 'Between two days'])
+		expect(RANGES.map(rangeWord)).toEqual(['Calendar year', 'Last 12 calendar months', 'All time', 'Between two days'])
 	})
 
 	it('reads a calendar year as its first day and the next year\'s', () => {
@@ -36,5 +37,36 @@ describe('the ranges', () => {
 	it('has no range while a day is missing or the last comes before the first', () => {
 		expect(daysOf('between', NOW, { from: new Date(2026, 1, 3), to: null })).toBeNull()
 		expect(daysOf('between', NOW, { from: new Date(2026, 1, 3), to: new Date(2026, 1, 2) })).toBeNull()
+	})
+})
+
+describe('a blank answer', () => {
+	const none = { total: null, energy: null, maintenance: null, expenses: null, incomplete: false, unstated: false }
+	/** @type {any} one vehicle's year with nothing recorded, loose so a case adds a bare series */
+	const BLANK = {
+		bucket: 'month',
+		buckets: [],
+		vehicles: [{ uuid: 'v-1', costs: true, drivers: true }],
+		costs: [{ currency: 'EUR', buckets: [], range: none }],
+		per_distance: [{ currency: 'EUR', per: 'km', buckets: [], range: { total: null, distance: null, value: null }, vehicles: [] }],
+		consumption: [],
+		distance: [],
+		by_driver: [],
+		co2: { grams: null, unstated: false, source: 'https://example.org/fuels', year: null, grid: null },
+	}
+
+	it('has no cost, no counter move, no consumption, no trip and no CO₂', () => {
+		expect(blank(BLANK)).toBe(true)
+		expect(blank({ ...BLANK, co2: null })).toBe(true)
+	})
+
+	it('has a figure in a fill-up without a price, or without an emission factor', () => {
+		expect(blank({ ...BLANK, costs: [{ ...BLANK.costs[0], range: { ...none, incomplete: true } }] })).toBe(false)
+		expect(blank({ ...BLANK, co2: { ...BLANK.co2, unstated: true } })).toBe(false)
+	})
+
+	it('has a figure in a consumption line or a trip series', () => {
+		expect(blank({ ...BLANK, consumption: [{ uuid: 'v-1', energy: 'diesel' }] })).toBe(false)
+		expect(blank({ ...BLANK, distance: [{ per: 'km' }] })).toBe(false)
 	})
 })

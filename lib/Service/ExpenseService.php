@@ -126,7 +126,7 @@ class ExpenseService {
 
 		return $this->atomicRetry(function () use ($userId, $vehicle, $expenseUuid, $expectedUpdatedAt, $fields): array {
 			$this->vehicles->hold((int)$vehicle->getId());
-			$expense = $this->expenses->findOnVehicle((int)$vehicle->getId(), $expenseUuid);
+			$expense = $this->costs->expense($userId, $vehicle, $this->expenses->findOnVehicle((int)$vehicle->getId(), $expenseUuid));
 			$this->fleet->change($userId, VehicleAccess::EDIT, $vehicle, $expense->getCreatedBy());
 			self::apply($expense, $fields);
 
@@ -148,7 +148,7 @@ class ExpenseService {
 
 		return $this->atomicRetry(function () use ($userId, $vehicle, $expenseUuid, $expectedUpdatedAt): array {
 			$this->vehicles->hold((int)$vehicle->getId());
-			$expense = $this->expenses->findOnVehicle((int)$vehicle->getId(), $expenseUuid);
+			$expense = $this->costs->expense($userId, $vehicle, $this->expenses->findOnVehicle((int)$vehicle->getId(), $expenseUuid));
 			$this->fleet->change($userId, VehicleAccess::DELETE, $vehicle, $expense->getCreatedBy());
 
 			return $this->remove($expense, $expectedUpdatedAt);
@@ -181,7 +181,7 @@ class ExpenseService {
 
 		return $this->atomicRetry(function () use ($userId, $vehicle, $expenseUuid, $expectedUpdatedAt): array {
 			$this->vehicles->hold((int)$vehicle->getId());
-			$expense = $this->expenses->findAnyOnVehicle((int)$vehicle->getId(), $expenseUuid);
+			$expense = $this->costs->expense($userId, $vehicle, $this->expenses->findAnyOnVehicle((int)$vehicle->getId(), $expenseUuid));
 			$this->fleet->change($userId, VehicleAccess::DELETE, $vehicle, $expense->getCreatedBy());
 
 			return $this->expenses->restoreChecked($expense, $expectedUpdatedAt)->jsonSerialize();

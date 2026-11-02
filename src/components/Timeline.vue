@@ -77,8 +77,8 @@ const chips = computed(() => [
 	{ value: 'energy', label: t('nextfleet', 'Energy') },
 	{ value: 'maintenance', label: t('nextfleet', 'Maintenance') },
 	// Energy and maintenance have chips of their own; this is the rest. Not "Costs": that is the
-	// header's button for the whole bill. A reader the costs are kept from has only their own.
-	...(may(props.vehicle, 'costs') ? [{ value: 'expense', label: t('nextfleet', 'Expenses') }] : []),
+	// header's button for the whole bill. A reader the costs are kept from finds their own here.
+	{ value: 'expense', label: t('nextfleet', 'Expenses') },
 ])
 
 /**

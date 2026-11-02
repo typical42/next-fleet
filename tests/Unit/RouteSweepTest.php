@@ -18,7 +18,7 @@ use PHPUnit\Framework\TestCase;
 class RouteSweepTest extends TestCase {
 	private const SWEEP = __DIR__ . '/../Integration/VehicleIdorTest.php';
 
-	/** @return array{routes: list<array{name: string, url: string, verb: string}>, ocs: list<array{name: string, url: string, verb: string}>} */
+	/** @return array{routes: list<array{name: string, url: string, verb: string, requirements?: array<string, string>}>, ocs: list<array{name: string, url: string, verb: string, requirements?: array<string, string>}>} */
 	private static function routes(): array {
 		return require __DIR__ . '/../../appinfo/routes.php';
 	}

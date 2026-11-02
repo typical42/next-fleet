@@ -139,9 +139,9 @@ In the same transaction, each one loses its grants and goes to the trash.
 An admin who wants a pool to outlive its owner runs `occ nextfleet:transfer` first (`TransferService`).
 The grants stand, the former owner keeps `viewer`, the new owner joins the recipients, and an audit row records it.
 
-**Deleting a group revokes its grants.**
+**Deleting a group revokes its grants and takes it off the booking lists.**
 A group made later with the same id must reach nothing.
-`GroupDeletedListener` hands the id to `GrantService::forgetGroup`, one vehicle at a time under its hold.
+`GroupDeletedListener` hands the id to `GrantService::forgetGroup`, which revokes one vehicle at a time under its hold and clears the lists in one statement, both under one pending mark.
 The members are gone by then, so `BeforeGroupDeletedEvent` notes which recipients were members first.
 A grant whose grantee vanished during the grant is removed after the commit.
 That erases nothing: an LDAP backend briefly out of reach says "no such user" for a live account, and an erasure cannot be undone.
@@ -203,11 +203,16 @@ The owner may make a vehicle's bookings wait for an answer: `booking_approval`, 
   Approvers may answer it until its end; then `PendingJob` declines it within the hour, by nobody and with no comment.
 - **An answer is to a span.**
   A new start or end makes the booking a request again, unless an approver moves it; a new purpose keeps the answer.
+  Asked back, the booker answers by changing the booking, a new purpose too: it is a request again.
+- **A cancel keeps the last `approval`** as history, so a client reads `approval` with the state.
 - ***Take it now* asks nobody** while the car is back by midnight on the booker's clock (the offset the sheet sends).
   Kept longer, it is a request, and the sheet leaves it booked.
 - **Turning the switch off approves** every booking that waits, as the owner.
-- **The comment is the booker's and the approvers'.** Everyone else reads `approval_comment` as null.
-- **Notices:** a request goes to the owner and the managers whatever the list says; each answer goes to the booker.
+- **The comment is the booker's and the approvers'.**
+  Everyone else reads `approval_comment` as null.
+- **Notices:** a request goes to the owner and the managers whatever the list says; each answer goes to the booker, in place of the one before.
+  A question carries the comment, shortened to 200 characters, and only the booker gets it.
+  A new owner and a new manager are asked the requests that wait already, after `TransferService::transfer` and a grant that gives `edit` (`BookingNotices::tellWaiting`).
   A notice shows only while the booking's approval is still the one it was sent for, and a request asked again takes the earlier notices back.
   The list hears of a booking once it is approved: `booked` the first time, `changed` after a new span is approved again (`fleet_bookings.announced`).
   It hears `cancelled` only of a booking it heard of; a request declined or never answered is no news to it.
@@ -219,7 +224,7 @@ Nextcloud notifications only, sent after the commit by `BookingNotices`.
 - **The booker hears of a cancel by somebody else.**
 - **The vehicle's list hears the events the owner ticked** in `booking_notices`: `booked`, `taken`, `returned`, `cancelled`, `changed`.
   A new vehicle hears `booked` and `taken`.
-  A booking that starts within five minutes of now is *Take it now*, so it is `taken`, not `booked`.
+  A booking that starts within five minutes of now is *Take it now*, so it is `taken`, not `booked`; one that waits for approval is `booked` once approved.
   Only a new start or end is `changed`; a new purpose alone is not.
 - **The list is `fleet_booking_recipients`**: accounts and groups, the owner's to write, a manager's to read.
   An empty list means the owner.
@@ -231,6 +236,7 @@ Nextcloud notifications only, sent after the commit by `BookingNotices`.
   It carries the span, or the counter and level of a return, as they were.
   The notifier names the booker from the booking when the list is read, so an erasure reaches it.
 - Deleting the vehicle takes back every notice of its bookings.
+  Undoing the delete asks again what waits for an answer: each request of the approvers, each question of its booker.
 
 ## Time
 
@@ -368,7 +374,7 @@ The first fill-up gives no number.
 So the months add up to the year.
 Resets split it into segments that add up.
 A segment that ran backwards hides an unanswered question, so the period has no distance.
-`ConsumptionService::distance()` reads the ends and the resets with indexed lookups, never the whole chain.
+`ConsumptionService::distance()` reads the ends and the resets with indexed lookups, never the whole chain; the Statistics screen is the exception below.
 
 **Cost per 100 km** is energy plus maintenance plus expenses, divided by the distance, times 100, shown beside the energy-only cost (`CostService`).
 
@@ -380,8 +386,13 @@ A segment that ran backwards hides an unanswered question, so the period has no 
 - Under "I reclaim VAT", each row counts net of its own rate.
   A row without a rate counts gross, and the figure says so.
 - The Statistics screen shows the same figure per month or year of its range (`StatisticsService`, [API](api.md#statistics)).
+  One exception: a bucket with a distance and no rows rates 0, so the line has a point wherever the vehicle moved.
+  The range is its buckets' rated costs over their distances (`CostService::rated()`), so it lies between the lowest and highest point.
+  The year route rates its year the same way over its months.
   The client names its time zone, and the server cuts the buckets at that zone's midnight.
-  One `CostService::periods()` call per vehicle serves every bucket, so the query count does not grow with the history (`KpiTest`).
+  Its buckets may be many, so it reads each vehicle's counter over the range and its fill-ups once, and finds the bucket edges among them (`CostService::lean()`, `ConsumptionService::distancesAlong()`).
+  It skips engine hours and TCO, which it does not show.
+  The query count does not grow with the buckets (`StatisticsTest::testTheQueriesDoNotGrowWithTheBuckets`).
 
 **TCO** adds depreciation: (purchase − residual) ÷ distance over the holding.
 An empty field hides it.
@@ -470,6 +481,7 @@ Its CSP allows inline style and nothing else.
 ### The mileage claim
 
 `GET /apps/nextfleet/vehicles/{uuid}/mileage/{year}` is served like the logbook.
+It takes `costs`, not `view`: it puts a money value on the trips.
 It exists where the country has rates and a renderer, for vehicles in kilometres.
 
 - **The core values, the country prints.**
@@ -502,6 +514,11 @@ A link like the logbook: no token, rate-limited, logged by ids, `view` access.
   Shared state, such as a vehicle handed to a new owner, would show somebody else's data.
   Such a row is reduced to its id (Art. 15(4) GDPR).
   What the account wrote itself is exported whole (`FleetMigrator::AUTHORED`).
+- **A booking the account only answered is the booker's.**
+  It is the account's own only where `user_id` or `created_by` names it.
+  Named only as `approval_by`, it is exported whole while the account sees the vehicle, else reduced to the answer (`FleetMigrator::ANSWER`).
+- **A vehicle row carries its prices only while the account may see costs** ([costs](api.md#costs)).
+  Else `purchase_price` and `residual_est` are null.
 - **Export only.**
   An import reads nothing: on a server with other people and vehicles, nobody can decide whose vehicle a row belongs to.
   It does not throw, because that would fail every other app's import.
@@ -591,15 +608,15 @@ The strongest row wins, and no row narrows another.
 |---|---|---|
 | `view` | viewer, driver, manager | Read the vehicle and everything on it |
 | `log` | driver, manager | Add an entry, change your own |
-| `edit` | manager | The vehicle, reminders, recipients, its own documents, any entry |
+| `edit` | manager | The vehicle, reminders, recipients, its own documents, any entry; answer a booking; read the booking notice list |
 | `delete` | manager | Delete any entry |
-| `own` | the owner alone | Access; delete and restore the vehicle; whether the costs are shared |
+| `own` | the owner alone | Access; delete and restore the vehicle; whether the costs are shared, whether bookings need approval, and who hears of bookings |
 | `costs` | manager; viewer and driver while `costs_shared` | Every amount, sum and price, and the mileage claim |
 
 - A route about one vehicle asks `may`.
+  A list asks `reachable`, one query instead of one per row.
 - Without `costs`, a reader still sees the amounts they entered (`VehicleAccess::mayCost`).
   `CostsShown` takes the rest off each door: others' fill-up and record amounts null, others' expenses dropped, every sum null ([API](api.md#costs)).
-  A list asks `reachable`, one query instead of one per row.
 - An Entry route asks `log`, then `VehicleService::change`: `edit` or `delete`, or `log` alone for the caller's own Entry.
   A booking does the same with the booker in the author's place (`VehicleAccess::mayBooking`).
   A document takes the rule of the row it hangs on.
@@ -644,6 +661,8 @@ There is no upload path.
 - **Who attaches.**
   Listing takes `view`.
   A paper on an Entry whose amounts are kept from the reader is not listed, synced or served (`CostsShown::showsPaper()`, [costs](api.md#costs)): a receipt shows the price.
+  So is a receipt on the vehicle itself, where its costs are kept, and a receipt on a booking, except to its booker; the vehicle's other papers and a booking's photos stay, since drivers need them.
+  To such a reader the paper is not there: removing or restoring it is a 404, not a 403.
   Attaching, removing and restoring take `log` plus the rule of the row the paper hangs on, or `edit` for the vehicle's own papers.
   A driver files the receipt of their own fill-up.
   The registration stays a manager's.

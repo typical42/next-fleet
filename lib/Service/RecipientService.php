@@ -41,6 +41,7 @@ class RecipientService {
 		private VehicleMapper $vehicles,
 		private IUserManager $users,
 		private IGroupManager $groups,
+		private Names $names,
 		private Sharable $sharable,
 		private VehicleAccess $access,
 		private NotificationService $notifications,
@@ -72,9 +73,7 @@ class RecipientService {
 	 */
 	public function add(string $userId, string $vehicleUuid, mixed $recipient): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
-		// The backend finds an account in any case; stored as sent, `Admin` beside `admin` would be
-		// one person told twice.
-		$recipient = is_string($recipient) ? $this->users->get($recipient)?->getUID() : null;
+		$recipient = is_string($recipient) ? $this->names->spelled(Access::USER, $recipient) : null;
 		// One answer for both, for the reason GrantService::grantee() gives.
 		if ($recipient === null || !$this->admits($userId, $vehicle, $recipient, Access::USER)) {
 			throw new \InvalidArgumentException('user_id is not an account on this instance');
@@ -123,11 +122,7 @@ class RecipientService {
 				static fn (ReminderRecipient $row): string => $row->getUserId(),
 				$this->recipients->findByVehicle((int)$vehicle->getId()),
 			);
-			// The row as the list shows it, else the spelling add() stores. A row an erased account
-			// left can share its uid with a live account in another case.
-			$gone = in_array($recipient, $listed, true)
-				? $recipient
-				: ($this->users->get($recipient)?->getUID() ?? $recipient);
+			$gone = $this->listedAs($listed, Access::USER, $recipient);
 			$this->recipients->deleteByUser((int)$vehicle->getId(), $gone);
 		}, $this->db);
 		$this->notifications->withdrawFrom((int)$vehicle->getId(), $gone);
@@ -161,10 +156,7 @@ class RecipientService {
 	public function addBooking(string $userId, string $vehicleUuid, mixed $recipient, mixed $type): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::OWN, $vehicleUuid);
 		$type = self::recipientType($type);
-		// Stored as the instance spells it, for the reason add() gives.
-		$name = !is_string($recipient) ? null : ($type === Access::GROUP
-			? $this->groups->get($recipient)?->getGID()
-			: $this->users->get($recipient)?->getUID());
+		$name = is_string($recipient) ? $this->names->spelled($type, $recipient) : null;
 		if ($name === null || !$this->admits($userId, $vehicle, $name, $type)) {
 			throw new \InvalidArgumentException('recipient is not an account or group on this instance');
 		}
@@ -207,20 +199,28 @@ class RecipientService {
 		$type = self::recipientType($type);
 		$this->atomicRetry(function () use ($vehicle, $type, $recipient): void {
 			$this->vehicles->hold((int)$vehicle->getId());
-			$this->bookingRecipients->deleteOne((int)$vehicle->getId(), $type, $recipient);
+			$listed = [];
+			foreach ($this->bookingRecipients->findByVehicle((int)$vehicle->getId()) as $one) {
+				if ($one->type() === $type) {
+					$listed[] = $one->name();
+				}
+			}
+			$this->bookingRecipients->deleteOne((int)$vehicle->getId(), $type, $this->listedAs($listed, $type, $recipient));
 		}, $this->db);
 
 		return $this->bookingOf($vehicle);
 	}
 
 	/**
-	 * Takes a deleted group off every booking list (GroupDeletedListener): a group spelt like it
-	 * later is another group.
+	 * The row a name sent to remove() or removeBooking() names: as the list shows it, else as
+	 * add() and addBooking() store it. As listed first, since a row an erased account left can
+	 * share its uid with a live account in another case.
 	 *
-	 * @throws \OCP\DB\Exception
+	 * @param list<string> $listed
+	 * @param Access::USER|Access::GROUP $type
 	 */
-	public function forgetBookingGroup(string $groupId): void {
-		$this->bookingRecipients->deleteEverywhere(Access::GROUP, $groupId);
+	private function listedAs(array $listed, string $type, string $name): string {
+		return in_array($name, $listed, true) ? $name : ($this->names->spelled($type, $name) ?? $name);
 	}
 
 	/**
