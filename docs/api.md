@@ -32,7 +32,8 @@ Send bodies as JSON: some fields need a real boolean, integer or null, which a f
 Each OCS route twins an internal route of the web UI: same path under `/api/v1`, same verb, same parameters, a controller of the same name in `lib/Controller/Ocs/`.
 Both make the same service call, so neither holds a rule ([architecture](architecture.md#stack-and-layers)).
 `OcsRoutesTest` holds the routes to that, and `VehicleIdorTest` walks every OCS route by role.
-[Sync](#sync) is the one route without a twin: the web UI keeps nothing to bring up to date.
+[Sync](#sync) has no twin: the web UI keeps nothing to bring up to date.
+`…/costs/{year}` has none either: v1 promises it, and the web UI reads `…/statistics` instead.
 
 ## Answers
 
@@ -85,10 +86,95 @@ The wire carries what the database stores ([data model](architecture.md#data-mod
   Show the local time the offset gives, not your own.
 - **A calendar day**, such as `first_reg`, is a `YYYY-MM-DD` string.
 - **Amounts are integers** in their stored unit: cents with the vehicle's `currency`, kilometres or hours by `odo_unit`, millilitres, watt-hours.
-  Only the figures of `…/kpis` and `…/costs/{year}` are worked out, and some of them are floats.
+  Only the figures of `…/kpis`, `…/costs/{year}` and `…/statistics` are worked out, and some of them are floats.
 - A Reading names the Entry that wrote it as `source_uuid`.
   `source_id` is a server row id and means nothing to a client.
 - `{fillUp}` in a path names an Energy Entry. v1 froze the path, so the old word stays.
+
+## Costs
+
+A vehicle's `may` holds `costs` when the caller sees what it costs.
+The owner and managers always do; drivers and viewers while the vehicle's `costs_shared` is true, its default.
+Only the owner changes `costs_shared`; a manager may send it back unchanged.
+
+Without `costs`, the caller still sees every amount they entered themselves.
+Of everything else:
+
+- `purchase_price` and `residual_est` are null;
+- a fill-up's `unit_price` and `total` and a maintenance record's `cost` are null, on every route;
+- an expense is left out of the timeline, its single read, sync and the CSV file, and its update, delete and restore are a 404;
+- a document linked to somebody else's fill-up, maintenance record or expense, a `receipt` on a booking somebody else is the booker of, and a `receipt` on the vehicle itself, is left out of `…/documents`, the list a write answers and sync, and its download, detach and restore are a 404;
+- attaching a document to an expense left out is a 404, as for one that does not exist;
+- `…/kpis` and `…/costs/{year}` answer with every amount in `cost` null, as for a period with nothing recorded;
+- `…/statistics` adds nothing of the vehicle to `costs`, and says so with `costs: false` in `vehicles`;
+- the mileage claim is a 403.
+
+## Statistics
+
+`GET /statistics` reads one vehicle, named by `vehicle`, or every vehicle the caller sees, disposed ones included.
+
+- `from` and `to` are calendar days, `to` the day after the last; send neither for all of it.
+  All of it runs from 1 January of the year of the first trip, fill-up, maintenance or expense to the end of the current year.
+  Only an expense the caller sees counts ([costs](#costs)).
+- `tz` is required: the buckets are cut at midnight there.
+- `bucket` is `month` up to 24 months and `year` beyond; all of it is always `year`.
+  `buckets` holds each one's `from` and `to`, the first and the last cut to the range.
+- `costs` holds one series per currency, never a sum across them: each bucket's cost and the range's, as `…/costs/{year}` itemises them.
+  A sum is null where nothing was recorded.
+  A vehicle without a currency adds nothing.
+- `per_distance` rates the same costs per 100 km, or per hour on a counter of hours: one series per currency and unit, each bucket's and the range's `total`, `distance` and `value` (cents).
+  The sums count every vehicle; `value` only those with a distance.
+  A bucket with a distance has a `value`, 0 when nothing was recorded in it; one without has none, whatever it cost.
+  `vehicles` holds each vehicle's range.
+  A vehicle's range `value` is the costs of its buckets with a distance over those distances, so it lies between its lowest and highest bucket.
+  The fleet's range adds those up over the vehicles.
+  `…/costs/{year}` rates its year the same way over its months, per distance and per engine hour, `tco` included, so its `value` is the range's of that year read by month.
+- `consumption` holds each vehicle's per energy, over the full-to-full segments that close in the range: the amount over the distance, so a long segment weighs more.
+  One vehicle's carries its `segments`; all vehicles' carry null.
+  It needs no cost right.
+- `distance` holds one series per unit: each bucket's and the range's `trips` and the distance of each category, `business`, `private` and `commute`.
+  A trip falls in the bucket it set off in; one without a distance counts as a trip and adds none.
+  Voided trips and Reconciliation Trips do not count: nobody drove them.
+- `by_driver` holds one series per unit: each driver's `trips`, `distance` and `business` distance over the range, by who entered the trip, with their `name`.
+  An erased driver keeps their pseudonym as both `user_id` and `name`.
+  The owner and managers get every driver's; anyone else only their own.
+  Each of `vehicles` says which in `drivers`.
+- `co2` is the vehicle's for the range, as `…/costs/{year}` states it; null when all vehicles are read.
+
+## Booking notices
+
+A vehicle's `booking_notices` lists the booking events its notice list hears: `booked`, `taken`, `returned`, `cancelled`, `changed`.
+A new vehicle hears `booked` and `taken`; an empty list hears none.
+`…/booking-recipients` is the list: accounts and groups, each `recipient` with its `recipient_type`.
+`DELETE …/booking-recipients/{type}/{recipient}` takes one off, `type` being its `recipient_type`; a slash in a group id stays a plain slash in the path.
+An empty list means the owner.
+Only the owner changes either; a manager reads the list and may send `booking_notices` back unchanged.
+The notices are Nextcloud notifications ([architecture](architecture.md#booking-notices)).
+
+## Booking approval
+
+While a vehicle's `booking_approval` is true, a driver's booking waits for an answer ([architecture](architecture.md#booking-approval)).
+Only the owner changes the switch; a manager may send it back unchanged.
+
+- A booking's `state` keeps its four values.
+  `approval` says where the answer stands: null (none asked), `requested`, `asked`, `approved` or `declined`.
+  `requested`, `asked` and `approved` mean something only while the state is `booked`; `declined` stays on the booking it cancelled, and the web UI shows it as **Declined**.
+  A cancel keeps the last `approval` as history.
+  `approval_comment` and `approval_by` hold the last answer's comment and who gave it; a change that makes the booking `requested` again clears both.
+  `approval_comment` is null to anyone but the booker and the approvers.
+- The owner's and the managers' own bookings are `approved` at once, and so are those they move.
+  A booking that starts within five minutes and ends by midnight in its `starts_at_off` is *Take it now*: its `approval` is null.
+- `POST …/bookings/{booking}/approve`, `…/ask` and `…/decline` answer a `requested` or `asked` booking before its end.
+  Each takes `updated_at` and an optional `comment`, and is offered in the booking's `may` as `approve`, `ask` and `decline`.
+  A decline cancels the booking.
+  One still `requested` or `asked` at its end is declined within the hour, with `approval_by` null.
+- A request holds its span.
+  The 409 of a booking in the way carries its `approval`, and so does a vehicle's `my_next_booking`.
+  `check_out` is not offered, and refused, until it is approved.
+- A `PUT` with a new start or end makes the booking `requested` again, whatever its `approval`, unless an approver sends it: then it is `approved`.
+  On an approved booking, a new purpose keeps the answer.
+  The booker's `PUT` to an `asked` booking is their answer, a new purpose too: the booking is `requested` again.
+- Turning `booking_approval` off approves every booking that waits.
 
 ## Sync
 
@@ -103,7 +189,7 @@ Each answer hands out the next one.
 | `unreachable` | Vehicles the client held that it no longer reaches. Drop them and their rows. |
 | `cursor` | What the next call sends. Opaque. |
 | `more` | Another page waits. |
-| `reset` | An erasure or a transfer happened. Drop everything and start from this answer. |
+| `reset` | An erasure, a transfer, a change of `costs_shared`, a change of access to a vehicle that keeps its costs, or a role change that gives or takes `edit` happened. Drop everything and start from this answer. |
 
 - **At least once.**
   A run's mark is the server's clock at its first page minus 120 seconds.

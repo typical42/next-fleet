@@ -42,8 +42,8 @@ Flagged records are resolved on their own row: a counter that went backwards ask
 │ HH-CD 42        │  │ ● Planned · Oil change · ~02.11.2026 [Done]│   │
 │ Blue van        │  └────────────────────────────────────────────┘   │
 │                 │  Bookings [Book][Take it now]                      │
-│ Reports         │  Fr., 02.10., 14:00–18:00  Anna  Booked  [Change]  │
-│ ─────────────── │                                                    │
+│ Statistics      │  Fr., 02.10., 14:00–18:00  Anna  Booked  [Change]  │
+│ Reports         │                                                    │
 │ Settings        │  Documents [Add document]                          │
 │                 │  Fahrzeugschein.pdf                        Remove  │
 │                 │                                                    │
@@ -93,7 +93,7 @@ Drawn in [design/components.md#frontend](design/components.md#frontend).
 | **Vehicle** | Header, due banner, bookings, documents, timeline | **New entry** |
 | **Entry sheet** | Trip, Energy, Maintenance, Odometer or Expense ([below](#the-entry-sheet-in-detail)) | Save |
 | **Vehicle sheet** | Create with a few fields; edit everything, the [access](#the-access-section) included | Save |
-| **Costs** | One vehicle, one year: bars per month, a table, the CO₂ estimate, CSV export | Export |
+| **Statistics** | Every vehicle or one, over a range ([below](#the-statistics-screen)); the vehicle's *Costs* opens it on that vehicle | Pick a range |
 | **Inbox** | The receipts waiting in the inbox folder ([below](#the-inbox-screen)) | Attach |
 | **Reports** | The logbook and the mileage claim, as a page to print ([ADR 0005](adr/0005-no-pdf-library.md)) | Open |
 | **Personal settings** | Country, "I reclaim VAT", grid factor, inbox folder. A block on Nextcloud's settings page, with its own bundle. | Pick, it saves |
@@ -102,9 +102,32 @@ Drawn in [design/components.md#frontend](design/components.md#frontend).
 Sold vehicles are offered too.
 The year is last year's until the end of February, when people print for the tax return.
 
-**Costs** draws three bands in hand-made SVG: six are unreadable at 320 px.
+### The Statistics screen
+
+Reviewing, at a desk: what did the fleet cost this year, and who drove it where.
+It reads every vehicle the person sees, or one, picked in *Vehicle*.
+
+**Ranges:** *Calendar year* (the default, with arrows), *Last 12 calendar months* (this month and the eleven before it), *All time* and *Between two days*.
+Up to 24 months are cut into months, a longer range into years.
+*All time* is always years side by side: that is the year-over-year comparison.
+
+**Sections**, each a chart and a table, one per currency or unit, since nothing is summed across them:
+
+- *Costs in {currency}*: energy, maintenance and expenses stacked, and each category's share of the range.
+- *Cost per 100 km* or *per hour*: a line, the vehicle's own or the fleet's; under the fleet's, a table compares the vehicles by cost, distance and rate.
+  A note says when a cost in a period without a distance is left out of the rate.
+- *Distance by trip category* (*Hours by …* on an hour meter): business, private and commute stacked.
+- *Distance by driver* (or *Hours by driver*): trips, distance and business share over the range.
+  The owner and managers of a vehicle see every driver, anyone else only themselves, and the screen says so ([legal](legal.md)).
+- *Consumption*: per fill-up interval for one vehicle, each vehicle's average for all.
+- *CO₂ (estimate)*, for one vehicle.
+
+Costs come only from vehicles whose costs the reader may see; a note says when some are left out.
+*Export* shows for one vehicle and a calendar year, the CSV export's unit.
+
+The charts are hand-made SVG in the theme's colours, three bands at most: six are unreadable at 320 px.
 The table carries every figure, so the drawing is hidden from screen readers.
-Depreciation stays out of the bars: it is an estimate over the whole holding, not a month's spending.
+Depreciation stays out of the series: it is an estimate over the whole holding, not a month's spending.
 
 ### The entry sheet, in detail
 
@@ -170,6 +193,8 @@ The code is no credential ([security](security.md#things-that-are-visible-in-the
 ### The Access section
 
 The last section of the edit sheet, for the owner alone.
+Above it are the settings about the people with access: *Drivers and viewers see costs*, *Bookings need approval*, and the booking notices with their events.
+The two switches and the events save with the vehicle; the notice list, like the grants below, saves on each pick.
 It lists each grant with a role picker and *Remove*.
 A search finds accounts and groups through core's autocomplete, which applies the instance's rules on who may find whom.
 The role picker offers driver first: a car is lent to be driven.
@@ -188,9 +213,18 @@ It shows only once anybody else has or had access (`ever_granted`): alone with a
 - *Book* asks start, end and purpose.
   A clash keeps the sheet open and names the booking in the way: "Booked by Anna, Fri 02/10, 14:00–18:00", or "With Anna until …" when it is out.
 - *Cancel booking* asks once, because a cancel has no undo.
+- On a vehicle whose bookings need approval, a waiting booking reads "Waiting for approval" to its booker and "Requested" to everyone else, and a clash with it "Requested by Anna, …".
+  An asked-back booking reads "Asked back", a declined one "Declined".
+  *Answer* opens a comment and *Approve*, *Ask back* and *Decline* in the row, as *Cancel booking* opens its question.
+  The answer's comment shows on the row, to the booker and the approvers only.
+  A waiting booking offers no *Take the car*.
+  *Take it now* kept past midnight is a request: before the save the sheet says so and its button reads *Request*; after it, the sheet stays open with the alert "The booking waits for approval." and focus on *Close*.
 - *Take the car* and *Return the car* ask the counter, the tank or battery level, and a note.
   On return the counter starts empty, because a prefilled one would be saved unread.
+  On someone else's booking *Take the car* reads "Hand over to Anna", in the button and its sheet: the owner or a manager is not the one who drives.
 - *Take it now* books from now and checks out in one step.
+  Before it books, it checks that the counter is a whole number, the level a percentage and the note within its length, so these refusals book nothing.
+  A counter the check-out refuses on the server's side still leaves the booking.
 - Returning opens the entry sheet on a trip filled in from the handover.
   The category stays empty: only the driver knows whether the drive was business.
 
@@ -231,14 +265,16 @@ Drawn in [design/context.md#by-role](design/context.md#by-role).
 |---|---|
 | *New entry*, `n`, the QR sticker, *Done* on a reminder, *Close gap*, *Add document* | `log` |
 | *Book*, *Take it now* | `book`: `log` on a car in service |
-| *Change*, *Cancel booking*, *Take the car*, *Return the car*, *Log the trip* | the booking's own `may` |
+| *Change*, *Cancel booking*, *Take the car*, *Return the car*, *Log the trip*, *Answer* | the booking's own `may` |
 | *Edit vehicle*, the reminder sheet, the recipients, the HU/AU question | `edit` |
 | *Import from a file…* | `edit`, on a vehicle not disposed of |
 | A timeline row that opens | the row's `edit` |
 | *Delete* or *Void trip* | the row's `delete` |
-| *Delete vehicle*, the Access section | `own` |
+| *Delete vehicle*, the Access section, *Drivers and viewers see costs*, *Bookings need approval*, the booking notices | `own` |
+| *Costs*, the header's cost tiles, *Open mileage claim* | `costs` |
 
 A row the reader may not change still says everything, and opens nothing.
+Without `costs`, a row somebody else entered comes without its amount, and their expenses not at all ([API](api.md#costs)).
 
 ### Who entered it
 

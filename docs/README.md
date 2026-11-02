@@ -8,7 +8,7 @@ Each page ends with a link to the next one, so you can read a path from start to
 
 | You are | Start here | The path |
 |---|---|---|
-| A user of the app | [User manual](user/README.md) | Get started, vehicles, entries, logbook, costs, reminders, access, documents, import, settings |
+| A user of the app | [User manual](user/README.md) | Get started, vehicles, entries, logbook, figures and statistics, reminders, access, documents, import, settings |
 | The administrator of a Nextcloud server | [Administration](admin/README.md) | Install, data and backups, `occ` commands, troubleshooting |
 | A developer | [Developer guide](developer/README.md) | Set up, architecture, interface, API, security, legal, contributing, testing and release |
 

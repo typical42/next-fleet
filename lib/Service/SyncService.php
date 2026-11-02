@@ -83,6 +83,7 @@ class SyncService {
 		private IAppConfig $config,
 		private ITimeFactory $time,
 		private LoggerInterface $logger,
+		private CostsShown $costs,
 	) {
 		$this->tables = [
 			'readings' => $readings,
@@ -134,14 +135,16 @@ class SyncService {
 		$more = count($page) > $limit;
 		$page = array_slice($page, 0, $limit);
 		$last = end($page);
-		$changes = $this->wired($userId, $byId, $page);
+		// After the cursor is read off the page, so it moves past what is left out.
+		$shown = $this->shown($userId, $byId, $page);
+		$changes = $this->wired($userId, $byId, $shown);
 
 		// docs/security.md#what-is-logged: a first sync is the CSV export of every vehicle at once.
 		$this->logger->info('Sync', [
 			'app' => Application::APP_ID,
 			'user' => $userId,
 			'vehicle' => 'all reachable',
-			'rows' => count($page),
+			'rows' => count($shown),
 		]);
 
 		return [
@@ -218,6 +221,42 @@ class SyncService {
 	}
 
 	/**
+	 * The page without the rows kept from the reader (CostsShown): somebody else's expenses, the
+	 * papers on entries whose amounts are kept, and the receipts on the vehicle or on somebody
+	 * else's booking. Their tombstones too, for rows never handed out.
+	 *
+	 * @param array<int, Vehicle> $byId
+	 * @param list<array{int, int, int, Row}> $page
+	 * @return list<array{int, int, int, Row}>
+	 * @throws \OCP\DB\Exception
+	 */
+	private function shown(string $userId, array $byId, array $page): array {
+		$papers = [];
+		foreach ($page as [, , , $row]) {
+			if ($row instanceof Document) {
+				$papers[$row->getVehicleId()][] = $row;
+			}
+		}
+		// A vehicle's papers at a time: whose entry each hangs on is one query for all.
+		$kept = [];
+		foreach ($papers as $vehicleId => $documents) {
+			foreach ($this->papers->shown($userId, $byId[$vehicleId], $documents) as $document) {
+				$kept[(int)$document->getId()] = true;
+			}
+		}
+
+		return array_values(array_filter($page, function (array $item) use ($userId, $byId, $kept): bool {
+			[, , , $row] = $item;
+
+			return match (true) {
+				$row instanceof Expense => $this->costs->showsExpense($userId, $byId[$row->getVehicleId()], $row),
+				$row instanceof Document => isset($kept[(int)$row->getId()]),
+				default => true,
+			};
+		}));
+	}
+
+	/**
 	 * The page by table, each item the row's uuid, vehicle and dating, and the row in the wire form
 	 * its own route answers - null for a deleted one, which is a tombstone.
 	 *
@@ -265,7 +304,8 @@ class SyncService {
 	}
 
 	/**
-	 * Live rows of one table on one vehicle, in the order given.
+	 * Live rows of one table on one vehicle, in the order given, each fill-up and record without
+	 * the amounts the reader may not see (CostsShown).
 	 *
 	 * @param non-empty-list<Row> $rows
 	 * @return list<array<string, mixed>>
@@ -273,8 +313,15 @@ class SyncService {
 	 */
 	private function wire(string $table, string $userId, Vehicle $vehicle, array $rows): array {
 		return match ($table) {
-			'energy' => array_map(static fn (Energy $energy): array => EnergyService::wire($vehicle, $energy), self::only(Energy::class, $rows)),
-			'maintenance' => $this->maintenance($vehicle, self::only(Maintenance::class, $rows)),
+			// Flagged as the row is, as the timeline flags it: a priced fill-up is not unpriced.
+			'energy' => array_map(
+				fn (Energy $energy): array => array_merge(
+					EnergyService::wire($vehicle, $this->costs->amounts($userId, $vehicle, $energy)),
+					['flags' => EnergyService::flags($vehicle, $energy)],
+				),
+				self::only(Energy::class, $rows),
+			),
+			'maintenance' => $this->maintenance($vehicle, $this->costs->entries($userId, $vehicle, self::only(Maintenance::class, $rows))),
 			'reminders' => $this->due->wired($vehicle, self::only(Reminder::class, $rows)),
 			'documents' => $this->papers->wired($userId, $vehicle, self::only(Document::class, $rows)),
 			'bookings' => $this->pool->wired($userId, $vehicle, self::only(Booking::class, $rows)),

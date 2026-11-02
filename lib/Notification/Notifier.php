@@ -36,13 +36,16 @@ use OCP\Notification\INotifier;
 use OCP\Notification\UnknownNotificationException;
 
 /**
- * Turns what the reminder job, a grant or a cancelled booking stored into words, in the recipient's
+ * Turns what the reminder job, a grant or a booking stored into words, in the recipient's
  * language, when the list is read (docs/architecture.md#reminder-engine). Each stores parameters
  * only, so a language changed later is the one shown.
  *
  * @psalm-type ReminderNotice = array{vehicle: string, plate: string, template_key: ?string, title: ?string, due_date: ?string, due_odo: ?int, occurrence?: int}
  */
 class Notifier implements INotifier {
+	/** The most characters of free text a notice carries (shortened()). */
+	private const LONGEST = 200;
+
 	/**
 	 * What prepare() read, for the next notice: Nextcloud prepares a list of many notices of one
 	 * vehicle one at a time. Kept for the notifier's life - a request, or one cron run, in which a
@@ -114,6 +117,8 @@ class Notifier implements INotifier {
 		$subject = match ($notification->getObjectType()) {
 			GrantNotices::OBJECT => $this->granted($l, $user, $vehicle, $notification->getObjectId()),
 			BookingNotices::OBJECT => $this->cancelled($l, $user, $vehicle, $notification->getObjectId()),
+			BookingNotices::EVENT => $this->bookingEvent($l, $user, $vehicle, $notification->getObjectId(), $notification->getSubject(), $p),
+			BookingNotices::APPROVAL => $this->approval($l, $user, $vehicle, $notification, $p),
 			default => $this->reminded($l, $user, $vehicle, (int)$notification->getObjectId(), $notification->getSubject(), $p),
 		};
 		$notification->setParsedSubject($subject)->setIcon($icon);
@@ -259,5 +264,118 @@ class Notifier implements INotifier {
 			(string)$l->l('date', $start, ['width' => 'medium']),
 			(string)$l->l('time', $start, ['width' => 'short']),
 		]);
+	}
+
+	/**
+	 * One event of a booking, as the vehicle's list hears it (BookingNotices::tell()): the span or
+	 * the handover as it was sent, the booker by the name the booking carries now - a pseudonym
+	 * after an erasure. Shown only while the reader sees the vehicle, for the reason cancelled()
+	 * gives.
+	 *
+	 * @param array<string, mixed> $p
+	 * @throws UnknownNotificationException for an event this app does not send
+	 * @throws AlreadyProcessedException if the booking is gone, or the reader lost the vehicle
+	 * @throws \OCP\DB\Exception
+	 */
+	private function bookingEvent(IL10N $l, string $user, Vehicle $vehicle, string $bookingUuid, string $event, array $p): string {
+		if (!$this->sees($user, $vehicle)) {
+			throw new AlreadyProcessedException();
+		}
+		try {
+			$booking = $this->bookings->findOnVehicle((int)$vehicle->getId(), $bookingUuid);
+		} catch (DoesNotExistException) {
+			throw new AlreadyProcessedException();
+		}
+		$booker = $this->users->getDisplayName($booking->getUserId()) ?? $booking->getUserId();
+		$name = VehicleWords::name($l, $vehicle);
+		$at = self::at($l, $p);
+		$odo = (string)($p['odo'] ?? '');
+		$level = $p['level'] ?? null;
+		$hours = $vehicle->getOdoUnit() === 'h';
+
+		return match ($event) {
+			Vehicle::NOTICE_BOOKED => $l->t('%1$s booked %2$s from %3$s to %4$s', [$booker, $name, $at('starts_at'), $at('ends_at')]),
+			Vehicle::NOTICE_TAKEN => $l->t('%1$s took %2$s until %3$s', [$booker, $name, $at('ends_at')]),
+			Vehicle::NOTICE_CHANGED => $l->t('The booking of %1$s by %2$s now runs from %3$s to %4$s', [$name, $booker, $at('starts_at'), $at('ends_at')]),
+			Vehicle::NOTICE_CANCELLED => $l->t('The booking of %1$s by %2$s from %3$s was cancelled', [$name, $booker, $at('starts_at')]),
+			Vehicle::NOTICE_RETURNED => match (true) {
+				$level === null && $hours => $l->t('%1$s returned %2$s at %3$s h', [$booker, $name, $odo]),
+				$level === null => $l->t('%1$s returned %2$s at %3$s km', [$booker, $name, $odo]),
+				$hours => $l->t('%1$s returned %2$s at %3$s h, tank or battery at %4$s%%', [$booker, $name, $odo, (string)$level]),
+				default => $l->t('%1$s returned %2$s at %3$s km, tank or battery at %4$s%%', [$booker, $name, $odo, (string)$level]),
+			},
+			default => throw new UnknownNotificationException(),
+		};
+	}
+
+	/**
+	 * A request to an approver, or an answer to the booker (BookingNotices::tellRequested(),
+	 * tellAnswered()), worded with the span it was sent with and the names the booking carries
+	 * now. Shown only while the booking's approval is still the one sent, so an answer takes the
+	 * request off every approver's list and a later answer the earlier one off the booker's; a
+	 * request or a question only while the booking is not cancelled, and a request only while the
+	 * reader may still answer it. A question carries the comment as its message, read off the
+	 * booking like the names, and for the booker only, who may read it.
+	 *
+	 * @param array<string, mixed> $p
+	 * @throws UnknownNotificationException for a subject this app does not send
+	 * @throws AlreadyProcessedException if the booking is gone or answered since, or the reader lost the vehicle
+	 * @throws \OCP\DB\Exception
+	 */
+	private function approval(IL10N $l, string $user, Vehicle $vehicle, INotification $notification, array $p): string {
+		$subject = $notification->getSubject();
+		if (!$this->sees($user, $vehicle)) {
+			throw new AlreadyProcessedException();
+		}
+		try {
+			$booking = $this->bookings->findOnVehicle((int)$vehicle->getId(), $notification->getObjectId());
+		} catch (DoesNotExistException) {
+			throw new AlreadyProcessedException();
+		}
+		// A cancel leaves the approval as it stood, so an open one also needs the booking live.
+		$open = in_array($subject, Booking::OPEN, true);
+		if ($booking->getApproval() !== $subject
+			|| ($open && $booking->getState() !== Booking::BOOKED)
+			|| ($subject === Booking::REQUESTED && !$this->access->may($user, VehicleAccess::EDIT, $vehicle))) {
+			throw new AlreadyProcessedException();
+		}
+		$name = VehicleWords::name($l, $vehicle);
+		$at = self::at($l, $p);
+		$nameOf = fn (?string $uid): string => $uid === null ? '' : ($this->users->getDisplayName($uid) ?? $uid);
+		$by = $nameOf($booking->getApprovalBy());
+		$question = (string)$booking->getApprovalComment();
+		if ($subject === Booking::ASKED && $question !== '' && $user === $booking->getUserId()) {
+			$notification->setParsedMessage(self::shortened($question));
+		}
+
+		return match ($subject) {
+			Booking::REQUESTED => $l->t('%1$s asks to book %2$s from %3$s to %4$s', [$nameOf($booking->getUserId()), $name, $at('starts_at'), $at('ends_at')]),
+			Booking::APPROVED => $l->t('%1$s approved your booking of %2$s from %3$s', [$by, $name, $at('starts_at')]),
+			Booking::ASKED => $l->t('%1$s has a question about your booking of %2$s from %3$s', [$by, $name, $at('starts_at')]),
+			// Declined by nobody: BookingService::declineUnanswered() at its end.
+			Booking::DECLINED => $booking->getApprovalBy() === null
+				? $l->t('Your booking of %1$s from %2$s was not approved before its end, so it was declined', [$name, $at('starts_at')])
+				: $l->t('%1$s declined your booking of %2$s from %3$s', [$by, $name, $at('starts_at')]),
+			default => throw new UnknownNotificationException(),
+		};
+	}
+
+	/** A notice is a line, not a letter: the booking shows the whole text. */
+	private static function shortened(string $text): string {
+		return mb_strlen($text) > self::LONGEST ? mb_substr($text, 0, self::LONGEST - 1) . '…' : $text;
+	}
+
+	/**
+	 * One end of the span a booking notice was sent with, in the reader's words.
+	 *
+	 * @param array<string, mixed> $p
+	 * @return \Closure(string): string by the parameter's key, `starts_at` or `ends_at`
+	 */
+	private static function at(IL10N $l, array $p): \Closure {
+		return static fn (string $key): string => (string)$l->l(
+			'datetime',
+			\DateTime::createFromImmutable(Jurisdictions::localTime((int)($p[$key] ?? 0), (int)($p[$key . '_off'] ?? 0))),
+			['width' => 'medium|short'],
+		);
 	}
 }

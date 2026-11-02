@@ -9,6 +9,8 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Service;
 
 use OCA\NextFleet\Db\Access;
+use OCA\NextFleet\Db\BookingRecipient;
+use OCA\NextFleet\Db\BookingRecipientMapper;
 use OCA\NextFleet\Db\ReminderRecipient;
 use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\Vehicle;
@@ -16,23 +18,30 @@ use OCA\NextFleet\Db\VehicleMapper;
 use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Db\TTransactional;
 use OCP\IDBConnection;
+use OCP\IGroupManager;
 use OCP\IUserManager;
 
 /**
- * Who a vehicle's reminders go to (docs/architecture.md#reminder-engine). Reading the list takes
- * EDIT as writing it does: who gets told is the managers' business, and the sheet shows the list
- * to whoever may change it and to nobody else.
+ * Who a vehicle's reminders go to (docs/architecture.md#reminder-engine), and who hears of its
+ * bookings (docs/architecture.md#booking-notices). Reading the reminder list takes EDIT as writing
+ * it does: who gets told is the managers' business, and the sheet shows the list to whoever may
+ * change it and to nobody else. The booking list is the owner's to write, as the events it hears
+ * are; a manager reads it.
  *
  * @psalm-import-type NextFleetRecipient from \OCA\NextFleet\ResponseDefinitions
+ * @psalm-import-type NextFleetBookingRecipient from \OCA\NextFleet\ResponseDefinitions
  */
 class RecipientService {
 	use TTransactional;
 
 	public function __construct(
 		private ReminderRecipientMapper $recipients,
+		private BookingRecipientMapper $bookingRecipients,
 		private VehicleService $fleet,
 		private VehicleMapper $vehicles,
 		private IUserManager $users,
+		private IGroupManager $groups,
+		private Names $names,
 		private Sharable $sharable,
 		private VehicleAccess $access,
 		private NotificationService $notifications,
@@ -64,12 +73,9 @@ class RecipientService {
 	 */
 	public function add(string $userId, string $vehicleUuid, mixed $recipient): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
-		// The backend finds an account in any case; stored as sent, `Admin` beside `admin` would be
-		// one person told twice.
-		$recipient = is_string($recipient) ? $this->users->get($recipient)?->getUID() : null;
+		$recipient = is_string($recipient) ? $this->names->spelled(Access::USER, $recipient) : null;
 		// One answer for both, for the reason GrantService::grantee() gives.
-		if ($recipient === null || (!$this->sharable->reaches($userId, $recipient, Access::USER)
-			&& !$this->access->may($recipient, VehicleAccess::VIEW, $vehicle))) {
+		if ($recipient === null || !$this->admits($userId, $vehicle, $recipient, Access::USER)) {
 			throw new \InvalidArgumentException('user_id is not an account on this instance');
 		}
 
@@ -116,16 +122,117 @@ class RecipientService {
 				static fn (ReminderRecipient $row): string => $row->getUserId(),
 				$this->recipients->findByVehicle((int)$vehicle->getId()),
 			);
-			// The row as the list shows it, else the spelling add() stores. A row an erased account
-			// left can share its uid with a live account in another case.
-			$gone = in_array($recipient, $listed, true)
-				? $recipient
-				: ($this->users->get($recipient)?->getUID() ?? $recipient);
+			$gone = $this->listedAs($listed, Access::USER, $recipient);
 			$this->recipients->deleteByUser((int)$vehicle->getId(), $gone);
 		}, $this->db);
 		$this->notifications->withdrawFrom((int)$vehicle->getId(), $gone);
 
 		return $this->of($vehicle);
+	}
+
+	/**
+	 * Who hears of the vehicle's bookings; empty means the owner (BookingNotices).
+	 *
+	 * @return list<NextFleetBookingRecipient>
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not edit this vehicle
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException
+	 * @throws \OCP\DB\Exception
+	 */
+	public function listBooking(string $userId, string $vehicleUuid): array {
+		return $this->bookingOf($this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid));
+	}
+
+	/**
+	 * Puts one account or one group on the booking list, by add()'s rule: whom the owner may share
+	 * with, or an account that sees the vehicle. Being on it grants nothing, and only those who see
+	 * the vehicle are told. Adding one already on it changes nothing.
+	 *
+	 * @return list<NextFleetBookingRecipient> the list as it now stands
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user does not own this vehicle
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException
+	 * @throws \InvalidArgumentException if the instance has no such account or group, or none the owner may share with
+	 * @throws \OCP\DB\Exception
+	 */
+	public function addBooking(string $userId, string $vehicleUuid, mixed $recipient, mixed $type): array {
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::OWN, $vehicleUuid);
+		$type = self::recipientType($type);
+		$name = is_string($recipient) ? $this->names->spelled($type, $recipient) : null;
+		if ($name === null || !$this->admits($userId, $vehicle, $name, $type)) {
+			throw new \InvalidArgumentException('recipient is not an account or group on this instance');
+		}
+
+		$this->atomicRetry(function () use ($userId, $vehicle, $name, $type): void {
+			$this->vehicles->hold((int)$vehicle->getId());
+			foreach ($this->bookingRecipients->findByVehicle((int)$vehicle->getId()) as $one) {
+				if ($one->type() === $type && $one->name() === $name) {
+					return;
+				}
+			}
+			// Asked again under the hold, for the reason add() gives.
+			if ($type === Access::USER ? !$this->users->userExists($name) : !$this->groups->groupExists($name)) {
+				throw new \InvalidArgumentException('recipient is not an account or group on this instance');
+			}
+
+			$row = new BookingRecipient();
+			$row->setVehicleId((int)$vehicle->getId());
+			$row->setUserId($type === Access::USER ? $name : null);
+			$row->setGroupId($type === Access::GROUP ? $name : null);
+			$row->setCreatedBy($userId);
+			$this->bookingRecipients->insert($row);
+		}, $this->db);
+
+		return $this->bookingOf($vehicle);
+	}
+
+	/**
+	 * Takes one account or group off the booking list. One not on it is already off it; the
+	 * notices it was sent stay, as they told what happened.
+	 *
+	 * @return list<NextFleetBookingRecipient> the list as it now stands
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user does not own this vehicle
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException
+	 * @throws \InvalidArgumentException if the type is neither user nor group
+	 * @throws \OCP\DB\Exception
+	 */
+	public function removeBooking(string $userId, string $vehicleUuid, string $type, string $recipient): array {
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::OWN, $vehicleUuid);
+		$type = self::recipientType($type);
+		$this->atomicRetry(function () use ($vehicle, $type, $recipient): void {
+			$this->vehicles->hold((int)$vehicle->getId());
+			$listed = [];
+			foreach ($this->bookingRecipients->findByVehicle((int)$vehicle->getId()) as $one) {
+				if ($one->type() === $type) {
+					$listed[] = $one->name();
+				}
+			}
+			$this->bookingRecipients->deleteOne((int)$vehicle->getId(), $type, $this->listedAs($listed, $type, $recipient));
+		}, $this->db);
+
+		return $this->bookingOf($vehicle);
+	}
+
+	/**
+	 * The row a name sent to remove() or removeBooking() names: as the list shows it, else as
+	 * add() and addBooking() store it. As listed first, since a row an erased account left can
+	 * share its uid with a live account in another case.
+	 *
+	 * @param list<string> $listed
+	 * @param Access::USER|Access::GROUP $type
+	 */
+	private function listedAs(array $listed, string $type, string $name): string {
+		return in_array($name, $listed, true) ? $name : ($this->names->spelled($type, $name) ?? $name);
+	}
+
+	/**
+	 * @return Access::USER|Access::GROUP
+	 * @throws \InvalidArgumentException
+	 */
+	private static function recipientType(mixed $type): string {
+		return match ($type) {
+			Access::USER => Access::USER,
+			Access::GROUP => Access::GROUP,
+			default => throw new \InvalidArgumentException('recipient_type is user or group'),
+		};
 	}
 
 	/**
@@ -170,6 +277,35 @@ class RecipientService {
 		}
 
 		return $dropped;
+	}
+
+	/**
+	 * The rule add() states, for both lists. A group only by sharing: a group sees nothing itself.
+	 *
+	 * @param Access::USER|Access::GROUP $type
+	 * @throws \OCP\DB\Exception
+	 */
+	private function admits(string $userId, Vehicle $vehicle, string $name, string $type): bool {
+		return $this->sharable->reaches($userId, $name, $type)
+			|| ($type === Access::USER && $this->access->may($name, VehicleAccess::VIEW, $vehicle));
+	}
+
+	/**
+	 * @return list<NextFleetBookingRecipient>
+	 * @throws \OCP\DB\Exception
+	 */
+	private function bookingOf(Vehicle $vehicle): array {
+		return array_map(function (BookingRecipient $recipient): array {
+			$name = $recipient->name();
+			$type = $recipient->type();
+
+			return [
+				'recipient' => $name,
+				'recipient_type' => $type,
+				// As of() names one whose account is gone.
+				'display_name' => ($type === Access::GROUP ? $this->groups->getDisplayName($name) : $this->users->getDisplayName($name)) ?? $name,
+			];
+		}, $this->bookingRecipients->findByVehicle((int)$vehicle->getId()));
 	}
 
 	/**

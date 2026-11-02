@@ -58,7 +58,7 @@ class FleetMigratorTest extends TestCase {
 		$vehicles = $this->createMock(VehicleMapper::class);
 		$vehicles->method('findAnyById')->willReturn(Vehicle::fromRow(['id' => 7, 'uuid' => 'v-7', 'user_id' => 'owner']));
 		$access = $this->createMock(VehicleAccess::class);
-		$access->method('may')->willReturnCallback(static fn (string $uid): bool => in_array($uid, $sees, true));
+		$access->method('operations')->willReturnCallback(static fn (string $uid): array => in_array($uid, $sees, true) ? [VehicleAccess::VIEW] : []);
 
 		return new FleetMigrator($tables, $vehicles, $this->createMock(TripMapper::class), $access, $this->createMock(IL10N::class), $this->createMock(LoggerInterface::class));
 	}

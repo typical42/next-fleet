@@ -9,8 +9,10 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Service;
 
 use OCA\NextFleet\AppInfo\Application;
+use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccountTables;
 use OCA\NextFleet\Db\BaseMapper;
+use OCA\NextFleet\Db\BookingRecipientMapper;
 use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
@@ -22,7 +24,7 @@ use Psr\Log\LoggerInterface;
 
 /**
  * What a deleted account leaves behind (docs/adr/0008-erasing-a-driver-pseudonymises.md): its
- * uid replaced on every row and no row deleted, except the reminder lists it was on; the vehicles
+ * uid replaced on every row and no row deleted, except the notice lists it was on; the vehicles
  * it owned closed. When it renamed a row, every sync cursor handed out before it starts over
  * (SyncService::EPOCH).
  */
@@ -40,6 +42,7 @@ class ErasureService {
 		private IDBConnection $db,
 		private ISecureRandom $random,
 		private ReminderRecipientMapper $recipients,
+		private BookingRecipientMapper $bookingRecipients,
 		private VehicleMapper $vehicles,
 		AccountTables $tables,
 		private SyncEpoch $epoch,
@@ -77,7 +80,7 @@ class ErasureService {
 			// The lists it is on are held so a recipient add or a sweep that asked userExists()
 			// before the account went commits first, and its row is deleted or renamed here, not
 			// left behind. All in id order, so two erasures at once never hold crosswise.
-			$held = array_unique([...$owned, ...$this->recipients->findVehicleIds($uid)]);
+			$held = array_unique([...$owned, ...$this->recipients->findVehicleIds($uid), ...$this->bookingRecipients->findVehicleIds($uid)]);
 			sort($held);
 			foreach ($held as $vehicleId) {
 				$this->vehicles->hold($vehicleId);
@@ -103,6 +106,7 @@ class ErasureService {
 				return [$vehicles, $grants, 0];
 			}
 			$this->recipients->deleteAccount($uid);
+			$this->bookingRecipients->deleteEverywhere(Access::USER, $uid);
 			$renamed = 0;
 			foreach ($named as $table) {
 				$renamed += $table->pseudonymise($uid, $pseudonym);

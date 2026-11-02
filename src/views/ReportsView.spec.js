@@ -22,10 +22,10 @@ vi.mock('@nextcloud/router', () => ({
 	generateUrl: (/** @type {string} */ path) => `/index.php${path}`,
 }))
 
-const GERMAN = { uuid: 'v-de', updated_at: 1, plate: 'B-XY 123', jurisdiction: 'de', lifecycle: 'active', odo_unit: 'km' }
-const SOLD = { uuid: 'v-sold', updated_at: 1, plate: 'M-AB 1', jurisdiction: 'de', lifecycle: 'disposed', odo_unit: 'km' }
-const HOURS = { uuid: 'v-hours', updated_at: 1, plate: 'GEN 1', jurisdiction: 'de', lifecycle: 'active', odo_unit: 'h' }
-const ELSEWHERE = { uuid: 'v-gen', updated_at: 1, plate: 'XX 42', jurisdiction: 'generic', lifecycle: 'active', odo_unit: 'km' }
+const GERMAN = { uuid: 'v-de', updated_at: 1, plate: 'B-XY 123', jurisdiction: 'de', lifecycle: 'active', odo_unit: 'km', may: ['view', 'costs'] }
+const SOLD = { uuid: 'v-sold', updated_at: 1, plate: 'M-AB 1', jurisdiction: 'de', lifecycle: 'disposed', odo_unit: 'km', may: ['view', 'costs'] }
+const HOURS = { uuid: 'v-hours', updated_at: 1, plate: 'GEN 1', jurisdiction: 'de', lifecycle: 'active', odo_unit: 'h', may: ['view', 'costs'] }
+const ELSEWHERE = { uuid: 'v-gen', updated_at: 1, plate: 'XX 42', jurisdiction: 'generic', lifecycle: 'active', odo_unit: 'km', may: ['view', 'costs'] }
 
 const settings = {
 	preferences: { jurisdiction: 'de', dismissed_hints: [], dismissed_logbook_hints: [], reclaim_vat: false, kpi_period: 'last-12', grid_factor: null, inbox_folder: null },
@@ -203,6 +203,14 @@ describe('reports screen', () => {
 		const hours = await screen([HOURS])
 		expect(link(hours).exists()).toBe(true)
 		expect(claim(hours).exists()).toBe(false)
+	})
+
+	/** The claim puts money on the trips, so it is the costs' (docs/api.md#costs). */
+	it('offers only the logbook to a reader the owner keeps the costs from', async () => {
+		const wrapper = await screen([{ ...GERMAN, may: ['view', 'log'] }])
+
+		expect(link(wrapper).exists()).toBe(true)
+		expect(claim(wrapper).exists()).toBe(false)
 	})
 
 	/** A country could print a claim and no logbook; its vehicles are offered all the same. */

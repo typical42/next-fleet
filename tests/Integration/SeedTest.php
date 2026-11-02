@@ -183,7 +183,7 @@ class SeedTest extends TestCase {
 	}
 
 	/**
-	 * The Costs screen charts a month: over the year before the run, no 30-day stretch of the
+	 * Statistics charts a month: over the year before the run, no 30-day stretch of the
 	 * Passat's is empty, so whichever months the seeding date puts on screen have bars.
 	 */
 	public function testThePassatHasACostInEveryMonthOfItsYear(): void {

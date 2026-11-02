@@ -29,11 +29,11 @@ sequenceDiagram
     alt the caller is an erased account's pseudonym
         Access-->>Fleet: nothing
     else the caller is the vehicle's user_id
-        Access-->>Fleet: view, log, edit, delete, own
+        Access-->>Fleet: view, log, edit, delete, own, costs
     else anybody else
         Access->>Groups: getUserGroupIds(user)
         Access->>db: AccessMapper::findGrants(vehicle_id, userId, groupIds)
-        Access-->>Fleet: what the grants' roles cover together
+        Access-->>Fleet: what the grants' roles cover together, costs too while costs_shared
     end
     break log is not among them
         Fleet-->>Controller: AccessDeniedException → 403
@@ -206,15 +206,18 @@ sequenceDiagram
 
 ## A booking to its handover
 
-A driver books, takes the car, brings it back, and logs the trip from the booking.
-Booking and handover write `fleet_bookings` only.
-The trip writes the Reading ([bookings](../architecture.md#bookings)).
+A driver books, waits for the answer where the vehicle asks for one, takes the car, brings it back, and logs the trip from the booking.
+Booking, answer and handover write `fleet_bookings` only.
+The trip writes the Reading ([bookings](../architecture.md#bookings), [booking approval](../architecture.md#booking-approval)).
+Each notice goes after the commit.
 
 ```mermaid
 sequenceDiagram
     actor Driver
+    actor Approver as Owner or manager
     participant Controller as BookingController
     participant Booking as BookingService
+    participant Notices as BookingNotices
     participant TripController
     participant Trip as TripService
     participant Odometer as OdometerService
@@ -226,12 +229,38 @@ sequenceDiagram
     break a booked or out booking holds part of the span
         Booking-->>Controller: BookingConflictException → 409, that booking
     end
-    Booking->>db: BookingMapper::insert, state booked
+    Booking->>db: BookingMapper::insert, state booked, approval as approvalFor() says
+    alt approval requested: booking_approval on, the driver no approver, not a take-now back by midnight
+        Booking->>Notices: tellRequested(vehicle, booking)
+        Notices->>Notices: notify the owner and the managers, whatever the list says
+    else
+        Booking->>Notices: tell(vehicle, booking, booked or taken, driver)
+        Notices->>db: BookingRecipientMapper::findByVehicle
+        Notices->>Notices: if booking_notices ticks the event: notify the list, each who sees the vehicle, not the driver
+    end
     Booking-->>Controller: 201, the booking with may
+    opt approval requested
+        Approver->>Controller: POST …/bookings/{booking}/approve, ask or decline, updated_at, comment
+        Controller->>Booking: answer(userId, uuid, booking, token, answer, fields)
+        Note over Booking: reach(userId, EDIT, uuid), state booked, waits(), before ends_at
+        Booking->>db: VehicleMapper::hold, BookingMapper::updateChecked, approval, approval_by, approval_comment
+        Note over Booking: declined is state cancelled
+        Booking->>Notices: tellAnswered(vehicle, booking, approver)
+        Notices->>Notices: the driver's notice of the answer, in place of the one before
+        Booking->>Notices: tellSettled(vehicle, booking, heard, approver)
+        Note over Notices: approved: the list hears booked
+        opt asked back
+            Driver->>Controller: PUT …/bookings/{booking}, updated_at, a new span or purpose
+            Controller->>Booking: change(userId, uuid, booking, token, fields)
+            Booking->>db: BookingMapper::updateChecked, approval requested
+            Booking->>Notices: tellRequested(vehicle, booking)
+        end
+        Note over Booking: PendingJob declines a request still waiting at ends_at
+    end
     Driver->>Controller: POST …/bookings/{booking}/check-out, odo, level, notes
     Controller->>Booking: checkOut(userId, uuid, booking, fields)
     Booking->>db: VehicleMapper::hold, BookingMapper::findOnVehicle
-    Note over Booking: VehicleAccess::mayBooking(), state booked, before ends_at
+    Note over Booking: VehicleAccess::mayBooking(), state booked, not waiting, before ends_at
     Booking->>db: BookingMapper::findOut, findLiveOverlapping for an early start
     break another booking is out, or an early start meets a live one
         Booking-->>Controller: 409, that booking
@@ -243,6 +272,7 @@ sequenceDiagram
     Booking->>db: VehicleMapper::hold, BookingMapper::findOnVehicle
     Note over Booking: VehicleAccess::mayBooking(), state out
     Booking->>db: BookingMapper::updateChecked, state returned, in_at, in_odo, in_level, in_notes
+    Booking->>Notices: tell(vehicle, booking, returned, driver)
     Booking-->>Controller: 200, the booking with trip_draft
     Driver->>TripController: POST …/trips, the draft's fields, booking_uuid
     TripController->>Trip: record(userId, uuid, fields)

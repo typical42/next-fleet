@@ -24,19 +24,25 @@ flowchart LR
     Owner -->|is a| Manager -->|is a| Driver -->|is a| Viewer
     subgraph NextFleet
         read(["Read a vehicle, its timeline and figures<br/>view"])
-        print(["Print the logbook and the Mileage Claim,<br/>export CSV<br/>view"])
+        print(["Print the logbook, export CSV<br/>view"])
+        costs(["See the costs, print the Mileage Claim<br/>costs"])
         log(["Log an Entry, change one they entered<br/>log"])
         book(["Book an active vehicle<br/>log"])
         edit(["Change the vehicle, its Reminders<br/>and Recipients<br/>edit"])
         any(["Change and delete anybody's Entry<br/>edit, delete"])
         import(["Import Entries from a CSV file<br/>edit"])
+        answer(["Answer a Booking that waits for Approval<br/>edit"])
         grant(["Grant, re-role and revoke access<br/>own"])
         exist(["Delete and restore the vehicle<br/>own"])
+        share(["Share the costs with drivers and viewers<br/>own"])
+        notices(["Choose who hears of bookings, and of what<br/>own"])
+        gate(["Make bookings wait for Approval<br/>own"])
     end
     Viewer --- read & print
+    Viewer -.-|while the owner shares them| costs
     Driver --- log & book
-    Manager --- edit & any & import
-    Owner --- grant & exist
+    Manager --- edit & any & import & costs & answer
+    Owner --- grant & exist & share & notices & gate
 ```
 
 ### Access

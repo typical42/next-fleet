@@ -18,6 +18,7 @@ use OCA\NextFleet\Migration\Version000006Date20261002000000;
 use OCA\NextFleet\Migration\Version000007Date20261003000000;
 use OCA\NextFleet\Migration\Version000008Date20261010000000;
 use OCA\NextFleet\Migration\Version000009Date20261011000000;
+use OCA\NextFleet\Migration\Version000010Date20261101000000;
 use OCP\IDBConnection;
 use OCP\Migration\SimpleMigrationStep;
 
@@ -45,6 +46,7 @@ final class MigrationSteps {
 			new Version000007Date20261003000000(),
 			new Version000008Date20261010000000(),
 			new Version000009Date20261011000000($db),
+			new Version000010Date20261101000000(),
 		];
 	}
 

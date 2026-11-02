@@ -32,8 +32,6 @@ const out = 'design/screenshots'
 // and the content column both still carry weight.
 const viewport = { width: 1280, height: 800 }
 const thumbnail = { width: 460, height: 288 }
-// Tall enough for the CO₂ estimate under the year's table.
-const costsViewport = { width: 1280, height: 960 }
 
 /**
  * @param {import('@playwright/test').Page} page - a signed-in page
@@ -83,21 +81,21 @@ await page.waitForFunction(() => [...document.querySelectorAll('[role="dialog"]'
 await shoot(page, 'entry-sheet')
 await page.keyboard.press('Escape')
 
-// The Passat's year of costs, which the seed fills to the current month. The table answers
-// after the chart's frame is up, so wait on a cell. Beside the navigation the twelve months
-// scroll inside their region and the picture ends mid-table, so the navigation closes for it.
-await page.getByRole('button', { name: 'Costs', exact: true }).click()
-await page.getByRole('region', { name: 'Costs by month' }).getByRole('cell').first().waitFor()
+// Statistics over every vehicle for this year, which the seed fills to the current month. The
+// table answers after the chart's frame is up, so wait on a cell. Beside the navigation the
+// twelve months scroll inside their region and the picture ends mid-table, so the navigation
+// closes for it. The store's height ends the frame under the costs table: a taller one would cut
+// the next chart in half.
+const costsLabel = 'Costs in EUR, by month'
+await page.locator('.app-navigation').getByRole('link', { name: 'Statistics' }).click()
+await page.getByRole('region', { name: costsLabel }).getByRole('cell').first().waitFor()
 await page.getByRole('button', { name: 'Close navigation' }).click()
-await page.setViewportSize(costsViewport)
-await page.waitForFunction(() => {
-	const table = document.querySelector('[aria-label="Costs by month"]')
+await page.waitForFunction((name) => {
+	const table = document.querySelector(`[aria-label="${name}"]`)
 	return table !== null && table.scrollWidth <= table.clientWidth
 		&& document.getAnimations().every((one) => one.playState !== 'running')
-})
-await page.getByRole('heading', { name: 'CO₂ (estimate)' }).waitFor()
-await shoot(page, 'costs')
-await page.setViewportSize(viewport)
+}, costsLabel)
+await shoot(page, 'statistics')
 await page.getByRole('button', { name: 'Open navigation' }).click()
 
 // Reports on the Passat, where both a Fahrtenbuch and a mileage claim print.

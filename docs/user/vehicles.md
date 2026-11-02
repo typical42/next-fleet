@@ -33,7 +33,8 @@ A vehicle without a display name shows its manufacturer, model and body type und
 From top to bottom:
 
 1. The name, and the buttons **New entry**, **Costs**, **Edit vehicle** and **QR sticker**.
-2. The figures of the selected period ([Costs](costs.md)).
+   **Costs** shows only if you see the costs ([Access](access.md#keep-the-costs-from-drivers-and-viewers)).
+2. The figures of the selected period ([Figures and statistics](statistics.md)).
 3. The reminders ([Reminders](reminders.md)).
 4. **Bookings**, only when another user has or had access ([Access and bookings](access.md)).
 5. **Documents** ([Documents](documents.md)).
@@ -285,6 +286,7 @@ Only the owner and the managers can do this.
 Only the owner can delete a vehicle.
 Click **Edit vehicle**, then **Delete vehicle**.
 To cancel, click **Undo** in the message at the bottom of the page.
+After **Undo**, the notifications about bookings that wait for approval are sent again.
 
 > [!WARNING]
 > After the message closes, only your administrator can restore the vehicle.

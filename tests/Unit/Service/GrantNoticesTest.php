@@ -12,11 +12,13 @@ use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Service\GrantNotices;
+use OCA\NextFleet\Service\Names;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\BackgroundJob\IJobList;
 use OCP\IGroup;
 use OCP\IGroupManager;
 use OCP\IUser;
+use OCP\IUserManager;
 use OCP\Notification\IManager;
 use OCP\Notification\INotification;
 use PHPUnit\Framework\TestCase;
@@ -53,7 +55,7 @@ class GrantNoticesTest extends TestCase {
 		$logger->expects($this->once())->method('error');
 		$clock = $this->createMock(ITimeFactory::class);
 		$clock->method('now')->willReturn(new \DateTimeImmutable('@1750000000'));
-		$notices = new GrantNotices($this->createMock(AccessMapper::class), $groups, $notifications, $clock, $this->createMock(IJobList::class), $logger);
+		$notices = new GrantNotices($this->createMock(AccessMapper::class), new Names($this->createMock(IUserManager::class), $groups), $notifications, $clock, $this->createMock(IJobList::class), $logger);
 
 		$notices->tellMembers(Vehicle::fromRow(['uuid' => 'v-1', 'user_id' => 'owner']), Access::fromRow(['uuid' => 'g-1', 'grantee' => 'crew', 'grantee_type' => Access::GROUP]));
 

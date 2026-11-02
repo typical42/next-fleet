@@ -79,8 +79,15 @@ With a pooled car, an employer processes employee data.
 - **An employer who pools cars has duties the app does not carry out.**
   In Germany, a system that can monitor employees needs the works council (§ 87 (1) no. 6 BetrVG).
   The app records; it asks nobody.
+- **Statistics sum each driver's trips, distance and business share** ([API](api.md#statistics)).
+  That is a performance figure about a person, so it falls under the works council's say above.
+  The sums are the owner's and managers'; a driver or viewer gets only their own.
+  This hides no trip: the next point lets every role read the logbook the sums come from.
+  An erased driver stays in them under their pseudonym.
+  They are counted on each read and stored nowhere.
 - **Access shows the whole vehicle.**
   Every role, viewer included, reads every trip and document.
+  One exception: where the owner keeps the costs from drivers and viewers, they read no document on another user's fill-up, maintenance or expense, no receipt on another user's booking, and no receipt on the vehicle itself ([costs](api.md#costs)).
   The owner decides whom to grant.
 - **Imported entries name the person who imported them.**
   Neither format says who drove.

@@ -18,7 +18,9 @@ use PHPUnit\Framework\TestCase;
 
 /**
  * How far a counter moved in a period, against the real database: which Readings bound it, and
- * what an answered reset does to it (docs/architecture.md#odometer-rules, rule 3).
+ * what an answered reset does to it (docs/architecture.md#odometer-rules, rule 3). Each case runs
+ * on the lookups and on the chain read once (ConsumptionService::distancesAlong()): both find the
+ * same Readings.
  *
  * It writes to the instance it runs against (docs/development.md#testing).
  */
@@ -57,30 +59,37 @@ class DistanceTest extends TestCase {
 	 * A month with one Reading in it still moved: the counter stood somewhere when it began, and
 	 * that Reading is where the month's kilometres start.
 	 */
-	public function testAPeriodCountsFromTheReadingStandingAtItsStart(): void {
+	/** @dataProvider ways */
+	public function testAPeriodCountsFromTheReadingStandingAtItsStart(bool $once): void {
 		$vehicle = $this->vehicle();
 		$this->read($vehicle, self::T, 10000);
 		$this->read($vehicle, self::T + 10 * self::DAY, 10500);
 		$this->read($vehicle, self::T + 40 * self::DAY, 11000);
 
-		$this->assertSame(500, $this->consumption->distance($vehicle, self::T + self::DAY, self::T + 30 * self::DAY));
+		$this->assertSame(500, $this->distance($once, $vehicle, self::T + self::DAY, self::T + 30 * self::DAY));
 	}
 
-	/** A Reading in question is neither end: it may be a typo. */
-	public function testAReadingInQuestionBoundsNoPeriod(): void {
+	/**
+	 * A Reading in question is neither end: it may be a typo.
+	 *
+	 * @dataProvider ways
+	 */
+	public function testAReadingInQuestionBoundsNoPeriod(bool $once): void {
 		$vehicle = $this->vehicle();
 		$this->read($vehicle, self::T, 10000);
 		$this->read($vehicle, self::T + 5 * self::DAY, 10500);
 		$this->read($vehicle, self::T + 10 * self::DAY, 9000);
 
-		$this->assertSame(500, $this->consumption->distance($vehicle, self::T + self::DAY, self::T + 12 * self::DAY));
+		$this->assertSame(500, $this->distance($once, $vehicle, self::T + self::DAY, self::T + 12 * self::DAY));
 	}
 
 	/**
 	 * A counter replaced: what the old one ran up to the swap, and what the new one has run since,
 	 * add up. The drop between them is no distance at all.
+	 *
+	 * @dataProvider ways
 	 */
-	public function testAnAnsweredResetAddsTheSegmentsOnEitherSide(): void {
+	public function testAnAnsweredResetAddsTheSegmentsOnEitherSide(bool $once): void {
 		$vehicle = $this->vehicle();
 		$this->read($vehicle, self::T, 10000);
 		$this->read($vehicle, self::T + 5 * self::DAY, 10500);
@@ -89,10 +98,43 @@ class DistanceTest extends TestCase {
 
 		$this->odometer->reset(self::OWNER, $vehicle->getUuid(), $swap->getUuid(), $swap->getUpdatedAt());
 
-		$this->assertSame(1000, $this->consumption->distance($vehicle, self::T + self::DAY, self::T + 20 * self::DAY));
-		$this->assertSame(500, $this->consumption->distance($vehicle, self::T + 11 * self::DAY, self::T + 20 * self::DAY));
-		$this->assertSame(1000, $this->consumption->distance($vehicle, PHP_INT_MIN, PHP_INT_MAX));
-		$this->assertSame(500, $this->consumption->distance($vehicle, self::T + 3 * self::DAY, self::T + 12 * self::DAY));
+		$this->assertSame(1000, $this->distance($once, $vehicle, self::T + self::DAY, self::T + 20 * self::DAY));
+		$this->assertSame(500, $this->distance($once, $vehicle, self::T + 11 * self::DAY, self::T + 20 * self::DAY));
+		$this->assertSame(1000, $this->distance($once, $vehicle, PHP_INT_MIN, PHP_INT_MAX));
+		$this->assertSame(500, $this->distance($once, $vehicle, self::T + 3 * self::DAY, self::T + 12 * self::DAY));
+	}
+
+	/**
+	 * Periods side by side, as the Statistics screen's buckets and their range: the first starts
+	 * before any Reading, and a counter replaced on an edge splits neither neighbour. The period
+	 * that ends on the swap moved nothing.
+	 *
+	 * @dataProvider ways
+	 */
+	public function testPeriodsSideBySideShareTheirEdges(bool $once): void {
+		$vehicle = $this->vehicle();
+		$this->read($vehicle, self::T, 10000);
+		$this->read($vehicle, self::T + 5 * self::DAY, 10500);
+		$swap = $this->read($vehicle, self::T + 10 * self::DAY, 200);
+		$this->read($vehicle, self::T + 15 * self::DAY, 700);
+		$this->odometer->reset(self::OWNER, $vehicle->getUuid(), $swap->getUuid(), $swap->getUpdatedAt());
+		$edges = [self::T - 10 * self::DAY, self::T + 5 * self::DAY, self::T + 10 * self::DAY, self::T + 20 * self::DAY];
+		$periods = [[$edges[0], $edges[1]], [$edges[1], $edges[2]], [$edges[2], $edges[3]], [$edges[0], $edges[3]]];
+
+		$this->assertSame([500, null, 500, 1000], $once
+			? $this->consumption->distancesAlong($vehicle, $periods)
+			: $this->consumption->distances($vehicle, $periods));
+	}
+
+	/** @return array<string, array{bool}> */
+	public static function ways(): array {
+		return ['looked up' => [false], 'read once' => [true]];
+	}
+
+	private function distance(bool $once, Vehicle $vehicle, int $from, int $to): ?int {
+		return $once
+			? $this->consumption->distancesAlong($vehicle, [[$from, $to]])[0]
+			: $this->consumption->distance($vehicle, $from, $to);
 	}
 
 	private function vehicle(): Vehicle {

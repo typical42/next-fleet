@@ -88,6 +88,11 @@ return [
 		['name' => 'recipient#index', 'url' => '/api/vehicles/{uuid}/recipients', 'verb' => 'GET'],
 		['name' => 'recipient#create', 'url' => '/api/vehicles/{uuid}/recipients', 'verb' => 'POST'],
 		['name' => 'recipient#delete', 'url' => '/api/vehicles/{uuid}/recipients/{recipient}', 'verb' => 'DELETE'],
+		// Who hears of the bookings: an account or a group, named by its type and its name. A group
+		// id may hold a slash, so the name is the rest of the path.
+		['name' => 'bookingRecipient#index', 'url' => '/api/vehicles/{uuid}/booking-recipients', 'verb' => 'GET'],
+		['name' => 'bookingRecipient#create', 'url' => '/api/vehicles/{uuid}/booking-recipients', 'verb' => 'POST'],
+		['name' => 'bookingRecipient#delete', 'url' => '/api/vehicles/{uuid}/booking-recipients/{type}/{recipient}', 'verb' => 'DELETE', 'requirements' => ['recipient' => '.+']],
 
 		// Who else may use the vehicle, and in which role - the owner's alone to read and write
 		// (CONTEXT.md, Vehicle Access). A grant is named by its uuid, since a user and a group may
@@ -125,6 +130,10 @@ return [
 		// The handover: taking the car and giving it back, each a moment the server stamps.
 		['name' => 'booking#check_out', 'url' => '/api/vehicles/{uuid}/bookings/{booking}/check-out', 'verb' => 'POST'],
 		['name' => 'booking#check_in', 'url' => '/api/vehicles/{uuid}/bookings/{booking}/check-in', 'verb' => 'POST'],
+		// The answers to a booking that waits for one, each with an optional comment.
+		['name' => 'booking#approve', 'url' => '/api/vehicles/{uuid}/bookings/{booking}/approve', 'verb' => 'POST'],
+		['name' => 'booking#ask', 'url' => '/api/vehicles/{uuid}/bookings/{booking}/ask', 'verb' => 'POST'],
+		['name' => 'booking#decline', 'url' => '/api/vehicles/{uuid}/bookings/{booking}/decline', 'verb' => 'POST'],
 
 		// What happened to the vehicle, every table at once and a page at a time
 		// (docs/architecture.md#the-timeline). `odometer#index` stays where it is: the counter on
@@ -138,9 +147,10 @@ return [
 		// The header's figures for one period the client names, since where a year starts is the
 		// person's midnight, not the server's (docs/ui.md).
 		['name' => 'kpi#index', 'url' => '/api/vehicles/{uuid}/kpis', 'verb' => 'GET'],
-		// The Costs screen's: those figures for one year, and each month's cost. The client names
-		// the zone rather than twelve periods, since a month is cut at its midnight.
-		['name' => 'kpi#year', 'url' => '/api/vehicles/{uuid}/costs/{year}', 'verb' => 'GET'],
+		// The Statistics screen's: one vehicle or all, so the vehicle is a filter in the query
+		// rather than a path. The client names the range's days and its zone, since a day is cut
+		// at its midnight.
+		['name' => 'statistics#index', 'url' => '/api/statistics', 'verb' => 'GET'],
 		// A Gap is named by the trip whose claim opened it, and closing one writes a trip - so it is
 		// the trips' controller that answers (docs/architecture.md#logbook-mode).
 		['name' => 'trip#reconcile', 'url' => '/api/vehicles/{uuid}/gaps/{trip}/close', 'verb' => 'POST'],
@@ -209,7 +219,10 @@ return [
 		['name' => 'Ocs\Timeline#gaps', 'url' => '/api/v1/vehicles/{uuid}/gaps', 'verb' => 'GET'],
 		['name' => 'Ocs\Timeline#show', 'url' => '/api/v1/vehicles/{uuid}/timeline/{type}/{entry}', 'verb' => 'GET'],
 		['name' => 'Ocs\Kpi#index', 'url' => '/api/v1/vehicles/{uuid}/kpis', 'verb' => 'GET'],
+		// A year's figures and each month's cost. v1 promised it; the web UI reads Statistics, so it
+		// has no internal twin. The client names the zone, since a month is cut at its midnight.
 		['name' => 'Ocs\Kpi#year', 'url' => '/api/v1/vehicles/{uuid}/costs/{year}', 'verb' => 'GET'],
+		['name' => 'Ocs\Statistics#index', 'url' => '/api/v1/statistics', 'verb' => 'GET'],
 
 		['name' => 'Ocs\Reminder#index', 'url' => '/api/v1/vehicles/{uuid}/reminders', 'verb' => 'GET'],
 		['name' => 'Ocs\Reminder#fleet', 'url' => '/api/v1/reminders', 'verb' => 'GET'],
@@ -223,6 +236,9 @@ return [
 		['name' => 'Ocs\Recipient#index', 'url' => '/api/v1/vehicles/{uuid}/recipients', 'verb' => 'GET'],
 		['name' => 'Ocs\Recipient#create', 'url' => '/api/v1/vehicles/{uuid}/recipients', 'verb' => 'POST'],
 		['name' => 'Ocs\Recipient#delete', 'url' => '/api/v1/vehicles/{uuid}/recipients/{recipient}', 'verb' => 'DELETE'],
+		['name' => 'Ocs\BookingRecipient#index', 'url' => '/api/v1/vehicles/{uuid}/booking-recipients', 'verb' => 'GET'],
+		['name' => 'Ocs\BookingRecipient#create', 'url' => '/api/v1/vehicles/{uuid}/booking-recipients', 'verb' => 'POST'],
+		['name' => 'Ocs\BookingRecipient#delete', 'url' => '/api/v1/vehicles/{uuid}/booking-recipients/{type}/{recipient}', 'verb' => 'DELETE', 'requirements' => ['recipient' => '.+']],
 
 		['name' => 'Ocs\Grant#index', 'url' => '/api/v1/vehicles/{uuid}/grants', 'verb' => 'GET'],
 		['name' => 'Ocs\Grant#create', 'url' => '/api/v1/vehicles/{uuid}/grants', 'verb' => 'POST'],
@@ -248,6 +264,9 @@ return [
 		['name' => 'Ocs\Booking#delete', 'url' => '/api/v1/vehicles/{uuid}/bookings/{booking}', 'verb' => 'DELETE'],
 		['name' => 'Ocs\Booking#check_out', 'url' => '/api/v1/vehicles/{uuid}/bookings/{booking}/check-out', 'verb' => 'POST'],
 		['name' => 'Ocs\Booking#check_in', 'url' => '/api/v1/vehicles/{uuid}/bookings/{booking}/check-in', 'verb' => 'POST'],
+		['name' => 'Ocs\Booking#approve', 'url' => '/api/v1/vehicles/{uuid}/bookings/{booking}/approve', 'verb' => 'POST'],
+		['name' => 'Ocs\Booking#ask', 'url' => '/api/v1/vehicles/{uuid}/bookings/{booking}/ask', 'verb' => 'POST'],
+		['name' => 'Ocs\Booking#decline', 'url' => '/api/v1/vehicles/{uuid}/bookings/{booking}/decline', 'verb' => 'POST'],
 
 		['name' => 'Ocs\Preferences#index', 'url' => '/api/v1/preferences', 'verb' => 'GET'],
 		['name' => 'Ocs\Preferences#update', 'url' => '/api/v1/preferences', 'verb' => 'PUT'],

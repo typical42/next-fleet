@@ -30,7 +30,7 @@ vi.mock('../services/api.js', async (original) => ({
 	getVehicle: vi.fn(),
 }))
 
-const OWNER = ['view', 'log', 'edit', 'delete', 'own']
+const OWNER = ['view', 'log', 'edit', 'delete', 'own', 'costs']
 const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', lifecycle: 'active', may: OWNER, ever_granted: true }
 
 const reload = vi.fn()
@@ -120,6 +120,12 @@ describe('the vehicle screen', () => {
 		await button(wrapper, 'Costs').vm.$emit('click')
 
 		expect(wrapper.emitted('costs')).toHaveLength(1)
+	})
+
+	it('offers no costs to a driver the owner keeps them from', () => {
+		const wrapper = screen({ vehicle: { ...VEHICLE, may: ['view', 'log', 'book'] } })
+
+		expect(wrapper.findAllComponents(NcButton).map((one) => one.text())).toEqual(['New entry'])
 	})
 
 	it('edits the vehicle it is showing', async () => {
@@ -270,6 +276,19 @@ describe('the vehicle screen', () => {
 		expect(sheet(wrapper).exists()).toBe(false)
 	})
 
+	/** Approval switched off answers the waiting bookings (docs/api.md#booking-approval). */
+	it('reads the bookings back once the vehicle is saved, and not when the sheet is closed', async () => {
+		const wrapper = screen()
+		await button(wrapper, 'Edit vehicle').vm.$emit('click')
+		await sheet(wrapper).vm.$emit('close')
+		expect(reload).not.toHaveBeenCalled()
+
+		await button(wrapper, 'Edit vehicle').vm.$emit('click')
+		await sheet(wrapper).vm.$emit('saved', VEHICLE)
+
+		expect(reload).toHaveBeenCalledOnce()
+	})
+
 	/** One dialog at a time (docs/ui.md#importing). */
 	it('swaps the vehicle sheet for the import, and reads back what it wrote', async () => {
 		const wrapper = screen()
@@ -292,7 +311,7 @@ describe('the vehicle screen', () => {
 
 	/** A driver logs but does not edit the vehicle (CONTEXT.md, Vehicle Access). */
 	it('offers a driver the entry and the sticker, not the edit', async () => {
-		const wrapper = screen({ vehicle: { ...VEHICLE, may: ['view', 'log'] } })
+		const wrapper = screen({ vehicle: { ...VEHICLE, may: ['view', 'log', 'costs'] } })
 
 		expect(wrapper.findAllComponents(NcButton).map((one) => one.text())).toEqual(['New entry', 'Costs'])
 		expect(wrapper.findComponent(VehicleSticker).exists()).toBe(true)
@@ -302,7 +321,7 @@ describe('the vehicle screen', () => {
 	 * A viewer adds nothing: neither the button, the key nor the sticker's link opens the sheet.
 	 */
 	it('offers a viewer neither the entry, the sticker nor the edit', async () => {
-		const viewer = { vehicle: { ...VEHICLE, may: ['view'] } }
+		const viewer = { vehicle: { ...VEHICLE, may: ['view', 'costs'] } }
 		const wrapper = screen(viewer)
 
 		expect(wrapper.findAllComponents(NcButton).map((one) => one.text())).toEqual(['Costs'])
@@ -361,6 +380,20 @@ describe('who has the car', () => {
 		// narrow no-break space before PM.
 		expect(wrapper.find('.vehicle__holder').text()).toBe('With Anna Adler until Fri, 10/02, 06:00 PM')
 		expect(wrapper.find('.vehicle__next').text()).toBe('Your booking: Sat, 10/03, 6:00 – 8:00 PM')
+	})
+
+	it('says the reader\'s next booking waits for approval while it does', () => {
+		vi.useFakeTimers({ toFake: ['Date'] })
+		vi.setSystemTime(new Date('2026-10-02T12:00:00Z'))
+		const next = { uuid: 'b-1', starts_at: FRIDAY_SIX_PM + 86400, starts_at_off: 120, ends_at: FRIDAY_SIX_PM + 86400 + 7200, ends_at_off: 120 }
+
+		// \s for the thin spaces Intl sets, as the case above says.
+		const requested = screen({ vehicle: { ...VEHICLE, out_with: null, my_next_booking: { ...next, approval: 'requested' } } })
+		expect(requested.find('.vehicle__next').text()).toMatch(/^Your booking, waiting for approval: Sat, 10\/03, 6:00\s–\s8:00\sPM$/)
+		const asked = screen({ vehicle: { ...VEHICLE, out_with: null, my_next_booking: { ...next, approval: 'asked' } } })
+		expect(asked.find('.vehicle__next').text()).toMatch(/^Your booking, asked back: Sat, 10\/03, 6:00\s–\s8:00\sPM$/)
+		const approved = screen({ vehicle: { ...VEHICLE, out_with: null, my_next_booking: { ...next, approval: 'approved' } } })
+		expect(approved.find('.vehicle__next').text()).toMatch(/^Your booking: Sat, 10\/03, 6:00\s–\s8:00\sPM$/)
 	})
 
 	it('says a car still out past its end is overdue', () => {

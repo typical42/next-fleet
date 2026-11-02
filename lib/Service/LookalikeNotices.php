@@ -10,8 +10,6 @@ namespace OCA\NextFleet\Service;
 
 use OCA\NextFleet\AppInfo\Application;
 use OCP\AppFramework\Utility\ITimeFactory;
-use OCP\IGroupManager;
-use OCP\IUser;
 use OCP\Notification\IManager;
 
 /**
@@ -24,7 +22,7 @@ class LookalikeNotices {
 	public const OBJECT = 'lookalike';
 
 	public function __construct(
-		private IGroupManager $groups,
+		private Names $names,
 		private IManager $notifications,
 		private ITimeFactory $time,
 	) {
@@ -41,9 +39,8 @@ class LookalikeNotices {
 			->setDateTime(\DateTime::createFromImmutable($this->time->now()))
 			->setObject(self::OBJECT, $account)
 			->setSubject(self::OBJECT, ['account' => $account]);
-		foreach ($this->groups->get('admin')?->getUsers() ?? [] as $admin) {
-			/** @var IUser $admin */
-			$this->notifications->notify($notification->setUser($admin->getUID()));
+		foreach ($this->names->members('admin') as $admin) {
+			$this->notifications->notify($notification->setUser($admin));
 		}
 	}
 

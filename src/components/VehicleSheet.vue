@@ -14,6 +14,7 @@ import NcTextArea from '@nextcloud/vue/components/NcTextArea'
 import NcTextField from '@nextcloud/vue/components/NcTextField'
 import { computed, onMounted, ref, watch } from 'vue'
 
+import BookingRecipients from './BookingRecipients.vue'
 import InspectionSticker from './InspectionSticker.vue'
 import ReminderRecipients from './ReminderRecipients.vue'
 import VehicleGrants from './VehicleGrants.vue'
@@ -177,6 +178,12 @@ watch([category, offRoad, body, addOn], () => {
 })
 // A column nobody wrote is null, which means off (docs/architecture.md#data-model).
 const logbookMode = ref(props.vehicle?.logbook_mode === true)
+// The owner's alone (docs/api.md#costs); on unless switched off.
+const costsShared = ref(props.vehicle?.costs_shared !== false)
+// The owner's alone too (docs/api.md#booking-notices); the server sends them with every vehicle.
+const bookingNotices = ref(props.vehicle?.booking_notices ?? [])
+// The owner's alone (docs/api.md#booking-approval); off unless switched on.
+const bookingApproval = ref(props.vehicle?.booking_approval === true)
 
 /**
  * Whether switching the mode off has been confirmed. The switch itself is not intercepted: the
@@ -245,7 +252,8 @@ function typed() {
 		formatDay(firstReg.value), formatDay(disposedAt.value), reminderMail.value,
 		vehicleType.value?.id, engine.value?.id, energyTypes.value.map((/** @type {{ id: string }} */ one) => one.id),
 		odoUnit.value?.id, lifecycle.value?.id, jurisdiction.value, countsHours.value, logbookMode.value,
-		category.value?.id, offRoad.value, body.value?.id, addOn.value?.id,
+		category.value?.id, offRoad.value, body.value?.id, addOn.value?.id, costsShared.value, bookingNotices.value,
+		bookingApproval.value,
 	])
 }
 const untyped = typed()
@@ -436,6 +444,8 @@ function fields(read) {
 		color: color.value,
 		notes: notes.value,
 		reminder_mail: reminderMail.value,
+		// Left out for anyone else: the save spreads the vehicle current() read, which carries it as stored.
+		...(may(props.vehicle, 'own') ? { costs_shared: costsShared.value, booking_notices: bookingNotices.value, booking_approval: bookingApproval.value } : {}),
 	}
 }
 
@@ -895,6 +905,25 @@ function chosen(options, id) {
 				<NcTextArea v-model="notes"
 					class="sheet__wide"
 					:label="t('nextfleet', 'Notes')"
+					:disabled="saving" />
+				<!-- Beside who has access, whom it is about; saved with the vehicle. -->
+				<NcFormBoxSwitch v-if="may(props.vehicle, 'own')"
+					v-model="costsShared"
+					class="sheet__wide"
+					:label="t('nextfleet', 'Drivers and viewers see costs')"
+					:description="t('nextfleet', 'Switched off, they see only the amounts they entered: no sums, no prices, no expenses of others. Managers always see the costs.')"
+					:disabled="saving" />
+				<NcFormBoxSwitch v-if="may(props.vehicle, 'own')"
+					v-model="bookingApproval"
+					class="sheet__wide"
+					:label="t('nextfleet', 'Bookings need approval')"
+					:description="t('nextfleet', 'A booking by a driver waits until you or a manager approve it. Bookings by you and the managers are approved at once.')"
+					:disabled="saving" />
+				<!-- The list is written on each pick; the events are a column, saved with the vehicle. -->
+				<BookingRecipients v-if="may(props.vehicle, 'own')"
+					v-model:events="bookingNotices"
+					class="sheet__wide"
+					:vehicle="props.vehicle.uuid"
 					:disabled="saving" />
 				<!-- Written on each change, like the recipients; the owner's alone. -->
 				<VehicleGrants class="sheet__wide"

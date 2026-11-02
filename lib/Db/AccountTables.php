@@ -30,8 +30,9 @@ class AccountTables {
 		DocumentMapper $documents,
 		AuditMapper $audit,
 		BookingMapper $bookings,
+		BookingRecipientMapper $bookingRecipients,
 	) {
-		$this->all = [$vehicles, $access, $readings, $trips, $energy, $maintenance, $expenses, $reminders, $receipts, $recipients, $documents, $audit, $bookings];
+		$this->all = [$vehicles, $access, $readings, $trips, $energy, $maintenance, $expenses, $reminders, $receipts, $recipients, $documents, $audit, $bookings, $bookingRecipients];
 	}
 
 	/** @return list<BaseMapper> */

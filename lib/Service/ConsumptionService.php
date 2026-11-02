@@ -45,6 +45,17 @@ class ConsumptionService {
 	}
 
 	/**
+	 * of() on the main counter, from fill-ups the caller has read already.
+	 *
+	 * @param list<Energy> $fills all the vehicle's, as EnergyMapper::findAllForVehicle() reads them
+	 * @return list<Segment>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function ofFills(Vehicle $vehicle, array $fills): array {
+		return $this->chained($vehicle, $fills, OdoReading::MAIN);
+	}
+
+	/**
 	 * of() on every counter the vehicle has, its fill-ups read once for both: the history grows
 	 * with the vehicle's age, the Readings per counter do not repeat.
 	 *
@@ -139,10 +150,12 @@ class ConsumptionService {
 	}
 
 	/**
+	 * Public for StatisticsService, which sums each vehicle's range the same way.
+	 *
 	 * @param list<Segment> $segments
 	 * @return array{period: list<Period>, measured: list<string>}
 	 */
-	private static function summed(array $segments, int $from, int $to, string $per): array {
+	public static function summed(array $segments, int $from, int $to, string $per): array {
 		$sums = [];
 		$measured = [];
 		foreach ($segments as $segment) {
@@ -184,7 +197,7 @@ class ConsumptionService {
 	}
 
 	/**
-	 * distance() for many periods at once, as the Costs screen's twelve months and their year ask:
+	 * distance() for many periods at once, as KpiService::year()'s twelve months and their year ask:
 	 * an edge two periods share is looked up once, and the resets once for all of them, so the
 	 * cost is per edge rather than per period.
 	 *
@@ -197,25 +210,95 @@ class ConsumptionService {
 		$vehicleId = (int)$vehicle->getId();
 		/** @var array<int, ?OdoReading> $newest */
 		$newest = [];
-		$standing = function (int $at) use (&$newest, $vehicleId, $counter): ?OdoReading {
-			if (!array_key_exists($at, $newest)) {
-				$newest[$at] = $this->readings->findNewestStanding($vehicleId, $counter, $at);
-			}
-			return $newest[$at];
-		};
-		// Nothing stands at or before an edge only while nothing stands at all before it, so the
-		// oldest Reading after any such edge is the vehicle's oldest.
 		$oldest = false;
+		/** @var array<int, ?OdoReading> $before */
+		$before = [];
 
-		$spans = [];
-		foreach ($periods as $i => [$from, $to]) {
-			$start = $standing($from);
-			if ($start === null) {
+		return self::measured(
+			$periods,
+			function (int $at) use (&$newest, $vehicleId, $counter): ?OdoReading {
+				if (!array_key_exists($at, $newest)) {
+					$newest[$at] = $this->readings->findNewestStanding($vehicleId, $counter, $at);
+				}
+				return $newest[$at];
+			},
+			function () use (&$oldest, $vehicleId, $counter): ?OdoReading {
 				if ($oldest === false) {
 					$oldest = $this->readings->findOldestStanding($vehicleId, $counter, PHP_INT_MIN);
 				}
-				$start = $oldest;
+				return $oldest;
+			},
+			fn (int $from, int $to): array => $this->readings->findResets($vehicleId, $counter, $from, $to),
+			function (OdoReading $reset) use (&$before, $vehicleId, $counter): ?OdoReading {
+				$id = (int)$reset->getId();
+				if (!array_key_exists($id, $before)) {
+					$before[$id] = $this->readings->findNewestStanding($vehicleId, $counter, $reset->getReadAt(), $id);
+				}
+				return $before[$id];
+			},
+		);
+	}
+
+	/**
+	 * distances() on the main counter off its chain read once over the periods, the edges found
+	 * in it: for a caller whose periods outnumber what one lookup each would cost
+	 * (StatisticsService).
+	 *
+	 * @param non-empty-list<array{int, int}> $periods each `[from, to]`
+	 * @return list<?int> in the periods' order
+	 * @throws \OCP\DB\Exception
+	 */
+	public function distancesAlong(Vehicle $vehicle, array $periods): array {
+		$vehicleId = (int)$vehicle->getId();
+		$from = min(array_column($periods, 0));
+		// Every edge, and every reset that splits a period, lies between the Reading standing at
+		// the first edge and the last. Without one, the oldest is the first standing after it.
+		$first = $this->readings->findNewestStanding($vehicleId, OdoReading::MAIN, $from);
+		$chain = $this->readings->findMainWithin([$vehicleId], $first?->getReadAt() ?? $from, max(array_column($periods, 1)))[$vehicleId] ?? [];
+		$standing = array_values(array_filter($chain, static fn (OdoReading $reading): bool => !$reading->getFlagged()));
+		$resets = array_values(array_filter($chain, static fn (OdoReading $reading): bool => $reading->getKind() === OdoReading::RESET));
+		// The newest standing Reading placed before `$place`, as findNewestStanding() picks it.
+		$newest = static function (array $place) use ($standing): ?OdoReading {
+			$found = null;
+			[$low, $high] = [0, count($standing) - 1];
+			while ($low <= $high) {
+				$middle = intdiv($low + $high, 2);
+				if ($standing[$middle]->place() < $place) {
+					$found = $standing[$middle];
+					$low = $middle + 1;
+				} else {
+					$high = $middle - 1;
+				}
 			}
+			return $found;
+		};
+
+		return self::measured(
+			$periods,
+			// Placed before every Reading read later than `$at`.
+			static fn (int $at): ?OdoReading => $newest([$at, PHP_INT_MAX]),
+			static fn (): ?OdoReading => $standing[0] ?? null,
+			static fn (int $from, int $to): array => array_values(array_filter($resets, static fn (OdoReading $reset): bool => $reset->getReadAt() >= $from && $reset->getReadAt() <= $to)),
+			static fn (OdoReading $reset): ?OdoReading => $newest($reset->place()),
+		);
+	}
+
+	/**
+	 * The distances, whichever way the Readings are found.
+	 *
+	 * @param list<array{int, int}> $periods
+	 * @param \Closure(int): ?OdoReading $standing the newest unquestioned Reading at or before an instant
+	 * @param \Closure(): ?OdoReading $oldest the oldest unquestioned Reading
+	 * @param \Closure(int, int): list<OdoReading> $resetsWithin the answered resets read in `[from, to]`
+	 * @param \Closure(OdoReading): ?OdoReading $standingBefore the newest unquestioned Reading before a reset
+	 * @return list<?int>
+	 */
+	private static function measured(array $periods, \Closure $standing, \Closure $oldest, \Closure $resetsWithin, \Closure $standingBefore): array {
+		$spans = [];
+		foreach ($periods as $i => [$from, $to]) {
+			// Nothing stands at or before an edge only while nothing stands at all before it, so
+			// the oldest Reading after any such edge is the vehicle's oldest.
+			$start = $standing($from) ?? $oldest();
 			$end = $start === null ? null : $standing($to);
 			if ($start !== null && $end !== null) {
 				$spans[$i] = [$start, $end];
@@ -225,14 +308,10 @@ class ConsumptionService {
 			return array_fill(0, count($periods), null);
 		}
 
-		$resets = $this->readings->findResets(
-			$vehicleId,
-			$counter,
+		$resets = $resetsWithin(
 			min(array_map(static fn (array $span): int => $span[0]->getReadAt(), $spans)),
 			max(array_map(static fn (array $span): int => $span[1]->getReadAt(), $spans)),
 		);
-		/** @var array<int, ?OdoReading> $before where the counter stood just before each reset */
-		$before = [];
 		$distances = [];
 		foreach (array_keys($periods) as $i) {
 			if (!isset($spans[$i])) {
@@ -245,12 +324,8 @@ class ConsumptionService {
 				if ($reset->place() <= $start->place() || $reset->place() > $end->place()) {
 					continue;
 				}
-				$id = (int)$reset->getId();
-				if (!array_key_exists($id, $before)) {
-					$before[$id] = $this->readings->findNewestStanding($vehicleId, $counter, $reset->getReadAt(), $id);
-				}
 				// Never null: the segment's start stands before the reset.
-				$ends[] = [$start, $before[$id] ?? $start];
+				$ends[] = [$start, $standingBefore($reset) ?? $start];
 				$start = $reset;
 			}
 			$ends[] = [$start, $end];

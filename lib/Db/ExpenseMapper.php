@@ -28,18 +28,34 @@ class ExpenseMapper extends BaseMapper {
 		return $this->findEntities($this->between('spent_at', $vehicleId, $from, $to));
 	}
 
+	/**
+	 * @param list<int> $vehicleIds
+	 * @param ?string $createdBy only this author's, for a reader the others' are kept from
+	 *                           (CostsShown::expensesBy())
+	 * @throws \OCP\DB\Exception
+	 */
+	public function firstAmong(array $vehicleIds, ?string $createdBy = null): ?int {
+		return $this->earliest('spent_at', $vehicleIds, $createdBy);
+	}
+
 	/** @throws \OCP\DB\Exception */
 	public function hasMoney(int $vehicleId): bool {
 		return $this->anySet($vehicleId, ['amount']);
 	}
 
 	/**
-	 * One page of the timeline's expenses, newest first (docs/architecture.md#the-timeline).
+	 * One page of the timeline's expenses, newest first (docs/architecture.md#the-timeline), all
+	 * of them or one author's.
 	 *
 	 * @return list<Expense>
 	 * @throws \OCP\DB\Exception
 	 */
-	public function findBefore(int $vehicleId, int $at, int $id, int $limit): array {
-		return $this->findEntities($this->pageBefore('spent_at', $vehicleId, $at, $id, $limit));
+	public function findBefore(int $vehicleId, int $at, int $id, int $limit, ?string $createdBy = null): array {
+		$qb = $this->pageBefore('spent_at', $vehicleId, $at, $id, $limit);
+		if ($createdBy !== null) {
+			$qb->andWhere($qb->expr()->eq('created_by', $qb->createNamedParameter($createdBy)));
+		}
+
+		return $this->findEntities($qb);
 	}
 }

@@ -202,7 +202,7 @@ jobs:
       matrix:
         db: [mariadb, pgsql]
         # The last release, the version users upgrade from. Each release moves it on.
-        base: [v0.4.0]
+        base: [v0.4.1]
     steps:
       # The base version is a commit, and the script builds it in a worktree.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

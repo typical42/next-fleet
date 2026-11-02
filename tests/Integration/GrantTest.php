@@ -12,17 +12,22 @@ use OCA\NextFleet\BackgroundJob\ForgetMemberJob;
 use OCA\NextFleet\BackgroundJob\PendingJob;
 use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
+use OCA\NextFleet\Db\BookingRecipient;
+use OCA\NextFleet\Db\BookingRecipientMapper;
 use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Exception\AccessDeniedException;
 use OCA\NextFleet\Exception\AlreadyCreatedException;
+use OCA\NextFleet\Service\BookingNotices;
 use OCA\NextFleet\Service\GrantNotices;
 use OCA\NextFleet\Service\GrantService;
+use OCA\NextFleet\Service\Names;
 use OCA\NextFleet\Service\NotificationService;
 use OCA\NextFleet\Service\Pending;
 use OCA\NextFleet\Service\RecipientService;
 use OCA\NextFleet\Service\Sharable;
+use OCA\NextFleet\Service\SyncEpoch;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Db\DoesNotExistException;
@@ -116,7 +121,7 @@ class GrantTest extends TestCase {
 
 	private function forgetRowsOf(string ...$people): void {
 		$db = \OCP\Server::get(IDBConnection::class);
-		foreach (['fleet_vehicles' => 'user_id', 'fleet_access' => 'created_by', 'fleet_reminder_recipients' => 'created_by'] as $table => $column) {
+		foreach (['fleet_vehicles' => 'user_id', 'fleet_access' => 'created_by', 'fleet_reminder_recipients' => 'created_by', 'fleet_booking_recipients' => 'created_by'] as $table => $column) {
 			$qb = $db->getQueryBuilder();
 			$qb->delete($table)->where($qb->expr()->in($column, $qb->createNamedParameter($people, $qb::PARAM_STR_ARRAY)));
 			$qb->executeStatement();
@@ -190,7 +195,7 @@ class GrantTest extends TestCase {
 			'display_name' => 'The Crew',
 			'role' => 'viewer',
 		]], $this->withoutUuids($list));
-		$this->assertSame(['view'], $this->vehicles->find(self::BEN, $vehicle->getUuid())->getMay());
+		$this->assertSame(['view', 'costs'], $this->vehicles->find(self::BEN, $vehicle->getUuid())->getMay());
 	}
 
 	/** A second grant to the same grantee is a role change, not a second row beside the first. */
@@ -361,7 +366,7 @@ class GrantTest extends TestCase {
 		$list = $this->grants->change(self::OWNER, $vehicle->getUuid(), $grant['uuid'], ['role' => 'driver']);
 
 		$this->assertSame([[$grant['uuid'], 'driver']], array_map(static fn (array $one): array => [$one['uuid'], $one['role']], $list));
-		$this->assertSame(['view', 'log'], $this->vehicles->find(self::ANNA, $vehicle->getUuid())->getMay());
+		$this->assertSame(['view', 'log', 'costs'], $this->vehicles->find(self::ANNA, $vehicle->getUuid())->getMay());
 	}
 
 	/** A grant is reached through the vehicle the route names, as an Entry is. */
@@ -547,7 +552,7 @@ class GrantTest extends TestCase {
 
 		$this->assertSame(['role' => null, 'groups' => [['grantee' => self::GROUP, 'display_name' => 'The Crew', 'role' => 'viewer']],
 			'holders' => [['display_name' => 'The Crew', 'grantee_type' => 'group', 'role' => 'viewer']]], $held);
-		$this->assertSame(['view'], $this->vehicles->find(self::BEN, $uuid)->getMay());
+		$this->assertSame(['view', 'costs'], $this->vehicles->find(self::BEN, $uuid)->getMay());
 		$this->assertSame([self::OWNER, self::BEN], $this->recipientIds($vehicle));
 	}
 
@@ -713,6 +718,30 @@ class GrantTest extends TestCase {
 		$this->assertSame([self::OWNER, self::ANNA], $this->recipientIds($second));
 	}
 
+	/** A deleted group leaves the booking lists under the same mark as its grants, so the job finishes both. */
+	public function testADeletedGroupsPlaceOnTheBookingListsGoesUnderTheSameMark(): void {
+		$vehicle = $this->vehicle();
+		$grant = new Access();
+		$grant->setVehicleId((int)$vehicle->getId());
+		$grant->setGrantee(self::VANISHED);
+		$grant->setGranteeType(Access::GROUP);
+		$grant->setRole('viewer');
+		$grant->setCreatedBy(self::OWNER);
+		\OCP\Server::get(AccessMapper::class)->insert($grant);
+		$this->onTheBookingList($vehicle, self::VANISHED);
+		$broken = $this->racing(\OCP\Server::get(IUserManager::class), \OCP\Server::get(IGroupManager::class), (int)$vehicle->getId());
+		try {
+			$broken->forgetGroup(self::VANISHED);
+			$this->fail('The revoke did not break');
+		} catch (Exception) {
+		}
+
+		\OCP\Server::get(PendingJob::class)->start(\OCP\Server::get(IJobList::class));
+
+		$this->assertSame([], $this->recipients->listBooking(self::OWNER, $vehicle->getUuid()));
+		$this->assertSame([], \OCP\Server::get(Pending::class)->of(Pending::GROUP));
+	}
+
 	/** A finish that fails again names the group and why, for `occ nextfleet:pending` to print, and keeps the mark. */
 	public function testAFinishThatFailsAgainSaysWhichAndWhy(): void {
 		$vehicle = $this->vehicle();
@@ -778,12 +807,29 @@ class GrantTest extends TestCase {
 			->set('updated_at', $qb->createNamedParameter($later->getUpdatedAt() + 60, IQueryBuilder::PARAM_INT))
 			->where($qb->expr()->eq('id', $qb->createNamedParameter($later->getId(), IQueryBuilder::PARAM_INT)))
 			->executeStatement();
+		$listed = $this->onTheBookingList($new, self::VANISHED);
+		$qb = \OCP\Server::get(IDBConnection::class)->getQueryBuilder();
+		$qb->update('fleet_booking_recipients')
+			->set('created_at', $qb->createNamedParameter($listed->getCreatedAt() + 60, IQueryBuilder::PARAM_INT))
+			->where($qb->expr()->eq('id', $qb->createNamedParameter($listed->getId(), IQueryBuilder::PARAM_INT)))
+			->executeStatement();
 
 		\OCP\Server::get(PendingJob::class)->start(\OCP\Server::get(IJobList::class));
 
 		$this->assertSame([], array_column($this->grants->list(self::OWNER, $old->getUuid()), 'grantee'));
 		$this->assertSame([self::VANISHED], array_column($this->grants->list(self::OWNER, $new->getUuid()), 'grantee'));
+		$this->assertSame([self::VANISHED], array_column($this->recipients->listBooking(self::OWNER, $new->getUuid()), 'recipient'));
 		$this->assertSame([], \OCP\Server::get(Pending::class)->of(Pending::GROUP));
+	}
+
+	/** A group on the vehicle's booking list, written past RecipientService, which asks the group to exist. */
+	private function onTheBookingList(Vehicle $vehicle, string $groupId): BookingRecipient {
+		$recipient = new BookingRecipient();
+		$recipient->setVehicleId((int)$vehicle->getId());
+		$recipient->setGroupId($groupId);
+		$recipient->setCreatedBy(self::OWNER);
+
+		return \OCP\Server::get(BookingRecipientMapper::class)->insert($recipient);
 	}
 
 	/** A vehicle in the trash loses the grants of a group deleted meanwhile, and its restore brings none back. */
@@ -923,14 +969,18 @@ class GrantTest extends TestCase {
 			\OCP\Server::get(VehicleAccess::class),
 			$vehicles,
 			\OCP\Server::get(ReminderRecipientMapper::class),
+			\OCP\Server::get(BookingRecipientMapper::class),
 			$users,
 			$groups,
+			new Names($users, $groups),
 			\OCP\Server::get(Sharable::class),
 			\OCP\Server::get(GrantNotices::class),
 			\OCP\Server::get(NotificationService::class),
+			\OCP\Server::get(BookingNotices::class),
 			\OCP\Server::get(IDBConnection::class),
 			\OCP\Server::get(Pending::class),
 			\OCP\Server::get(LoggerInterface::class),
+			\OCP\Server::get(SyncEpoch::class),
 		);
 	}
 

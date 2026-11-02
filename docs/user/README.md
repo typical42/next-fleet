@@ -56,7 +56,7 @@ After the second full tank, NextFleet shows the consumption.
 1. [Vehicles](vehicles.md): add, edit, lay up, delete and find a vehicle.
 2. [Entries and the timeline](entries.md): record what happens to the vehicle.
 3. [Logbook for the tax office](logbook.md): Logbook mode, the logbook and the mileage claim.
-4. [Costs](costs.md): the figures, the costs per month, CO₂ and CSV export.
+4. [Figures and statistics](statistics.md): the figures, the Statistics page, CO₂ and CSV export.
 5. [Reminders](reminders.md): get told before a service or an inspection.
 6. [Access and bookings](access.md): share a vehicle, book it, take it and return it.
 7. [Documents and the receipt inbox](documents.md): attach files from your Files.

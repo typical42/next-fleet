@@ -17,10 +17,12 @@ use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Exception\AccessDeniedException;
 use OCA\NextFleet\Exception\BookingConflictException;
 use OCA\NextFleet\Exception\StaleUpdateException;
+use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCP\AppFramework\Db\TTransactional;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\IDBConnection;
 use OCP\IUserManager;
+use Psr\Log\LoggerInterface;
 
 /**
  * Everything a Booking is written under (CONTEXT.md, Pool). A booking is a plan, not an Entry, so
@@ -41,6 +43,8 @@ class BookingService {
 	public const ODO_BELOW = 'odo_below';
 	/** Checked in after the booking's end. */
 	public const LATE = 'late';
+	/** What an approver may answer (answer()). */
+	public const ANSWERS = [Booking::APPROVED, Booking::ASKED, Booking::DECLINED];
 
 	public function __construct(
 		private BookingMapper $bookings,
@@ -52,6 +56,7 @@ class BookingService {
 		private BookingNotices $notices,
 		private ITimeFactory $time,
 		private IDBConnection $db,
+		private LoggerInterface $logger,
 	) {
 	}
 
@@ -118,21 +123,36 @@ class BookingService {
 		$booking->setCreatedBy($userId);
 		$booking->setState(Booking::BOOKED);
 		$this->apply($booking, $fields);
+		// Take it now books, then checks out, from the client: a start within the slack is the car
+		// taken. A car needed now waits for nobody, but kept past the day it is a booking ahead.
+		$takenNow = $booking->getStartsAt() <= $this->time->getTime() + self::START_SLACK;
+		$skips = $takenNow && $booking->getEndsAt() <= self::dayEnd($booking);
 
 		// Retried for the reason TripService::record() gives.
-		$written = $this->atomicRetry(function () use ($vehicle, $booking, $once): Booking {
+		$written = $this->atomicRetry(function () use ($userId, $vehicle, $booking, $once, $skips): Booking {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$once->check();
+			if (!$skips && $this->asksApproval($vehicle)) {
+				$this->approvalFor($userId, $vehicle, $booking);
+			}
 			$this->claim($booking);
 
 			return $this->bookings->insert($booking);
 		}, $this->db);
+		// After the booking stands, the reason NotificationService::sweep() gives. The list hears
+		// of a request once it is approved (answer()).
+		if ($written->waits()) {
+			$this->notices->tellRequested($vehicle, $written);
+		} else {
+			$this->notices->tell($vehicle, $written, $takenNow ? Vehicle::NOTICE_TAKEN : Vehicle::NOTICE_BOOKED, $userId);
+		}
 
 		return $this->wired($userId, $vehicle, [$written])[0];
 	}
 
 	/**
-	 * Moves the span or rewrites the purpose, while the car is not yet taken.
+	 * Moves the span or rewrites the purpose, while the car is not yet taken. The booker's change to
+	 * a booking asked back is their answer, a new purpose too: it asks its approvers again.
 	 *
 	 * @param array<string, mixed> $fields
 	 * @param int $expectedUpdatedAt the `updated_at` the client read
@@ -147,13 +167,41 @@ class BookingService {
 	public function change(string $userId, string $vehicleUuid, string $bookingUuid, int $expectedUpdatedAt, array $fields): array {
 		$vehicle = $this->bookable($userId, $vehicleUuid);
 
-		$changed = $this->atomicRetry(function () use ($userId, $vehicle, $bookingUuid, $expectedUpdatedAt, $fields): Booking {
+		/** @var array{Booking, bool, bool, bool, bool} $result */
+		$result = $this->atomicRetry(function () use ($userId, $vehicle, $bookingUuid, $expectedUpdatedAt, $fields): array {
 			$booking = $this->inState($userId, $vehicle, $bookingUuid, $expectedUpdatedAt, Booking::BOOKED);
+			$was = [$booking->getStartsAt(), $booking->getEndsAt()];
+			$wasPurpose = $booking->getPurpose();
+			[$heard, $waited] = [$booking->heard(), $booking->waits()];
 			$this->apply($booking, $fields);
+			$moved = $was !== [$booking->getStartsAt(), $booking->getEndsAt()];
+			// The booker has no other way to answer than this; a save that changes nothing says nothing.
+			$replies = $booking->getApproval() === Booking::ASKED && $booking->getUserId() === $userId
+				&& ($moved || $booking->getPurpose() !== $wasPurpose);
+			// An answer was given to a span, so a new purpose keeps it, unless it is the booker's reply.
+			if (($moved || $replies) && $this->asksApproval($vehicle)) {
+				// A booking from before the switch was heard of by its list when it was made.
+				$booking->setAnnounced($heard);
+				$this->approvalFor($userId, $vehicle, $booking);
+			}
 			$this->claim($booking);
 
-			return $this->bookings->updateChecked($booking, $expectedUpdatedAt);
+			return [$this->bookings->updateChecked($booking, $expectedUpdatedAt), $moved, $replies, $heard, $waited];
 		}, $this->db);
+		[$changed, $moved, $replies, $heard, $waited] = $result;
+		// A new purpose alone is no news to anybody, unless it is the booker's reply: that asks every
+		// approver again.
+		if ($moved || $replies) {
+			if ($changed->waits()) {
+				$this->notices->tellRequested($vehicle, $changed);
+			} else {
+				$this->notices->tellSettled($vehicle, $changed, $heard, $userId);
+			}
+			// An approver moving a request answered it.
+			if ($waited && !$changed->waits()) {
+				$this->notices->tellAnswered($vehicle, $changed, $userId);
+			}
+		}
 
 		return $this->wired($userId, $vehicle, [$changed])[0];
 	}
@@ -182,8 +230,114 @@ class BookingService {
 		if ($cancelled->getUserId() !== $userId) {
 			$this->notices->tellCancelled($vehicle, $cancelled);
 		}
+		$this->notices->tellSettled($vehicle, $cancelled, $cancelled->heard(), $userId);
 
 		return $this->wired($userId, $vehicle, [$cancelled])[0];
+	}
+
+	/**
+	 * Answers a booking that waits for one, as the owner or a manager: approved, asked back with
+	 * a question, or declined, which cancels it and frees its span. The comment is the
+	 * booker's to read.
+	 *
+	 * @param value-of<self::ANSWERS> $answer
+	 * @param array<string, mixed> $fields `comment`, if any
+	 * @param int $expectedUpdatedAt the `updated_at` the client read: a booking moved since is
+	 *                               not the one the approver saw
+	 * @return NextFleetBooking the booking as answered, in its wire form
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user does not answer bookings of this vehicle
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the booking has changed since
+	 * @throws \InvalidArgumentException if it is no answer, or the booking waits for none
+	 * @throws \OCP\DB\Exception
+	 */
+	public function answer(string $userId, string $vehicleUuid, string $bookingUuid, int $expectedUpdatedAt, string $answer, array $fields): array {
+		if (!in_array($answer, self::ANSWERS, true)) {
+			throw new \InvalidArgumentException('an answer approves, asks back or declines');
+		}
+		$comment = Field::read('comment', 'text', Field::TEXT, $fields['comment'] ?? null);
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::EDIT, $vehicleUuid);
+
+		/** @var array{Booking, bool} $result */
+		$result = $this->atomicRetry(function () use ($userId, $vehicle, $bookingUuid, $expectedUpdatedAt, $answer, $comment): array {
+			$booking = $this->inState($userId, $vehicle, $bookingUuid, $expectedUpdatedAt, Booking::BOOKED);
+			if (!$booking->waits()) {
+				throw new \InvalidArgumentException('only a booking waiting for an answer is answered');
+			}
+			// declineUnanswered() answers it within the hour.
+			if ($this->time->getTime() >= $booking->getEndsAt()) {
+				throw new \InvalidArgumentException('the booking is over, so it is answered no more');
+			}
+			$heard = $booking->heard();
+			if ($answer === Booking::APPROVED) {
+				$booking->approve($userId);
+			} else {
+				$booking->setApproval($answer);
+				$booking->setApprovalBy($userId);
+			}
+			$booking->setApprovalComment(is_string($comment) ? $comment : null);
+			if ($answer === Booking::DECLINED) {
+				$booking->setState(Booking::CANCELLED);
+			}
+
+			return [$this->bookings->updateChecked($booking, $expectedUpdatedAt), $heard];
+		}, $this->db);
+		[$answered, $heard] = $result;
+		// After the answer stands, the reason NotificationService::sweep() gives.
+		$this->notices->tellAnswered($vehicle, $answered, $userId);
+		$this->notices->tellSettled($vehicle, $answered, $heard, $userId);
+
+		return $this->wired($userId, $vehicle, [$answered])[0];
+	}
+
+	/**
+	 * Declines every booking still waiting for an answer at its end (Booking::waits()), by nobody
+	 * and with no comment: the span it held is over. The booker is told, and the list only if it
+	 * had heard of it. For the hourly PendingJob. A booking that fails is logged and left for the
+	 * next hour; the rest still go.
+	 *
+	 * @throws \OCP\DB\Exception if the requests cannot be found
+	 */
+	public function declineUnanswered(): void {
+		$now = $this->time->getTime();
+		foreach ($this->bookings->findWaitingEnded($now) as $found) {
+			try {
+				$this->decline($found, $now);
+			} catch (\Throwable $e) {
+				$this->logger->error('A booking request was not declined at its end', ['exception' => $e]);
+			}
+		}
+	}
+
+	/**
+	 * One of declineUnanswered()'s requests.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	private function decline(Booking $found, int $now): void {
+		$vehicle = $this->vehicles->findAnyById($found->getVehicleId());
+		/** @var array{?Booking, bool} $result */
+		$result = $this->atomicRetry(function () use ($found, $now): array {
+			// Read again under the hold: an approver may have answered since.
+			$this->vehicles->hold($found->getVehicleId());
+			$booking = $this->bookings->findOnVehicle($found->getVehicleId(), $found->getUuid());
+			if ($booking->getState() !== Booking::BOOKED || !$booking->waits() || $booking->getEndsAt() > $now) {
+				return [null, false];
+			}
+			$heard = $booking->heard();
+			$booking->setState(Booking::CANCELLED);
+			$booking->setApproval(Booking::DECLINED);
+			$booking->setApprovalBy(null);
+			$booking->setApprovalComment(null);
+
+			return [$this->bookings->updateChecked($booking, $booking->getUpdatedAt()), $heard];
+		}, $this->db);
+		[$declined, $heard] = $result;
+		// A deleted vehicle's notices are taken back with it.
+		if ($declined !== null && $vehicle->getDeletedAt() === null) {
+			$this->notices->tellAnswered($vehicle, $declined, '');
+			$this->notices->tellSettled($vehicle, $declined, $heard, '');
+		}
 	}
 
 	/**
@@ -209,6 +363,9 @@ class BookingService {
 			$booking = $this->inState($userId, $vehicle, $bookingUuid, null, Booking::BOOKED);
 			if ($now >= $booking->getEndsAt()) {
 				throw new \InvalidArgumentException('the booking is over, so the car is no longer taken under it');
+			}
+			if ($booking->waits()) {
+				throw new \InvalidArgumentException('the booking waits for an answer, so the car is not taken under it yet');
 			}
 			$taken = $this->bookings->findOut((int)$vehicle->getId());
 			if ($taken !== null) {
@@ -262,6 +419,7 @@ class BookingService {
 
 			return $this->bookings->updateChecked($booking, $booking->getUpdatedAt());
 		}, $this->db);
+		$this->notices->tell($vehicle, $in, Vehicle::NOTICE_RETURNED, $userId);
 
 		return $this->wired($userId, $vehicle, [$in])[0];
 	}
@@ -384,6 +542,41 @@ class BookingService {
 		return [$odo, is_int($level) ? $level : null, is_string($notes) ? $notes : null, self::required('at_off', 'offset', $fields)];
 	}
 
+	/** Midnight after the booking's start, on the booker's clock: the offset the sheet sent. */
+	private static function dayEnd(Booking $booking): int {
+		return Jurisdictions::localTime($booking->getStartsAt(), $booking->getStartsAtOff())
+			->setTime(0, 0)
+			->modify('+1 day')
+			->getTimestamp();
+	}
+
+	/**
+	 * Whether the vehicle's bookings wait for an answer, read again under its hold: the vehicle
+	 * the caller reached was read before it, and turning the switch off approves what waits under
+	 * the same row (VehicleService::update()). Only that way round matters: a booking made while
+	 * the switch is turned on is one made before it.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	private function asksApproval(Vehicle $vehicle): bool {
+		return $vehicle->needsApproval() && $this->vehicles->findAnyById((int)$vehicle->getId())->needsApproval();
+	}
+
+	/**
+	 * Where a booking the user makes or moves stands on a vehicle whose bookings wait for an
+	 * answer: an approver's own hand answers it, anyone else's asks. What was said about the
+	 * span before goes with it.
+	 */
+	private function approvalFor(string $userId, Vehicle $vehicle, Booking $booking): void {
+		if ($this->access->mayApprove($userId, $vehicle)) {
+			$booking->approve($userId);
+		} else {
+			$booking->setApproval(Booking::REQUESTED);
+			$booking->setApprovalBy(null);
+		}
+		$booking->setApprovalComment(null);
+	}
+
 	/**
 	 * Refuses the span when another live booking holds any second of it - an `out` one the hours it
 	 * was taken early and those it is overdue as well. Under the vehicle's hold, or two bookings
@@ -411,6 +604,8 @@ class BookingService {
 			'ends_at_off' => $held->getEndsAtOff(),
 			// `out` is "still with Anna", anything else "booked by Anna": the sheet words it by this.
 			'state' => $held->getState(),
+			// A request in the way reads "requested by Anna".
+			'approval' => $held->getApproval(),
 		]);
 	}
 
@@ -519,8 +714,9 @@ class BookingService {
 		$counters = $this->bookings->findCountersAtOut($bookings);
 		$now = $this->time->getTime();
 		$names = [];
+		$approves = $this->access->mayApprove($userId, $vehicle);
 
-		return array_map(function (Booking $booking) use ($userId, $vehicle, $trips, $counters, $now, &$names): array {
+		return array_map(function (Booking $booking) use ($userId, $vehicle, $trips, $counters, $now, $approves, &$names): array {
 			$booker = $booking->getUserId();
 			$names[$booker] ??= $this->nameOf($booker);
 			$state = $booking->getState();
@@ -531,7 +727,7 @@ class BookingService {
 			$may = $this->access->mayBooking($userId, $vehicle, $booker) ? array_keys(array_filter([
 				'edit' => $state === Booking::BOOKED && $active,
 				'cancel' => $state === Booking::BOOKED,
-				'check_out' => $state === Booking::BOOKED && $active && $now < $booking->getEndsAt(),
+				'check_out' => $state === Booking::BOOKED && $active && $now < $booking->getEndsAt() && !$booking->waits(),
 				'check_in' => $state === Booking::OUT,
 				'log_trip' => $untripped,
 				// Handover photos. DocumentService takes a paper on any booking by the same rule;
@@ -542,6 +738,10 @@ class BookingService {
 			// (VehicleService::changes()); a voided one is no longer read.
 			if ($trip !== null && $trip->getDeletedAt() === null && $this->access->mayChange($userId, VehicleAccess::EDIT, $vehicle, $trip->getCreatedBy())) {
 				$may[] = 'open_trip';
+			}
+			// answer()'s rule, one word for each answer.
+			if ($state === Booking::BOOKED && $booking->waits() && $approves && $now < $booking->getEndsAt()) {
+				array_push($may, 'approve', 'ask', 'decline');
 			}
 
 			return [
@@ -568,6 +768,10 @@ class BookingService {
 				// The trip stays tied when voided: the booking was driven, whatever became of its log.
 				'trip_voided' => $trip?->getDeletedAt() !== null,
 				'trip_draft' => $untripped ? self::draft($booking) : null,
+				'approval' => $booking->getApproval(),
+				// Between the booker and whoever answers: a question may be about the booker.
+				'approval_comment' => $booker === $userId || $approves ? $booking->getApprovalComment() : null,
+				'approval_by' => $booking->getApprovalBy(),
 				'flags' => self::flags($booking, $counters[(int)$booking->getId()] ?? null),
 				'created_at' => $booking->getCreatedAt(),
 				'updated_at' => $booking->getUpdatedAt(),

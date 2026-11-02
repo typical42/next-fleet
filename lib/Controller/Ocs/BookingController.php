@@ -8,6 +8,7 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Controller\Ocs;
 
+use OCA\NextFleet\Db\Booking;
 use OCA\NextFleet\ResponseDefinitions;
 use OCA\NextFleet\Service\BookingService;
 use OCP\AppFramework\Http;
@@ -230,6 +231,82 @@ class BookingController extends OCSController {
 	): DataResponse {
 		return $this->write(fn (): DataResponse => new DataResponse(
 			$this->service->checkIn($this->userId(), $uuid, $booking, $this->request->getParams()),
+		));
+	}
+
+	/**
+	 * Approve a booking
+	 *
+	 * As the owner or a manager, of a booking whose `approval` is `requested` or `asked`. Checked
+	 * against the `updated_at` it carries.
+	 *
+	 * @param string $uuid the vehicle's uuid
+	 * @param string $booking the booking's uuid
+	 * @param int|null $updated_at required: the booking's `updated_at` as the caller read it
+	 * @param string|null $comment for the booker
+	 * @return DataResponse<Http::STATUS_OK, NextFleetBooking, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
+	 * @throws OCSForbiddenException the caller does not answer this vehicle's bookings
+	 * @throws OCSNotFoundException no such vehicle or booking
+	 *
+	 * 200: the booking, `approval` `approved`
+	 * 400: the booking waits for no answer, or `updated_at` is missing
+	 * 412: the booking changed since `updated_at`; read it again
+	 */
+	#[NoAdminRequired]
+	#[UserRateLimit(limit: 60, period: 60)]
+	public function approve(string $uuid, string $booking, mixed $updated_at = null, mixed $comment = null): DataResponse {
+		return $this->write(fn (): DataResponse => new DataResponse(
+			$this->service->answer($this->userId(), $uuid, $booking, $this->token(), Booking::APPROVED, $this->request->getParams()),
+		));
+	}
+
+	/**
+	 * Ask back about a booking
+	 *
+	 * As approve does: the booking keeps its span and waits for the booker to change or cancel it.
+	 *
+	 * @param string $uuid the vehicle's uuid
+	 * @param string $booking the booking's uuid
+	 * @param int|null $updated_at required: the booking's `updated_at` as the caller read it
+	 * @param string|null $comment the question, for the booker
+	 * @return DataResponse<Http::STATUS_OK, NextFleetBooking, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
+	 * @throws OCSForbiddenException the caller does not answer this vehicle's bookings
+	 * @throws OCSNotFoundException no such vehicle or booking
+	 *
+	 * 200: the booking, `approval` `asked`
+	 * 400: the booking waits for no answer, or `updated_at` is missing
+	 * 412: the booking changed since `updated_at`; read it again
+	 */
+	#[NoAdminRequired]
+	#[UserRateLimit(limit: 60, period: 60)]
+	public function ask(string $uuid, string $booking, mixed $updated_at = null, mixed $comment = null): DataResponse {
+		return $this->write(fn (): DataResponse => new DataResponse(
+			$this->service->answer($this->userId(), $uuid, $booking, $this->token(), Booking::ASKED, $this->request->getParams()),
+		));
+	}
+
+	/**
+	 * Decline a booking
+	 *
+	 * As approve does: the booking becomes `cancelled` and its span is free.
+	 *
+	 * @param string $uuid the vehicle's uuid
+	 * @param string $booking the booking's uuid
+	 * @param int|null $updated_at required: the booking's `updated_at` as the caller read it
+	 * @param string|null $comment for the booker
+	 * @return DataResponse<Http::STATUS_OK, NextFleetBooking, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
+	 * @throws OCSForbiddenException the caller does not answer this vehicle's bookings
+	 * @throws OCSNotFoundException no such vehicle or booking
+	 *
+	 * 200: the booking, `cancelled`, `approval` `declined`
+	 * 400: the booking waits for no answer, or `updated_at` is missing
+	 * 412: the booking changed since `updated_at`; read it again
+	 */
+	#[NoAdminRequired]
+	#[UserRateLimit(limit: 60, period: 60)]
+	public function decline(string $uuid, string $booking, mixed $updated_at = null, mixed $comment = null): DataResponse {
+		return $this->write(fn (): DataResponse => new DataResponse(
+			$this->service->answer($this->userId(), $uuid, $booking, $this->token(), Booking::DECLINED, $this->request->getParams()),
 		));
 	}
 }

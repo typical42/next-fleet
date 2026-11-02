@@ -190,7 +190,7 @@ class CostServiceTest extends TestCase {
 	}
 
 	/**
-	 * The Costs screen's table breaks the expenses out by category, in the sheet's order; one
+	 * The Statistics table breaks the expenses out by category, in the sheet's order; one
 	 * without a category is not "other", it is unstated, and comes last.
 	 */
 	public function testExpensesAreItemisedByCategoryNetOfTheirOwnRate(): void {
@@ -308,7 +308,7 @@ class CostServiceTest extends TestCase {
 	}
 
 	/**
-	 * The Costs screen's months and year in one read: each row counts in the period it fell in,
+	 * The year route's months and year in one read: each row counts in the period it fell in,
 	 * and only there, and every period spreads the holding's depreciation over the same distance.
 	 */
 	public function testManyPeriodsEachCountTheRowsThatFellInThem(): void {
@@ -326,6 +326,33 @@ class CostServiceTest extends TestCase {
 		$this->assertSame([1000, 2000, 3000], array_column($costs, 'distance'));
 		// 2 000 000 cents over 3 000 km is 66 666.67 per 100 km, beside each period's own cost.
 		$this->assertEqualsWithDelta([800.0 + 200000 / 3, 600.0 + 200000 / 3, 20000 / 30 + 200000 / 3], array_column($costs, 'tco'), 0.001);
+	}
+
+	/**
+	 * The year rated over its months, as Statistics rates a range: a month that moved without a
+	 * cost counts at 0, a cost where the counter stood still does not count. 70 € over 1,600 km,
+	 * and over 20 engine hours.
+	 */
+	public function testAWholeIsRatedOverThePeriodsThatMoved(): void {
+		foreach ([[0, 10000, 100], [1000, 10000, 100], [2000, 10800, 110], [3000, 11600, 120]] as [$at, $km, $hours]) {
+			$this->reading($at, $km);
+			$this->reading($at, $hours, counter: OdoReading::SECOND);
+		}
+		$this->fill(6000, null);
+		$this->maintain(7000, null);
+		$this->records[0]->setDoneAt(2500);
+
+		$costs = $this->service()->periods($this->vehicle(secondUnit: 'h', purchase: 3000000, residual: 1000000), [[0, 1000], [1000, 2000], [2000, 3000], [0, 3000]], false, whole: true);
+
+		$this->assertSame([null, 800, 800, 1600], array_column($costs, 'distance'));
+		$this->assertSame([null, 10, 10, 20], array_column($costs, 'hours'));
+		$this->assertSame(13000, $costs[3]['total']);
+		$this->assertSame(437.5, $costs[3]['value']);
+		$this->assertSame(0.0, $costs[3]['energy_value']);
+		$this->assertSame(350.0, $costs[3]['value_per_hour']);
+		$this->assertSame(0.0, $costs[3]['energy_value_per_hour']);
+		// 2 000 000 cents over the holding's 1 600 km.
+		$this->assertEqualsWithDelta(437.5 + 125000.0, $costs[3]['tco'], 0.001);
 	}
 
 	/** @return array<string, mixed> */

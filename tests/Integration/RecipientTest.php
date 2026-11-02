@@ -11,12 +11,14 @@ namespace OCA\NextFleet\Tests\Integration;
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
+use OCA\NextFleet\Db\BookingRecipientMapper;
 use OCA\NextFleet\Db\ReminderRecipient;
 use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Exception\AccessDeniedException;
 use OCA\NextFleet\Repair\StrangerRecipients;
+use OCA\NextFleet\Service\Names;
 use OCA\NextFleet\Service\NotificationService;
 use OCA\NextFleet\Service\RecipientService;
 use OCA\NextFleet\Service\Sharable;
@@ -198,9 +200,12 @@ class RecipientTest extends TestCase {
 		$users->method('getDisplayName')->willReturnCallback(static fn (string $uid): ?string => $real->getDisplayName($uid));
 		$racing = new RecipientService(
 			\OCP\Server::get(ReminderRecipientMapper::class),
+			\OCP\Server::get(BookingRecipientMapper::class),
 			$this->vehicles,
 			\OCP\Server::get(VehicleMapper::class),
 			$users,
+			\OCP\Server::get(IGroupManager::class),
+			new Names($users, \OCP\Server::get(IGroupManager::class)),
 			\OCP\Server::get(Sharable::class),
 			\OCP\Server::get(VehicleAccess::class),
 			\OCP\Server::get(NotificationService::class),

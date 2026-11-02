@@ -51,7 +51,13 @@ export function nextBookingWords(vehicle) {
 	}
 	const span = formatSpan(next.starts_at, next.starts_at_off, next.ends_at, next.ends_at_off)
 
-	return t('nextfleet', 'Your booking: {span}', { span })
+	if (next.approval === 'asked') {
+		return t('nextfleet', 'Your booking, asked back: {span}', { span })
+	}
+
+	return waiting(next)
+		? t('nextfleet', 'Your booking, waiting for approval: {span}', { span })
+		: t('nextfleet', 'Your booking: {span}', { span })
 }
 
 /** The span's rules, worded once for the sheets' own check and for the server's answer. */
@@ -61,6 +67,17 @@ const LONGEST = () => t('nextfleet', 'A booking lasts 90 days at most.')
 const AHEAD = () => t('nextfleet', 'A booking ends no more than a year from now.')
 
 const DAY = 86400 * 1000
+
+/**
+ * A cancel keeps the approval it stood at, so the state is read with it. The vehicle's
+ * `my_next_booking` carries no state: it is booked by what it is.
+ *
+ * @param {{state?: string, approval?: string|null}} booking - as listed, or as a 409 names it
+ * @return {boolean} it waits for an answer (docs/api.md#booking-approval), holding its span meanwhile
+ */
+export function waiting(booking) {
+	return (booking.state ?? 'booked') === 'booked' && (booking.approval === 'requested' || booking.approval === 'asked')
+}
 
 /**
  * What is wrong with a span before it is sent, as BookingService::apply() would refuse it.
@@ -111,6 +128,10 @@ export function refusalWords(message) {
 		'the booking is over, so the car is no longer taken under it': () => t('nextfleet', 'The booking is over, so the car is no longer taken under it.'),
 		'only a booking not yet taken changes, is cancelled or is checked out': () => t('nextfleet', 'This booking was taken, returned or cancelled meanwhile.'),
 		'only a booking whose car is out is checked in': () => t('nextfleet', 'The car is not out under this booking, so it is not given back under it.'),
+		'the booking is over, so it is answered no more': () => t('nextfleet', 'The booking is over, so it is answered no more.'),
+		'only a booking waiting for an answer is answered': () => t('nextfleet', 'This booking was answered or changed meanwhile.'),
+		'the booking waits for an answer, so the car is not taken under it yet': () => t('nextfleet', 'The booking is not approved yet, so the car is not taken under it.'),
+		'comment is longer than 10000 characters': () => t('nextfleet', 'The comment is longer than {max} characters.', { max: formatCount(10000) }),
 		'notes is longer than 10000 characters': () => t('nextfleet', 'The note is longer than {max} characters.', { max: formatCount(10000) }),
 		'level is 100 at most': () => t('nextfleet', 'The tank or battery is a percentage, 0 to 100.'),
 		'purpose is longer than 255 characters': () => t('nextfleet', 'The purpose is longer than 255 characters.'),

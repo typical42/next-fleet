@@ -79,8 +79,24 @@ class SeedAccessTest extends TestCase {
 	public function testTheAccountDrivesTheOwnersPassat(): void {
 		$passat = $this->passatOf(self::DRIVER);
 
-		$this->assertSame(['view', 'log'], $passat->getMay());
+		$this->assertSame(['view', 'log', 'costs'], $passat->getMay());
 		$this->assertNotNull($passat->getOwnedBy());
+	}
+
+	/** The Volvo is theirs to drive too, without what it cost. */
+	public function testTheAccountDrivesTheVolvoWithoutItsCosts(): void {
+		$volvo = null;
+		foreach (\OCP\Server::get(VehicleService::class)->list(self::DRIVER) as $vehicle) {
+			if ($vehicle->getUserId() === self::OWNER && $vehicle->getPlate() === 'NF-PH 200') {
+				$volvo = $vehicle;
+			}
+		}
+
+		$this->assertSame(['view', 'log'], $volvo?->getMay());
+		$this->assertNull($volvo->jsonSerialize()['purchase_price']);
+		// And their booking of it waits for the owner's answer.
+		$bookings = \OCP\Server::get(BookingService::class)->list(self::OWNER, $volvo->getUuid(), []);
+		$this->assertSame([[self::DRIVER, 'requested']], array_map(static fn (array $one): array => [$one['user_id'], $one['approval']], $bookings));
 	}
 
 	/** One trip each way round, and each reader's mileage claim holds only their own. */

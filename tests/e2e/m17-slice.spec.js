@@ -126,7 +126,7 @@ test('the edit sheet finds a body type by its German word and keeps category, ty
 })
 
 // The header states a figure per engine hour beside each per 100 km on a vehicle that counts both
-// (docs/user/costs.md). Two full fill-ups 500 km and 10 h apart, the second of 50 l for 90 €.
+// (docs/user/statistics.md). Two full fill-ups 500 km and 10 h apart, the second of 50 l for 90 €.
 test('a vehicle that counts kilometres and engine hours states its figures per engine hour', async ({ page, browser }, testInfo) => {
 	const owner = await account(page, browser, testInfo, 'en')
 	const plate = `${plates}hours-${Date.now()}`

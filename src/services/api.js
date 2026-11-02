@@ -37,14 +37,19 @@ import { t } from '../utils/l10n.js'
  * @property {string|null} [currency] - the code its costs are in; null leaves them unsummed
  * @property {string} [reminder_mail] - how often the reminder digest covers it: `off`, `daily`,
  *   `weekly` or `monthly`
+ * @property {boolean} [costs_shared] - drivers and viewers see what it costs; the owner's to change
+ * @property {string[]} [booking_notices] - the booking events its notice list hears: `booked`,
+ *   `taken`, `returned`, `cancelled`, `changed`; the owner's to change
+ * @property {boolean} [booking_approval] - whether a driver's booking waits for an answer; the
+ *   owner's to change
  * @property {string[]} [may] - what the session may do on it: `view`, `log`, `edit`, `delete`,
- *   `own` (CONTEXT.md, Vehicle Access), and `book` - `log` on a car in service; the server's
- *   answer, never a field a client sends
+ *   `own`, `costs` (CONTEXT.md, Vehicle Access), and `book` - `log` on a car in service; the
+ *   server's answer, never a field a client sends
  * @property {string|null} [owned_by] - the owner's display name when the session reached it through
  *   a grant; null on the session's own
  * @property {{user_id: string, user_name: string, ends_at: number, ends_at_off: number}|null} [out_with]
  *   - who has the car checked out, and the end of their booking; null while it is not out
- * @property {{uuid: string, starts_at: number, starts_at_off: number, ends_at: number, ends_at_off: number}|null} [my_next_booking]
+ * @property {{uuid: string, starts_at: number, starts_at_off: number, ends_at: number, ends_at_off: number, approval?: string|null}|null} [my_next_booking]
  *   - the session's own next booking of it within seven days, not yet taken; null when none
  * @property {boolean} [ever_granted] - whether anybody but the owner has or had access: the rule
  *   "Entered by" follows, and the screen shows Bookings by it
@@ -222,13 +227,110 @@ import { t } from '../utils/l10n.js'
  */
 
 /**
- * One vehicle's year for the Costs screen: the header's figures for the whole year, and each month's
- * cost, cut at the reader's midnight.
+ * A period's cost added up over the vehicles of one currency; the sums are null where none of them
+ * recorded anything, as a Cost's are.
  *
- * @typedef {object} CostYear
- * @property {Kpis} year - the year's figures
- * @property {Co2|null} co2 - the year's CO₂; null where the vehicle's country states no factors
- * @property {{month: number, from: number, to: number, cost: Cost}[]} months - January first
+ * @typedef {object} CostSum
+ * @property {number|null} total - every cost in the period
+ * @property {number|null} energy - the fill-ups' share of it
+ * @property {number|null} maintenance - the maintenance records' share of it
+ * @property {{category: string|null, total: number}[]|null} expenses - the expenses' share, per
+ *   category as a Cost has them
+ * @property {boolean} incomplete - a fill-up in the period has no price
+ * @property {boolean} unstated - under `net`, a row without a stated rate counted gross
+ */
+
+/**
+ * @typedef {object} CostSeries
+ * @property {string} currency - what every sum in it is in
+ * @property {CostSum[]} buckets - one per bucket, in order
+ * @property {CostSum} range - the whole range's
+ */
+
+/**
+ * A period's costs over its distance. The sums count everything; the rate only what had a
+ * distance, and what moved without a cost at 0 (docs/api.md#statistics).
+ *
+ * @typedef {object} DistanceCost
+ * @property {number|null} total - cents, null where nothing was recorded
+ * @property {number|null} distance - in the series' unit, null where no counter moved
+ * @property {number|null} value - cents per 100 km or per hour; null without a distance
+ */
+
+/**
+ * @typedef {object} PerDistance
+ * @property {string} currency - what every sum in it is in
+ * @property {'km'|'h'} per - the unit the counters count
+ * @property {DistanceCost[]} buckets - one per bucket, in order
+ * @property {DistanceCost} range - the whole range's
+ * @property {{uuid: string, range: DistanceCost}[]} vehicles - each vehicle's whole range
+ */
+
+/**
+ * One vehicle's consumption of one energy, over the segments that close in the range.
+ *
+ * @typedef {object} ConsumptionLine
+ * @property {string} uuid - the vehicle's
+ * @property {string} energy - which energy
+ * @property {'km'|'h'} per - the counter's unit
+ * @property {number} amount - millilitres or watt-hours, summed
+ * @property {number} distance - the segments' distances, summed
+ * @property {number} value - litres or kWh per 100 km, or per hour, the amount over the distance
+ * @property {Consumption[]|null} segments - oldest first; null when every vehicle is read
+ */
+
+/**
+ * A period's trips and the distance of each category, in the series' unit.
+ *
+ * @typedef {object} TripDistance
+ * @property {number} trips - how many set off in it, with a distance or without
+ * @property {number} business - distance
+ * @property {number} private - distance
+ * @property {number} commute - distance
+ */
+
+/**
+ * @typedef {object} DistanceSeries
+ * @property {'km'|'h'} per - the unit the counters count
+ * @property {TripDistance[]} buckets - one per bucket, in order
+ * @property {TripDistance} range - the whole range's
+ */
+
+/**
+ * One driver's range, by who entered the trips.
+ *
+ * @typedef {object} Driver
+ * @property {string} user_id - an erased driver's pseudonym
+ * @property {string} name - the display name; the pseudonym for an erased driver
+ * @property {number} trips - how many
+ * @property {number} distance - in the series' unit
+ * @property {number} business - the business trips' distance
+ */
+
+/**
+ * @typedef {object} DriverSeries
+ * @property {'km'|'h'} per - the unit the counters count
+ * @property {Driver[]} drivers - by name
+ */
+
+/**
+ * The Statistics screen's range (lib/Service/StatisticsService.php), cut at the reader's midnight.
+ *
+ * @typedef {object} Statistics
+ * @property {number} from - the range's first midnight, unix seconds
+ * @property {number} to - the midnight after its last day
+ * @property {'month'|'year'} bucket - what each bucket is
+ * @property {{from: number, to: number}[]} buckets - the first and the last cut to the range
+ * @property {{uuid: string, costs: boolean, drivers: boolean}[]} vehicles - the vehicles counted,
+ *   whether their costs are, and whether every driver's figures are or only the reader's
+ * @property {CostSeries[]} costs - one per currency, by its code
+ * @property {PerDistance[]} per_distance - one per currency and unit
+ * @property {ConsumptionLine[]} consumption - by vehicle, then the energy's first segment in the
+ *   range
+ * @property {DistanceSeries[]} distance - one per unit
+ * @property {DriverSeries[]} by_driver - one per unit
+ * @property {Co2|null} co2 - one vehicle's for the range; null for all of them, or where its
+ *   country states no factors
  */
 
 /**
@@ -351,16 +453,21 @@ import { t } from '../utils/l10n.js'
  * @property {boolean} trip_voided - whether that trip was voided since; it stays tied
  * @property {TripDraft|null} trip_draft - the trip the handover describes, while a returned booking has none
  * @property {('odo_below'|'late')[]} flags - what the handover is in question for, computed on read
+ * @property {'requested'|'asked'|'approved'|'declined'|null} approval - where its answer stands, null
+ *   where the vehicle asks for none (docs/api.md#booking-approval)
+ * @property {string|null} approval_comment - the last answer's comment
+ * @property {string|null} approval_by - who gave the last answer
  * @property {string[]} may - what the session may do to it: `edit`, `cancel`, `check_out`, `check_in`,
- *   `log_trip`, `attach` (a handover photo, once handed over), and `open_trip` where the trip it
- *   became is the session's to open, as its timeline row says
+ *   `log_trip`, `attach` (a handover photo, once handed over), `open_trip` where the trip it
+ *   became is the session's to open, as its timeline row says, and `approve`, `ask` and `decline`
+ *   where it waits for the session's answer
  */
 
 /**
  * The booking a refused span or check-out collides with, as the 409 names it: `out` when the car is
- * still with its booker.
+ * still with its booker, `approval` `requested` or `asked` while it waits for an answer.
  *
- * @typedef {Pick<Booking, 'uuid'|'user_id'|'user_name'|'starts_at'|'starts_at_off'|'ends_at'|'ends_at_off'|'state'>} BookingHeld
+ * @typedef {Pick<Booking, 'uuid'|'user_id'|'user_name'|'starts_at'|'starts_at_off'|'ends_at'|'ends_at_off'|'state'|'approval'>} BookingHeld
  */
 
 /**
@@ -953,6 +1060,48 @@ export async function removeRecipient(uuid, userId) {
 }
 
 /**
+ * One account or group that hears of a vehicle's bookings (docs/architecture.md#booking-notices).
+ *
+ * @typedef {object} BookingRecipient
+ * @property {string} recipient - the account or the group
+ * @property {'user'|'group'} recipient_type - which of the two
+ * @property {string} display_name - its name, or the recipient where it has none any more
+ */
+
+/**
+ * Who hears of the vehicle's bookings; empty means the owner. The owner and managers read it.
+ *
+ * @param {string} uuid - the vehicle
+ * @return {Promise<BookingRecipient[]>} the list, in the order it was added to
+ */
+export async function listBookingRecipients(uuid) {
+	return request('GET', `/api/vehicles/${uuid}/booking-recipients`)
+}
+
+/**
+ * Put an account or a group on the list; the owner's alone. No token, as addRecipient() sends none.
+ *
+ * @param {string} uuid - the vehicle
+ * @param {{ recipient: string, recipient_type: 'user'|'group' }} whom - the account or the group
+ * @return {Promise<BookingRecipient[]>} the list as it now stands
+ */
+export async function addBookingRecipient(uuid, whom) {
+	return request('POST', `/api/vehicles/${uuid}/booking-recipients`, { recipient: whom.recipient, recipient_type: whom.recipient_type })
+}
+
+/**
+ * @param {string} uuid - the vehicle
+ * @param {{ recipient: string, recipient_type: 'user'|'group' }} whom - the account or the group
+ * @return {Promise<BookingRecipient[]>} the list as it now stands
+ */
+export async function removeBookingRecipient(uuid, whom) {
+	// A group id may hold a slash. Sent encoded, a web server refuses it by default; the route
+	// takes the rest of the path as the name.
+	const name = whom.recipient.split('/').map(encodeURIComponent).join('/')
+	return request('DELETE', `/api/vehicles/${uuid}/booking-recipients/${whom.recipient_type}/${name}`)
+}
+
+/**
  * What the session holds on a vehicle through grants: a grant in their own name they may leave,
  * and the groups only the owner can change. The owner holds no grant and gets neither.
  *
@@ -1138,20 +1287,28 @@ export async function readKpis(uuid, { from, to, net }) {
 }
 
 /**
- * One vehicle's year for the Costs screen (lib/Service/KpiService.php). The reader names the zone
- * and the server cuts the months at its midnight (docs/architecture.md#numbers-consumption-cost-emissions).
+ * The Statistics screen's range (docs/api.md#statistics). The reader names the days and the zone,
+ * and the server cuts the buckets at its midnight.
  *
- * @param {string} uuid - the vehicle whose year to read
  * @param {object} asked - what to read
- * @param {string} asked.year - four digits, which is what the route takes
+ * @param {string} asked.vehicle - a vehicle's uuid; empty for every vehicle
+ * @param {string} [asked.from] - the first day, YYYY-MM-DD; with neither end, all of it
+ * @param {string} [asked.to] - the day after the last
  * @param {string} asked.tz - the reader's IANA zone
  * @param {boolean} asked.net - whether the person reclaims VAT
- * @return {Promise<CostYear>} the year
+ * @return {Promise<Statistics>} the range
  */
-export async function readYear(uuid, { year, tz, net }) {
-	const query = new URLSearchParams({ tz, net: String(net) })
+export async function readStatistics({ vehicle, from, to, tz, net }) {
+	const query = new URLSearchParams()
+	for (const [name, value] of Object.entries({ vehicle, from, to })) {
+		if (value) {
+			query.set(name, value)
+		}
+	}
+	query.set('tz', tz)
+	query.set('net', String(net))
 
-	return request('GET', `/api/vehicles/${uuid}/costs/${year}?${query}`)
+	return request('GET', `/api/statistics?${query}`)
 }
 
 /**
@@ -1381,6 +1538,20 @@ export async function changeBooking(uuid, booking, fields) {
  */
 export async function cancelBooking(uuid, booking) {
 	return request('DELETE', `/api/vehicles/${uuid}/bookings/${booking.uuid}?updated_at=${booking.updated_at}`)
+}
+
+/**
+ * Answer a booking that waits for one, as the owner or a manager.
+ *
+ * @param {string} uuid - the vehicle
+ * @param {Booking} booking - the booking as read: its token goes along
+ * @param {'approve'|'ask'|'decline'} answer - which of the three
+ * @param {string} comment - for the booker; empty for none
+ * @return {Promise<Booking>} the booking as answered
+ * @throws {ConflictError} when the booking changed since it was read
+ */
+export async function answerBooking(uuid, booking, answer, comment) {
+	return request('POST', `/api/vehicles/${uuid}/bookings/${booking.uuid}/${answer}`, { updated_at: booking.updated_at, comment })
 }
 
 /**

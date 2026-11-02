@@ -3,18 +3,20 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
+import { getCurrentUser } from '@nextcloud/auth'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcDateTimePickerNative from '@nextcloud/vue/components/NcDateTimePickerNative'
 import NcDialog from '@nextcloud/vue/components/NcDialog'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import NcTextArea from '@nextcloud/vue/components/NcTextArea'
 import NcTextField from '@nextcloud/vue/components/NcTextField'
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 import { BookingConflictError, checkIn, checkOut, createBooking } from '../services/api.js'
+import { may } from '../utils/access.js'
 import { formatCount, formatSpan, parseWhole } from '../utils/format.js'
 import { t } from '../utils/l10n.js'
-import { refusalWords, spanFault } from '../utils/pool.js'
+import { refusalWords, spanFault, waiting } from '../utils/pool.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -37,8 +39,16 @@ const emit = defineEmits(['close', 'saved'])
 
 const HOUR = 3600 * 1000
 
+/** The server's bound on a note, Field::TEXT. */
+const NOTES = 10000
+
 /** A booking that is out is given back; any other the sheet is offered on is taken. */
 const returning = computed(() => props.booking?.state === 'out')
+
+/** On someone else's booking the owner or a manager is not the one who drives: the car goes to its booker. */
+const taking = computed(() => props.booking === null || props.booking.user_id === getCurrentUser()?.uid
+	? t('nextfleet', 'Take the car')
+	: t('nextfleet', 'Hand over to {name}', { name: props.booking.user_name }))
 
 /** Taken now, the car is booked until the end a new booking defaults to (BookingSheet.vue). */
 const soon = new Date()
@@ -67,12 +77,50 @@ const clash = ref(null)
  */
 const held = ref(props.booking)
 
+/**
+ * Kept past midnight on a vehicle that wants answers, a take-now is a request, unless the user
+ * answers requests: the rule BookingService::insert() applies, on the same clock.
+ */
+const asks = computed(() => {
+	if (props.booking !== null || props.vehicle.booking_approval !== true || may(props.vehicle, 'edit')) {
+		return false
+	}
+	const midnight = new Date()
+	midnight.setHours(24, 0, 0, 0)
+
+	return end.value instanceof Date && end.value.getTime() > midnight.getTime()
+})
+
+/** The take-now came back a request: it stands booked, and the sheet stays open to say so. */
+const requested = ref(false)
+
+/** The sheet's first button: Cancel, or Close once the take-now is a request. */
+const closer = ref(null)
+
+// The button pressed goes with the request, so focus would fall out of the sheet. Close is
+// enabled only once the save is over, after the next render.
+watch(requested, async (now) => {
+	if (now) {
+		await nextTick()
+		closer.value?.$el?.focus()
+	}
+})
+
+/** A request the sheet foresaw came back approved: it stands booked, and the car is still to take. */
+const freed = ref(false)
+
+/** A request takes no car, so it asks for nothing the car is handed over with. */
+const stating = computed(() => !requested.value && !(asks.value && held.value === null))
+
 const action = computed(() => {
+	if (!stating.value) {
+		return t('nextfleet', 'Request')
+	}
 	if (failure.value) {
 		return t('nextfleet', 'Try again')
 	}
 
-	return returning.value ? t('nextfleet', 'Return the car') : t('nextfleet', 'Take the car')
+	return returning.value ? t('nextfleet', 'Return the car') : taking.value
 })
 
 const taken = computed(() => returning.value
@@ -84,8 +132,12 @@ const note = computed(() => {
 		const name = clash.value.user_name
 		const span = formatSpan(clash.value.starts_at, clash.value.starts_at_off, clash.value.ends_at, clash.value.ends_at_off)
 
-		return clash.value.state === 'out'
-			? t('nextfleet', 'Still with {name}, booked {span}', { name, span })
+		if (clash.value.state === 'out') {
+			return t('nextfleet', 'Still with {name}, booked {span}', { name, span })
+		}
+
+		return waiting(clash.value)
+			? t('nextfleet', 'Requested by {name}, {span}', { name, span })
 			: t('nextfleet', 'Booked by {name}, {span}', { name, span })
 	}
 
@@ -112,6 +164,12 @@ function handover() {
 		stated.level = percent
 	}
 	if (notes.value.trim() !== '') {
+		// Checked here, not left to the check-out: a take-now would be booked, and the list told it
+		// was taken, first. Trimmed and counted in code points, as Field::read() counts; thrown in
+		// the server's words, which save() turns into the user's as it does the server's refusal.
+		if ([...notes.value.trim()].length > NOTES) {
+			throw new Error(`notes is longer than ${NOTES} characters`)
+		}
 		stated.notes = notes.value
 	}
 
@@ -148,13 +206,23 @@ async function save() {
 	saving.value = true
 	failure.value = ''
 	clash.value = null
+	freed.value = false
 	try {
-		const stated = handover()
 		if (returning.value) {
-			emit('saved', await checkIn(props.vehicle.uuid, props.booking, stated))
+			emit('saved', await checkIn(props.vehicle.uuid, props.booking, handover()))
 			return
 		}
+		const stated = stating.value ? handover() : null
 		held.value ??= await bookNow()
+		// The server has the last word on a request (BookingService::insert()), either way round.
+		if (waiting(held.value)) {
+			requested.value = true
+			return
+		}
+		if (stated === null) {
+			freed.value = true
+			return
+		}
 		emit('saved', await checkOut(props.vehicle.uuid, held.value, stated))
 	} catch (error) {
 		if (error instanceof BookingConflictError) {
@@ -179,12 +247,23 @@ function requestClose() {
 </script>
 
 <template>
-	<NcDialog :name="returning ? t('nextfleet', 'Return the car') : t('nextfleet', 'Take the car')"
+	<NcDialog :name="returning ? t('nextfleet', 'Return the car') : taking"
 		:open="true"
 		size="small"
 		@update:open="requestClose">
 		<div class="sheet" @keydown.esc.stop="requestClose">
 			<NcNoteCard v-if="note" type="error" :text="note" />
+			<NcNoteCard v-if="!stating"
+				type="info"
+				:show-alert="requested"
+				:heading="requested
+					? t('nextfleet', 'The booking waits for approval.')
+					: t('nextfleet', 'Kept past midnight, this is a request that waits for approval.')"
+				:text="t('nextfleet', 'You state the counter, the tank and the notes when you take the car.')" />
+			<NcNoteCard v-if="freed"
+				type="info"
+				show-alert
+				:text="t('nextfleet', 'No approval needed after all. State the counter and take the car.')" />
 
 			<NcDateTimePickerNative v-if="booking === null"
 				v-model="end"
@@ -192,25 +271,30 @@ function requestClose() {
 				:label="t('nextfleet', 'Back by')"
 				:disabled="saving || held !== null"
 				@keydown.esc.stop="keepPicker" />
-			<NcTextField v-model="odo"
-				:label="t('nextfleet', 'Counter reading ({unit})', { unit: vehicle.odo_unit })"
-				:helper-text="taken"
-				:disabled="saving"
-				inputmode="numeric" />
-			<NcTextField v-model="level"
-				:label="t('nextfleet', 'Tank or battery (%)')"
-				:disabled="saving"
-				inputmode="numeric" />
-			<NcTextArea v-model="notes"
-				:label="t('nextfleet', 'Notes')"
-				:disabled="saving" />
+			<template v-if="stating">
+				<NcTextField v-model="odo"
+					:label="t('nextfleet', 'Counter reading ({unit})', { unit: vehicle.odo_unit })"
+					:helper-text="taken"
+					:disabled="saving"
+					inputmode="numeric" />
+				<NcTextField v-model="level"
+					:label="t('nextfleet', 'Tank or battery (%)')"
+					:disabled="saving"
+					inputmode="numeric" />
+				<NcTextArea v-model="notes"
+					:label="t('nextfleet', 'Notes')"
+					:disabled="saving" />
+			</template>
 		</div>
 
 		<template #actions>
-			<NcButton :disabled="saving" @click="requestClose">
-				{{ t('nextfleet', 'Cancel') }}
+			<NcButton ref="closer" :disabled="saving" @click="requestClose">
+				{{ requested ? t('nextfleet', 'Close') : t('nextfleet', 'Cancel') }}
 			</NcButton>
-			<NcButton variant="primary" :disabled="saving" @click="save">
+			<NcButton v-if="!requested"
+				variant="primary"
+				:disabled="saving"
+				@click="save">
 				{{ action }}
 			</NcButton>
 		</template>

@@ -3,6 +3,7 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
+import { getCurrentUser } from '@nextcloud/auth'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcDateTimePickerNative from '@nextcloud/vue/components/NcDateTimePickerNative'
 import NcDialog from '@nextcloud/vue/components/NcDialog'
@@ -13,7 +14,7 @@ import { computed, ref } from 'vue'
 import { BookingConflictError, changeBooking, ConflictError, createBooking, listBookings } from '../services/api.js'
 import { formatSpan, formatWhen } from '../utils/format.js'
 import { t } from '../utils/l10n.js'
-import { refusalWords, spanFault } from '../utils/pool.js'
+import { refusalWords, spanFault, waiting } from '../utils/pool.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -53,6 +54,19 @@ const stale = ref(false)
 /** The booking the next write is checked against: the prop, until a refused write reads a newer one. */
 const held = ref(props.booking)
 
+/**
+ * Asked back, the booker answers by changing the booking (BookingService::change()). Only the
+ * booker's change answers, so only the booker is told; of the booking the save is checked
+ * against, which an approver may have answered meanwhile.
+ */
+const asked = computed(() => held.value !== null
+	&& held.value.state === 'booked'
+	&& held.value.approval === 'asked'
+	&& held.value.user_id === getCurrentUser()?.uid)
+const question = computed(() => held.value?.approval_comment
+	? t('nextfleet', 'Question: {comment}', { comment: held.value.approval_comment })
+	: undefined)
+
 const action = computed(() => {
 	if (stale.value) {
 		return t('nextfleet', 'Save anyway')
@@ -68,7 +82,9 @@ const note = computed(() => {
 	if (clash.value !== null) {
 		const name = clash.value.user_name
 		const span = formatSpan(clash.value.starts_at, clash.value.starts_at_off, clash.value.ends_at, clash.value.ends_at_off)
-		let text = t('nextfleet', 'Booked by {name}, {span}', { name, span })
+		let text = waiting(clash.value)
+			? t('nextfleet', 'Requested by {name}, {span}', { name, span })
+			: t('nextfleet', 'Booked by {name}, {span}', { name, span })
 		// A car still out is in somebody's hands, not just on their calendar: say whose, and when it is
 		// due back - or, overdue, that it still is out, since "until" a time gone by would be wrong.
 		if (clash.value.state === 'out') {
@@ -214,6 +230,10 @@ function requestClose() {
 				:label="t('nextfleet', 'End')"
 				:disabled="saving"
 				@keydown.esc.stop="keepPicker" />
+			<NcNoteCard v-if="asked"
+				type="info"
+				:heading="question"
+				:text="t('nextfleet', 'Saving a change answers the question, and the booking waits for approval again.')" />
 			<NcTextField v-model="purpose"
 				:label="t('nextfleet', 'Purpose')"
 				:disabled="saving" />

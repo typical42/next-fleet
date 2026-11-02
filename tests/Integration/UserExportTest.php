@@ -12,10 +12,12 @@ use Doctrine\DBAL\Schema\Table;
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\AccountTables;
 use OCA\NextFleet\Db\Audit;
+use OCA\NextFleet\Db\Booking;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
+use OCA\NextFleet\Service\BookingService;
 use OCA\NextFleet\Service\ExpenseService;
 use OCA\NextFleet\Service\GrantService;
 use OCA\NextFleet\Service\RecipientService;
@@ -46,6 +48,8 @@ use Symfony\Component\Console\Output\BufferedOutput;
 class UserExportTest extends TestCase {
 	private const OWNER = 'nextfleet-test-export-owner';
 	private const DRIVER = 'nextfleet-test-export-driver';
+	private const MANAGER = 'nextfleet-test-export-manager';
+	private const ACCOUNTS = [self::OWNER, self::DRIVER, self::MANAGER];
 	private const TABLES = [
 		'fleet_vehicles', 'fleet_access', 'fleet_odo_readings', 'fleet_trips', 'fleet_energy', 'fleet_maintenance', 'fleet_expenses',
 		'fleet_reminders', 'fleet_reminder_receipts', 'fleet_reminder_recipients', 'fleet_documents', 'fleet_audit', 'fleet_bookings',
@@ -64,7 +68,7 @@ class UserExportTest extends TestCase {
 		$this->forget();
 
 		$users = \OCP\Server::get(IUserManager::class);
-		foreach ([self::OWNER, self::DRIVER] as $uid) {
+		foreach (self::ACCOUNTS as $uid) {
 			$users->createUser($uid, bin2hex(random_bytes(16)));
 		}
 	}
@@ -97,7 +101,7 @@ class UserExportTest extends TestCase {
 		$this->vehicleIds = [];
 
 		$users = \OCP\Server::get(IUserManager::class);
-		foreach ([self::OWNER, self::DRIVER] as $uid) {
+		foreach (self::ACCOUNTS as $uid) {
 			$users->get($uid)?->delete();
 		}
 	}
@@ -186,6 +190,64 @@ class UserExportTest extends TestCase {
 		]], $files['nextfleet/fleet_vehicles.json']);
 		$this->assertSame([$driven->getUuid()], array_column($files['nextfleet/fleet_trips.json'], 'uuid'));
 		$this->assertSame(12000, $files['nextfleet/fleet_trips.json'][0]['end_odo']);
+	}
+
+	/**
+	 * A booking the account only answered is the booker's: whole while the account may still see
+	 * the vehicle, else only the answer (Art. 15(4) GDPR).
+	 */
+	public function testABookingTheAccountOnlyAnsweredKeepsOnlyTheAnswerOnceTheGrantIsGone(): void {
+		[$vehicle, $booking, $grant] = $this->askedBack();
+		\OCP\Server::get(GrantService::class)->revoke(self::OWNER, $vehicle->getUuid(), $grant['uuid']);
+
+		$this->assertSame([[
+			'uuid' => $booking['uuid'],
+			'created_at' => $booking['created_at'],
+			'approval' => Booking::ASKED,
+			'approval_comment' => 'Which site?',
+			'approval_by' => self::MANAGER,
+		]], $this->export(self::MANAGER)['nextfleet/fleet_bookings.json']);
+	}
+
+	public function testABookingTheAccountAnsweredIsWholeWhileItSeesTheVehicle(): void {
+		[, $booking] = $this->askedBack();
+
+		[$row] = $this->export(self::MANAGER)['nextfleet/fleet_bookings.json'];
+
+		$this->assertSame([$booking['uuid'], 'Site visit', self::DRIVER], [$row['uuid'], $row['purpose'], $row['user_id']]);
+	}
+
+	/** A vehicle the account made and handed on shows its prices only while the account may see costs. */
+	public function testAVehicleRowCarriesItsPricesOnlyWhileTheAccountMaySeeCosts(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'purchase_price' => 3200000, 'residual_est' => 1200000, 'costs_shared' => false]);
+		$this->vehicleIds[] = (int)$vehicle->getId();
+		\OCP\Server::get(TransferService::class)->transfer($vehicle->getUuid(), self::DRIVER);
+
+		[$former] = $this->export(self::OWNER)['nextfleet/fleet_vehicles.json'];
+		[$current] = $this->export(self::DRIVER)['nextfleet/fleet_vehicles.json'];
+
+		$this->assertSame(['B-XY 123', null, null], [$former['plate'], $former['purchase_price'], $former['residual_est']]);
+		$this->assertSame([3200000, 1200000], [$current['purchase_price'], $current['residual_est']]);
+	}
+
+	/**
+	 * The driver books the owner's car, which asks for approval; the manager asks back.
+	 *
+	 * @return array{Vehicle, array<string, mixed>, array<string, mixed>} the vehicle, the booking, the manager's grant
+	 */
+	private function askedBack(): array {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'booking_approval' => true]);
+		$this->vehicleIds[] = (int)$vehicle->getId();
+		$grants = \OCP\Server::get(GrantService::class);
+		$grants->grant(self::OWNER, $vehicle->getUuid(), ['grantee' => self::DRIVER, 'grantee_type' => 'user', 'role' => 'driver']);
+		$listed = $grants->grant(self::OWNER, $vehicle->getUuid(), ['grantee' => self::MANAGER, 'grantee_type' => 'user', 'role' => 'manager']);
+		[$grant] = array_values(array_filter($listed, static fn (array $grant): bool => $grant['grantee'] === self::MANAGER));
+		$bookings = \OCP\Server::get(BookingService::class);
+		$start = time() + 86400;
+		$booked = $bookings->book(self::DRIVER, $vehicle->getUuid(), ['starts_at' => $start, 'starts_at_off' => 120, 'ends_at' => $start + 3600, 'ends_at_off' => 120, 'purpose' => 'Site visit']);
+		$asked = $bookings->answer(self::MANAGER, $vehicle->getUuid(), (string)$booked['uuid'], (int)$booked['updated_at'], Booking::ASKED, ['comment' => 'Which site?']);
+
+		return [$vehicle, $asked, $grant];
 	}
 
 	/** NextFleet does not restore from an export, and says so rather than failing the whole import. */

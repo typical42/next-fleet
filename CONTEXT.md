@@ -180,11 +180,12 @@ The row saying a Warning Point was sent to one Recipient on one channel (`app` o
 
 **Vehicle Access**:
 Our own permission to see or change a vehicle: owner, or a grant with role manager, driver or
-viewer. It comes as five operations: `view` (every role), `log` (driver and manager: add an Entry,
+viewer. It comes as six operations: `view` (every role), `log` (driver and manager: add an Entry,
 change one you entered), `edit` and `delete` (manager: the vehicle's settings and anybody's
-Entries), and `own` (the owner alone: access, and whether the vehicle exists). Decided in one place,
-`VehicleAccess::may`. A grant ends when the owner revokes it, its grantee Leaves, its group is
-deleted, or the owner's account is deleted.
+Entries), `own` (the owner alone: access, and whether the vehicle exists), and `costs` (owner and
+manager, and driver and viewer while the owner shares them: every amount, sum and price). Decided
+in one place, `VehicleAccess::may`. A grant ends when the owner revokes it, its grantee Leaves, its
+group is deleted, or the owner's account is deleted.
 _Avoid_: Share, permission, ACL
 
 **Leave**:
@@ -210,6 +211,13 @@ One person's plan to use a vehicle from one instant to another, `booked`, `out`,
 `cancelled`. A plan, not an Entry: it writes no Reading and is on no timeline or report. Only a
 `booked` or `out` one holds the vehicle.
 _Avoid_: Reservation, appointment, event
+
+**Approval**:
+The owner's or a manager's answer to a driver's Booking, on a vehicle whose owner asks for one:
+`requested`, then `approved`, `asked` (a question back) or `declined` (which cancels it). Beside
+the Booking's state, not one of them: a Booking waiting for it is `booked` and holds the vehicle,
+but is not taken. Given to a span: a new start or end asks again. Still waiting at its end, `declined`.
+_Avoid_: Confirmation, release
 
 **Handover**:
 The two moments a Booking changes hands, Check-out and Check-in, each with the counter, the tank or

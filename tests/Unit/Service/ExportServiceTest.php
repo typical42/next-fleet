@@ -8,16 +8,23 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Unit\Service;
 
+use OCA\NextFleet\Db\AccessMapper;
+use OCA\NextFleet\Db\Energy;
 use OCA\NextFleet\Db\EnergyMapper;
 use OCA\NextFleet\Db\Expense;
 use OCA\NextFleet\Db\ExpenseMapper;
+use OCA\NextFleet\Db\Maintenance;
 use OCA\NextFleet\Db\MaintenanceMapper;
 use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
+use OCA\NextFleet\Service\CostsShown;
 use OCA\NextFleet\Service\EnteredBy;
 use OCA\NextFleet\Service\ExportService;
+use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
 use OCA\NextFleet\Tests\Stub\SpyLogger;
+use OCP\IGroupManager;
+use OCP\IUserManager;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LogLevel;
@@ -86,23 +93,59 @@ class ExportServiceTest extends TestCase {
 		];
 	}
 
-	/** @param array<string, string> $vehicle */
-	private function service(ExpenseMapper $expenses, SpyLogger $logger, array $vehicle = ['plate' => 'B-XY 123']): ExportService {
+	/**
+	 * A driver the costs are kept from exports the year without them: no amount on a row
+	 * somebody else entered, and no expense of somebody else's at all. Their own stay whole.
+	 */
+	public function testAFileHoldsNoAmountTheReaderMayNotSee(): void {
+		$may = ['view', 'log'];
+		$expenses = $this->createMock(ExpenseMapper::class);
+		$expenses->method('findBetween')->willReturn([
+			self::expense('Toll', gmmktime(10, 0, 0, 3, 1, 2026), 'alice'),
+			self::expense('Car wash', gmmktime(10, 0, 0, 6, 1, 2026), 'carol'),
+		]);
+		$energy = $this->createMock(EnergyMapper::class);
+		$energy->method('findBetween')->willReturn([
+			Energy::fromRow(['id' => 1, 'uuid' => 'f1', 'vehicle_id' => 7, 'filled_at' => gmmktime(10, 0, 0, 3, 1, 2026), 'filled_at_off' => 60, 'energy' => 'diesel', 'amount' => 42000, 'unit_price' => 1799, 'total' => 7556, 'created_by' => 'alice']),
+		]);
+		$maintenance = $this->createMock(MaintenanceMapper::class);
+		$maintenance->method('findBetween')->willReturn([
+			Maintenance::fromRow(['id' => 1, 'uuid' => 'm1', 'vehicle_id' => 7, 'done_at' => gmmktime(10, 0, 0, 3, 1, 2026), 'done_at_off' => 60, 'title' => 'Brakes', 'cost' => 42000, 'created_by' => 'alice']),
+		]);
+
+		$service = $this->service($expenses, new SpyLogger(), may: $may, energy: $energy, maintenance: $maintenance);
+		$rows = static fn (string $table): array => array_map('str_getcsv', array_slice(explode("\r\n", trim($service->csv('carol', self::VEHICLE, 2026, $table)['body'])), 1));
+
+		$this->assertSame([['e-' . gmmktime(10, 0, 0, 6, 1, 2026)]], array_map(static fn (array $row): array => [$row[0]], $rows('expenses')));
+		[$fill] = $rows('energy');
+		$this->assertSame(['42000', '', ''], [$fill[7], $fill[8], $fill[9]]);
+		[$record] = $rows('maintenance');
+		$this->assertSame(['Brakes', ''], [$record[7], $record[9]]);
+	}
+
+	/**
+	 * @param array<string, string> $vehicle
+	 * @param list<string> $may what the gate leaves on the vehicle
+	 */
+	private function service(ExpenseMapper $expenses, SpyLogger $logger, array $vehicle = ['plate' => 'B-XY 123'], array $may = ['view', 'costs'], ?EnergyMapper $energy = null, ?MaintenanceMapper $maintenance = null): ExportService {
+		$reached = Vehicle::fromRow(['id' => 7, 'uuid' => self::VEHICLE, 'currency' => 'EUR'] + $vehicle);
+		$reached->setMay($may);
 		$fleet = $this->createMock(VehicleService::class);
-		$fleet->method('reach')->willReturn(Vehicle::fromRow(['id' => 7, 'uuid' => self::VEHICLE, 'currency' => 'EUR'] + $vehicle));
+		$fleet->method('reach')->willReturn($reached);
 
 		return new ExportService(
 			$fleet,
 			$this->createMock(TripMapper::class),
-			$this->createMock(EnergyMapper::class),
-			$this->createMock(MaintenanceMapper::class),
+			$energy ?? $this->createMock(EnergyMapper::class),
+			$maintenance ?? $this->createMock(MaintenanceMapper::class),
 			$expenses,
 			$this->createMock(EnteredBy::class),
 			$logger,
+			new CostsShown(new VehicleAccess($this->createMock(AccessMapper::class), $this->createMock(IUserManager::class), $this->createMock(IGroupManager::class))),
 		);
 	}
 
-	private static function expense(string $notes, int $spentAt): Expense {
-		return Expense::fromRow(['id' => 1, 'uuid' => 'e-' . $spentAt, 'vehicle_id' => 7, 'spent_at' => $spentAt, 'spent_at_off' => 60, 'category' => 'other', 'amount' => 500, 'notes' => $notes]);
+	private static function expense(string $notes, int $spentAt, string $createdBy = 'alice'): Expense {
+		return Expense::fromRow(['id' => 1, 'uuid' => 'e-' . $spentAt, 'vehicle_id' => 7, 'spent_at' => $spentAt, 'spent_at_off' => 60, 'category' => 'other', 'amount' => 500, 'notes' => $notes, 'created_by' => $createdBy]);
 	}
 }

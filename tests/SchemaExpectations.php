@@ -160,7 +160,7 @@ trait SchemaExpectations {
 
 		$this->assertSame(
 			[
-				'fleet_access', 'fleet_audit', 'fleet_bookings', 'fleet_documents', 'fleet_energy', 'fleet_expenses',
+				'fleet_access', 'fleet_audit', 'fleet_booking_recipients', 'fleet_bookings', 'fleet_documents', 'fleet_energy', 'fleet_expenses',
 				'fleet_maintenance', 'fleet_odo_readings', 'fleet_reminder_receipts', 'fleet_reminder_recipients',
 				'fleet_reminders', 'fleet_trips', 'fleet_vehicles',
 			],
@@ -210,6 +210,13 @@ trait SchemaExpectations {
 			// `vehicle_type` decides the rules.
 			'eu_category' => 'string(8), null',
 			'body_type' => 'string(4), null',
+			// Whether drivers and viewers see the costs. Defaulted on, so the vehicles already
+			// there show what they always showed.
+			'costs_shared' => 'boolean, null, default true',
+			// The booking events the notice list hears; null reads as booked and taken.
+			'booking_notices' => 'json, null',
+			// Whether a booking ahead waits for an answer. Off, so nothing waits that did not.
+			'booking_approval' => 'boolean, null, default false',
 		]);
 	}
 
@@ -355,6 +362,15 @@ trait SchemaExpectations {
 		]);
 	}
 
+	/** A user or a group, the other null. */
+	public function testBookingRecipientsHoldsTheDataModelsColumnsAndNoOthers(): void {
+		$this->assertTable('fleet_booking_recipients', [
+			'vehicle_id' => 'bigint, not null',
+			'user_id' => 'string(64), null',
+			'group_id' => 'string(64), null',
+		]);
+	}
+
 	public function testDocumentsHoldsTheDataModelsColumnsAndNoOthers(): void {
 		$this->assertTable('fleet_documents', [
 			'vehicle_id' => 'bigint, not null',
@@ -415,6 +431,12 @@ trait SchemaExpectations {
 			'in_notes' => 'text, null',
 			// The trip logged from it, once one is.
 			'trip_id' => 'bigint, null',
+			// The answer, where the vehicle asks for one: where it stands, the comment and who
+			// gave it.
+			'approval' => 'string(16), null',
+			'approval_comment' => 'text, null',
+			'approval_by' => 'string(64), null',
+			'announced' => 'boolean, null, default false',
 		]);
 	}
 
@@ -499,6 +521,12 @@ trait SchemaExpectations {
 			'fleet_rcp_veh_user_uniq' => 'unique(vehicle_id, user_id)',
 		], $this->indexes('fleet_reminder_recipients'));
 
+		// A vehicle's notice list; no doubles index, for the reason the migration gives.
+		$this->assertSame([
+			'fleet_brc_uuid_uniq' => 'unique(uuid)',
+			'fleet_brc_veh_idx' => 'index(vehicle_id)',
+		], $this->indexes('fleet_booking_recipients'));
+
 		// A vehicle's papers, and the paperclip on an entry's timeline row.
 		$this->assertSame([
 			'fleet_doc_creator_idx' => 'index(created_by)',
@@ -508,13 +536,15 @@ trait SchemaExpectations {
 			'fleet_doc_veh_upd_idx' => 'index(vehicle_id, updated_at, id)',
 		], $this->indexes('fleet_documents'));
 
-		// A vehicle's bookings by time, and the overlap check before each one.
+		// A vehicle's bookings by time, the overlap check before each one, and the hourly search
+		// across vehicles for the requests whose end came unanswered.
 		$this->assertSame([
 			'fleet_bkg_creator_idx' => 'index(created_by)',
 			'fleet_bkg_uuid_uniq' => 'unique(uuid)',
 			'fleet_bkg_veh_start_idx' => 'index(vehicle_id, starts_at)',
 			'fleet_bkg_veh_state_idx' => 'index(vehicle_id, state)',
 			'fleet_bkg_veh_upd_idx' => 'index(vehicle_id, updated_at, id)',
+			'fleet_bkg_wait_end_idx' => 'index(approval, ends_at)',
 		], $this->indexes('fleet_bookings'));
 	}
 

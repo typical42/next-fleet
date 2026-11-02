@@ -5,38 +5,51 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { barsOf, co2Of, tableOf } from './costs.js'
+import { barsOf, co2Of, labelsOf, tableOf } from './costs.js'
 
 /**
- * @param {object} [cost] - what differs from a priced month with nothing in it
- * @return {import('../services/api.js').Cost} the month's cost
+ * @param {object} [sum] - what differs from a priced period with nothing in it
+ * @return {import('../services/api.js').CostSum} the period's cost
  */
-function cost(cost = {}) {
-	return { currency: 'EUR', net: false, per: 'km', distance: null, hours: null, total: 0, energy: 0, maintenance: 0, expenses: [], value: null, energy_value: null, value_per_hour: null, energy_value_per_hour: null, tco: null, incomplete: false, unstated: false, ...cost }
+function sum(sum = {}) {
+	return { total: 0, energy: 0, maintenance: 0, expenses: [], incomplete: false, unstated: false, ...sum }
 }
 
-/** A month with no rows: no sums at all (lib/Service/CostService.php). */
-const EMPTY = cost({ total: null, energy: null, maintenance: null, expenses: null })
+/** A period with no rows: no sums at all (lib/Service/StatisticsService.php). */
+const EMPTY = sum({ total: null, energy: null, maintenance: null, expenses: null })
 
 /**
- * @param {Record<number, import('../services/api.js').Cost>} costs - the months that differ from empty
- * @return {import('../services/api.js').CostYear} a year as the route answers it
+ * @param {Record<number, import('../services/api.js').CostSum>} sums - the buckets that differ from
+ *   empty, by index
+ * @param {import('../services/api.js').CostSum} [range] - the range's
+ * @param {number} [count] - how many buckets
+ * @return {import('../services/api.js').CostSeries} one currency's series
  */
-function year(costs) {
-	const months = Array.from({ length: 12 }, (_, i) => ({ month: i + 1, from: 0, to: 0, cost: costs[i + 1] ?? EMPTY }))
-
-	return { year: { consumption: [], consumption_per_hour: null, measured: [], measured_per_hour: null, wall_side: null, cost: cost(), hours: null }, co2: null, months }
+function series(sums, range = sum(), count = 12) {
+	return { currency: 'EUR', buckets: Array.from({ length: count }, (_, i) => sums[i] ?? EMPTY), range }
 }
+
+/**
+ * @param {string[]} starts - each bucket's first day, then the day after the last, in UTC
+ * @param {'month'|'year'} [bucket] - what the buckets are
+ * @return {import('../services/api.js').Statistics} a range as the route answers it, without costs
+ */
+function statistics(starts, bucket = 'month') {
+	const at = starts.map((day) => Date.parse(`${day}T00:00:00Z`) / 1000)
+
+	return { from: at[0], to: at[at.length - 1], bucket, buckets: at.slice(0, -1).map((from, i) => ({ from, to: at[i + 1] })), vehicles: [], costs: [], per_distance: [], consumption: [], distance: [], by_driver: [], co2: null }
+}
+
+const YEAR = statistics([...Array.from({ length: 12 }, (_, i) => `2025-${String(i + 1).padStart(2, '0')}-01`), '2026-01-01'])
 
 describe('the bars', () => {
-	it('stacks energy, maintenance and expenses from the baseline, scaled to the dearest month', () => {
-		const bars = barsOf(year({
-			1: cost({ total: 20000, energy: 10000, maintenance: 6000, expenses: [{ category: 'toll', total: 1000 }, { category: null, total: 3000 }] }),
-			2: cost({ total: 10000, energy: 10000 }),
+	it('stacks energy, maintenance and expenses from the baseline, scaled to the dearest bucket', () => {
+		const bars = barsOf(series({
+			0: sum({ total: 20000, energy: 10000, maintenance: 6000, expenses: [{ category: 'toll', total: 1000 }, { category: null, total: 3000 }] }),
+			1: sum({ total: 10000, energy: 10000 }),
 		}))
 
 		expect(bars[0]).toEqual({
-			month: 1,
 			empty: false,
 			bands: [
 				{ band: 'energy', from: 0, to: 0.5 },
@@ -47,44 +60,70 @@ describe('the bars', () => {
 		expect(bars[1].bands).toEqual([{ band: 'energy', from: 0, to: 0.5 }])
 	})
 
-	it('marks a month without rows as empty rather than drawing it at zero', () => {
-		const bars = barsOf(year({ 3: cost({ total: 5000, energy: 5000 }) }))
+	it('marks a bucket without rows as empty rather than drawing it at zero', () => {
+		const bars = barsOf(series({ 2: sum({ total: 5000, energy: 5000 }) }))
 
 		expect(bars).toHaveLength(12)
-		expect(bars[0]).toEqual({ month: 1, empty: true, bands: [] })
+		expect(bars[0]).toEqual({ empty: true, bands: [] })
 		expect(bars[2].empty).toBe(false)
 	})
 
-	it('draws a priced month that cost nothing as no bar, and not as empty', () => {
-		expect(barsOf(year({ 1: cost() }))[0]).toEqual({ month: 1, empty: false, bands: [] })
+	it('draws a priced bucket that cost nothing as no bar, and not as empty', () => {
+		expect(barsOf(series({ 0: sum() }))[0]).toEqual({ empty: false, bands: [] })
 	})
 
 	/** A refund is a row too, but a bar grows from the baseline up. */
 	it('leaves a negative band out of the stack', () => {
-		const bars = barsOf(year({ 1: cost({ total: 4000, energy: 5000, expenses: [{ category: 'fine', total: -1000 }] }) }))
+		const bars = barsOf(series({ 0: sum({ total: 4000, energy: 5000, expenses: [{ category: 'fine', total: -1000 }] }) }))
 
 		expect(bars[0].bands).toEqual([{ band: 'energy', from: 0, to: 1 }])
 	})
 })
 
-describe('the table', () => {
-	const answer = year({
-		1: cost({ total: 20000, energy: 10000, maintenance: 6000, expenses: [{ category: 'toll', total: 1000 }, { category: null, total: 3000 }] }),
-		2: cost({ total: 10000, energy: 10000 }),
+describe('the bucket labels', () => {
+	it('names the months of one calendar year by their short names', () => {
+		const labels = labelsOf(YEAR, 'en', 'UTC')
+
+		expect(labels).toHaveLength(12)
+		expect([labels[0], labels[11]]).toEqual(['Jan', 'Dec'])
 	})
-	answer.year.cost = cost({ total: 30000, energy: 20000, maintenance: 6000, expenses: [{ category: 'toll', total: 1000 }, { category: null, total: 3000 }] })
 
-	it('heads the columns with the months and the year', () => {
-		const { columns } = tableOf(answer, 'en')
+	it('names the year beside each month of a range across two', () => {
+		expect(labelsOf(statistics(['2024-11-01', '2024-12-01', '2025-01-01', '2025-02-01']), 'en', 'UTC'))
+			.toEqual(['Nov 24', 'Dec 24', 'Jan 25'])
+	})
 
-		expect(columns).toHaveLength(13)
+	it('names years by their number', () => {
+		expect(labelsOf(statistics(['2023-07-15', '2024-01-01', '2025-01-01', '2025-03-01'], 'year'), 'en', 'UTC'))
+			.toEqual(['2023', '2024', '2025'])
+	})
+
+	/** The server cut the buckets at the reader's midnight; read in UTC, January would be December. */
+	it('reads each bucket in the reader\'s zone', () => {
+		const berlin = { ...YEAR, buckets: [{ from: Date.parse('2024-12-31T23:00:00Z') / 1000, to: Date.parse('2025-01-31T23:00:00Z') / 1000 }] }
+
+		expect(labelsOf(berlin, 'en', 'Europe/Berlin')).toEqual(['Jan'])
+	})
+})
+
+describe('the table', () => {
+	const answer = series({
+		0: sum({ total: 20000, energy: 10000, maintenance: 6000, expenses: [{ category: 'toll', total: 1000 }, { category: null, total: 3000 }] }),
+		1: sum({ total: 10000, energy: 10000 }),
+	}, sum({ total: 30000, energy: 20000, maintenance: 6000, expenses: [{ category: 'toll', total: 1000 }, { category: null, total: 3000 }] }))
+	const labels = labelsOf(YEAR, 'en', 'UTC')
+
+	it('heads the columns with the buckets, the whole range and each row\'s share of it', () => {
+		const { columns } = tableOf(answer, labels, 'en')
+
+		expect(columns).toHaveLength(14)
 		expect(columns[0]).toBe('Jan')
 		expect(columns[11]).toBe('Dec')
-		expect(columns[12]).toBe('Year')
+		expect(columns.slice(12)).toEqual(['Whole period', 'Share'])
 	})
 
-	it('breaks the expenses out by category under the three bands, and totals the month', () => {
-		const { rows } = tableOf(answer, 'en')
+	it('breaks the expenses out by category under the three bands, and totals the bucket', () => {
+		const { rows } = tableOf(answer, labels, 'en')
 
 		expect(rows.map((row) => [row.label, row.item])).toEqual([
 			['Energy', false],
@@ -98,14 +137,26 @@ describe('the table', () => {
 		expect(rows.map((row) => row.cells[12])).toEqual(['€200.00', '€60.00', '€40.00', '€10.00', '€30.00', '€300.00'])
 	})
 
-	it('states a zero for a category a priced month did not have', () => {
-		const { rows } = tableOf(answer, 'en')
+	it('states each row\'s share of the whole range', () => {
+		const { rows } = tableOf(answer, labels, 'en')
+
+		expect(rows.map((row) => row.cells[13])).toEqual(['67%', '20%', '13%', '3%', '10%', '100%'])
+	})
+
+	it('states no share of a range that cost nothing', () => {
+		const { rows } = tableOf(series({}, EMPTY), labels, 'en')
+
+		expect(rows.map((row) => row.cells[13])).toEqual(['–', '–', '–', '–'])
+	})
+
+	it('states a zero for a category a priced bucket did not have', () => {
+		const { rows } = tableOf(answer, labels, 'en')
 
 		expect(rows.find((row) => row.label === 'Toll')?.cells[1]).toBe('€0.00')
 	})
 
-	it('says a month without rows has none, rather than a zero', () => {
-		const { rows } = tableOf(answer, 'en')
+	it('says a bucket without rows has none, rather than a zero', () => {
+		const { rows } = tableOf(answer, labels, 'en')
 
 		expect(rows.map((row) => row.cells[2])).toEqual(['–', '–', '–', '–', '–', 'No entries'])
 	})

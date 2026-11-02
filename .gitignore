@@ -13,3 +13,6 @@
 
 # Local agent tool permissions, not app source.
 /.claude/
+
+# Local agent scratch: notes and mockups, not app source.
+/tmp/

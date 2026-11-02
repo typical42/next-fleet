@@ -60,13 +60,15 @@ describe('the recipients and the mail cadence', () => {
 		expect(/** @type {any} */ (wrapper.findComponent(NcSelect)).props('modelValue').id).toBe('weekly')
 	})
 
-	it('shows nothing to somebody the list is refused to', async () => {
-		vi.mocked(listRecipients).mockRejectedValue(new Error('Not yours'))
+	/** The cadence is the vehicle's, saved with it: a list that cannot be read does not hide it. */
+	it('keeps the cadence when the list cannot be read, and says so in place of the picker', async () => {
+		vi.mocked(listRecipients).mockRejectedValue(new Error('Service unavailable'))
 
 		const wrapper = await section()
 
 		expect(picker(wrapper).exists()).toBe(false)
-		expect(wrapper.findComponent(NcSelect).exists()).toBe(false)
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('The list could not be read: Service unavailable')
+		expect(/** @type {any} */ (wrapper.findComponent(NcSelect)).props('modelValue').id).toBe('weekly')
 	})
 
 	it('hands a changed cadence to the sheet, which saves it with the vehicle', async () => {

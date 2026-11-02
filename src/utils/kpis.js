@@ -5,6 +5,7 @@
 
 import { getCanonicalLocale } from '@nextcloud/l10n'
 
+import { may } from './access.js'
 import { energyWord, formatConsumption, formatCount, formatMoney, formatOdometer, formatWallSide } from './format.js'
 import { t } from './l10n.js'
 
@@ -37,21 +38,20 @@ export function tilesOf(vehicle, now, before, locale = getCanonicalLocale()) {
 			change: null,
 			notes: [],
 		},
-		...(now === null ? [] : periodTilesOf(vehicle, now, before, locale)),
+		...(now === null ? [] : periodTiles(vehicle, now, before, locale)),
 	]
 }
 
 /**
- * The header's figures but the odometer, which belongs to no period. The Costs screen states them
- * for its year.
+ * The header's figures but the odometer, which belongs to no period.
  *
  * @param {import('../services/api.js').Vehicle} vehicle - the vehicle as it was read
  * @param {import('../services/api.js').Kpis} now - the period's figures
  * @param {import('../services/api.js').Kpis|null} before - the period before's, null for no comparison
- * @param {string} [locale] - defaults to the one Nextcloud resolved for this session
+ * @param {string} locale - the reader's
  * @return {Tile[]} the tiles, in reading order
  */
-export function periodTilesOf(vehicle, now, before, locale = getCanonicalLocale()) {
+function periodTiles(vehicle, now, before, locale) {
 	/** @type {Tile[]} */
 	const tiles = []
 
@@ -120,7 +120,10 @@ export function periodTilesOf(vehicle, now, before, locale = getCanonicalLocale(
 		})
 	}
 
-	tiles.push(...costTiles(now.cost, before?.cost ?? null, Boolean(vehicle.second_unit), locale))
+	// The answer carries no sum for a reader the costs are kept from, and none is not zero.
+	if (may(vehicle, 'costs')) {
+		tiles.push(...costTiles(now.cost, before?.cost ?? null, Boolean(vehicle.second_unit), locale))
+	}
 
 	if (vehicle.second_unit && now.hours !== null) {
 		/** @type {(hours: number) => string} */
@@ -136,23 +139,6 @@ export function periodTilesOf(vehicle, now, before, locale = getCanonicalLocale(
 	}
 
 	return tiles
-}
-
-/**
- * The figures without those per engine hour, for a screen that states a period per 100 km alone.
- *
- * @param {import('../services/api.js').Kpis} figures - the period's
- * @return {import('../services/api.js').Kpis} the same, per 100 km
- */
-export function perDistanceOnly(figures) {
-	return {
-		...figures,
-		consumption_per_hour: null,
-		// An energy measured per engine hour alone has its full fill-ups; it is not one to ask them for.
-		measured: [...new Set([...figures.measured, ...(figures.measured_per_hour ?? [])])],
-		measured_per_hour: null,
-		cost: { ...figures.cost, hours: null },
-	}
 }
 
 /**

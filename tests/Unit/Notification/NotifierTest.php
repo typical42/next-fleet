@@ -339,6 +339,118 @@ class NotifierTest extends TestCase {
 		$this->notifier(null, $booking, sees: false)->prepare($this->cancelNotice(), 'en');
 	}
 
+	/** @return array<string, array{string, array<string, int|null>, string}> */
+	public static function bookingEvents(): array {
+		$span = ['starts_at' => 2093238000, 'starts_at_off' => 120, 'ends_at' => 2093248800, 'ends_at_off' => 120];
+
+		return [
+			'booked' => ['booked', $span, 'Dave booked B-XY 123 from 1 May 2036, 09:00 to 1 May 2036, 12:00'],
+			'taken now' => ['taken', $span, 'Dave took B-XY 123 until 1 May 2036, 12:00'],
+			'changed' => ['changed', $span, 'The booking of B-XY 123 by Dave now runs from 1 May 2036, 09:00 to 1 May 2036, 12:00'],
+			'cancelled' => ['cancelled', $span, 'The booking of B-XY 123 by Dave from 1 May 2036, 09:00 was cancelled'],
+			'returned' => ['returned', ['odo' => 12345, 'level' => 40], 'Dave returned B-XY 123 at 12345 km, tank or battery at 40%'],
+			'returned, no level' => ['returned', ['odo' => 12345, 'level' => null], 'Dave returned B-XY 123 at 12345 km'],
+		];
+	}
+
+	/**
+	 * The booker by name as they are called now, the span as it was sent, each at its own offset.
+	 *
+	 * @param array<string, int|null> $p
+	 */
+	#[DataProvider('bookingEvents')]
+	public function testABookingEventReadsAsASentence(string $event, array $p, string $expected): void {
+		$booking = new Booking();
+		$booking->setUserId('dave');
+		$booking->setState(Booking::BOOKED);
+		$parsed = null;
+		$notification = $this->eventNotice($event, $p);
+		$notification->method('setParsedSubject')->willReturnCallback(function (string $subject) use (&$parsed, $notification) {
+			$parsed = $subject;
+
+			return $notification;
+		});
+
+		$this->notifier(null, $booking)->prepare($notification, 'en');
+
+		$this->assertSame($expected, $parsed);
+	}
+
+	public function testAReturnInHoursNamesTheHours(): void {
+		$booking = new Booking();
+		$booking->setUserId('erased-x');
+		$parsed = null;
+		$notification = $this->eventNotice('returned', ['odo' => 812, 'level' => null]);
+		$notification->method('setParsedSubject')->willReturnCallback(function (string $subject) use (&$parsed, $notification) {
+			$parsed = $subject;
+
+			return $notification;
+		});
+
+		$this->notifier(null, $booking, unit: 'h')->prepare($notification, 'en');
+
+		// An erased booker's pseudonym has no account, and reads as itself.
+		$this->assertSame('erased-x returned B-XY 123 at 812 h', $parsed);
+	}
+
+	public function testABookingEventTheReaderNoLongerSeesIsProcessed(): void {
+		$booking = new Booking();
+		$booking->setUserId('dave');
+
+		$this->expectException(AlreadyProcessedException::class);
+		$this->notifier(null, $booking, sees: false)->prepare($this->eventNotice('booked', []), 'en');
+	}
+
+	public function testABookingEventWhoseBookingIsGoneIsProcessed(): void {
+		$this->expectException(AlreadyProcessedException::class);
+		$this->notifier()->prepare($this->eventNotice('booked', []), 'en');
+	}
+
+	public function testABookingEventThisAppDoesNotSendIsRefused(): void {
+		$booking = new Booking();
+		$booking->setUserId('dave');
+
+		$this->expectException(UnknownNotificationException::class);
+		$this->notifier(null, $booking)->prepare($this->eventNotice('crashed', []), 'en');
+	}
+
+	/** @return array<string, array{?string, ?string}> */
+	public static function questions(): array {
+		return [
+			'a short one' => ['Could you take the van?', 'Could you take the van?'],
+			'a long one' => [str_repeat('ä', 250), str_repeat('ä', 199) . '…'],
+			'none' => [null, null],
+		];
+	}
+
+	/** The question rides along for the booker to read, shortened to a notice's length. */
+	#[DataProvider('questions')]
+	public function testAQuestionRidesInTheBookersNotice(?string $comment, ?string $expected): void {
+		$booking = new Booking();
+		$booking->setUserId('erin');
+		$booking->setState(Booking::BOOKED);
+		$booking->setApproval(Booking::ASKED);
+		$booking->setApprovalBy('anna');
+		$booking->setApprovalComment($comment);
+		[$subject, $message] = [null, null];
+		$notification = $this->approvalNotice(Booking::ASKED);
+		$notification->method('setParsedSubject')->willReturnCallback(function (string $parsed) use (&$subject, $notification) {
+			$subject = $parsed;
+
+			return $notification;
+		});
+		$notification->method('setParsedMessage')->willReturnCallback(function (string $parsed) use (&$message, $notification) {
+			$message = $parsed;
+
+			return $notification;
+		});
+
+		$this->notifier(null, $booking)->prepare($notification, 'en');
+
+		$this->assertSame('Anna has a question about your booking of B-XY 123 from 1 May 2036, 09:00', $subject);
+		$this->assertSame($expected, $message);
+	}
+
 	/** The upgrade kept an account named like an erased driver; the admin is told which to look at. */
 	public function testALookalikeNoticeNamesTheAccount(): void {
 		$parsed = null;
@@ -387,6 +499,37 @@ class NotifierTest extends TestCase {
 		return $notification;
 	}
 
+	/**
+	 * @param array<string, int|null> $p
+	 * @return INotification&\PHPUnit\Framework\MockObject\MockObject
+	 */
+	private function eventNotice(string $event, array $p): INotification {
+		$notification = $this->createMock(INotification::class);
+		$notification->method('getApp')->willReturn('nextfleet');
+		$notification->method('getUser')->willReturn('erin');
+		$notification->method('getObjectType')->willReturn(BookingNotices::EVENT);
+		$notification->method('getObjectId')->willReturn('b-1');
+		$notification->method('getSubject')->willReturn($event);
+		$notification->method('getSubjectParameters')->willReturn(['vehicle' => 'v-1'] + $p);
+		$notification->method('setIcon')->willReturnSelf();
+
+		return $notification;
+	}
+
+	/** @return INotification&\PHPUnit\Framework\MockObject\MockObject */
+	private function approvalNotice(string $subject): INotification {
+		$notification = $this->createMock(INotification::class);
+		$notification->method('getApp')->willReturn('nextfleet');
+		$notification->method('getUser')->willReturn('erin');
+		$notification->method('getObjectType')->willReturn(BookingNotices::APPROVAL);
+		$notification->method('getObjectId')->willReturn('b-1');
+		$notification->method('getSubject')->willReturn($subject);
+		$notification->method('getSubjectParameters')->willReturn(['vehicle' => 'v-1', 'starts_at' => 2093238000, 'starts_at_off' => 120, 'ends_at' => 2093248800, 'ends_at_off' => 120]);
+		$notification->method('setIcon')->willReturnSelf();
+
+		return $notification;
+	}
+
 	/** The reminder a notice of the first occurrence was sent for, still open and where it rang. */
 	private static function reminder(?string $dueDate = '2031-05-31', ?int $dueOdo = null): Reminder {
 		$reminder = new Reminder();
@@ -402,7 +545,11 @@ class NotifierTest extends TestCase {
 	private function notifier(?Access $grant = null, ?Booking $booking = null, bool $sees = true, bool $listed = true, ?Reminder $reminder = null, bool $gone = false, bool $vehicleGone = false, string $unit = 'km', ?string $plate = 'B-XY 123', ?string $displayName = null, ?string $make = null): Notifier {
 		$l = $this->createMock(IL10N::class);
 		$l->method('t')->willReturnCallback(static fn (string $text, array $parameters = []): string => vsprintf($text, $parameters));
-		$l->method('l')->willReturnCallback(static fn (string $type, \DateTime $day): string => $day->format($type === 'time' ? 'H:i' : 'j F Y'));
+		$l->method('l')->willReturnCallback(static fn (string $type, \DateTime $day): string => $day->format(match ($type) {
+			'time' => 'H:i',
+			'datetime' => 'j F Y, H:i',
+			default => 'j F Y',
+		}));
 		$factory = $this->createMock(IFactory::class);
 		$factory->method('get')->willReturn($l);
 		$vehicle = new Vehicle();

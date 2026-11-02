@@ -51,6 +51,9 @@ erDiagram
         bigint second_value
         bigint purchase_price
         bigint residual_est
+        boolean costs_shared
+        json booking_notices
+        boolean booking_approval
         string(3) currency
         string(8) jurisdiction
         boolean logbook_mode
@@ -197,12 +200,23 @@ erDiagram
 A grant names a user or a group in `grantee`.
 There is one live row per grantee, and a revoke soft-deletes it.
 A booking's handover is its own columns, and `trip_id` points at the trip logged from it ([bookings](../architecture.md#bookings)).
+Its answer is its own columns too: `approval`, the comment, and who gave it in `approval_by` ([booking approval](../architecture.md#booking-approval)).
+`fleet_bkg_wait_end_idx` on `(approval, ends_at)` serves the hourly search across vehicles for requests whose end came unanswered.
+`announced` marks that the booking notice list has heard of it, so a booking moved back to a request is "changed" once approved again, not "booked".
+A booking notice recipient names a user in `user_id` or a group in `group_id`, never both ([booking notices](../architecture.md#booking-notices)).
 
 ```mermaid
 erDiagram
     fleet_vehicles ||--o{ fleet_access : "access through"
     fleet_vehicles ||--o{ fleet_bookings : "booked through"
+    fleet_vehicles ||--o{ fleet_booking_recipients : "booking notices go to"
     fleet_bookings |o--o| fleet_trips : "becomes"
+
+    fleet_booking_recipients {
+        bigint vehicle_id FK
+        string(64) user_id
+        string(64) group_id
+    }
 
     fleet_access {
         bigint vehicle_id FK
@@ -230,6 +244,10 @@ erDiagram
         integer in_level
         text in_notes
         bigint trip_id FK
+        string(16) approval
+        text approval_comment
+        string(64) approval_by
+        boolean announced
     }
 ```
 

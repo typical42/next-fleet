@@ -11,6 +11,7 @@ import NcTextField from '@nextcloud/vue/components/NcTextField'
 import { computed, onMounted, ref } from 'vue'
 
 import { getPreferences, logbookUrl, mileageClaimUrl } from '../services/api.js'
+import { may } from '../utils/access.js'
 import { nameOf } from '../utils/format.js'
 import { t } from '../utils/l10n.js'
 
@@ -34,7 +35,7 @@ const failure = ref('')
 /**
  * Whether the vehicle's country prints a logbook, and whether a claim: each route answers 404
  * where there is none, and the claim also for a vehicle not counting kilometres, which no
- * kilometre rate values.
+ * kilometre rate values. The claim puts money on the trips, so it needs the costs.
  *
  * @param {import('../services/api.js').Vehicle} vehicle - one of the fleet
  * @return {{ logbook: boolean, claim: boolean }} which pages it has
@@ -43,7 +44,7 @@ function pagesOf(vehicle) {
 	const country = vehicle.jurisdiction ?? ''
 	return {
 		logbook: printing.value.includes(country),
-		claim: claiming.value.includes(country) && vehicle.odo_unit === 'km',
+		claim: claiming.value.includes(country) && vehicle.odo_unit === 'km' && may(vehicle, 'costs'),
 	}
 }
 

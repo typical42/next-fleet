@@ -76,6 +76,10 @@ use OCP\DB\Types;
  * @method void setEuCategory(?string $euCategory)
  * @method string|null getBodyType()
  * @method void setBodyType(?string $bodyType)
+ * @method bool|null getCostsShared()
+ * @method void setCostsShared(?bool $costsShared)
+ * @method void setBookingNotices(?array $bookingNotices)
+ * @method void setBookingApproval(?bool $bookingApproval)
  *
  * @psalm-import-type NextFleetVehicle from \OCA\NextFleet\ResponseDefinitions
  */
@@ -88,6 +92,15 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 	public const MAIL_DAILY = 'daily';
 	public const MAIL_WEEKLY = 'weekly';
 	public const MAIL_MONTHLY = 'monthly';
+
+	/** The booking events a notice list can hear (BookingNotices), and what a new vehicle's hears. */
+	public const NOTICE_BOOKED = 'booked';
+	public const NOTICE_TAKEN = 'taken';
+	public const NOTICE_RETURNED = 'returned';
+	public const NOTICE_CANCELLED = 'cancelled';
+	public const NOTICE_CHANGED = 'changed';
+	public const NOTICES = [self::NOTICE_BOOKED, self::NOTICE_TAKEN, self::NOTICE_RETURNED, self::NOTICE_CANCELLED, self::NOTICE_CHANGED];
+	public const DEFAULT_NOTICES = [self::NOTICE_BOOKED, self::NOTICE_TAKEN];
 
 	protected string $userId = '';
 	protected ?string $plate = null;
@@ -126,6 +139,23 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 	protected ?string $euCategory = null;
 	/** Field 4, the EU body code with its add-on. */
 	protected ?string $bodyType = null;
+	/**
+	 * Whether drivers and viewers see what the car costs (VehicleAccess::COSTS). Null reads as
+	 * shared, the column's default: a boolean column cannot be NOT NULL on every database.
+	 */
+	protected ?bool $costsShared = true;
+	/**
+	 * The booking events the vehicle's notice list hears (BookingNotices). Null reads as
+	 * `DEFAULT_NOTICES`: a JSON column takes no default on every database.
+	 *
+	 * @var list<string>|null
+	 */
+	protected ?array $bookingNotices = null;
+	/**
+	 * Whether a booking ahead waits for the owner or a manager to answer it
+	 * (BookingService::book()). Null reads as no, for the reason `costsShared` gives.
+	 */
+	protected ?bool $bookingApproval = false;
 
 	/**
 	 * What whoever asked may do on the vehicle (VehicleAccess::operations()). Not a column:
@@ -147,9 +177,9 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 	 */
 	private ?array $outWith = null;
 	/**
-	 * The reader's own next booking of it within a week, its uuid and span. Not a column, like `may`.
+	 * The reader's own next booking of it within a week, its uuid, span and answer. Not a column, like `may`.
 	 *
-	 * @var array{uuid: string, starts_at: int, starts_at_off: int, ends_at: int, ends_at_off: int}|null
+	 * @var array{uuid: string, starts_at: int, starts_at_off: int, ends_at: int, ends_at_off: int, approval: ?string}|null
 	 */
 	private ?array $myNextBooking = null;
 	/**
@@ -190,6 +220,30 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 		$this->addType('displayName', Types::STRING);
 		$this->addType('euCategory', Types::STRING);
 		$this->addType('bodyType', Types::STRING);
+		$this->addType('costsShared', Types::BOOLEAN);
+		$this->addType('bookingNotices', Types::JSON);
+		$this->addType('bookingApproval', Types::BOOLEAN);
+	}
+
+	public function needsApproval(): bool {
+		return $this->bookingApproval === true;
+	}
+
+	public function sharesCosts(): bool {
+		return $this->costsShared !== false;
+	}
+
+	/** @return list<string> */
+	public function bookingNotices(): array {
+		return $this->bookingNotices ?? self::DEFAULT_NOTICES;
+	}
+
+	/**
+	 * Whether whoever asked sees what the car costs: `costs` in `may`. `'costs'` is
+	 * VehicleAccess::COSTS, spelt out as `'log'` is in wiredMay().
+	 */
+	public function showsCosts(): bool {
+		return in_array('costs', $this->may, true);
 	}
 
 	/** @return list<string> */
@@ -219,12 +273,12 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 		$this->everGranted = $everGranted;
 	}
 
-	/** @return array{uuid: string, starts_at: int, starts_at_off: int, ends_at: int, ends_at_off: int}|null */
+	/** @return array{uuid: string, starts_at: int, starts_at_off: int, ends_at: int, ends_at_off: int, approval: ?string}|null */
 	public function getMyNextBooking(): ?array {
 		return $this->myNextBooking;
 	}
 
-	/** @param array{uuid: string, starts_at: int, starts_at_off: int, ends_at: int, ends_at_off: int}|null $myNextBooking */
+	/** @param array{uuid: string, starts_at: int, starts_at_off: int, ends_at: int, ends_at_off: int, approval: ?string}|null $myNextBooking */
 	public function setMyNextBooking(?array $myNextBooking): void {
 		$this->myNextBooking = $myNextBooking;
 	}
@@ -253,8 +307,9 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 			'vin' => $this->vin,
 			'odo_value' => $this->odoValue,
 			'odo_unit' => $this->odoUnit,
-			'purchase_price' => $this->purchasePrice,
-			'residual_est' => $this->residualEst,
+			// What the car cost and is still worth are costs.
+			'purchase_price' => $this->showsCosts() ? $this->purchasePrice : null,
+			'residual_est' => $this->showsCosts() ? $this->residualEst : null,
 			'currency' => $this->currency,
 			'jurisdiction' => $this->jurisdiction,
 			'logbook_mode' => $this->logbookMode,
@@ -269,6 +324,9 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 			'display_name' => $this->displayName,
 			'eu_category' => $this->euCategory,
 			'body_type' => $this->bodyType,
+			'costs_shared' => $this->sharesCosts(),
+			'booking_notices' => $this->bookingNotices(),
+			'booking_approval' => $this->needsApproval(),
 			'created_at' => $this->createdAt,
 			'updated_at' => $this->updatedAt,
 			'deleted_at' => $this->deletedAt,
@@ -284,7 +342,7 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 
 	/**
 	 * `may`, and `book` where BookingService::bookable() takes a booking. A word the screen hides
-	 * by, not a sixth operation - VehicleAccess never sees it. Derived here, at the last moment,
+	 * by, not an operation - VehicleAccess never sees it. Derived here, at the last moment,
 	 * so an edit that lays the car up answers without it. `'log'` is VehicleAccess::LOG, spelt
 	 * out so an entity does not reach into the service layer.
 	 *

@@ -24,6 +24,7 @@ use OCA\NextFleet\Service\Field;
 use OCA\NextFleet\Service\GrantNotices;
 use OCA\NextFleet\Service\MoneyRows;
 use OCA\NextFleet\Service\NotificationService;
+use OCA\NextFleet\Service\SyncEpoch;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
 use OCA\NextFleet\Tests\Fixture\SharedCases;
@@ -58,8 +59,10 @@ class VehicleServiceTest extends TestCase {
 	private IDBConnection&MockObject $db;
 	private IUserManager&MockObject $users;
 	private MoneyRows&MockObject $money;
+	private SyncEpoch&MockObject $epoch;
 
 	protected function setUp(): void {
+		$this->epoch = $this->createMock(SyncEpoch::class);
 		$this->users = $this->createMock(IUserManager::class);
 
 		$this->audits = [];
@@ -126,6 +129,7 @@ class VehicleServiceTest extends TestCase {
 			$this->users,
 			$this->money,
 			$this->createMock(AccessMapper::class),
+			$this->epoch,
 		);
 	}
 
@@ -623,6 +627,86 @@ class VehicleServiceTest extends TestCase {
 
 		$this->expectException(AccessDeniedException::class);
 		$this->service()->update(self::STRANGER, self::UUID, 1750000000, ['plate' => 'B-ZZ 9']);
+	}
+
+	/**
+	 * Whether drivers and viewers see the costs is the owner's to say. A flip starts every
+	 * client's sync over, after the write stands: rows already sent carry amounts a reader may
+	 * no longer see, or lack ones they now may, and no `updated_at` of theirs moved.
+	 */
+	public function testTheOwnerKeepsTheCostsFromDriversAndEveryClientSyncsAgain(): void {
+		$this->mapper->method('findByUuid')->willReturn($this->stored());
+		$this->mapper->method('updateChecked')->willReturnCallback(function (Vehicle $vehicle): Vehicle {
+			$this->calls[] = 'vehicle';
+
+			return $vehicle;
+		});
+		$this->epoch->method('reset')->willReturnCallback(function (): void {
+			$this->calls[] = 'epoch';
+		});
+
+		$vehicle = $this->service()->update(self::OWNER, self::UUID, 1750000000, ['costs_shared' => false]);
+
+		$this->assertFalse($vehicle->sharesCosts());
+		$this->assertSame(['begin', 'vehicle', 'commit', 'epoch'], $this->calls);
+	}
+
+	/** A sheet sends the whole vehicle on every save; one that leaves the switch alone resets no sync. */
+	public function testASaveThatLeavesTheSwitchAsItWasResetsNothing(): void {
+		$this->mapper->method('findByUuid')->willReturn($this->stored());
+		$this->mapper->method('updateChecked')->willReturnArgument(0);
+		$this->epoch->expects($this->never())->method('reset');
+
+		$this->assertTrue($this->service()->update(self::OWNER, self::UUID, 1750000000, ['costs_shared' => true])->sharesCosts());
+		// An empty switch is no choice, as an empty cadence is none.
+		$this->assertTrue($this->service()->update(self::OWNER, self::UUID, 1750000000, ['costs_shared' => null])->sharesCosts());
+	}
+
+	/**
+	 * A manager edits the vehicle, and their sheet sends the switch back as it was; changing it
+	 * is refused before anything is written.
+	 */
+	public function testAManagerDoesNotFlipTheSwitch(): void {
+		$this->mapper->method('findByUuid')->willReturnCallback(fn (): Vehicle => $this->stored());
+		$this->mapper->method('updateChecked')->willReturnArgument(0);
+
+		$kept = $this->service()->update(self::MANAGER, self::UUID, 1750000000, ['plate' => 'B-ZZ 9', 'costs_shared' => true]);
+		$this->assertSame('B-ZZ 9', $kept->getPlate());
+
+		$this->mapper->expects($this->never())->method('updateChecked');
+		$this->expectException(AccessDeniedException::class);
+		$this->service()->update(self::MANAGER, self::UUID, 1750000000, ['costs_shared' => false]);
+	}
+
+	/** The owner ticks what the booking notice list hears; ticking none is a choice. */
+	public function testTheOwnerTicksTheBookingEvents(): void {
+		$this->mapper->method('findByUuid')->willReturnCallback(fn (): Vehicle => $this->stored());
+		$this->mapper->method('updateChecked')->willReturnArgument(0);
+		$this->epoch->expects($this->never())->method('reset');
+
+		$this->assertSame(['returned', 'cancelled'], $this->service()->update(self::OWNER, self::UUID, 1750000000, ['booking_notices' => ['returned', 'cancelled', 'returned']])->bookingNotices());
+		$this->assertSame([], $this->service()->update(self::OWNER, self::UUID, 1750000000, ['booking_notices' => []])->bookingNotices());
+		// Left out or null, it stays.
+		$this->assertSame(['booked', 'taken'], $this->service()->update(self::OWNER, self::UUID, 1750000000, ['booking_notices' => null])->bookingNotices());
+	}
+
+	public function testABookingEventTheAppDoesNotSendIsRefused(): void {
+		$this->mapper->method('findByUuid')->willReturn($this->stored());
+
+		$this->expectException(\InvalidArgumentException::class);
+		$this->service()->update(self::OWNER, self::UUID, 1750000000, ['booking_notices' => ['booked', 'crashed']]);
+	}
+
+	/** As with the cost switch: a manager's sheet sends the events back as read, and nothing more. */
+	public function testAManagerDoesNotTickTheBookingEvents(): void {
+		$this->mapper->method('findByUuid')->willReturnCallback(fn (): Vehicle => $this->stored());
+		$this->mapper->method('updateChecked')->willReturnArgument(0);
+
+		$kept = $this->service()->update(self::MANAGER, self::UUID, 1750000000, ['plate' => 'B-ZZ 9', 'booking_notices' => ['taken', 'booked']]);
+		$this->assertSame('B-ZZ 9', $kept->getPlate());
+
+		$this->expectException(AccessDeniedException::class);
+		$this->service()->update(self::MANAGER, self::UUID, 1750000000, ['booking_notices' => ['booked']]);
 	}
 
 	/** An empty cadence is no choice: the stored one stays. */

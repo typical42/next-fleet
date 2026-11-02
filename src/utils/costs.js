@@ -19,36 +19,70 @@ import { t } from './l10n.js'
 export const BANDS = ['energy', 'maintenance', 'expenses']
 
 /**
+ * @template {string} [B=Band]
  * @typedef {object} Bar
- * @property {number} month - 1 to 12
- * @property {boolean} empty - the month has no rows, which is not the same as costing nothing
- * @property {{band: Band, from: number, to: number}[]} bands - bottom up, as fractions of the
- *   dearest month's height; a band that cost nothing is left out
+ * @property {boolean} empty - the bucket has no rows, which is not the same as adding up to nothing
+ * @property {{band: B, from: number, to: number}[]} bands - bottom up, as fractions of the
+ *   tallest bucket's height; a band of nothing is left out
  */
 
 /**
- * One stacked bar per month, scaled to the dearest month.
+ * One stacked bar per bucket, scaled to the dearest bucket.
  *
- * @param {import('../services/api.js').CostYear} answer - the year as the route answers it
- * @return {Bar[]} twelve bars, January first
+ * @param {import('../services/api.js').CostSeries} series - one currency's, as the route answers it
+ * @return {Bar[]} one per bucket, in order
  */
-export function barsOf(answer) {
-	const heights = answer.months.map(({ cost }) => BANDS.map((band) => Math.max(0, bandOf(cost, band) ?? 0)))
-	const tallest = Math.max(0, ...heights.map((bands) => bands.reduce((sum, one) => sum + one, 0)))
+export function barsOf(series) {
+	const stacks = stacksOf(series.buckets.map((cost) => BANDS.map((band) => bandOf(cost, band) ?? 0)), BANDS)
 
-	return answer.months.map(({ month, cost }, i) => {
-		/** @type {Bar['bands']} */
-		const bands = []
+	return series.buckets.map((cost, i) => ({ empty: cost.total === null, bands: stacks[i] }))
+}
+
+/**
+ * Each bucket's bands stacked bottom up, scaled to the tallest bucket.
+ *
+ * @template {string} B
+ * @param {number[][]} heights - each bucket's, one per band in the order of `bands`
+ * @param {B[]} bands - bottom up
+ * @return {Bar<B>['bands'][]} one per bucket, in order
+ */
+export function stacksOf(heights, bands) {
+	const positive = heights.map((bucket) => bucket.map((height) => Math.max(0, height)))
+	const tallest = Math.max(0, ...positive.map((bucket) => bucket.reduce((sum, one) => sum + one, 0)))
+
+	return positive.map((bucket) => {
+		/** @type {Bar<B>['bands']} */
+		const stack = []
 		let from = 0
-		heights[i].forEach((height, j) => {
+		bucket.forEach((height, j) => {
 			if (height > 0) {
-				bands.push({ band: BANDS[j], from: from / tallest, to: (from + height) / tallest })
+				stack.push({ band: bands[j], from: from / tallest, to: (from + height) / tallest })
 				from += height
 			}
 		})
 
-		return { month, empty: cost.total === null, bands }
+		return stack
 	})
+}
+
+/**
+ * What each bucket is called: a year by its number, a month by its short name, with the year beside
+ * it once the range runs over more than one. Read in the zone the server cut them in.
+ *
+ * @param {import('../services/api.js').Statistics} answer - the range as the route answers it
+ * @param {string} [locale] - defaults to the one Nextcloud resolved for this session
+ * @param {string} [timeZone] - the zone the range was asked in; defaults to the reader's
+ * @return {string[]} one per bucket
+ */
+export function labelsOf(answer, locale = getCanonicalLocale(), timeZone = undefined) {
+	const year = new Intl.DateTimeFormat(locale, { year: 'numeric', timeZone })
+	if (answer.bucket === 'year') {
+		return answer.buckets.map(({ from }) => year.format(from * 1000))
+	}
+	const years = new Set(answer.buckets.map(({ from }) => year.format(from * 1000)))
+	const month = new Intl.DateTimeFormat(locale, { month: 'short', ...(years.size > 1 ? { year: '2-digit' } : {}), timeZone })
+
+	return answer.buckets.map(({ from }) => month.format(from * 1000))
 }
 
 /**
@@ -56,38 +90,50 @@ export function barsOf(answer) {
  * @property {string} key - unique within the table
  * @property {string} label - what the row counts
  * @property {boolean} item - an expense category, one of the band above it broken out
- * @property {string[]} cells - one per month, then the year
+ * @property {string[]} cells - one per bucket, then the whole range, then its share of the range
  */
 
 /**
- * The table beneath the bars: months across, the bands down with the expenses broken out beneath
- * theirs, and a total. The year's column is the server's year, not a sum of the months.
+ * The table beneath the bars: buckets across, the bands down with the expenses broken out beneath
+ * theirs, and a total. The whole range's column is the server's sum, not one of the buckets'.
  *
- * @param {import('../services/api.js').CostYear} answer - the year as the route answers it
+ * @param {import('../services/api.js').CostSeries} series - one currency's, as the route answers it
+ * @param {string[]} labels - one per bucket (labelsOf())
  * @param {string} [locale] - defaults to the one Nextcloud resolved for this session
  * @return {{columns: string[], rows: Row[]}} the column heads and the rows
  */
-export function tableOf(answer, locale = getCanonicalLocale()) {
-	const months = new Intl.DateTimeFormat(locale, { month: 'short', timeZone: 'UTC' })
+export function tableOf(series, labels, locale = getCanonicalLocale()) {
 	const columns = [
-		...answer.months.map(({ month }) => months.format(Date.UTC(2000, month - 1, 1))),
-		t('nextfleet', 'Year'),
+		...labels,
+		t('nextfleet', 'Whole period'),
+		// TRANSLATORS: "Share" is a proportion of the whole, not sharing.
+		t('nextfleet', 'Share'),
 	]
-	const costs = [...answer.months.map(({ cost }) => cost), answer.year.cost]
+	const costs = [...series.buckets, series.range]
+	const whole = series.range.total
+	const percent = new Intl.NumberFormat(locale, { style: 'percent', maximumFractionDigits: 0 })
 
 	/**
-	 * @param {(cost: import('../services/api.js').Cost) => number|null} read - the row's figure in a period
+	 * @param {(cost: import('../services/api.js').CostSum) => number|null} read - the row's figure in a period
 	 * @param {string} none - what a period with no rows says instead
 	 * @return {string[]} the cells
 	 */
-	const cells = (read, none = '–') => costs.map((cost) => {
-		const cents = read(cost)
+	const cells = (read, none = '–') => {
+		const share = read(series.range)
 
-		return cents === null ? none : formatMoney(cents, cost.currency, locale)
-	})
+		return [
+			...costs.map((cost) => {
+				const cents = read(cost)
 
-	// The year lists every category any of its months had, already in the server's order.
-	const categories = (answer.year.cost.expenses ?? []).map(({ category }) => category)
+				return cents === null ? none : formatMoney(cents, series.currency, locale)
+			}),
+			// A range that cost nothing has no shares, which a division would call NaN.
+			share === null || !whole ? '–' : percent.format(share / whole),
+		]
+	}
+
+	// The range lists every category any of its buckets had, already in the server's order.
+	const categories = (series.range.expenses ?? []).map(({ category }) => category)
 
 	return {
 		columns,
@@ -115,10 +161,10 @@ export function tableOf(answer, locale = getCanonicalLocale()) {
  */
 
 /**
- * The year's CO₂ as the Costs screen states it: always an estimate, with each factor's year and
+ * A range's CO₂ as Statistics states it: always an estimate, with each factor's year and
  * source. Null from the server is "unavailable", which is not a zero.
  *
- * @param {import('../services/api.js').Co2|null} co2 - the year's, as the route answers it
+ * @param {import('../services/api.js').Co2|null} co2 - the range's, as the route answers it
  * @param {string} [locale] - defaults to the one Nextcloud resolved for this session
  * @return {Co2Text} what the screen says
  */
@@ -171,7 +217,7 @@ export function bandWord(band) {
 }
 
 /**
- * @param {import('../services/api.js').Cost} cost - a period's
+ * @param {import('../services/api.js').CostSum} cost - a period's
  * @param {Band} band - which share of it
  * @return {number|null} the band's cents, null when the period has no sums
  */

@@ -340,6 +340,35 @@ abstract class BaseMapper extends QBMapper {
 	}
 
 	/**
+	 * The earliest `$instant` among the live rows of `$vehicleIds`, null when they have none:
+	 * where "all of it" starts. With `$createdBy`, only that author's rows.
+	 *
+	 * @param list<int> $vehicleIds
+	 * @throws \OCP\DB\Exception
+	 */
+	protected function earliest(string $instant, array $vehicleIds, ?string $createdBy = null): ?int {
+		if ($vehicleIds === []) {
+			return null;
+		}
+		$qb = $this->db->getQueryBuilder();
+		$qb->select($qb->func()->min($instant))
+			->from($this->tableName)
+			->where(InList::in($qb, 'vehicle_id', $vehicleIds, IQueryBuilder::PARAM_INT_ARRAY))
+			->andWhere($qb->expr()->isNull('deleted_at'));
+		if ($createdBy !== null) {
+			$qb->andWhere($qb->expr()->eq('created_by', $qb->createNamedParameter($createdBy)));
+		}
+		$result = $qb->executeQuery();
+		try {
+			$value = $result->fetchOne();
+		} finally {
+			$result->closeCursor();
+		}
+
+		return $value === false || $value === null ? null : (int)$value;
+	}
+
+	/**
 	 * One page of what a sync hands over from this table (docs/api.md#sync), oldest change first:
 	 * every live row of a vehicle the client does not hold yet, and every row of one it holds that
 	 * changed after `$since`, a deleted one included. Only rows past `($afterAt, $afterId)` in

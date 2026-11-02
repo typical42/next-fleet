@@ -13,6 +13,8 @@ use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccountTables;
 use OCA\NextFleet\Db\Audit;
 use OCA\NextFleet\Db\BaseEntity;
+use OCA\NextFleet\Db\Booking;
+use OCA\NextFleet\Db\BookingRecipient;
 use OCA\NextFleet\Db\Reminder;
 use OCA\NextFleet\Db\ReminderRecipient;
 use OCA\NextFleet\Db\TripMapper;
@@ -35,12 +37,18 @@ use Symfony\Component\Console\Output\OutputInterface;
 class FleetMigrator implements IMigrator {
 	/**
 	 * What the account wrote about its own doing: a trip it drove, a fill-up it paid. Theirs in
-	 * full, whoever may see the vehicle now.
+	 * full, whoever may see the vehicle now - but for a booking it only answered (ANSWER).
 	 */
 	private const AUTHORED = ['fleet_trips', 'fleet_energy', 'fleet_maintenance', 'fleet_expenses', 'fleet_odo_readings', 'fleet_bookings', 'fleet_documents', 'fleet_reminder_receipts'];
 
-	/** @var array<string, bool> by uid and vehicle id: one instance may export several accounts */
-	private array $sees = [];
+	/** What an approver wrote on somebody else's booking: their answer, and when it was asked. */
+	private const ANSWER = ['uuid', 'created_at', 'approval', 'approval_comment', 'approval_by'];
+
+	/** The vehicle's columns that only `costs` shows, as Vehicle::jsonSerialize() hides them. */
+	private const PRICES = ['purchase_price', 'residual_est'];
+
+	/** @var array<string, list<string>> by uid and vehicle id: one instance may export several accounts */
+	private array $held = [];
 
 	public function __construct(
 		private AccountTables $tables,
@@ -110,12 +118,22 @@ class FleetMigrator implements IMigrator {
 	 * must not reach into other people's data, so such a row stays whole only while the account
 	 * may still see the vehicle.
 	 *
+	 * Bookings and prices: docs/architecture.md#personal-data-export.
+	 *
 	 * @return array<string, mixed>
 	 * @throws \OCP\DB\Exception
 	 */
 	private function rowFor(string $uid, string $table, BaseEntity $entity): array {
 		$row = self::row($entity);
-		if (in_array($table, self::AUTHORED, true) || ($row['created_by'] ?? null) !== $uid || $this->sees($uid, $this->vehicleOf($entity))) {
+		if ($entity instanceof Booking && $row['user_id'] !== $uid && $row['created_by'] !== $uid) {
+			return $this->may($uid, VehicleAccess::VIEW, $entity->getVehicleId()) ? $row : array_intersect_key($row, array_flip(self::ANSWER));
+		}
+		$vehicle = $entity instanceof Vehicle ? $entity : null;
+		if (in_array($table, self::AUTHORED, true) || ($row['created_by'] ?? null) !== $uid || $this->may($uid, VehicleAccess::VIEW, $this->vehicleOf($entity), $vehicle)) {
+			if ($vehicle !== null && !$this->may($uid, VehicleAccess::COSTS, (int)$vehicle->getId(), $vehicle)) {
+				$row = array_merge($row, array_fill_keys(self::PRICES, null));
+			}
+
 			return $row;
 		}
 
@@ -136,7 +154,7 @@ class FleetMigrator implements IMigrator {
 					? $this->trips->findAnyById($entity->getEntityId())->getVehicleId()
 					: $entity->getEntityId(),
 				// The rest of the tables that mirror shared state; AUTHORED took the others.
-				$entity instanceof Access, $entity instanceof Reminder, $entity instanceof ReminderRecipient => $entity->getVehicleId(),
+				$entity instanceof Access, $entity instanceof Reminder, $entity instanceof ReminderRecipient, $entity instanceof BookingRecipient => $entity->getVehicleId(),
 				default => null,
 			};
 		} catch (DoesNotExistException) {
@@ -144,21 +162,24 @@ class FleetMigrator implements IMigrator {
 		}
 	}
 
-	/** @throws \OCP\DB\Exception */
-	private function sees(string $uid, ?int $vehicleId): bool {
+	/**
+	 * @param Vehicle|null $vehicle the vehicle itself when the row is one, to read it no second time
+	 * @throws \OCP\DB\Exception
+	 */
+	private function may(string $uid, string $operation, ?int $vehicleId, ?Vehicle $vehicle = null): bool {
 		if ($vehicleId === null) {
 			return false;
 		}
 		$key = $uid . "\0" . $vehicleId;
-		if (!array_key_exists($key, $this->sees)) {
+		if (!array_key_exists($key, $this->held)) {
 			try {
-				$this->sees[$key] = $this->access->may($uid, VehicleAccess::VIEW, $this->vehicles->findAnyById($vehicleId));
+				$this->held[$key] = $this->access->operations($uid, $vehicle ?? $this->vehicles->findAnyById($vehicleId));
 			} catch (DoesNotExistException) {
-				$this->sees[$key] = false;
+				$this->held[$key] = [];
 			}
 		}
 
-		return $this->sees[$key];
+		return in_array($operation, $this->held[$key], true);
 	}
 
 	/** @return array<string, mixed> column => value, as the table holds it */

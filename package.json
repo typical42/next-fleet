@@ -1,6 +1,6 @@
 {
   "name": "nextfleet",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "private": true,
   "license": "AGPL-3.0-or-later",
   "type": "module",
@@ -30,7 +30,10 @@
     "watch": "vite build --mode development --watch"
   },
   "overrides": {
-    "fast-xml-parser": "^5.7.0"
+    "fast-xml-parser": "^5.7.0",
+    "webdav": {
+      "minimatch": "^11.0.1"
+    }
   },
   "dependencies": {
     "@mdi/js": "^7.4.47",

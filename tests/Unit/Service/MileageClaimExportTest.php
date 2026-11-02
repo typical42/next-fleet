@@ -43,6 +43,8 @@ class MileageClaimExportTest extends TestCase {
 	private string $odoUnit = 'km';
 	private bool $hasRates = true;
 	private bool $hasRenderer = true;
+	/** Whether the owner shares the costs with the driver. */
+	private bool $costsShared = true;
 	private ?MileageClaim $printed = null;
 	/** @var list<string> the local days a rate was asked for */
 	private array $asked = [];
@@ -62,7 +64,8 @@ class MileageClaimExportTest extends TestCase {
 		$fleet = $this->createMock(VehicleService::class);
 		$fleet->method('reach')->willReturnCallback(
 			function (string $userId, string $operation): Vehicle {
-				if ($userId !== self::OWNER && !($userId === self::DRIVER && $operation === VehicleAccess::VIEW)) {
+				$driverMay = $this->costsShared ? [VehicleAccess::VIEW, VehicleAccess::COSTS] : [VehicleAccess::VIEW];
+				if ($userId !== self::OWNER && !($userId === self::DRIVER && in_array($operation, $driverMay, true))) {
 					throw new AccessDeniedException();
 				}
 
@@ -315,6 +318,17 @@ class MileageClaimExportTest extends TestCase {
 
 		$this->expectException(AccessDeniedException::class);
 		$this->service()->year('mallory', self::VEHICLE, 2026);
+	}
+
+	/**
+	 * The claim puts a money value on the trips, so it is read with the costs: a driver the
+	 * owner keeps them from has the logbook, not the claim.
+	 */
+	public function testADriverTheCostsAreKeptFromHasNoClaim(): void {
+		$this->costsShared = false;
+
+		$this->expectException(AccessDeniedException::class);
+		$this->service()->year(self::DRIVER, self::VEHICLE, 2026);
 	}
 
 	/** Who read which vehicle's claim is logged by ids, as the logbook is (docs/security.md). */

@@ -20,7 +20,8 @@ use OCP\IRequest;
 use OCP\IUserSession;
 
 /**
- * A vehicle's figures through the OCS door: the twin of the internal KpiController (docs/api.md,
+ * A vehicle's figures through the OCS door: the period's are the twin of the internal
+ * KpiController, the year's are v1's alone (docs/api.md,
  * docs/architecture.md#numbers-consumption-cost-emissions).
  *
  * @psalm-import-type NextFleetFigures from ResponseDefinitions

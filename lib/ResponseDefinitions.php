@@ -53,6 +53,9 @@ namespace OCA\NextFleet;
  *     display_name: ?string,
  *     eu_category: ?string,
  *     body_type: ?string,
+ *     costs_shared: bool,
+ *     booking_notices: list<string>,
+ *     booking_approval: bool,
  *     created_at: int,
  *     updated_at: int,
  *     deleted_at: ?int,
@@ -60,7 +63,7 @@ namespace OCA\NextFleet;
  *     may: list<string>,
  *     owned_by: ?string,
  *     out_with: ?array{user_id: string, user_name: string, ends_at: int, ends_at_off: int},
- *     my_next_booking: ?array{uuid: string, starts_at: int, starts_at_off: int, ends_at: int, ends_at_off: int},
+ *     my_next_booking: ?array{uuid: string, starts_at: int, starts_at_off: int, ends_at: int, ends_at_off: int, approval: ?string},
  *     ever_granted: bool,
  * }
  *
@@ -267,6 +270,29 @@ namespace OCA\NextFleet;
  *
  * @psalm-type NextFleetYear = array{year: NextFleetFigures, co2: ?NextFleetCo2, months: list<array{month: int, from: int, to: int, cost: NextFleetCost}>}
  *
+ * The Statistics screen's range (docs/api.md#statistics): its buckets, the vehicles it counts and
+ * whether their costs are, and the costs of those added up in one series per currency. A sum is
+ * null where none of them recorded anything, as a NextFleetCost's is. `per_distance` rates those
+ * costs per 100 km or per hour, one series per currency and unit, each vehicle's range beside it.
+ * `consumption` is each vehicle's per energy over the segments that close in the range, the
+ * segments themselves only for one vehicle. `co2` is one vehicle's, null for all of them.
+ * `distance` is the trips by category, one series per unit; `by_driver` each driver's over the
+ * range, every driver's only on the vehicles a counted `drivers` says the reader may compare.
+ *
+ * @psalm-type NextFleetBucket = array{from: int, to: int}
+ * @psalm-type NextFleetCounted = array{uuid: string, costs: bool, drivers: bool}
+ * @psalm-type NextFleetCostSum = array{total: ?int, energy: ?int, maintenance: ?int, expenses: ?list<NextFleetItemised>, incomplete: bool, unstated: bool}
+ * @psalm-type NextFleetCostSeries = array{currency: string, buckets: list<NextFleetCostSum>, range: NextFleetCostSum}
+ * @psalm-type NextFleetDistanceCost = array{total: ?int, distance: ?int, value: ?float}
+ * @psalm-type NextFleetVehicleDistanceCost = array{uuid: string, range: NextFleetDistanceCost}
+ * @psalm-type NextFleetPerDistance = array{currency: string, per: string, buckets: list<NextFleetDistanceCost>, range: NextFleetDistanceCost, vehicles: list<NextFleetVehicleDistanceCost>}
+ * @psalm-type NextFleetConsumptionLine = array{uuid: string, energy: string, per: string, amount: int, distance: int, value: float, segments: ?list<NextFleetSegment>}
+ * @psalm-type NextFleetTripDistance = array{trips: int, business: int, private: int, commute: int}
+ * @psalm-type NextFleetDistanceSeries = array{per: string, buckets: list<NextFleetTripDistance>, range: NextFleetTripDistance}
+ * @psalm-type NextFleetDriver = array{user_id: string, name: string, trips: int, distance: int, business: int}
+ * @psalm-type NextFleetDriverSeries = array{per: string, drivers: list<NextFleetDriver>}
+ * @psalm-type NextFleetStatistics = array{from: int, to: int, bucket: string, buckets: list<NextFleetBucket>, vehicles: list<NextFleetCounted>, costs: list<NextFleetCostSeries>, per_distance: list<NextFleetPerDistance>, consumption: list<NextFleetConsumptionLine>, distance: list<NextFleetDistanceSeries>, by_driver: list<NextFleetDriverSeries>, co2: ?NextFleetCo2}
+ *
  * A Reminder as a write answers it. Days are plain calendar days, YYYY-MM-DD.
  *
  * @psalm-type NextFleetReminder = array{
@@ -346,6 +372,8 @@ namespace OCA\NextFleet;
  *
  * @psalm-type NextFleetRecipient = array{user_id: string, display_name: string}
  *
+ * @psalm-type NextFleetBookingRecipient = array{recipient: string, recipient_type: string, display_name: string}
+ *
  * @psalm-type NextFleetGrant = array{uuid: string, grantee: string, grantee_type: string, display_name: string, role: string}
  *
  * What the caller holds on a vehicle: their own grant's role, and each group's that reaches them.
@@ -359,6 +387,8 @@ namespace OCA\NextFleet;
  * @psalm-type NextFleetDocument = array{uuid: string, kind: string, file_id: int, name: ?string, mime: ?string, linked_type: ?string, linked_uuid: ?string, may: list<string>}
  *
  * A booking, the booker by name and its trip by uuid; `may` is what the caller may do to it.
+ * `approval` is where its answer stands, null where the vehicle asks for none
+ * (docs/architecture.md#booking-approval).
  *
  * @psalm-type NextFleetBooking = array{
  *     uuid: string,
@@ -383,6 +413,9 @@ namespace OCA\NextFleet;
  *     trip_uuid: ?string,
  *     trip_voided: bool,
  *     trip_draft: ?array{started_at: ?int, started_at_off: ?int, ended_at: ?int, ended_at_off: ?int, start_odo: ?int, end_odo: ?int, purpose: ?string},
+ *     approval: ?string,
+ *     approval_comment: ?string,
+ *     approval_by: ?string,
  *     flags: list<string>,
  *     created_at: int,
  *     updated_at: int,
@@ -489,7 +522,7 @@ namespace OCA\NextFleet;
  *
  * A 409: the booking in the way, as the bookings list shows it.
  *
- * @psalm-type NextFleetBookingConflict = array{message: string, booking: array{uuid: string, user_id: string, user_name: string, starts_at: int, starts_at_off: int, ends_at: int, ends_at_off: int, state: string}}
+ * @psalm-type NextFleetBookingConflict = array{message: string, booking: array{uuid: string, user_id: string, user_name: string, starts_at: int, starts_at_off: int, ends_at: int, ends_at_off: int, state: string, approval: ?string}}
  */
 class ResponseDefinitions {
 }

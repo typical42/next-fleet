@@ -76,6 +76,14 @@ class EnergyMapper extends BaseMapper {
 	}
 
 	/**
+	 * @param list<int> $vehicleIds
+	 * @throws \OCP\DB\Exception
+	 */
+	public function firstAmong(array $vehicleIds): ?int {
+		return $this->earliest('filled_at', $vehicleIds);
+	}
+
+	/**
 	 * One page of the timeline's fill-ups, newest first (docs/architecture.md#the-timeline).
 	 *
 	 * @return list<Energy>

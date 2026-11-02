@@ -14,6 +14,7 @@ use OCA\NextFleet\BackgroundJob\PendingJob;
 use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\AccountTables;
+use OCA\NextFleet\Db\BookingRecipientMapper;
 use OCA\NextFleet\Db\Document;
 use OCA\NextFleet\Db\DocumentMapper;
 use OCA\NextFleet\Db\ReminderMapper;
@@ -85,7 +86,8 @@ class ErasureTest extends TestCase {
 		'fleet_documents' => ['created_by'],
 		'fleet_audit' => ['created_by'],
 		'fleet_access' => ['grantee', 'created_by'],
-		'fleet_bookings' => ['user_id', 'created_by'],
+		'fleet_bookings' => ['user_id', 'created_by', 'approval_by'],
+		'fleet_booking_recipients' => ['user_id', 'created_by'],
 	];
 
 	private VehicleService $vehicles;
@@ -178,7 +180,8 @@ class ErasureTest extends TestCase {
 	 * fails here rather than passing unvisited.
 	 */
 	public function testADriverNamedInEveryColumnIsNamedInNoneAfterward(): void {
-		$shared = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'engine' => 'diesel', 'logbook_mode' => true]);
+		// Bookings need approval, so the manager's own booking names them as its approver too.
+		$shared = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'engine' => 'diesel', 'logbook_mode' => true, 'booking_approval' => true]);
 		$this->vehicleIds[] = (int)$shared->getId();
 		$this->grant($shared, self::DRIVER, 'manager');
 		$uuid = $shared->getUuid();
@@ -200,6 +203,8 @@ class ErasureTest extends TestCase {
 		// Their own car lists them as its recipient, and they give somebody access to it.
 		$own = $this->vehicle(self::DRIVER, 'B-DR 1');
 		\OCP\Server::get(GrantService::class)->grant(self::DRIVER, $own->getUuid(), ['grantee' => self::OWNER, 'grantee_type' => 'user', 'role' => 'viewer']);
+		// And put themselves on its booking list.
+		$this->recipients->addBooking(self::DRIVER, $own->getUuid(), self::DRIVER, 'user');
 		$every = [];
 		foreach (self::PEOPLE_COLUMNS as $table => $columns) {
 			foreach ($columns as $column) {
@@ -219,7 +224,7 @@ class ErasureTest extends TestCase {
 	 * `string(64)`, or a name that says whose; three columns are that long for another reason.
 	 */
 	public function testEveryColumnThatCanNameAnAccountIsOneThisSuiteChecks(): void {
-		$notAccounts = ['fleet_vehicles.manufacturer', 'fleet_vehicles.model', 'fleet_vehicles.display_name'];
+		$notAccounts = ['fleet_vehicles.manufacturer', 'fleet_vehicles.model', 'fleet_vehicles.display_name', 'fleet_booking_recipients.group_id'];
 		$prefix = \OCP\Server::get(IConfig::class)->getSystemValueString('dbtableprefix', 'oc_');
 		$found = [];
 		foreach (\OCP\Server::get(IDBConnection::class)->createSchema()->getTables() as $table) {
@@ -261,9 +266,9 @@ class ErasureTest extends TestCase {
 
 		$queries = self::queriesOf(fn () => $erasure->erase(self::GHOST));
 
-		// Beside the probes: the vehicles it owns and the lists it is on, to hold first; the
-		// pending marker, set and removed; the audit's transfer rows.
-		$this->assertLessThanOrEqual($tables + 5, $queries);
+		// Beside the probes: the vehicles it owns and the two kinds of list it is on, to hold
+		// first; the pending marker, set and removed; the audit's transfer rows.
+		$this->assertLessThanOrEqual($tables + 6, $queries);
 		$this->assertSame($epoch, $config->getValueString(Application::APP_ID, SyncService::EPOCH));
 	}
 
@@ -275,6 +280,16 @@ class ErasureTest extends TestCase {
 		\OCP\Server::get(IUserManager::class)->get(self::DRIVER)?->delete();
 
 		$this->assertSame([self::OWNER], array_column($this->recipients->list(self::OWNER, $vehicle->getUuid()), 'user_id'));
+	}
+
+	/** And the booking list: a row renamed to a pseudonym would wait for nobody. */
+	public function testADeletedAccountLeavesTheBookingList(): void {
+		$vehicle = $this->vehicle(self::OWNER, 'B-XY 123');
+		$this->recipients->addBooking(self::OWNER, $vehicle->getUuid(), self::DRIVER, 'user');
+
+		\OCP\Server::get(IUserManager::class)->get(self::DRIVER)?->delete();
+
+		$this->assertSame([], $this->recipients->listBooking(self::OWNER, $vehicle->getUuid()));
 	}
 
 	/**
@@ -514,6 +529,7 @@ class ErasureTest extends TestCase {
 			\OCP\Server::get(IDBConnection::class),
 			\OCP\Server::get(ISecureRandom::class),
 			$recipients,
+			\OCP\Server::get(BookingRecipientMapper::class),
 			$vehicles,
 			\OCP\Server::get(AccountTables::class),
 			\OCP\Server::get(SyncEpoch::class),

@@ -31,7 +31,7 @@ vi.mock('../services/api.js', async (original) => ({
 	resetReading: vi.fn(),
 }))
 
-const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', odo_unit: 'km' }
+const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', odo_unit: 'km', may: ['view', 'costs'] }
 
 /** Two rows in September 2026 and one in the August before it, as the server orders them. */
 const SEPTEMBER = [
@@ -393,6 +393,14 @@ describe('the timeline', () => {
 
 		expect(readTimeline).toHaveBeenLastCalledWith('v-1', { type: 'trip', cursor: null })
 		expect(wrapper.findAllComponents(TimelineRow)).toHaveLength(1)
+	})
+
+	/** The server narrows the expenses to their own, so the chip finds those. */
+	it('offers the Expenses chip to a reader the owner keeps the costs from', async () => {
+		const wrapper = await timeline({ ...VEHICLE, may: ['view', 'log'] })
+
+		expect(wrapper.findAllComponents(NcRadioGroupButton).map((one) => String(one.props('label'))))
+			.toEqual(['All', 'Trips', 'Odometer', 'Energy', 'Maintenance', 'Expenses'])
 	})
 
 	it('asks for the expenses under Expenses, and lists the cost kinds each as a row', async () => {

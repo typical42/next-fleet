@@ -119,6 +119,7 @@ class BookingTest extends TestCase {
 				'ends_at' => $this->tomorrow + 3 * self::HOUR,
 				'ends_at_off' => 120,
 				'state' => 'booked',
+				'approval' => null,
 			], $e->booking);
 		}
 		$this->assertCount(1, $this->bookings->list(self::OWNER, $this->vehicle->getUuid(), []));
@@ -712,6 +713,7 @@ class BookingTest extends TestCase {
 			'starts_at_off' => 120,
 			'ends_at' => $this->tomorrow + 6 * self::HOUR,
 			'ends_at_off' => 120,
+			'approval' => null,
 		], $this->fleetRow(self::DRIVER)['my_next_booking']);
 		$this->assertSame($this->tomorrow, $this->fleetRow(self::OWNER)['my_next_booking']['starts_at']);
 

@@ -27,7 +27,7 @@ const cadence = defineModel('cadence', { type: String, default: 'weekly' })
 
 /**
  * The list as the server last answered, or null while unread or refused. The vehicle sheet mounts
- * this only for `edit`; a refusal still shows neither control rather than an empty list.
+ * this only for `edit`; a refusal is a fault then, so it is said, and the cadence stays.
  *
  * @type {import('vue').Ref<import('../services/api.js').Recipient[]|null>}
  */
@@ -35,6 +35,8 @@ const recipients = ref(null)
 const { found, search } = latestSearch(searchUsers)
 const writing = ref(false)
 const failure = ref('')
+/** Why the list could not be read, or '' while it is read or once it was. */
+const unread = ref('')
 
 /**
  * @param {import('../services/api.js').Recipient} one - an account
@@ -60,8 +62,8 @@ const cadenceOption = computed(() => cadences.value.find((one) => one.id === cad
 onMounted(async () => {
 	try {
 		recipients.value = await listRecipients(props.vehicle)
-	} catch {
-		recipients.value = null
+	} catch (error) {
+		unread.value = t('nextfleet', 'The list could not be read: {reason}', { reason: error.message })
 	}
 })
 
@@ -103,16 +105,19 @@ async function pick(selection) {
 </script>
 
 <template>
-	<div v-if="recipients !== null" class="recipients">
-		<NcNoteCard v-if="failure" type="error" :text="failure" />
-		<NcSelectUsers :model-value="chosen"
-			:options="options"
-			:input-label="t('nextfleet', 'Reminders go to')"
-			:disabled="disabled || writing"
-			:loading="writing"
-			multiple
-			@search="search"
-			@update:model-value="pick" />
+	<div class="recipients">
+		<NcNoteCard v-if="unread" type="error" :text="unread" />
+		<template v-if="recipients !== null">
+			<NcNoteCard v-if="failure" type="error" :text="failure" />
+			<NcSelectUsers :model-value="chosen"
+				:options="options"
+				:input-label="t('nextfleet', 'Reminders go to')"
+				:disabled="disabled || writing"
+				:loading="writing"
+				multiple
+				@search="search"
+				@update:model-value="pick" />
+		</template>
 		<NcSelect :model-value="cadenceOption"
 			:options="cadences"
 			:input-label="t('nextfleet', 'Reminder mail')"

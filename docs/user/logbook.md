@@ -53,6 +53,7 @@ Other vehicles get a plain logbook in your language.
 
 The mileage claim lists the business trips that you recorded on one vehicle in one year, with the flat rate per kilometre.
 It exists for German vehicles that count kilometres.
+If the owner keeps the costs from you, you get no mileage claim ([Access](access.md#keep-the-costs-from-drivers-and-viewers)).
 
 1. In **Reports**, select the **Vehicle** and the **Year**.
 2. Click **Open mileage claim**.
@@ -61,4 +62,4 @@ It exists for German vehicles that count kilometres.
 Commutes are not on it.
 The flat rate is only for vehicles that are not business assets.
 
-Next: [Costs](costs.md)
+Next: [Figures and statistics](statistics.md)

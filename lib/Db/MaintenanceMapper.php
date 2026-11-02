@@ -57,6 +57,14 @@ class MaintenanceMapper extends BaseMapper {
 	}
 
 	/**
+	 * @param list<int> $vehicleIds
+	 * @throws \OCP\DB\Exception
+	 */
+	public function firstAmong(array $vehicleIds): ?int {
+		return $this->earliest('done_at', $vehicleIds);
+	}
+
+	/**
 	 * One page of the timeline's Maintenance Records, newest first
 	 * (docs/architecture.md#the-timeline).
 	 *

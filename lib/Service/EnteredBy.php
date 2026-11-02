@@ -40,9 +40,16 @@ class EnteredBy {
 
 		$names = [];
 		foreach (array_unique($uids) as $uid) {
-			$names[$uid] = $this->users->getDisplayName($uid) ?? $uid;
+			$names[$uid] = $this->name($uid);
 		}
 
 		return $names;
+	}
+
+	/**
+	 * One author's display name, the uid the row carries for one with no account.
+	 */
+	public function name(string $uid): string {
+		return $this->users->getDisplayName($uid) ?? $uid;
 	}
 }

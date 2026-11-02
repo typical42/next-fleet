@@ -165,6 +165,6 @@ Usage: `occ nextfleet:seed <user> [--grant-to <uid>]`
 
 | Option | Description |
 |---|---|
-| `--grant-to` | Give this account driver access to one vehicle, with one trip of its own. |
+| `--grant-to` | Give this account driver access to two vehicles: one with a trip and a booking of its own, and one whose costs drivers do not see, with a booking of its own waiting for approval. |
 
 Next: [Troubleshooting](troubleshooting.md)

@@ -68,3 +68,14 @@ test('a flagged reading is the demo fleet, not a broken write', async ({ page })
 	// The newest reading, which is the one after the reset - not the highest the vehicle ever read.
 	expect(hybrid?.odo_value).toBe(23740)
 })
+
+test('the navigation shows its footer whole beside the demo fleet', async ({ page }) => {
+	// At the store screenshots' size (tools/screenshots.mjs), six vehicles and the footer's links
+	// compete for the height; the vehicles are the list that scrolls.
+	await page.setViewportSize({ width: 1280, height: 800 })
+	const footer = page.locator('.app-navigation-list')
+		.filter({ has: page.getByRole('link', { name: 'Settings' }) })
+
+	await expect(footer.getByRole('link', { name: 'Statistics' })).toBeVisible()
+	await expect.poll(() => footer.evaluate((list) => list.scrollHeight - list.clientHeight)).toBe(0)
+})

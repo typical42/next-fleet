@@ -15,8 +15,6 @@ use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\BackgroundJob\IJobList;
-use OCP\IGroupManager;
-use OCP\IUser;
 use OCP\Notification\IManager;
 use Psr\Log\LoggerInterface;
 
@@ -30,7 +28,7 @@ class GrantNotices {
 
 	public function __construct(
 		private AccessMapper $grants,
-		private IGroupManager $groups,
+		private Names $names,
 		private IManager $notifications,
 		private ITimeFactory $time,
 		private IJobList $jobs,
@@ -52,7 +50,7 @@ class GrantNotices {
 
 	/** Tells each member the group has now, for GrantNoticeJob. */
 	public function tellMembers(Vehicle $vehicle, Access $grant): void {
-		$this->send($vehicle, $grant, array_map(static fn (IUser $user): string => $user->getUID(), $this->groups->get($grant->getGrantee())?->getUsers() ?? []));
+		$this->send($vehicle, $grant, $this->names->members($grant->getGrantee()));
 	}
 
 	/**

@@ -53,7 +53,7 @@ class TwinAnswersTest extends TestCase {
 	private const TRIP = '0195e2f1-1111-4000-8000-000000000001';
 	/** A reminder, a paper or a booking: the service is a mock, so any row will do. */
 	private const ROW = '0195e2f1-2222-4000-8000-000000000001';
-	private const BOOKING = ['uuid' => 'b', 'user_id' => 'bob', 'user_name' => 'Bob', 'starts_at' => 1, 'starts_at_off' => 0, 'ends_at' => 2, 'ends_at_off' => 0, 'state' => 'out'];
+	private const BOOKING = ['uuid' => 'b', 'user_id' => 'bob', 'user_name' => 'Bob', 'starts_at' => 1, 'starts_at_off' => 0, 'ends_at' => 2, 'ends_at_off' => 0, 'state' => 'out', 'approval' => null];
 
 	/** @param array<string, mixed> $params */
 	private function request(array $params): IRequest {

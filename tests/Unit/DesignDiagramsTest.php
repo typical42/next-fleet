@@ -14,6 +14,7 @@ use OCA\NextFleet\Db\Booking;
 use OCA\NextFleet\Db\Reminder;
 use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\Vehicle;
+use OCA\NextFleet\Service\BookingService;
 use OCA\NextFleet\Service\VehicleService;
 use OCA\NextFleet\Tests\Fixture\SchemaWrapper;
 use OCA\NextFleet\Tests\MigrationSteps;
@@ -37,13 +38,14 @@ class DesignDiagramsTest extends TestCase {
 	private const COMMON = ['id', 'uuid', 'created_at', 'updated_at', 'deleted_at', 'created_by'];
 
 	/**
-	 * Per class whose constants lifecycles.md names: the list in the code that holds every state,
-	 * and the class's other string constants, so a new one is a state until it is named here.
+	 * Per class whose constants lifecycles.md names: the lists in the code that together hold every
+	 * state, and the class's other string constants, so a new one is a state until it is named here.
+	 * A booking has two: its `state`, and its `approval` beside it.
 	 */
 	private const STATE_LISTS = [
-		Booking::class => [Booking::class, 'STATES', []],
-		Reminder::class => [Reminder::class, 'STATES', ['DATE', 'ODO', 'EITHER']],
-		Vehicle::class => [VehicleService::class, 'LIFECYCLES', ['MAIL_OFF', 'MAIL_DAILY', 'MAIL_WEEKLY', 'MAIL_MONTHLY']],
+		Booking::class => [[[Booking::class, 'STATES'], [Booking::class, 'OPEN'], [BookingService::class, 'ANSWERS']], []],
+		Reminder::class => [[[Reminder::class, 'STATES']], ['DATE', 'ODO', 'EITHER']],
+		Vehicle::class => [[[VehicleService::class, 'LIFECYCLES']], ['MAIL_OFF', 'MAIL_DAILY', 'MAIL_WEEKLY', 'MAIL_MONTHLY', 'NOTICE_BOOKED', 'NOTICE_TAKEN', 'NOTICE_RETURNED', 'NOTICE_CANCELLED', 'NOTICE_CHANGED']],
 	];
 
 	public function testEveryClassOfTheDomainIsAClassUnderLib(): void {
@@ -105,8 +107,9 @@ class DesignDiagramsTest extends TestCase {
 
 	/**
 	 * A state held in a constant is drawn as `state "value<br/>Class::NAME" as value`. A diagram
-	 * that names one names every state so, and across the file a class's states are exactly its
-	 * list's values. A diagram naming none draws states no constant holds, and is checked by review.
+	 * that names one names every state so, but for a column left null, drawn as `"null<br/>…" as none`;
+	 * across the file a class's states are exactly its lists' values. A diagram naming none draws
+	 * states no constant holds, and is checked by review.
 	 */
 	public function testEachLifecycleDrawsExactlyTheStatesItsConstantsHold(): void {
 		$byShortName = [];
@@ -123,6 +126,9 @@ class DesignDiagramsTest extends TestCase {
 			}
 			foreach ($labels as $state => $label) {
 				$lines = explode('<br/>', (string)$label);
+				if ($state === 'none' && $lines[0] === 'null' && preg_grep('/::/', $lines) === []) {
+					continue;
+				}
 				[$short, $name] = explode('::', (string)current(preg_grep('/^\w+::\w+$/', $lines))) + [1 => ''];
 				$class = $byShortName[$short] ?? null;
 				if ($lines[0] !== $state || $class === null || !defined($class . '::' . $name) || constant($class . '::' . $name) !== $state) {
@@ -136,10 +142,14 @@ class DesignDiagramsTest extends TestCase {
 
 		$held = [];
 		$declared = [];
-		foreach (self::STATE_LISTS as $class => [$owner, $list, $others]) {
-			$states = (new \ReflectionClassConstant($owner, $list))->getValue();
-			$this->assertIsArray($states);
-			$held[$class] = array_values($states);
+		foreach (self::STATE_LISTS as $class => [$lists, $others]) {
+			$held[$class] = [];
+			foreach ($lists as [$owner, $list]) {
+				$states = (new \ReflectionClassConstant($owner, $list))->getValue();
+				$this->assertIsArray($states);
+				array_push($held[$class], ...$states);
+			}
+			$held[$class] = array_values(array_unique($held[$class]));
 			sort($held[$class]);
 			$declared[$class] = array_values(array_filter(
 				array_diff_key((new \ReflectionClass($class))->getConstants(), array_flip($others)),

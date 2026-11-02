@@ -132,7 +132,7 @@ useHotKey('n', () => {
 					{{ t('nextfleet', 'New entry') }}
 				</NcButton>
 				<!-- The shell swaps the screen (src/App.vue). -->
-				<NcButton @click="$emit('costs')">
+				<NcButton v-if="may(vehicle, 'costs')" @click="$emit('costs')">
 					{{ t('nextfleet', 'Costs') }}
 				</NcButton>
 				<NcButton v-if="may(vehicle, 'edit')" @click="editing = true">
@@ -186,12 +186,13 @@ useHotKey('n', () => {
 			:entry="opened"
 			@close="opened = null"
 			@saved="written" />
-		<!-- A save closes the sheet: the screen reads the saved vehicle from the store. -->
+		<!-- A save closes the sheet: the screen reads the saved vehicle from the store. Approval
+		     switched off answers the bookings that wait, so their list is read again. -->
 		<VehicleSheet v-if="editing"
 			:vehicle="vehicle"
 			@close="editing = false"
 			@import="editing = false; importing = true"
-			@saved="editing = false" />
+			@saved="editing = false; bookings?.reload()" />
 		<!-- Replaces the vehicle sheet: one dialog, one way out.
 		     Result and undo go to the toast. -->
 		<ImportSheet v-if="importing"
