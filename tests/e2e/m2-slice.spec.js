@@ -11,6 +11,10 @@ import { add, api, appPage, audit, categorise, choice, login, open, removeVehicl
 // and each sweeps its own (README.md).
 const plates = 'M2-E2E-'
 
+// A vehicle under Logbook Mode is made under `de` by name: the personal settings case in
+// m1-slice.spec.js may have moved this user's default to a country with no logbook rules, and a
+// vehicle there is never Incomplete.
+
 /** What the vehicle starts on, and what the two journeys below leave it at. */
 const starting = 148320
 const ended = '148 402'
@@ -130,7 +134,7 @@ test('a trip refused leaves the sheet open with every value in it', async ({ pag
 /** docs/architecture.md#logbook-mode: saved, flagged, and asked for the rest in the sheet's words. */
 test('a business trip missing what the logbook requires is saved and asks for the rest', async ({ page }) => {
 	const plate = `${plates}${Date.now()}`
-	const vehicle = await api(page, { method: 'POST', path: '/api/vehicles', body: { plate, logbook_mode: true } })
+	const vehicle = await api(page, { method: 'POST', path: '/api/vehicles', body: { plate, jurisdiction: 'de', logbook_mode: true } })
 	await api(page, {
 		method: 'POST',
 		path: `/api/vehicles/${vehicle.uuid}/readings`,
@@ -159,7 +163,7 @@ test('a business trip missing what the logbook requires is saved and asks for th
  */
 test('the month a trip set off above the counter in states the kilometres nobody accounted for', async ({ page }) => {
 	const plate = `${plates}${Date.now()}`
-	const vehicle = await api(page, { method: 'POST', path: '/api/vehicles', body: { plate, logbook_mode: true } })
+	const vehicle = await api(page, { method: 'POST', path: '/api/vehicles', body: { plate, jurisdiction: 'de', logbook_mode: true } })
 	await api(page, {
 		method: 'POST',
 		path: `/api/vehicles/${vehicle.uuid}/readings`,
@@ -286,7 +290,7 @@ test.describe('the month above the rows', { tag: '@nc35' }, () => {
  */
 test('a Gap is closed by one confirmed private trip', async ({ page }) => {
 	const plate = `${plates}gap-${Date.now()}`
-	const vehicle = await api(page, { method: 'POST', path: '/api/vehicles', body: { plate, logbook_mode: true } })
+	const vehicle = await api(page, { method: 'POST', path: '/api/vehicles', body: { plate, jurisdiction: 'de', logbook_mode: true } })
 	// The second journey says it set off 8 km above where the first one ended.
 	for (const [hour, ending, claim] of [[8, 148402, undefined], [12, 148484, 148410]]) {
 		const at = Math.floor(Date.UTC(2026, 6, 15, hour, 0) / 1000)
@@ -318,7 +322,6 @@ test('a Gap is closed by one confirmed private trip', async ({ page }) => {
  */
 test('the logbook opens from Reports for a vehicle and a year', async ({ page }) => {
 	const plate = `${plates}report-${Date.now()}`
-	// Under `de` by name: the personal settings case may have moved this user's default.
 	const vehicle = await api(page, { method: 'POST', path: '/api/vehicles', body: { plate, jurisdiction: 'de', logbook_mode: true } })
 	const at = Math.floor(Date.UTC(2025, 6, 15, 8, 0) / 1000)
 	await api(page, {
@@ -383,7 +386,7 @@ test.describe('at 320 x 640, in the dark', { tag: '@nc35' }, () => {
 		const plate = `${plates}dark`
 		// Under Logbook Mode, so the audit covers what the mode adds to the list: a month header
 		// stating a Gap and the rows saying what they lack (docs/architecture.md#logbook-mode).
-		const vehicle = await api(page, { method: 'POST', path: '/api/vehicles', body: { plate, logbook_mode: true } })
+		const vehicle = await api(page, { method: 'POST', path: '/api/vehicles', body: { plate, jurisdiction: 'de', logbook_mode: true } })
 		await api(page, {
 			method: 'POST',
 			path: `/api/vehicles/${vehicle.uuid}/readings`,
