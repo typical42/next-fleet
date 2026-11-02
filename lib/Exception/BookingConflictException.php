@@ -15,7 +15,7 @@ namespace OCA\NextFleet\Exception;
  */
 class BookingConflictException extends \RuntimeException {
 	/**
-	 * @param array{uuid: string, user_id: string, user_name: string, starts_at: int, starts_at_off: int, ends_at: int, ends_at_off: int, state: string} $booking
+	 * @param array{uuid: string, user_id: string, user_name: string, starts_at: int, starts_at_off: int, ends_at: int, ends_at_off: int, state: string, approval: ?string} $booking
 	 */
 	public function __construct(
 		string $message,

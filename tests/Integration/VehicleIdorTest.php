@@ -10,6 +10,7 @@ namespace OCA\NextFleet\Tests\Integration;
 
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Controller\BookingController;
+use OCA\NextFleet\Controller\BookingRecipientController;
 use OCA\NextFleet\Controller\DocumentController;
 use OCA\NextFleet\Controller\EnergyController;
 use OCA\NextFleet\Controller\ExpenseController;
@@ -24,6 +25,7 @@ use OCA\NextFleet\Controller\PreferencesController;
 use OCA\NextFleet\Controller\RecipientController;
 use OCA\NextFleet\Controller\ReminderController;
 use OCA\NextFleet\Controller\ReportController;
+use OCA\NextFleet\Controller\StatisticsController;
 use OCA\NextFleet\Controller\TimelineController;
 use OCA\NextFleet\Controller\TripController;
 use OCA\NextFleet\Controller\VehicleController;
@@ -53,6 +55,7 @@ use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\PreferencesService;
 use OCA\NextFleet\Service\RecipientService;
 use OCA\NextFleet\Service\ReminderService;
+use OCA\NextFleet\Service\StatisticsService;
 use OCA\NextFleet\Service\SyncService;
 use OCA\NextFleet\Service\TimelineService;
 use OCA\NextFleet\Service\TripService;
@@ -136,6 +139,7 @@ class VehicleIdorTest extends TestCase {
 	private ImportService $imports;
 	private TimelineService $history;
 	private KpiService $figures;
+	private StatisticsService $statistics;
 	private LogbookExport $logbook;
 	private MileageClaimExport $claim;
 	private ExportService $csv;
@@ -171,6 +175,7 @@ class VehicleIdorTest extends TestCase {
 		$this->imports = \OCP\Server::get(ImportService::class);
 		$this->history = \OCP\Server::get(TimelineService::class);
 		$this->figures = \OCP\Server::get(KpiService::class);
+		$this->statistics = \OCP\Server::get(StatisticsService::class);
 		$this->logbook = \OCP\Server::get(LogbookExport::class);
 		$this->claim = \OCP\Server::get(MileageClaimExport::class);
 		$this->csv = \OCP\Server::get(ExportService::class);
@@ -204,7 +209,7 @@ class VehicleIdorTest extends TestCase {
 		$qb->executeStatement();
 
 		// `fleet_access` again: a grant the owner gave to a real account names nobody above.
-		foreach (['fleet_access', 'fleet_odo_readings', 'fleet_trips', 'fleet_energy', 'fleet_maintenance', 'fleet_expenses', 'fleet_reminders', 'fleet_reminder_recipients', 'fleet_bookings', 'fleet_documents'] as $table) {
+		foreach (['fleet_access', 'fleet_odo_readings', 'fleet_trips', 'fleet_energy', 'fleet_maintenance', 'fleet_expenses', 'fleet_reminders', 'fleet_reminder_recipients', 'fleet_booking_recipients', 'fleet_bookings', 'fleet_documents'] as $table) {
 			$qb = $db->getQueryBuilder();
 			$qb->delete($table)
 				->where($qb->expr()->in('created_by', $qb->createNamedParameter($people, $qb::PARAM_STR_ARRAY)));
@@ -288,6 +293,12 @@ class VehicleIdorTest extends TestCase {
 		return $this->door(RecipientController::class, $this->recipients, $userId, $params);
 	}
 
+	/** @param array<string, mixed> $params */
+	private function bookingRecipient(string $userId, array $params): BookingRecipientController|Ocs\BookingRecipientController {
+		/** @var BookingRecipientController|Ocs\BookingRecipientController */
+		return $this->door(BookingRecipientController::class, $this->recipients, $userId, $params);
+	}
+
 	/**
 	 * Not `grant()`: that name writes a row.
 	 *
@@ -337,6 +348,12 @@ class VehicleIdorTest extends TestCase {
 	private function kpis(string $userId, array $params): KpiController|Ocs\KpiController {
 		/** @var KpiController|Ocs\KpiController */
 		return $this->door(KpiController::class, $this->figures, $userId, $params);
+	}
+
+	/** @param array<string, mixed> $params */
+	private function statisticsRoute(string $userId, array $params): StatisticsController|Ocs\StatisticsController {
+		/** @var StatisticsController|Ocs\StatisticsController */
+		return $this->door(StatisticsController::class, $this->statistics, $userId, $params);
 	}
 
 	/** @param array<string, mixed> $params */
@@ -502,6 +519,9 @@ class VehicleIdorTest extends TestCase {
 			'recipient#index' => $this->recipient(self::STRANGER, $params)->index($uuid),
 			'recipient#create' => $this->recipient(self::STRANGER, $params + ['user_id' => self::ACCOUNT])->create($uuid),
 			'recipient#delete' => $this->recipient(self::STRANGER, $params)->delete($uuid, self::OWNER),
+			'bookingRecipient#index' => $this->bookingRecipient(self::STRANGER, $params)->index($uuid),
+			'bookingRecipient#create' => $this->bookingRecipient(self::STRANGER, $params + ['recipient' => self::ACCOUNT, 'recipient_type' => 'user'])->create($uuid),
+			'bookingRecipient#delete' => $this->bookingRecipient(self::STRANGER, $params)->delete($uuid, 'user', self::OWNER),
 			'grant#index' => $this->grantRoute(self::STRANGER, $params)->index($uuid),
 			'grant#create' => $this->grantRoute(self::STRANGER, $params + ['grantee' => self::ACCOUNT, 'grantee_type' => 'user', 'role' => 'manager'])->create($uuid),
 			// Walked against a grant that is not there, for the reason the trip's are.
@@ -531,11 +551,16 @@ class VehicleIdorTest extends TestCase {
 			'booking#delete' => $this->booking(self::STRANGER, $params)->delete($uuid, self::NO_SUCH_ENTRY),
 			'booking#check_out' => $this->booking(self::STRANGER, $params + ['odo' => 999999, 'at_off' => 120])->checkOut($uuid, self::NO_SUCH_ENTRY),
 			'booking#check_in' => $this->booking(self::STRANGER, $params + ['odo' => 999999, 'at_off' => 120])->checkIn($uuid, self::NO_SUCH_ENTRY),
+			'booking#approve' => $this->booking(self::STRANGER, $params)->approve($uuid, self::NO_SUCH_ENTRY),
+			'booking#ask' => $this->booking(self::STRANGER, $params)->ask($uuid, self::NO_SUCH_ENTRY),
+			'booking#decline' => $this->booking(self::STRANGER, $params)->decline($uuid, self::NO_SUCH_ENTRY),
 			'timeline#index' => $this->timeline(self::STRANGER, $params)->index($uuid),
 			'timeline#gaps' => $this->timeline(self::STRANGER, $params)->gaps($uuid),
 			'timeline#show' => $this->timeline(self::STRANGER, $params)->show($uuid, 'trip', self::NO_SUCH_ENTRY),
 			'kpi#index' => $this->kpis(self::STRANGER, $params + ['from' => 1749900000, 'to' => 1750200000])->index($uuid),
 			'kpi#year' => $this->kpis(self::STRANGER, $params + ['tz' => 'Europe/Berlin'])->year($uuid, '2025'),
+			// Names its vehicle in the query; without one it is the stranger's own fleet.
+			'statistics#index' => $this->statisticsRoute(self::STRANGER, $params + ['vehicle' => $uuid, 'tz' => 'Europe/Berlin'])->index(),
 			'report#logbook' => $this->report(self::STRANGER, $params)->logbook($uuid, '2026'),
 			'report#mileage' => $this->report(self::STRANGER, $params)->mileage($uuid, '2026'),
 			'report#csv' => $this->report(self::STRANGER, $params)->csv($uuid, '2026', 'trips'),
@@ -934,6 +959,9 @@ class VehicleIdorTest extends TestCase {
 			'booking#delete' => $this->booking(self::OWNER, $params)->delete($other, $row),
 			'booking#check_out' => $this->booking(self::OWNER, $handover)->checkOut($other, $row),
 			'booking#check_in' => $this->booking(self::OWNER, $handover)->checkIn($other, $row),
+			'booking#approve' => $this->booking(self::OWNER, $params)->approve($other, $row),
+			'booking#ask' => $this->booking(self::OWNER, $params)->ask($other, $row),
+			'booking#decline' => $this->booking(self::OWNER, $params)->decline($other, $row),
 			'timeline#show' => $this->timeline(self::OWNER, [])->show($other, 'trip', $row),
 			default => $this->fail($route . ' has no arm in the cross-vehicle matrix'),
 		});
@@ -951,7 +979,7 @@ class VehicleIdorTest extends TestCase {
 
 	/** @return iterable<string, list<mixed>> */
 	public static function crossVehicleMatrix(): iterable {
-		$routes = ['booking#update', 'booking#delete', 'booking#check_out', 'booking#check_in', 'timeline#show'];
+		$routes = ['booking#update', 'booking#delete', 'booking#check_out', 'booking#check_in', 'booking#approve', 'booking#ask', 'booking#decline', 'timeline#show'];
 		foreach (array_keys(self::ENTRY_BODIES) as $kind) {
 			foreach (['update', 'delete', 'restore'] as $action) {
 				$routes[] = "$kind#$action";
@@ -1001,6 +1029,45 @@ class VehicleIdorTest extends TestCase {
 		if ($status === Http::STATUS_FORBIDDEN) {
 			$this->assertSame([$booking], $this->pool->list(self::HOLDERS[$booker], $uuid, []));
 		}
+	}
+
+	/**
+	 * The answers to a driver's request by role: the owner's and a manager's, nobody else's, the
+	 * booker included. The request is real, so a refusal is the gate's.
+	 *
+	 * @dataProvider answerMatrix
+	 */
+	public function testOnlyTheOwnerAndAManagerAnswerARequest(string $route, string $role, int $status, bool $ocs): void {
+		$this->ocs = $ocs;
+		$uuid = $this->vehicle->getUuid();
+		$this->service->update(self::OWNER, $uuid, $this->vehicle->getUpdatedAt(), ['booking_approval' => true]);
+		$this->grantEveryRole();
+		$booking = $this->pool->book(self::CODRIVER, $uuid, self::tomorrow());
+		$door = $this->booking(self::HOLDERS[$role], ['updated_at' => $booking['updated_at']]);
+
+		$response = $this->through(fn (): Response => match ($route) {
+			'booking#approve' => $door->approve($uuid, $booking['uuid']),
+			'booking#ask' => $door->ask($uuid, $booking['uuid']),
+			'booking#decline' => $door->decline($uuid, $booking['uuid']),
+			default => $this->fail($route . ' has no arm in the answer matrix'),
+		});
+
+		$this->assertSame($status, $response->getStatus());
+		if ($status === Http::STATUS_FORBIDDEN) {
+			$this->assertSame([$booking], $this->pool->list(self::CODRIVER, $uuid, []));
+		}
+	}
+
+	/** @return iterable<string, list<mixed>> */
+	public static function answerMatrix(): iterable {
+		$cases = [];
+		foreach (['booking#approve', 'booking#ask', 'booking#decline'] as $route) {
+			foreach (array_keys(self::HOLDERS) as $role) {
+				$cases["$route by the $role"] = [$route, $role, in_array($role, ['owner', 'manager'], true) ? Http::STATUS_OK : Http::STATUS_FORBIDDEN];
+			}
+		}
+
+		return self::throughBothDoors($cases);
 	}
 
 	/** @return iterable<string, list<mixed>> */
@@ -1206,10 +1273,10 @@ class VehicleIdorTest extends TestCase {
 		$uuid = $this->vehicle->getUuid();
 		$this->grantEveryRole();
 		$expected = [
-			'owner' => ['view', 'log', 'edit', 'delete', 'own', 'book'],
-			'manager' => ['view', 'log', 'edit', 'delete', 'book'],
-			'driver' => ['view', 'log', 'book'],
-			'viewer' => ['view'],
+			'owner' => ['view', 'log', 'edit', 'delete', 'own', 'costs', 'book'],
+			'manager' => ['view', 'log', 'edit', 'delete', 'costs', 'book'],
+			'driver' => ['view', 'log', 'costs', 'book'],
+			'viewer' => ['view', 'costs'],
 		];
 
 		foreach ($expected as $role => $may) {
@@ -1236,12 +1303,12 @@ class VehicleIdorTest extends TestCase {
 		$uuid = $this->vehicle->getUuid();
 		$this->grantEveryRole();
 		$laidUp = $this->service->update(self::OWNER, $uuid, $this->vehicle->getUpdatedAt(), ['lifecycle' => 'laid_up']);
-		$this->assertSame(['view', 'log', 'edit', 'delete', 'own'], $laidUp->jsonSerialize()['may']);
+		$this->assertSame(['view', 'log', 'edit', 'delete', 'own', 'costs'], $laidUp->jsonSerialize()['may']);
 
 		$controller = $this->controller(self::HOLDERS['driver'], []);
 		$shown = $controller->show($uuid)->getData();
 		$this->assertInstanceOf(Vehicle::class, $shown);
-		$this->assertSame(['view', 'log'], $shown->jsonSerialize()['may']);
+		$this->assertSame(['view', 'log', 'costs'], $shown->jsonSerialize()['may']);
 	}
 
 	/**

@@ -54,6 +54,7 @@ class ExpenseService {
 		private VehicleMapper $vehicles,
 		private Jurisdictions $jurisdictions,
 		private IDBConnection $db,
+		private CostsShown $costs,
 	) {
 	}
 
@@ -72,7 +73,8 @@ class ExpenseService {
 		$once = Once::of(
 			$fields,
 			$this->expenses,
-			static fn (Expense $row): bool => $row->getVehicleId() === (int)$vehicle->getId(),
+			// One kept from the reader is not there for them, so its uuid is as taken as any other.
+			fn (Expense $row): bool => $row->getVehicleId() === (int)$vehicle->getId() && $this->costs->showsExpense($userId, $vehicle, $row),
 			static fn (Expense $row): array => $row->jsonSerialize(),
 		);
 

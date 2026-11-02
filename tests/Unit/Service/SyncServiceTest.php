@@ -12,9 +12,11 @@ use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\BaseEntity;
 use OCA\NextFleet\Db\BookingMapper;
 use OCA\NextFleet\Db\DocumentMapper;
+use OCA\NextFleet\Db\Energy;
 use OCA\NextFleet\Db\EnergyMapper;
 use OCA\NextFleet\Db\Expense;
 use OCA\NextFleet\Db\ExpenseMapper;
+use OCA\NextFleet\Db\Maintenance;
 use OCA\NextFleet\Db\MaintenanceMapper;
 use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Db\OdoReadingMapper;
@@ -23,14 +25,18 @@ use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Service\BookingService;
+use OCA\NextFleet\Service\CostsShown;
 use OCA\NextFleet\Service\DocumentService;
 use OCA\NextFleet\Service\GrantService;
 use OCA\NextFleet\Service\ReminderService;
 use OCA\NextFleet\Service\SyncService;
+use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
 use OCA\NextFleet\Tests\Stub\SpyLogger;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\IAppConfig;
+use OCP\IGroupManager;
+use OCP\IUserManager;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 use Psr\Log\LogLevel;
@@ -139,17 +145,53 @@ class SyncServiceTest extends TestCase {
 		return $mock;
 	}
 
-	/** @param array<string, object> $tables mocks by SyncCursor::TABLES; the rest are empty */
-	private function service(array $tables, ?LoggerInterface $logger = null): SyncService {
+	/**
+	 * A driver the costs are kept from syncs the vehicle without them, as the timeline shows it:
+	 * no amount on a fill-up or record somebody else entered, no expense of somebody else's. The
+	 * cursor still moves past what was left out, and the log counts what was handed out.
+	 */
+	public function testADriverSyncsNoAmountOthersEnteredWhileTheCostsAreKeptFromThem(): void {
+		$logger = new SpyLogger();
+		$expenses = $this->createMock(ExpenseMapper::class);
+		$expenses->method('findChanged')->willReturn([
+			Expense::fromRow(['id' => 1, 'uuid' => 'e-1', 'vehicle_id' => 7, 'updated_at' => 100, 'amount' => 500, 'created_by' => 'alice']),
+			Expense::fromRow(['id' => 2, 'uuid' => 'e-2', 'vehicle_id' => 7, 'updated_at' => 101, 'amount' => 700, 'created_by' => 'carol']),
+		]);
+		$energy = $this->createMock(EnergyMapper::class);
+		$energy->method('findChanged')->willReturn([
+			Energy::fromRow(['id' => 1, 'uuid' => 'f-1', 'vehicle_id' => 7, 'updated_at' => 102, 'amount' => 42000, 'unit_price' => 1799, 'total' => 7556, 'created_by' => 'alice']),
+		]);
+		$maintenance = $this->createMock(MaintenanceMapper::class);
+		$maintenance->method('findChanged')->willReturn([
+			Maintenance::fromRow(['id' => 1, 'uuid' => 'm-1', 'vehicle_id' => 7, 'updated_at' => 103, 'title' => 'Brakes', 'cost' => 42000, 'created_by' => 'alice']),
+		]);
+
+		$page = $this->service(['expenses' => $expenses, 'energy' => $energy, 'maintenance' => $maintenance], $logger, ['view', 'log'])->sync('carol', '', 500);
+
+		$this->assertSame(['e-2'], array_column($page['changes']['expenses'], 'uuid'));
+		$this->assertSame(700, $page['changes']['expenses'][0]['row']['amount']);
+		$this->assertSame([42000, null, null], [$page['changes']['energy'][0]['row']['amount'], $page['changes']['energy'][0]['row']['unit_price'], $page['changes']['energy'][0]['row']['total']]);
+		$this->assertSame(['Brakes', null], [$page['changes']['maintenance'][0]['row']['title'], $page['changes']['maintenance'][0]['row']['cost']]);
+		$this->assertSame(3, $logger->lines[0]['context']['rows']);
+		$this->assertFalse($page['more']);
+	}
+
+	/**
+	 * @param array<string, object> $tables mocks by SyncCursor::TABLES; the rest are empty
+	 * @param list<string> $may what the list leaves on the vehicle
+	 */
+	private function service(array $tables, ?LoggerInterface $logger = null, array $may = ['view', 'log', 'edit', 'delete', 'own', 'costs']): SyncService {
+		$vehicle = Vehicle::fromRow(['id' => 7, 'uuid' => '0195e2f1-0000-4000-8000-000000000001', 'user_id' => 'alice', 'plate' => 'B-XY 123']);
+		$vehicle->setMay($may);
 		$fleet = $this->createMock(VehicleService::class);
-		$fleet->method('list')->willReturn([Vehicle::fromRow(['id' => 7, 'uuid' => '0195e2f1-0000-4000-8000-000000000001', 'user_id' => 'alice', 'plate' => 'B-XY 123'])]);
+		$fleet->method('list')->willReturn([$vehicle]);
 
 		return new SyncService(
 			$fleet,
 			$tables['readings'] ?? $this->createMock(OdoReadingMapper::class),
 			$tables['trips'] ?? $this->createMock(TripMapper::class),
-			$this->createMock(EnergyMapper::class),
-			$this->createMock(MaintenanceMapper::class),
+			$tables['energy'] ?? $this->createMock(EnergyMapper::class),
+			$tables['maintenance'] ?? $this->createMock(MaintenanceMapper::class),
 			$tables['expenses'] ?? $this->createMock(ExpenseMapper::class),
 			$this->createMock(ReminderMapper::class),
 			$this->createMock(DocumentMapper::class),
@@ -162,6 +204,7 @@ class SyncServiceTest extends TestCase {
 			$this->createMock(IAppConfig::class),
 			$this->createMock(ITimeFactory::class),
 			$logger ?? new SpyLogger(),
+			new CostsShown(new VehicleAccess($this->createMock(AccessMapper::class), $this->createMock(IUserManager::class), $this->createMock(IGroupManager::class))),
 		);
 	}
 }

@@ -47,11 +47,12 @@ class VehicleAccessTest extends TestCase {
 		return new VehicleAccess($this->grants, $users, $groups);
 	}
 
-	private function vehicle(): Vehicle {
+	private function vehicle(bool $costsShared = true): Vehicle {
 		return Vehicle::fromRow([
 			'id' => self::VEHICLE_ID,
 			'uuid' => '0195e2f1-0000-4000-8000-000000000001',
 			'user_id' => self::OWNER,
+			'costs_shared' => $costsShared,
 		]);
 	}
 
@@ -97,6 +98,97 @@ class VehicleAccessTest extends TestCase {
 		yield 'edit' => [VehicleAccess::EDIT];
 		yield 'delete' => [VehicleAccess::DELETE];
 		yield 'own' => [VehicleAccess::OWN];
+		yield 'costs' => [VehicleAccess::COSTS];
+	}
+
+	/** The switch is for drivers and viewers: the owner sees what the car costs whatever it says. */
+	public function testTheOwnerSeesCostsWithTheSwitchOff(): void {
+		$this->assertTrue($this->access()->may(self::OWNER, VehicleAccess::COSTS, $this->vehicle(costsShared: false)));
+	}
+
+	/**
+	 * Costs follow the role and the vehicle's switch: the manager handles them and always sees
+	 * them, a driver and a viewer only while the owner shares them.
+	 *
+	 * @dataProvider costRoles
+	 */
+	public function testCostsAreTheManagersAndTheSwitchDecidesForTheRest(string $role, bool $costsShared, bool $expected): void {
+		$this->grants = $this->createMock(AccessMapper::class);
+		$this->grants->method('findGrants')->willReturn([$this->grant($role)]);
+
+		$this->assertSame($expected, $this->access()->may(self::STRANGER, VehicleAccess::COSTS, $this->vehicle($costsShared)));
+	}
+
+	/**
+	 * @return iterable<string, array{string, bool, bool}>
+	 */
+	public static function costRoles(): iterable {
+		yield 'a manager, shared' => ['manager', true, true];
+		yield 'a manager, not shared' => ['manager', false, true];
+		yield 'a driver, shared' => ['driver', true, true];
+		yield 'a driver, not shared' => ['driver', false, false];
+		yield 'a viewer, shared' => ['viewer', true, true];
+		yield 'a viewer, not shared' => ['viewer', false, false];
+		// Sharing is with those who have access, never with everybody.
+		yield 'a role the domain does not have, shared' => ['admin', true, false];
+	}
+
+	/** A stranger reaches nothing, so a shared switch gives them no costs either. */
+	public function testASharedSwitchGivesAStrangerNothing(): void {
+		$this->assertSame([], $this->access()->operations(self::STRANGER, $this->vehicle(costsShared: true)));
+	}
+
+	/**
+	 * What one Entry's amount shows to the reader: everybody's with `costs`, their own whatever
+	 * the switch says, because they entered it. Read off what the gate left, as mayChange() is.
+	 *
+	 * @dataProvider entryCosts
+	 * @param list<string> $held
+	 */
+	public function testAnAmountShowsWithCostsOrToWhoEnteredIt(array $held, ?string $createdBy, bool $expected): void {
+		$this->grants->expects($this->never())->method('findGrants');
+		$vehicle = $this->vehicle(costsShared: false);
+		$vehicle->setMay($held);
+
+		$this->assertSame($expected, $this->access()->mayCost(self::STRANGER, $vehicle, $createdBy));
+	}
+
+	/**
+	 * @return iterable<string, array{list<string>, ?string, bool}>
+	 */
+	public static function entryCosts(): iterable {
+		yield 'with costs, somebody else\'s' => [['view', 'log', 'costs'], self::OWNER, true];
+		yield 'a driver, their own' => [['view', 'log'], self::STRANGER, true];
+		yield 'a driver, somebody else\'s' => [['view', 'log'], self::OWNER, false];
+		yield 'a viewer, their own from when they drove' => [['view'], self::STRANGER, true];
+		yield 'a driver, an erased author' => [['view', 'log'], null, false];
+		yield 'a vehicle that never passed the gate' => [[], self::STRANGER, false];
+	}
+
+	/**
+	 * Who sees every driver's figures on the Statistics screen: the owner and the managers, who
+	 * hold `edit`. Read off what the gate left, as mayChange() is.
+	 *
+	 * @dataProvider driverFigures
+	 * @param list<string> $held
+	 */
+	public function testEveryDriversFiguresAreTheOwnersAndTheManagers(array $held, bool $expected): void {
+		$this->grants->expects($this->never())->method('findGrants');
+		$vehicle = $this->vehicle();
+		$vehicle->setMay($held);
+
+		$this->assertSame($expected, $this->access()->mayCompareDrivers(self::STRANGER, $vehicle));
+	}
+
+	/**
+	 * @return iterable<string, array{list<string>, bool}>
+	 */
+	public static function driverFigures(): iterable {
+		yield 'the owner' => [['view', 'log', 'edit', 'delete', 'own', 'costs'], true];
+		yield 'a manager' => [['view', 'log', 'edit', 'delete', 'costs'], true];
+		yield 'a driver, costs shared' => [['view', 'log', 'costs'], false];
+		yield 'a viewer' => [['view'], false];
+		yield 'a vehicle that never passed the gate' => [[], false];
 	}
 
 	/**
@@ -167,11 +259,11 @@ class VehicleAccessTest extends TestCase {
 	 * @return iterable<string, array{string, list<string>, list<string>}>
 	 */
 	public static function operationLists(): iterable {
-		yield 'the owner' => [self::OWNER, [], ['view', 'log', 'edit', 'delete', 'own']];
-		yield 'a manager' => [self::STRANGER, ['manager'], ['view', 'log', 'edit', 'delete']];
-		yield 'a driver' => [self::STRANGER, ['driver'], ['view', 'log']];
-		yield 'a viewer' => [self::STRANGER, ['viewer'], ['view']];
-		yield 'a viewer and a driver at once' => [self::STRANGER, ['viewer', 'driver'], ['view', 'log']];
+		yield 'the owner' => [self::OWNER, [], ['view', 'log', 'edit', 'delete', 'own', 'costs']];
+		yield 'a manager' => [self::STRANGER, ['manager'], ['view', 'log', 'edit', 'delete', 'costs']];
+		yield 'a driver' => [self::STRANGER, ['driver'], ['view', 'log', 'costs']];
+		yield 'a viewer' => [self::STRANGER, ['viewer'], ['view', 'costs']];
+		yield 'a viewer and a driver at once' => [self::STRANGER, ['viewer', 'driver'], ['view', 'log', 'costs']];
 		yield 'a stranger' => [self::STRANGER, [], []];
 	}
 
@@ -187,22 +279,24 @@ class VehicleAccessTest extends TestCase {
 			->with(self::STRANGER, ['drivers'], ['manager', 'driver', 'viewer'])
 			->willReturn([7 => ['viewer', 'driver'], 9 => ['manager']]);
 
+		// The switch is on each vehicle, so what it adds is listed()'s to read; the role alone is here.
 		$this->assertSame(
-			[7 => ['view', 'log'], 9 => ['view', 'log', 'edit', 'delete']],
+			[7 => ['view', 'log'], 9 => ['view', 'log', 'edit', 'delete', 'costs']],
 			$this->access()->reachable(self::STRANGER),
 		);
 	}
 
 	/**
 	 * A vehicle in a list is answered from what reachable() found, not a query per row; the
-	 * owner's own from the column on the vehicle.
+	 * owner's own from the column on the vehicle, and the cost switch too.
 	 */
 	public function testAListedVehicleIsAnsweredWithoutAQuery(): void {
 		$this->grants->expects($this->never())->method('findGrants');
 		$reachable = [self::VEHICLE_ID => ['view']];
 
-		$this->assertSame(['view', 'log', 'edit', 'delete', 'own'], $this->access()->listed(self::OWNER, $this->vehicle(), $reachable));
-		$this->assertSame(['view'], $this->access()->listed(self::STRANGER, $this->vehicle(), $reachable));
+		$this->assertSame(['view', 'log', 'edit', 'delete', 'own', 'costs'], $this->access()->listed(self::OWNER, $this->vehicle(), $reachable));
+		$this->assertSame(['view', 'costs'], $this->access()->listed(self::STRANGER, $this->vehicle(), $reachable));
+		$this->assertSame(['view'], $this->access()->listed(self::STRANGER, $this->vehicle(costsShared: false), $reachable));
 		$this->assertSame([], $this->access()->listed(self::STRANGER, $this->vehicle(), []));
 	}
 
@@ -258,6 +352,8 @@ class VehicleAccessTest extends TestCase {
 		$this->assertFalse($access->may($erased, VehicleAccess::VIEW, $owned));
 		$this->assertFalse($access->mayChange($erased, VehicleAccess::EDIT, $granted, $erased));
 		$this->assertFalse($access->mayBooking($erased, $granted, $erased));
+		$this->assertFalse($access->mayCost($erased, $granted, $erased));
+		$this->assertFalse($access->mayCompareDrivers($erased, $owned));
 		$this->assertSame([], $access->listed($erased, $owned, [self::VEHICLE_ID => ['view']]));
 		$this->assertSame([], $access->reachable($erased));
 	}

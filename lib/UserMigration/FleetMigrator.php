@@ -13,6 +13,7 @@ use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccountTables;
 use OCA\NextFleet\Db\Audit;
 use OCA\NextFleet\Db\BaseEntity;
+use OCA\NextFleet\Db\BookingRecipient;
 use OCA\NextFleet\Db\Reminder;
 use OCA\NextFleet\Db\ReminderRecipient;
 use OCA\NextFleet\Db\TripMapper;
@@ -136,7 +137,7 @@ class FleetMigrator implements IMigrator {
 					? $this->trips->findAnyById($entity->getEntityId())->getVehicleId()
 					: $entity->getEntityId(),
 				// The rest of the tables that mirror shared state; AUTHORED took the others.
-				$entity instanceof Access, $entity instanceof Reminder, $entity instanceof ReminderRecipient => $entity->getVehicleId(),
+				$entity instanceof Access, $entity instanceof Reminder, $entity instanceof ReminderRecipient, $entity instanceof BookingRecipient => $entity->getVehicleId(),
 				default => null,
 			};
 		} catch (DoesNotExistException) {

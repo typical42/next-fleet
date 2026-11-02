@@ -3,6 +3,7 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
+import { getCurrentUser } from '@nextcloud/auth'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcDateTimePickerNative from '@nextcloud/vue/components/NcDateTimePickerNative'
 import NcDialog from '@nextcloud/vue/components/NcDialog'
@@ -14,7 +15,7 @@ import { computed, ref } from 'vue'
 import { BookingConflictError, checkIn, checkOut, createBooking } from '../services/api.js'
 import { formatCount, formatSpan, parseWhole } from '../utils/format.js'
 import { t } from '../utils/l10n.js'
-import { refusalWords, spanFault } from '../utils/pool.js'
+import { refusalWords, spanFault, waiting } from '../utils/pool.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -39,6 +40,11 @@ const HOUR = 3600 * 1000
 
 /** A booking that is out is given back; any other the sheet is offered on is taken. */
 const returning = computed(() => props.booking?.state === 'out')
+
+/** On someone else's booking the owner or a manager is not the one who drives: the car goes to its booker. */
+const taking = computed(() => props.booking === null || props.booking.user_id === getCurrentUser()?.uid
+	? t('nextfleet', 'Take the car')
+	: t('nextfleet', 'Hand over to {name}', { name: props.booking.user_name }))
 
 /** Taken now, the car is booked until the end a new booking defaults to (BookingSheet.vue). */
 const soon = new Date()
@@ -72,7 +78,7 @@ const action = computed(() => {
 		return t('nextfleet', 'Try again')
 	}
 
-	return returning.value ? t('nextfleet', 'Return the car') : t('nextfleet', 'Take the car')
+	return returning.value ? t('nextfleet', 'Return the car') : taking.value
 })
 
 const taken = computed(() => returning.value
@@ -84,8 +90,12 @@ const note = computed(() => {
 		const name = clash.value.user_name
 		const span = formatSpan(clash.value.starts_at, clash.value.starts_at_off, clash.value.ends_at, clash.value.ends_at_off)
 
-		return clash.value.state === 'out'
-			? t('nextfleet', 'Still with {name}, booked {span}', { name, span })
+		if (clash.value.state === 'out') {
+			return t('nextfleet', 'Still with {name}, booked {span}', { name, span })
+		}
+
+		return waiting(clash.value)
+			? t('nextfleet', 'Requested by {name}, {span}', { name, span })
 			: t('nextfleet', 'Booked by {name}, {span}', { name, span })
 	}
 
@@ -155,6 +165,12 @@ async function save() {
 			return
 		}
 		held.value ??= await bookNow()
+		// Kept past the day, a take-now on a vehicle that wants answers is a request: it stands
+		// booked, and the list says it waits.
+		if (waiting(held.value)) {
+			emit('saved', held.value)
+			return
+		}
 		emit('saved', await checkOut(props.vehicle.uuid, held.value, stated))
 	} catch (error) {
 		if (error instanceof BookingConflictError) {
@@ -179,7 +195,7 @@ function requestClose() {
 </script>
 
 <template>
-	<NcDialog :name="returning ? t('nextfleet', 'Return the car') : t('nextfleet', 'Take the car')"
+	<NcDialog :name="returning ? t('nextfleet', 'Return the car') : taking"
 		:open="true"
 		size="small"
 		@update:open="requestClose">

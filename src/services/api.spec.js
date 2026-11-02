@@ -4,7 +4,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { addGrant, addRecipient, attachDocument, BookingConflictError, cancelBooking, ChangedError, changeBooking, changeGrant, checkIn, checkOut, closeGap, createBooking, ImportRefusedError, listBookings, ConflictError, previewImport, runImport, undoImport, createReminder, createVehicle, csvUrl, deleteEntry, deleteVehicle, detachDocument, dismissReminder, documentUrl, energyPrefill, expensePrefill, fetchDocument, getPreferences, getVehicle, leaveVehicle, LockedError, maintenancePrefill, readHeld, recordEnergy, recordExpense, recordMaintenance, tripPrefill, restoreDocument, listDocuments, listFleetReminders, listGrants, listRecipients, listReminders, listVehicles, logbookUrl, mileageClaimUrl, NotFoundError, OfflineError, readEntry, readGaps, readInbox, readKpis, readTimeline, readYear, recordReading, recordTrip, RefusedError, reminderTemplates, removeRecipient, resetReading, restoreEntry, revokeGrant, searchGrantees, searchUsers, restoreVehicle, savePreferences, snoozeReminder, stickerUrl, thumbnailUrl, updateEntry, updateVehicle } from './api.js'
+import { addGrant, addRecipient, attachDocument, BookingConflictError, cancelBooking, ChangedError, changeBooking, changeGrant, checkIn, checkOut, closeGap, createBooking, ImportRefusedError, listBookings, ConflictError, previewImport, runImport, undoImport, createReminder, createVehicle, csvUrl, deleteEntry, deleteVehicle, detachDocument, dismissReminder, documentUrl, energyPrefill, expensePrefill, fetchDocument, getPreferences, getVehicle, leaveVehicle, LockedError, maintenancePrefill, readHeld, recordEnergy, recordExpense, recordMaintenance, tripPrefill, restoreDocument, listDocuments, listFleetReminders, listGrants, listRecipients, listReminders, listVehicles, logbookUrl, mileageClaimUrl, NotFoundError, OfflineError, readEntry, readGaps, readInbox, readKpis, readStatistics, readTimeline, recordReading, recordTrip, RefusedError, reminderTemplates, removeRecipient, resetReading, restoreEntry, revokeGrant, searchGrantees, searchUsers, restoreVehicle, savePreferences, snoozeReminder, stickerUrl, thumbnailUrl, updateEntry, updateVehicle } from './api.js'
 
 vi.mock('@nextcloud/router', () => ({
 	generateUrl: (/** @type {string} */ path) => `/index.php${path}`,
@@ -206,15 +206,23 @@ describe('readKpis', () => {
 	})
 })
 
-describe('readYear', () => {
-	it('asks for one year in the zone it names, and says whether VAT is reclaimed', async () => {
-		const fetch = answers(200, { year: {}, months: [] })
+describe('readStatistics', () => {
+	it('asks for one vehicle\'s range in the zone it names, and says whether VAT is reclaimed', async () => {
+		const fetch = answers(200, { bucket: 'month', buckets: [], vehicles: [], costs: [], co2: null })
 
-		await readYear(vehicle.uuid, { year: '2026', tz: 'Europe/Berlin', net: false })
+		await readStatistics({ vehicle: vehicle.uuid, from: '2026-01-01', to: '2027-01-01', tz: 'Europe/Berlin', net: false })
 
 		const [url, options] = fetch.mock.calls[0]
-		expect(url).toBe(`/index.php/apps/nextfleet/api/vehicles/${vehicle.uuid}/costs/2026?tz=Europe%2FBerlin&net=false`)
+		expect(url).toBe(`/index.php/apps/nextfleet/api/statistics?vehicle=${vehicle.uuid}&from=2026-01-01&to=2027-01-01&tz=Europe%2FBerlin&net=false`)
 		expect(options.method).toBe('GET')
+	})
+
+	it('names no vehicle and no days for all of every vehicle', async () => {
+		const fetch = answers(200, { bucket: 'year', buckets: [], vehicles: [], costs: [], co2: null })
+
+		await readStatistics({ vehicle: '', tz: 'UTC', net: true })
+
+		expect(fetch.mock.calls[0][0]).toBe('/index.php/apps/nextfleet/api/statistics?tz=UTC&net=true')
 	})
 })
 

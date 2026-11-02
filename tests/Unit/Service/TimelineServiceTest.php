@@ -8,6 +8,7 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Unit\Service;
 
+use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\Energy;
 use OCA\NextFleet\Db\EnergyMapper;
 use OCA\NextFleet\Db\Expense;
@@ -26,12 +27,16 @@ use OCA\NextFleet\Jurisdiction\ILogbookRules;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCA\NextFleet\Service\Completeness;
 use OCA\NextFleet\Service\ConsumptionService;
+use OCA\NextFleet\Service\CostsShown;
 use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\EnteredBy;
 use OCA\NextFleet\Service\Gaps;
 use OCA\NextFleet\Service\TimelineService;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
+use OCP\AppFramework\Db\DoesNotExistException;
+use OCP\IGroupManager;
+use OCP\IUserManager;
 use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 use Psr\Container\ContainerInterface;
@@ -89,9 +94,13 @@ class TimelineServiceTest extends TestCase {
 			'expenses' => [ExpenseMapper::class, Expense::class],
 		] as $property => [$mapper, $entity]) {
 			$this->$property = $this->createMock($mapper);
+			// Expenses may be narrowed to one author, in the query, so a page stays a page.
 			$this->$property->method('findBefore')->willReturnCallback(
-				fn (int $vehicleId, int $at, int $id, int $limit): array => $this->before(
-					array_values(array_filter($this->costRows, static fn (object $row): bool => $row instanceof $entity)),
+				fn (int $vehicleId, int $at, int $id, int $limit, ?string $createdBy = null): array => $this->before(
+					array_values(array_filter(
+						$this->costRows,
+						static fn (object $row): bool => $row instanceof $entity && ($createdBy === null || $row->getCreatedBy() === $createdBy),
+					)),
 					$vehicleId,
 					[$at, $id],
 					$limit,
@@ -173,7 +182,7 @@ class TimelineServiceTest extends TestCase {
 		);
 
 		// Who reaches which vehicle is VehicleAccessTest's; what this states is which operation
-		// reading the timeline asks the gate for.
+		// reading the timeline asks the gate for, and what the gate leaves on the vehicle.
 		$this->fleet = $this->createMock(VehicleService::class);
 		$this->fleet->method('reach')->willReturnCallback(
 			function (string $userId, string $operation): Vehicle {
@@ -186,7 +195,13 @@ class TimelineServiceTest extends TestCase {
 					throw new AccessDeniedException();
 				}
 
-				return Vehicle::fromRow(['id' => self::VEHICLE_ID, 'uuid' => self::VEHICLE] + $this->vehicleRow);
+				$vehicle = Vehicle::fromRow(['id' => self::VEHICLE_ID, 'uuid' => self::VEHICLE] + $this->vehicleRow);
+				$vehicle->setMay(match ($userId) {
+					self::OWNER => ['view', 'log', 'edit', 'delete', 'own', 'costs'],
+					default => $vehicle->sharesCosts() ? ['view', 'log', 'costs'] : ['view', 'log'],
+				});
+
+				return $vehicle;
 			},
 		);
 	}
@@ -245,6 +260,8 @@ class TimelineServiceTest extends TestCase {
 			new ConsumptionService($this->energy, $this->readings),
 			// Who entered a row is TimelineTest's: it reads accounts and grants.
 			$this->createMock(EnteredBy::class),
+			// The real rule: it reads only what the gate left on the vehicle.
+			new CostsShown(new VehicleAccess($this->createMock(AccessMapper::class), $this->createMock(IUserManager::class), $this->createMock(IGroupManager::class))),
 		);
 	}
 
@@ -815,6 +832,78 @@ class TimelineServiceTest extends TestCase {
 		$this->expectException(AccessDeniedException::class);
 
 		$this->service()->page(self::STRANGER, self::VEHICLE, null, null);
+	}
+
+	/**
+	 * With the costs kept from drivers, a driver reads every row but none of the money others
+	 * entered: a fill-up and a record lose their amounts, an expense, which is nothing but its
+	 * amount, is not on the page. What they entered themselves stays whole.
+	 */
+	public function testADriverReadsNoAmountOthersEnteredWhileTheCostsAreKeptFromThem(): void {
+		$this->vehicleRow = ['costs_shared' => false, 'energy_types' => '["petrol"]'];
+		$theirs = $this->fillUp(1750000000, total: 7500);
+		$theirs->setUnitPrice(1790);
+		$this->work(1750100000)->setCost(42000);
+		$this->expense(1750200000);
+		$mine = $this->fillUp(1750300000, total: 6100);
+		$myExpense = $this->expense(1750400000);
+		$mine->setCreatedBy(self::DRIVER);
+		$myExpense->setCreatedBy(self::DRIVER);
+
+		$page = $this->service()->page(self::DRIVER, self::VEHICLE, null, null);
+
+		$this->assertSame(['expense', 'energy', 'maintenance', 'energy'], array_column($page['rows'], 'type'));
+		$this->assertSame([1200, 6100, null, null, null], [
+			$page['rows'][0]['expense']->getAmount(),
+			$page['rows'][1]['energy']->getTotal(),
+			$page['rows'][2]['maintenance']->getCost(),
+			$page['rows'][3]['energy']->getTotal(),
+			$page['rows'][3]['energy']->getUnitPrice(),
+		]);
+		// The rows read are not the rows handed out: nothing withheld can be written back.
+		$this->assertSame(7500, $theirs->getTotal());
+		// Withheld after the flags are read, so a priced fill-up is not flagged as having no total.
+		$this->assertSame([], $page['rows'][3]['flags']);
+	}
+
+	/** The chip asks the same query, so a page of somebody else's expenses is no page of nothing. */
+	public function testTheCostsChipShowsADriverOnlyTheirOwnExpensesWhileTheCostsAreKept(): void {
+		$this->vehicleRow = ['costs_shared' => false];
+		for ($i = 0; $i < TimelineService::PAGE + 1; $i++) {
+			$this->expense(1750100000 + $i);
+		}
+		$mine = $this->expense(1750000000);
+		$mine->setCreatedBy(self::DRIVER);
+
+		$page = $this->service()->page(self::DRIVER, self::VEHICLE, TimelineService::EXPENSE, null);
+
+		$this->assertSame(['expense ' . $mine->getUuid()], $this->shown($page));
+		$this->assertNull($page['next']);
+	}
+
+	/** Shared, as every vehicle is until its owner says otherwise, the driver reads what the owner reads. */
+	public function testADriverReadsEveryAmountWhileTheCostsAreShared(): void {
+		$this->fillUp(1750000000, total: 7500);
+		$this->expense(1750100000);
+
+		$page = $this->service()->page(self::DRIVER, self::VEHICLE, null, null);
+
+		$this->assertSame([1200, 7500], [$page['rows'][0]['expense']->getAmount(), $page['rows'][1]['energy']->getTotal()]);
+	}
+
+	/** One row is read as the page reads it; an expense kept from the reader is not there. */
+	public function testOneRowKeepsTheAmountsThePageKeeps(): void {
+		$this->vehicleRow = ['costs_shared' => false];
+		$fill = $this->fillUp(1750000000, total: 7500);
+		$expense = $this->expense(1750100000);
+		$this->energy->method('findOnVehicle')->willReturn($fill);
+		$this->expenses->method('findOnVehicle')->willReturn($expense);
+
+		$this->assertNull($this->service()->one(self::DRIVER, self::VEHICLE, TimelineService::ENERGY, $fill->getUuid())['energy']->getTotal());
+		$this->assertSame(7500, $this->service()->one(self::OWNER, self::VEHICLE, TimelineService::ENERGY, $fill->getUuid())['energy']->getTotal());
+
+		$this->expectException(DoesNotExistException::class);
+		$this->service()->one(self::DRIVER, self::VEHICLE, TimelineService::EXPENSE, $expense->getUuid());
 	}
 
 	/**

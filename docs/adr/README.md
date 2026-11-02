@@ -15,6 +15,7 @@ A decision that no longer applies is removed, and the one that replaced it says 
 | [0008](0008-erasing-a-driver-pseudonymises.md) | Erasing a driver pseudonymises, it does not delete |
 | [0009](0009-the-ocs-api-v1-is-the-public-contract.md) | The OCS API v1 is the public contract |
 | [0010](0010-the-vehicle-type-drives-rules-the-eu-codes-are-data.md) | The vehicle type drives rules, the EU codes are data |
+| [0011](0011-a-small-firm-may-opt-into-approval-and-hidden-costs.md) | A small firm may opt into approval and hidden costs |
 
 This is the end of the developer path.
 Back to the [developer guide](../developer/README.md).

@@ -27,6 +27,11 @@ class VehicleAccess {
 	public const DELETE = 'delete';
 	/** The owner's alone: access, and whether the vehicle exists. */
 	public const OWN = 'own';
+	/**
+	 * See what the vehicle costs: every amount, every sum, and what it was bought for. Without it
+	 * a reader still sees the amounts they entered (mayCost()).
+	 */
+	public const COSTS = 'costs';
 
 	/**
 	 * Every operation, in the order an answer lists them, so the same caller always gets the
@@ -34,16 +39,18 @@ class VehicleAccess {
 	 *
 	 * @var list<string>
 	 */
-	private const OPERATIONS = [self::VIEW, self::LOG, self::EDIT, self::DELETE, self::OWN];
+	private const OPERATIONS = [self::VIEW, self::LOG, self::EDIT, self::DELETE, self::OWN, self::COSTS];
 
 	/**
 	 * What each role of `fleet_access` covers. No role covers `own`: the car is the owner's, so
-	 * a manager can neither grant nor delete it, and cannot promote themselves to either.
+	 * a manager can neither grant nor delete it, and cannot promote themselves to either. The
+	 * manager handles the costs; the other roles see them only while the vehicle shares them
+	 * (shared()).
 	 *
 	 * @var array<string, list<string>>
 	 */
 	private const ROLES = [
-		'manager' => [self::VIEW, self::LOG, self::EDIT, self::DELETE],
+		'manager' => [self::VIEW, self::LOG, self::EDIT, self::DELETE, self::COSTS],
 		'driver' => [self::VIEW, self::LOG],
 		'viewer' => [self::VIEW],
 	];
@@ -90,10 +97,39 @@ class VehicleAccess {
 	/**
 	 * Whether the user may change, cancel, check out or check in one Booking: anybody's with `edit`,
 	 * their own with `log` (CONTEXT.md, Pool). mayChange()'s rule with the booker in the author's
-	 * place, so a booking needs no sixth operation.
+	 * place, so a booking needs no operation of its own.
 	 */
 	public function mayBooking(string $userId, Vehicle $vehicle, string $bookerId): bool {
 		return $this->mayChange($userId, self::EDIT, $vehicle, $bookerId);
+	}
+
+	/**
+	 * Whether the user answers the bookings of a vehicle that asks for approval: the owner and
+	 * the managers, who change anybody's booking anyway.
+	 */
+	public function mayApprove(string $userId, Vehicle $vehicle): bool {
+		return $this->mayChange($userId, self::EDIT, $vehicle, null);
+	}
+
+	/**
+	 * Whether the user sees every driver's figures on the Statistics screen, not only their own:
+	 * the owner and the managers, who change anybody's trip anyway.
+	 */
+	public function mayCompareDrivers(string $userId, Vehicle $vehicle): bool {
+		return $this->mayChange($userId, self::EDIT, $vehicle, null);
+	}
+
+	/**
+	 * Whether the user sees the amount on one Entry: anybody's with `costs`, one they entered
+	 * whatever their role says now. Read off the gate's answer, as mayChange() is.
+	 */
+	public function mayCost(string $userId, Vehicle $vehicle, ?string $createdBy): bool {
+		if (self::erased($userId)) {
+			return false;
+		}
+		$held = $vehicle->getMay();
+
+		return in_array(self::COSTS, $held, true) || ($held !== [] && $createdBy === $userId);
 	}
 
 	/**
@@ -116,12 +152,13 @@ class VehicleAccess {
 			$this->grants->findGrants((int)$vehicle->getId(), $userId, $this->groupIdsOf($userId)),
 		);
 
-		return self::covered($roles);
+		return self::shared(self::covered($roles), $vehicle);
 	}
 
 	/**
-	 * Every vehicle this user may look at through a grant, by id, with what they may do on it.
-	 * What they own is not in it: that is a column on the vehicle itself.
+	 * Every vehicle this user may look at through a grant, by id, with what their roles cover on
+	 * it; what the vehicle's own switch adds is listed()'s. What they own is not in it: that is a
+	 * column on the vehicle itself.
 	 *
 	 * The roles travel with the query, so the same table decides here as in may(): a row whose
 	 * role covers nothing must not list a vehicle with its plate, its VIN and what it cost.
@@ -155,7 +192,22 @@ class VehicleAccess {
 			return self::OPERATIONS;
 		}
 
-		return $reachable[(int)$vehicle->getId()] ?? [];
+		return self::shared($reachable[(int)$vehicle->getId()] ?? [], $vehicle);
+	}
+
+	/**
+	 * What a grant holds once the vehicle has its say: `costs` to every role while the owner
+	 * shares them. Only to a grant that holds something, so the switch opens nothing by itself.
+	 *
+	 * @param list<string> $held
+	 * @return list<string>
+	 */
+	private static function shared(array $held, Vehicle $vehicle): array {
+		if ($held === [] || !$vehicle->sharesCosts()) {
+			return $held;
+		}
+
+		return array_values(array_intersect(self::OPERATIONS, [...$held, self::COSTS]));
 	}
 
 	/**
@@ -181,9 +233,11 @@ class VehicleAccess {
 	}
 
 	/**
+	 * The roles whose grant covers `$operation`.
+	 *
 	 * @return list<string>
 	 */
-	private static function rolesCovering(string $operation): array {
+	public static function rolesCovering(string $operation): array {
 		return array_values(array_keys(array_filter(
 			self::ROLES,
 			static fn (array $operations): bool => in_array($operation, $operations, true),

@@ -62,6 +62,7 @@ class MaintenanceService {
 		private ReminderService $reminders,
 		private ReminderMapper $reminderRows,
 		private AfterCommit $after,
+		private CostsShown $costs,
 	) {
 	}
 
@@ -81,7 +82,8 @@ class MaintenanceService {
 			$fields,
 			$this->records,
 			static fn (Maintenance $row): bool => $row->getVehicleId() === (int)$vehicle->getId(),
-			fn (Maintenance $row): array => self::wire($row, $this->closed($row)),
+			// The uuid may name somebody else's row, which the reader sees as the timeline shows it.
+			fn (Maintenance $row): array => self::wire($this->costs->amounts($userId, $vehicle, $row), $this->closed($row)),
 		);
 
 		// Retried for the reason TripService::record() gives. The replay builds a fresh row. Run

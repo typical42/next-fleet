@@ -53,7 +53,19 @@ class GrantService {
 		private IDBConnection $db,
 		private Pending $pending,
 		private LoggerInterface $logger,
+		private SyncEpoch $epoch,
 	) {
+	}
+
+	/**
+	 * After a grant's role changed on a vehicle that keeps its costs: what a grantee may read of
+	 * rows already synced changed with it, and no row did (VehicleAccess::COSTS). Where the
+	 * costs are shared, every role reads the same, and no client is sent back to the start.
+	 */
+	private function resync(Vehicle $vehicle): void {
+		if (!$vehicle->sharesCosts()) {
+			$this->epoch->reset();
+		}
 	}
 
 	/**
@@ -135,6 +147,7 @@ class GrantService {
 			}
 			$this->notices->tell($vehicle, $new);
 		}
+		$this->resync($vehicle);
 
 		return $this->of($vehicle);
 	}
@@ -158,6 +171,7 @@ class GrantService {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$this->recast($this->grants->findOnVehicle((int)$vehicle->getId(), $grantUuid), $role);
 		}, $this->db);
+		$this->resync($vehicle);
 
 		return $this->of($vehicle);
 	}
@@ -185,6 +199,7 @@ class GrantService {
 		}, $this->db);
 		$this->notices->withdraw($grantUuid);
 		$this->unremind((int)$vehicle->getId(), $pruned);
+		$this->resync($vehicle);
 
 		return $this->of($vehicle);
 	}
@@ -216,6 +231,7 @@ class GrantService {
 		}, $this->db);
 		$this->notices->withdraw($grant->getUuid());
 		$this->unremind((int)$vehicle->getId(), $pruned);
+		$this->resync($vehicle);
 
 		return $this->holding($userId, $vehicle);
 	}
@@ -315,14 +331,17 @@ class GrantService {
 		$failed = null;
 		foreach ($this->grants->findByGroup($groupId, $removedAt) as $grant) {
 			try {
+				/** @var Vehicle $vehicle */
 				/** @var list<string> $pruned */
-				$pruned = $this->atomicRetry(function () use ($grant, $userId): array {
+				[$vehicle, $pruned] = $this->atomicRetry(function () use ($grant, $userId): array {
 					$vehicleId = $grant->getVehicleId();
 					$this->vehicles->hold($vehicleId);
+					$vehicle = $this->vehicles->findAnyById($vehicleId);
 
-					return $this->prune($this->vehicles->findAnyById($vehicleId), [$userId]);
+					return [$vehicle, $this->prune($vehicle, [$userId])];
 				}, $this->db);
 				$this->unremind($grant->getVehicleId(), $pruned);
+				$this->resync($vehicle);
 			} catch (\Throwable $e) {
 				$failed ??= $e;
 			}
@@ -340,15 +359,16 @@ class GrantService {
 	 * @throws \OCP\DB\Exception
 	 */
 	private function revokeGone(Access $grant, ?array $members): void {
+		/** @var Vehicle|null $vehicle */
 		/** @var list<string> $pruned */
-		$pruned = $this->atomicRetry(function () use ($grant, $members): array {
+		[$vehicle, $pruned] = $this->atomicRetry(function () use ($grant, $members): array {
 			$vehicleId = $grant->getVehicleId();
 			$this->vehicles->hold($vehicleId);
 			// Read again under the hold, for a token no owner's revoke has moved since.
 			try {
 				$grant = $this->grants->findOnVehicle($vehicleId, $grant->getUuid());
 			} catch (DoesNotExistException) {
-				return [];
+				return [null, []];
 			}
 			$vehicle = $this->vehicles->findAnyById($vehicleId);
 			$saw = $members === null
@@ -356,10 +376,13 @@ class GrantService {
 				: [...$this->seeing($vehicle), ...$members];
 			$this->grants->softDelete($grant, $grant->getUpdatedAt());
 
-			return $this->prune($vehicle, $saw);
+			return [$vehicle, $this->prune($vehicle, $saw)];
 		}, $this->db);
 		$this->notices->withdraw($grant->getUuid());
 		$this->unremind($grant->getVehicleId(), $pruned);
+		if ($vehicle !== null) {
+			$this->resync($vehicle);
+		}
 	}
 
 	/**

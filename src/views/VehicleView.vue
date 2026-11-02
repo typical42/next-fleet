@@ -132,7 +132,7 @@ useHotKey('n', () => {
 					{{ t('nextfleet', 'New entry') }}
 				</NcButton>
 				<!-- The shell swaps the screen (src/App.vue). -->
-				<NcButton @click="$emit('costs')">
+				<NcButton v-if="may(vehicle, 'costs')" @click="$emit('costs')">
 					{{ t('nextfleet', 'Costs') }}
 				</NcButton>
 				<NcButton v-if="may(vehicle, 'edit')" @click="editing = true">

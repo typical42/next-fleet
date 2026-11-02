@@ -17,10 +17,10 @@ import VehicleSheet from './components/VehicleSheet.vue'
 import { deleteVehicle, getPreferences, listVehicles, readInbox } from './services/api.js'
 import { useVehiclesStore } from './store/index.js'
 import { usePreferencesStore } from './store/preferences.js'
-import CostsView from './views/CostsView.vue'
 import InboxView from './views/InboxView.vue'
 import OverviewView from './views/OverviewView.vue'
 import ReportsView from './views/ReportsView.vue'
+import StatisticsView from './views/StatisticsView.vue'
 import VehicleView from './views/VehicleView.vue'
 
 // The store stays real: which vehicles the shell can show is its rule. Every export a mount reaches
@@ -217,30 +217,42 @@ describe('the app shell', () => {
 		expect(reports(wrapper).props('active')).toBe(false)
 	})
 
-	it('opens the costs of the vehicle shown, and goes back to it', async () => {
+	it('opens the statistics on every vehicle of the whole fleet from the navigation', async () => {
+		const SOLD = { ...VEHICLE, uuid: 'v-2', lifecycle: 'disposed' }
+		vi.mocked(listVehicles).mockResolvedValue([VEHICLE, SOLD])
+		const wrapper = await shell()
+
+		await entry(wrapper, 'Statistics').vm.$emit('click')
+
+		expect(wrapper.findComponent(VehicleView).exists()).toBe(false)
+		/** @type {any} */
+		const screen = wrapper.findComponent(StatisticsView)
+		expect(screen.props('vehicle')).toBe('')
+		expect(screen.props('vehicles').map((/** @type {{ uuid: string }} */ one) => one.uuid)).toEqual([VEHICLE.uuid, SOLD.uuid])
+		expect(entry(wrapper, 'Statistics').props('active')).toBe(true)
+	})
+
+	it('opens the statistics on the vehicle shown from its costs link', async () => {
 		const wrapper = await shell()
 
 		await wrapper.findComponent(VehicleView).vm.$emit('costs')
 
 		expect(wrapper.findComponent(VehicleView).exists()).toBe(false)
 		/** @type {any} */
-		const costs = wrapper.findComponent(CostsView)
-		expect(costs.props('vehicle')).toEqual(VEHICLE)
-
-		await costs.vm.$emit('back')
-
-		expect(wrapper.findComponent(CostsView).exists()).toBe(false)
-		expect(wrapper.findComponent(VehicleView).exists()).toBe(true)
+		const screen = wrapper.findComponent(StatisticsView)
+		expect(screen.props('vehicle')).toBe(VEHICLE.uuid)
+		expect(entry(wrapper, 'Statistics').props('active')).toBe(true)
 	})
 
-	it('leaves the costs for the vehicle picked in the navigation', async () => {
+	it('leaves the statistics for the vehicle picked in the navigation', async () => {
 		const wrapper = await shell()
 		await wrapper.findComponent(VehicleView).vm.$emit('costs')
 
 		await wrapper.findComponent(VehicleList).vm.$emit('select', VEHICLE.uuid)
 
-		expect(wrapper.findComponent(CostsView).exists()).toBe(false)
+		expect(wrapper.findComponent(StatisticsView).exists()).toBe(false)
 		expect(wrapper.findComponent(VehicleView).exists()).toBe(true)
+		expect(entry(wrapper, 'Statistics').props('active')).toBe(false)
 	})
 
 	/** Neither a vehicle nor the reports may be a screen only a reload leaves. */
@@ -340,7 +352,7 @@ describe('the app shell', () => {
 		})
 		await flushPromises()
 
-		expect(wrapper.findAll('.item').map((one) => one.text())).toEqual(['Overview', 'Inbox3', 'Reports', 'Settings'])
+		expect(wrapper.findAll('.item').map((one) => one.text())).toEqual(['Overview', 'Inbox3', 'Statistics', 'Reports', 'Settings'])
 	})
 
 	it('shows that the fleet is loading, not that it is empty', async () => {

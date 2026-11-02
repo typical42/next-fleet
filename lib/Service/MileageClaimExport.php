@@ -32,15 +32,15 @@ class MileageClaimExport {
 
 	/**
 	 * The printable page, or null where there is no claim: the jurisdiction states no rate or
-	 * prints no claim, or the vehicle counts hours. Reading it takes what reading the timeline
-	 * takes.
+	 * prints no claim, or the vehicle counts hours. Reading it takes seeing the costs, because it
+	 * puts a money value on the trips.
 	 *
-	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not see this vehicle
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not see this vehicle's costs
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCP\DB\Exception
 	 */
 	public function year(string $userId, string $vehicleUuid, int $year): ?string {
-		$vehicle = $this->fleet->reach($userId, VehicleAccess::VIEW, $vehicleUuid);
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::COSTS, $vehicleUuid);
 		$jurisdiction = $this->jurisdictions->get($vehicle->getJurisdiction());
 		$rates = $jurisdiction->rates();
 		$renderer = $jurisdiction->claimRenderer();

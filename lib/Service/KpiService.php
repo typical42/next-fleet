@@ -57,9 +57,9 @@ class KpiService {
 	}
 
 	/**
-	 * The Costs screen's year: the header's figures for all of it, and each month's cost. The
-	 * months are cut at midnight in the zone the client names, for the reason `of()` takes its
-	 * period from the client. A month with no rows has the null cost `CostService` gives any empty
+	 * One year of a vehicle, as v1 serves it: the header's figures for all of it, and each month's
+	 * cost. The months are cut at midnight in the zone the client names, for the reason `of()`
+	 * takes its period from the client. A month with no rows has the null cost `CostService` gives any empty
 	 * period. The year's CO₂ is read at the reader's own grid factor: whoever looks at a shared
 	 * car states the tariff they know.
 	 *
@@ -90,6 +90,9 @@ class KpiService {
 		}
 		// The year last, so its edges are the months' and cost no lookup of their own.
 		$costs = $this->cost->periods($vehicle, [...$periods, [$starts[0], $starts[12]]], $net);
+		if (!CostsShown::all($vehicle)) {
+			$costs = array_map(CostService::withheld(...), $costs);
+		}
 		$months = [];
 		foreach ($periods as $i => [$from, $to]) {
 			$months[] = ['month' => $i + 1, 'from' => $from, 'to' => $to, 'cost' => $costs[$i]];
@@ -103,12 +106,18 @@ class KpiService {
 	}
 
 	/**
+	 * Without a sum to a reader the costs are kept from (CostService::withheld()): an answer
+	 * rather than a refusal, because what the car used is theirs to see.
+	 *
 	 * @param Cost|null $cost the period's cost when the caller read it already
 	 * @return Figures
 	 * @throws \OCP\DB\Exception
 	 */
 	private function figures(Vehicle $vehicle, int $from, int $to, bool $net, ?array $cost = null): array {
 		$cost ??= $this->cost->of($vehicle, $from, $to, $net);
+		if (!CostsShown::all($vehicle)) {
+			$cost = CostService::withheld($cost);
+		}
 		$measured = $this->consumption->measuredOnEachCounter($vehicle, $from, $to);
 		$perDistance = $measured[OdoReading::MAIN];
 		$perHour = $measured[OdoReading::SECOND] ?? null;

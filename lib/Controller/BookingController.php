@@ -8,6 +8,7 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Controller;
 
+use OCA\NextFleet\Db\Booking;
 use OCA\NextFleet\Service\BookingService;
 use OCP\AppFramework\Controller;
 use OCP\AppFramework\Http;
@@ -88,5 +89,35 @@ class BookingController extends Controller {
 	#[UserRateLimit(limit: 60, period: 60)]
 	public function checkIn(string $uuid, string $booking): DataResponse {
 		return $this->answer(fn (): DataResponse => new DataResponse($this->service->checkIn($this->userId(), $uuid, $booking, $this->request->getParams())));
+	}
+
+	/**
+	 * The three answers to a booking that waits for one (BookingService::answer()).
+	 *
+	 * @param string $booking the booking's uuid
+	 */
+	#[NoAdminRequired]
+	#[UserRateLimit(limit: 60, period: 60)]
+	public function approve(string $uuid, string $booking): DataResponse {
+		return $this->answered($uuid, $booking, Booking::APPROVED);
+	}
+
+	/** @param string $booking the booking's uuid */
+	#[NoAdminRequired]
+	#[UserRateLimit(limit: 60, period: 60)]
+	public function ask(string $uuid, string $booking): DataResponse {
+		return $this->answered($uuid, $booking, Booking::ASKED);
+	}
+
+	/** @param string $booking the booking's uuid */
+	#[NoAdminRequired]
+	#[UserRateLimit(limit: 60, period: 60)]
+	public function decline(string $uuid, string $booking): DataResponse {
+		return $this->answered($uuid, $booking, Booking::DECLINED);
+	}
+
+	/** @param value-of<BookingService::ANSWERS> $answer */
+	private function answered(string $uuid, string $booking, string $answer): DataResponse {
+		return $this->checked(fn (int $token): array => $this->service->answer($this->userId(), $uuid, $booking, $token, $answer, $this->request->getParams()));
 	}
 }

@@ -187,6 +187,51 @@ It writes no Reading and is on no timeline, logbook or report.
   The list fills them for all vehicles with one query each, never one per vehicle.
   Overdue is the client's to say.
 
+### Booking approval
+
+The owner may make a vehicle's bookings wait for an answer: `booking_approval`, off by default ([ADR 0011](adr/0011-a-small-firm-may-opt-into-approval-and-hidden-costs.md)).
+
+- **The answer sits beside the state, not in it.**
+  A booking waiting for one is `booked` with `approval: requested`, so a client that knows the four states still reads it.
+  `approval` is null where the vehicle asks for none.
+- **The owner and the managers answer** (`VehicleAccess::mayApprove`): approve, ask back, or decline, each with an optional comment.
+  A booking they make is approved by making it.
+  Declined is `cancelled`, so the span is free; asked back waits for the booker and can still be answered.
+  Each answer takes the `updated_at` the approver read, so nobody answers a booking that moved since.
+- **A request holds its span**, as any `booked` booking does, and the 409 says so with `approval`.
+  It is not checked out until it is approved.
+  Approvers may answer it until its end; then `PendingJob` declines it within the hour, by nobody and with no comment.
+- **An answer is to a span.**
+  A new start or end makes the booking a request again, unless an approver moves it; a new purpose keeps the answer.
+- ***Take it now* asks nobody** while the car is back by midnight on the booker's clock (the offset the sheet sends).
+  Kept longer, it is a request, and the sheet leaves it booked.
+- **Turning the switch off approves** every booking that waits, as the owner.
+- **The comment is the booker's and the approvers'.** Everyone else reads `approval_comment` as null.
+- **Notices:** a request goes to the owner and the managers whatever the list says; each answer goes to the booker.
+  A notice shows only while the booking's approval is still the one it was sent for, and a request asked again takes the earlier notices back.
+  The list hears of a booking once it is approved: `booked` the first time, `changed` after a new span is approved again (`fleet_bookings.announced`).
+  It hears `cancelled` only of a booking it heard of; a request declined or never answered is no news to it.
+
+### Booking notices
+
+Nextcloud notifications only, sent after the commit by `BookingNotices`.
+
+- **The booker hears of a cancel by somebody else.**
+- **The vehicle's list hears the events the owner ticked** in `booking_notices`: `booked`, `taken`, `returned`, `cancelled`, `changed`.
+  A new vehicle hears `booked` and `taken`.
+  A booking that starts within five minutes of now is *Take it now*, so it is `taken`, not `booked`.
+  Only a new start or end is `changed`; a new purpose alone is not.
+- **The list is `fleet_booking_recipients`**: accounts and groups, the owner's to write, a manager's to read.
+  An empty list means the owner.
+  A group is its members when the event happens.
+- **Nobody hears of their own action**, and a booker never hears of a cancel twice.
+- **Only those who see the vehicle are told**, then and when they read it.
+  Being on the list grants nothing, so a member who lost the car needs no pruning.
+- **A notice stores no name.**
+  It carries the span, or the counter and level of a return, as they were.
+  The notifier names the booker from the booking when the list is read, so an erasure reaches it.
+- Deleting the vehicle takes back every notice of its bookings.
+
 ## Time
 
 Every user-facing instant is two facts: the UTC instant and `<name>_off`, the offset in minutes where it happened ([ADR 0007](adr/0007-time-is-an-instant-plus-an-offset.md)).
@@ -334,9 +379,9 @@ A segment that ran backwards hides an unanswered question, so the period has no 
   The header shows it as zero and compares nothing with it.
 - Under "I reclaim VAT", each row counts net of its own rate.
   A row without a rate counts gross, and the figure says so.
-- The Costs screen's year is the same figure per month.
-  The client names its time zone, and the server cuts the months at that zone's midnight.
-  The query count does not grow with the history (`KpiTest`).
+- The Statistics screen shows the same figure per month or year of its range (`StatisticsService`, [API](api.md#statistics)).
+  The client names its time zone, and the server cuts the buckets at that zone's midnight.
+  One `CostService::periods()` call per vehicle serves every bucket, so the query count does not grow with the history (`KpiTest`).
 
 **TCO** adds depreciation: (purchase − residual) ÷ distance over the holding.
 An empty field hides it.
@@ -548,9 +593,12 @@ The strongest row wins, and no row narrows another.
 | `log` | driver, manager | Add an entry, change your own |
 | `edit` | manager | The vehicle, reminders, recipients, its own documents, any entry |
 | `delete` | manager | Delete any entry |
-| `own` | the owner alone | Access; delete and restore the vehicle |
+| `own` | the owner alone | Access; delete and restore the vehicle; whether the costs are shared |
+| `costs` | manager; viewer and driver while `costs_shared` | Every amount, sum and price, and the mileage claim |
 
 - A route about one vehicle asks `may`.
+- Without `costs`, a reader still sees the amounts they entered (`VehicleAccess::mayCost`).
+  `CostsShown` takes the rest off each door: others' fill-up and record amounts null, others' expenses dropped, every sum null ([API](api.md#costs)).
   A list asks `reachable`, one query instead of one per row.
 - An Entry route asks `log`, then `VehicleService::change`: `edit` or `delete`, or `log` alone for the caller's own Entry.
   A booking does the same with the booker in the author's place (`VehicleAccess::mayBooking`).
@@ -595,11 +643,12 @@ There is no upload path.
 
 - **Who attaches.**
   Listing takes `view`.
+  A paper on an Entry whose amounts are kept from the reader is not listed, synced or served (`CostsShown::showsPaper()`, [costs](api.md#costs)): a receipt shows the price.
   Attaching, removing and restoring take `log` plus the rule of the row the paper hangs on, or `edit` for the vehicle's own papers.
   A driver files the receipt of their own fill-up.
   The registration stays a manager's.
 - **Only the attacher's own file.**
-  The download serves the file to everyone who may view the vehicle, so attaching is where the file's own access is checked.
+  The download serves the file to everyone who may view the vehicle and list the paper, so attaching is where the file's own access is checked.
   A shared file is refused: the download would outlive a revoked share.
   A group folder or external storage is refused: both name whoever asks as the owner (`OwnFiles::owns`).
 - Nothing edits a document, so there is no token.

@@ -175,6 +175,10 @@ class SeedCommand extends Command {
 				'jurisdiction' => self::HOME_COUNTRY,
 				'lifecycle' => 'active',
 				'notes' => 'Cluster replaced under warranty; the counter starts over.',
+				// The management's car: its drivers see what it used, not what it cost, and wait
+				// for the owner's answer before they have it.
+				'costs_shared' => false,
+				'booking_approval' => true,
 			],
 			// A counter that goes backwards because the instrument cluster was swapped: the row
 			// is kept and flagged, and the timeline asks about it (rule 3). The swap and a reading
@@ -409,11 +413,16 @@ class SeedCommand extends Command {
 	 *
 	 * And one booking of theirs, tomorrow morning in Berlin's hours: ahead of any day it is
 	 * seeded on, so the Bookings section has a coming one and the overview a pool.
+	 *
+	 * And the Volvo, whose costs are kept from its drivers, so the account sees a car without them,
+	 * with a booking of theirs that afternoon waiting for the owner's answer.
 	 */
 	private const GRANTED = [
 		'plate' => self::DISTRICT . 'DE 100',
+		'costs_kept' => self::DISTRICT . 'PH 200',
 		'trip' => ['days' => 3, 'minutes' => 45, 'start_odo' => 112180, 'end_odo' => 112236, 'category' => 'business', 'from_label' => 'Stuttgart, Büro', 'to_label' => 'Ludwigsburg, Schneider Logistik', 'purpose' => 'Lieferung', 'partner' => 'Schneider Logistik GmbH'],
 		'booking' => ['from' => 9, 'to' => 12, 'purpose' => 'Kundentermin Esslingen'],
+		'request' => ['from' => 14, 'to' => 17, 'purpose' => 'Messe Stuttgart'],
 	];
 
 	/**
@@ -555,7 +564,9 @@ class SeedCommand extends Command {
 		if ($driver !== null) {
 			$uuid = $uuids[self::GRANTED['plate']];
 			try {
-				$this->grants->grant($userId, $uuid, ['grantee' => $driver, 'grantee_type' => 'user', 'role' => 'driver']);
+				foreach ([$uuid, $uuids[self::GRANTED['costs_kept']]] as $granted) {
+					$this->grants->grant($userId, $granted, ['grantee' => $driver, 'grantee_type' => 'user', 'role' => 'driver']);
+				}
 			} catch (\InvalidArgumentException) {
 				// Both accounts exist and differ (checked above), so only the admin's sharing
 				// settings are left to refuse: GrantService answers "no user you may grant to" alike.
@@ -568,7 +579,9 @@ class SeedCommand extends Command {
 			}
 			$this->trips->record($driver, $uuid, $this->driven(self::GRANTED['trip']));
 			$this->bookings->book($driver, $uuid, $this->booked(self::GRANTED['booking']));
-			$output->writeln('Gave ' . $driver . ' access to ' . self::GRANTED['plate'] . ' as a driver, with one trip and one booking of theirs.');
+			$this->bookings->book($driver, $uuids[self::GRANTED['costs_kept']], $this->booked(self::GRANTED['request']));
+			$output->writeln('Gave ' . $driver . ' access to ' . self::GRANTED['plate'] . ' as a driver, with one trip and one booking of theirs, and to '
+				. self::GRANTED['costs_kept'] . ', whose costs are kept from drivers, with a booking of theirs waiting for approval.');
 		}
 
 		return self::SUCCESS;

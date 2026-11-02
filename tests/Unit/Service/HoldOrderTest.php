@@ -29,6 +29,7 @@ use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCA\NextFleet\Service\AfterCommit;
 use OCA\NextFleet\Service\BookingNotices;
 use OCA\NextFleet\Service\BookingService;
+use OCA\NextFleet\Service\CostsShown;
 use OCA\NextFleet\Service\DocumentService;
 use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\ExpenseService;
@@ -41,6 +42,7 @@ use OCA\NextFleet\Service\OwnFiles;
 use OCA\NextFleet\Service\Pending;
 use OCA\NextFleet\Service\ReminderService;
 use OCA\NextFleet\Service\Sharable;
+use OCA\NextFleet\Service\SyncEpoch;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Db\DoesNotExistException;
@@ -183,8 +185,8 @@ class HoldOrderTest extends TestCase {
 	private function entry(string $kind, string $action, array $fields): void {
 		$this->calls = [];
 		$service = match ($kind) {
-			'energy' => new EnergyService($this->rows(EnergyMapper::class, $this->row(new Energy())), $this->odometer, $this->fleet, $this->vehicles, $this->createMock(Jurisdictions::class), $this->db),
-			'expense' => new ExpenseService($this->rows(ExpenseMapper::class, $this->row(new Expense())), $this->fleet, $this->vehicles, $this->createMock(Jurisdictions::class), $this->db),
+			'energy' => new EnergyService($this->rows(EnergyMapper::class, $this->row(new Energy())), $this->odometer, $this->fleet, $this->vehicles, $this->createMock(Jurisdictions::class), $this->db, $this->createMock(CostsShown::class)),
+			'expense' => new ExpenseService($this->rows(ExpenseMapper::class, $this->row(new Expense())), $this->fleet, $this->vehicles, $this->createMock(Jurisdictions::class), $this->db, $this->createMock(CostsShown::class)),
 			'maintenance' => $this->workshop(),
 		};
 		match ($action) {
@@ -212,6 +214,7 @@ class HoldOrderTest extends TestCase {
 			$reminders,
 			$reminderRows,
 			new AfterCommit($this->db, $this->createMock(LoggerInterface::class)),
+			$this->createMock(CostsShown::class),
 		);
 	}
 
@@ -280,6 +283,7 @@ class HoldOrderTest extends TestCase {
 			$this->createMock(BookingNotices::class),
 			$this->clock(),
 			$this->db,
+			$this->createMock(LoggerInterface::class),
 		);
 	}
 
@@ -351,6 +355,7 @@ class HoldOrderTest extends TestCase {
 			$access,
 			$this->createMock(OwnFiles::class),
 			$this->db,
+			new CostsShown($access),
 		);
 	}
 
@@ -424,6 +429,7 @@ class HoldOrderTest extends TestCase {
 			$this->db,
 			$this->createMock(Pending::class),
 			$this->createMock(LoggerInterface::class),
+			$this->createMock(SyncEpoch::class),
 		);
 
 		try {

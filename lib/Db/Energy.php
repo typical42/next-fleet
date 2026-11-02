@@ -107,6 +107,18 @@ class Energy extends BaseEntity implements \JsonSerializable {
 		$this->setter('isDc', [$isDc]);
 	}
 
+	/**
+	 * The fill-up as a reader who may not see its cost reads it (VehicleAccess::mayCost()): a
+	 * copy, so the row itself is never written without its price.
+	 */
+	public function withoutCost(): static {
+		$copy = clone $this;
+		$copy->unitPrice = null;
+		$copy->total = null;
+
+		return $copy;
+	}
+
 	/** @return NextFleetEnergyEntry */
 	public function jsonSerialize(): array {
 		return [

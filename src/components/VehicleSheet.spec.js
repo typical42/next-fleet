@@ -18,6 +18,7 @@ import { ConflictError, RefusedError, createVehicle, deleteVehicle, getPreferenc
 import { useVehiclesStore } from '../store/index.js'
 import { formatDay } from '../utils/format.js'
 import { REGISTRATION_HELP } from '../utils/registration.js'
+import BookingRecipients from './BookingRecipients.vue'
 import InspectionSticker from './InspectionSticker.vue'
 import ReminderRecipients from './ReminderRecipients.vue'
 import VehicleGrants from './VehicleGrants.vue'
@@ -331,6 +332,76 @@ describe('the vehicle sheet, editing', () => {
 			notes: 'two rows of seats',
 		}))
 		expect(emitted(wrapper, 'saved').updated_at).toBe(1700000900)
+	})
+
+	/** Whether drivers and viewers see the costs is the owner's to say (docs/user/access.md). */
+	it('lets the owner keep the costs from drivers and viewers', async () => {
+		const wrapper = await sheet({ ...VEHICLE, costs_shared: true })
+
+		expect(toggle(wrapper, 'Drivers and viewers see costs')?.props('modelValue')).toBe(true)
+		await toggle(wrapper, 'Drivers and viewers see costs').vm.$emit('update:modelValue', false)
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ costs_shared: false }))
+	})
+
+	/** A manager's save sends the switch back as it was read, which the server lets through. */
+	it('does not offer the switch to a manager, and sends it back as it was', async () => {
+		const wrapper = await sheet({ ...MANAGED, costs_shared: false })
+
+		expect(toggle(wrapper, 'Drivers and viewers see costs')).toBeUndefined()
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ costs_shared: false }))
+	})
+
+	/** Whether a booking waits for an answer is the owner's to say too (docs/user/access.md). */
+	it('lets the owner make bookings wait for approval, and not a manager', async () => {
+		const owned = await sheet({ ...VEHICLE, booking_approval: false })
+
+		expect(toggle(owned, 'Bookings need approval')?.props('modelValue')).toBe(false)
+		await toggle(owned, 'Bookings need approval').vm.$emit('update:modelValue', true)
+		await saveButton(owned).vm.$emit('click')
+		await flushPromises()
+		expect(updateVehicle).toHaveBeenLastCalledWith(expect.objectContaining({ booking_approval: true }))
+
+		// A flipped switch is a change like any other: the import waits for it.
+		const touched = await sheet({ ...VEHICLE, booking_approval: false })
+		await toggle(touched, 'Bookings need approval').vm.$emit('update:modelValue', true)
+		expect(button(touched, 'Import from a file…').props('disabled')).toBe(true)
+
+		const managed = await sheet({ ...MANAGED, booking_approval: true })
+		expect(toggle(managed, 'Bookings need approval')).toBeUndefined()
+		await saveButton(managed).vm.$emit('click')
+		await flushPromises()
+		expect(updateVehicle).toHaveBeenLastCalledWith(expect.objectContaining({ booking_approval: true }))
+	})
+
+	/** Who hears of bookings is the owner's to say; the events are a vehicle column, saved with it. */
+	it('lets the owner tick the booking events the list hears', async () => {
+		const wrapper = await sheet({ ...VEHICLE, booking_notices: ['booked'] })
+		const section = /** @type {any} */ (wrapper.findComponent(BookingRecipients))
+
+		expect(section.props('vehicle')).toBe('v-1')
+		expect(section.props('events')).toEqual(['booked'])
+		await section.vm.$emit('update:events', ['booked', 'returned'])
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ booking_notices: ['booked', 'returned'] }))
+	})
+
+	/** As with the cost switch, a manager's save sends the events back as read. */
+	it('does not offer the booking notices to a manager, and sends them back as they were', async () => {
+		const wrapper = await sheet({ ...MANAGED, booking_notices: ['returned'] })
+
+		expect(wrapper.findComponent(BookingRecipients).exists()).toBe(false)
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ booking_notices: ['returned'] }))
 	})
 
 	/** The recipients are written on each pick; the cadence is a vehicle column, saved with it. */

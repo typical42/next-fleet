@@ -23,6 +23,7 @@ use OCA\NextFleet\Service\NotificationService;
 use OCA\NextFleet\Service\Pending;
 use OCA\NextFleet\Service\RecipientService;
 use OCA\NextFleet\Service\Sharable;
+use OCA\NextFleet\Service\SyncEpoch;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Db\DoesNotExistException;
@@ -190,7 +191,7 @@ class GrantTest extends TestCase {
 			'display_name' => 'The Crew',
 			'role' => 'viewer',
 		]], $this->withoutUuids($list));
-		$this->assertSame(['view'], $this->vehicles->find(self::BEN, $vehicle->getUuid())->getMay());
+		$this->assertSame(['view', 'costs'], $this->vehicles->find(self::BEN, $vehicle->getUuid())->getMay());
 	}
 
 	/** A second grant to the same grantee is a role change, not a second row beside the first. */
@@ -361,7 +362,7 @@ class GrantTest extends TestCase {
 		$list = $this->grants->change(self::OWNER, $vehicle->getUuid(), $grant['uuid'], ['role' => 'driver']);
 
 		$this->assertSame([[$grant['uuid'], 'driver']], array_map(static fn (array $one): array => [$one['uuid'], $one['role']], $list));
-		$this->assertSame(['view', 'log'], $this->vehicles->find(self::ANNA, $vehicle->getUuid())->getMay());
+		$this->assertSame(['view', 'log', 'costs'], $this->vehicles->find(self::ANNA, $vehicle->getUuid())->getMay());
 	}
 
 	/** A grant is reached through the vehicle the route names, as an Entry is. */
@@ -547,7 +548,7 @@ class GrantTest extends TestCase {
 
 		$this->assertSame(['role' => null, 'groups' => [['grantee' => self::GROUP, 'display_name' => 'The Crew', 'role' => 'viewer']],
 			'holders' => [['display_name' => 'The Crew', 'grantee_type' => 'group', 'role' => 'viewer']]], $held);
-		$this->assertSame(['view'], $this->vehicles->find(self::BEN, $uuid)->getMay());
+		$this->assertSame(['view', 'costs'], $this->vehicles->find(self::BEN, $uuid)->getMay());
 		$this->assertSame([self::OWNER, self::BEN], $this->recipientIds($vehicle));
 	}
 
@@ -931,6 +932,7 @@ class GrantTest extends TestCase {
 			\OCP\Server::get(IDBConnection::class),
 			\OCP\Server::get(Pending::class),
 			\OCP\Server::get(LoggerInterface::class),
+			\OCP\Server::get(SyncEpoch::class),
 		);
 	}
 

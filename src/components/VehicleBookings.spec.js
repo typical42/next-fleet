@@ -5,11 +5,12 @@
 
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
+import NcTextArea from '@nextcloud/vue/components/NcTextArea'
 import { flushPromises, mount, shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { cancelBooking, ConflictError, listBookings, readEntry } from '../services/api.js'
+import { answerBooking, cancelBooking, ConflictError, listBookings, readEntry } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
 import { savePaper } from '../utils/papers.js'
 import BookingSheet from './BookingSheet.vue'
@@ -18,6 +19,7 @@ import VehicleBookings from './VehicleBookings.vue'
 
 vi.mock('../services/api.js', async (original) => ({
 	...await original(),
+	answerBooking: vi.fn(),
 	cancelBooking: vi.fn(),
 	listBookings: vi.fn(),
 	readEntry: vi.fn(),
@@ -28,6 +30,11 @@ vi.mock('../utils/papers.js', () => ({ savePaper: vi.fn(async () => '') }))
 vi.mock('@nextcloud/l10n', async (original) => ({
 	...await original(),
 	getCanonicalLocale: () => 'en-GB',
+}))
+
+vi.mock('@nextcloud/auth', async (original) => ({
+	...await original(),
+	getCurrentUser: () => ({ uid: 'me' }),
 }))
 
 const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', lifecycle: 'active', may: ['view', 'log', 'book'] }
@@ -354,6 +361,79 @@ describe('changing and cancelling', () => {
 	})
 })
 
+describe('approval', () => {
+	/** The reader's own, waiting; Anna's, asked back with a question the reader may read. */
+	const MINE = booking({ ...COMING, approval: 'requested' })
+	const ASKED = booking({ ...ANNAS, approval: 'asked', approval_comment: 'The van instead?' })
+
+	it('says where the answer stands, to the booker and to everyone else', async () => {
+		const others = booking({ ...ANNAS, uuid: 'b-4', approval: 'requested' })
+		vi.mocked(listBookings).mockResolvedValue([MINE, others, booking({ ...PAST, state: 'cancelled', approval: 'declined' })])
+		const wrapper = await section()
+
+		expect(row(wrapper, 'b-2').text()).toContain('Waiting for approval')
+		expect(row(wrapper, 'b-4').text()).toContain('Requested')
+		expect(row(wrapper, 'b-1').text()).toContain('Declined')
+	})
+
+	it('shows the answer\'s comment on the row', async () => {
+		vi.mocked(listBookings).mockResolvedValue([ASKED])
+		const wrapper = await section()
+
+		expect(row(wrapper, 'b-3').text()).toContain('Asked back')
+		expect(row(wrapper, 'b-3').text()).toContain('The van instead?')
+	})
+
+	/** One button opens the three answers and a comment, as Cancel opens its question. */
+	it('lets an approver answer with a comment', async () => {
+		const waiting = booking({ ...ANNAS, approval: 'requested', may: ['edit', 'cancel', 'check_out', 'approve', 'ask', 'decline'] })
+		vi.mocked(listBookings).mockResolvedValue([waiting])
+		vi.mocked(answerBooking).mockResolvedValue(booking({ ...waiting, approval: 'approved' }))
+		const wrapper = await section()
+
+		expect(button(row(wrapper, 'b-3'), 'Approve')).toBeUndefined()
+		await button(row(wrapper, 'b-3'), 'Answer').vm.$emit('click')
+		await wrapper.findComponent(NcTextArea).vm.$emit('update:modelValue', 'Fill it up after')
+		await button(row(wrapper, 'b-3'), 'Approve').vm.$emit('click')
+		await flushPromises()
+
+		expect(answerBooking).toHaveBeenCalledWith('v-1', waiting, 'approve', 'Fill it up after')
+		expect(listBookings).toHaveBeenCalledTimes(2)
+		expect(button(row(wrapper, 'b-3'), 'Approve')).toBeUndefined()
+	})
+
+	it('keeps the answers and the comment open when the answer is refused', async () => {
+		const waiting = booking({ ...ANNAS, approval: 'requested', may: ['approve', 'ask', 'decline'] })
+		vi.mocked(listBookings).mockResolvedValue([waiting])
+		vi.mocked(answerBooking).mockRejectedValue(new Error('offline'))
+		const wrapper = await section()
+
+		await button(row(wrapper, 'b-3'), 'Answer').vm.$emit('click')
+		await wrapper.findComponent(NcTextArea).vm.$emit('update:modelValue', 'Fill it up after')
+		await button(row(wrapper, 'b-3'), 'Decline').vm.$emit('click')
+		await flushPromises()
+
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toContain('offline')
+		expect(wrapper.findComponent(NcTextArea).props('modelValue')).toBe('Fill it up after')
+		expect(button(row(wrapper, 'b-3'), 'Decline')).toBeDefined()
+	})
+
+	it('offers ask back and decline beside approve, and no answer without the right', async () => {
+		const waiting = booking({ ...ANNAS, approval: 'requested', may: ['approve', 'ask', 'decline'] })
+		vi.mocked(listBookings).mockResolvedValue([waiting, MINE])
+		vi.mocked(answerBooking).mockResolvedValue(booking({ ...waiting, state: 'cancelled', approval: 'declined' }))
+		const wrapper = await section()
+
+		expect(button(row(wrapper, 'b-2'), 'Answer')).toBeUndefined()
+		await button(row(wrapper, 'b-3'), 'Answer').vm.$emit('click')
+		expect(button(row(wrapper, 'b-3'), 'Ask back')).toBeDefined()
+		await button(row(wrapper, 'b-3'), 'Decline').vm.$emit('click')
+		await flushPromises()
+
+		expect(answerBooking).toHaveBeenCalledWith('v-1', waiting, 'decline', '')
+	})
+})
+
 describe('the handover', () => {
 	const OUT = booking({ uuid: 'b-5', user_id: 'me', user_name: 'Me', starts_at: 1790935200, ends_at: 1790949600, state: 'out', may: ['check_in'] })
 
@@ -365,6 +445,20 @@ describe('the handover', () => {
 		await button(row(wrapper, 'b-2'), 'Take the car').vm.$emit('click')
 
 		expect(/** @type {any} */ (wrapper.getComponent(HandoverSheet)).props('booking')).toEqual(COMING)
+	})
+
+	/** The owner or a manager may check out anyone's booking: the button says whose car it becomes. */
+	it('offers Hand over to the booker on someone else\'s booking, and opens the sheet on it', async () => {
+		const annas = { ...ANNAS, may: ['check_out'] }
+		vi.mocked(listBookings).mockResolvedValue([COMING, annas])
+		const wrapper = await section()
+
+		expect(button(row(wrapper, 'b-3'), 'Take the car')).toBeUndefined()
+		const handOver = button(row(wrapper, 'b-3'), 'Hand over to Anna')
+		expect(handOver.props('ariaLabel')).toBe('Hand over to Anna, booked Sat 03/10, 10:00–14:00')
+		await handOver.vm.$emit('click')
+
+		expect(/** @type {any} */ (wrapper.getComponent(HandoverSheet)).props('booking')).toEqual(annas)
 	})
 
 	/** The newest return's counter, not the largest: a counter that ran backwards is the car's now. */

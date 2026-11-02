@@ -19,7 +19,7 @@
 #   tools/upgrade-check.sh [--db mariadb|pgsql|oracle] <tarball> [<base>]
 #
 # <tarball> is the package to check: pass the file you are about to sign, not a rebuild of it.
-# <base> is the version users have, as a git ref or a tarball. It defaults to v0.4.0, the last
+# <base> is the version users have, as a git ref or a tarball. It defaults to v0.4.1, the last
 # release; each release moves it on.
 #
 # The servers are tools/upgrade-check.compose.yml, its own project with its own volumes. They are
@@ -51,7 +51,7 @@ if [ $# -lt 1 ] || [ ! -f "$1" ]; then
 	usage
 fi
 tarball=$(realpath "$1")
-base=${2:-v0.4.0}
+base=${2:-v0.4.1}
 # --db goes first; after the tarball it would be taken for the base.
 case $base in -*) usage ;; esac
 if [ -f "$base" ]; then

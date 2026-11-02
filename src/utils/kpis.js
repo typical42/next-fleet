@@ -5,6 +5,7 @@
 
 import { getCanonicalLocale } from '@nextcloud/l10n'
 
+import { may } from './access.js'
 import { energyWord, formatConsumption, formatCount, formatMoney, formatOdometer, formatWallSide } from './format.js'
 import { t } from './l10n.js'
 
@@ -120,7 +121,10 @@ export function periodTilesOf(vehicle, now, before, locale = getCanonicalLocale(
 		})
 	}
 
-	tiles.push(...costTiles(now.cost, before?.cost ?? null, Boolean(vehicle.second_unit), locale))
+	// The answer carries no sum for a reader the costs are kept from, and none is not zero.
+	if (may(vehicle, 'costs')) {
+		tiles.push(...costTiles(now.cost, before?.cost ?? null, Boolean(vehicle.second_unit), locale))
+	}
 
 	if (vehicle.second_unit && now.hours !== null) {
 		/** @type {(hours: number) => string} */

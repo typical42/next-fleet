@@ -117,12 +117,13 @@ flowchart LR
 
 #### Reading the figures
 
-What the timeline, the header and the exports compute.
+What the timeline, the header, the statistics and the exports compute.
 Country rules come from `Jurisdictions` ([numbers](../architecture.md#numbers-consumption-cost-emissions), [reports and exports](../architecture.md#reports-and-exports)).
 
 ```mermaid
 flowchart TB
     Kpi["KpiService"]
+    Statistics["StatisticsService"]
     Timeline["TimelineService"]
     Export["ExportService"]
     Logbook["LogbookExport"]
@@ -137,6 +138,7 @@ flowchart TB
     Completeness["Completeness"]
     Jurisdictions["Jurisdictions"]
     Kpi --> Cost & Emission & Preferences & Consumption
+    Statistics --> Cost & Emission & Preferences & Consumption & EnteredBy
     Cost --> Consumption
     Timeline --> Consumption & Gaps & EnteredBy & Completeness
     Export --> EnteredBy
@@ -235,7 +237,7 @@ flowchart TB
         Undo["UndoToast"]
         Overview["OverviewView"]
         VehicleView["VehicleView"]
-        Costs["CostsView"]
+        Statistics["StatisticsView"]
         Inbox["InboxView"]
         Reports["ReportsView"]
     end
@@ -245,7 +247,7 @@ flowchart TB
     end
     main -->|"import()"| boot --> App
     App --> List & Sheet & Undo
-    App --> Overview & VehicleView & Costs & Inbox & Reports
+    App --> Overview & VehicleView & Statistics & Inbox & Reports
     VehicleView --> Sheet
     settings --> SettingsView
 ```
@@ -286,16 +288,20 @@ flowchart LR
     Inbox["InboxView"]
     InboxSheet["InboxSheet"]
     Entry["EntrySheet"]
-    Costs["CostsView"]
-    Tile["KpiTile"]
     Sheet["VehicleSheet"]
     Recipients["ReminderRecipients"]
+    Notices["BookingRecipients"]
     Grants["VehicleGrants"]
     Inspection["InspectionSticker"]
+    Statistics["StatisticsView"]
+    Bars["StatisticsBars"]
+    Buckets["StatisticsBuckets"]
+    Line["StatisticsLine"]
+    Table["StatisticsTable"]
     Overview --> Hint
     Inbox --> InboxSheet & Entry
-    Costs --> Tile
-    Sheet --> Recipients & Grants & Inspection
+    Sheet --> Recipients & Notices & Grants & Inspection
+    Statistics --> Bars & Buckets & Line & Table
 ```
 
 ### State and the server

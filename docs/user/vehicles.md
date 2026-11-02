@@ -33,7 +33,7 @@ A vehicle without a display name shows its manufacturer, model and body type und
 From top to bottom:
 
 1. The name, and the buttons **New entry**, **Costs**, **Edit vehicle** and **QR sticker**.
-2. The figures of the selected period ([Costs](costs.md)).
+2. The figures of the selected period ([Figures and statistics](statistics.md)).
 3. The reminders ([Reminders](reminders.md)).
 4. **Bookings**, only when another user has or had access ([Access and bookings](access.md)).
 5. **Documents** ([Documents](documents.md)).

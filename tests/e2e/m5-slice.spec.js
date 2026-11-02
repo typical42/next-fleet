@@ -190,18 +190,19 @@ async function march(page, plate) {
 	return { vehicle, year }
 }
 
-// The month's figures come from the server's year (kpi#year); the screen only lays them out.
-test('the Costs screen reads a month and exports its trips as CSV', async ({ page }) => {
+// The month's figures come from the server (statistics#index); the screen only lays them out.
+test('the vehicle\'s costs link opens Statistics on it, which reads a month and exports its trips as CSV', async ({ page }) => {
 	const plate = `${plates}costs-${Date.now()}`
 	const { year } = await march(page, plate)
 
 	await page.goto(appPage)
 	await open(page, plate)
 	await page.getByRole('button', { name: 'Costs', exact: true }).click()
+	await expect(page.getByRole('heading', { name: 'Statistics' })).toBeVisible()
 	await page.getByRole('button', { name: 'Previous year' }).click()
-	await expect(page.locator('.costs__year-number')).toHaveText(String(year))
+	await expect(page.locator('.statistics__year-number')).toHaveText(String(year))
 
-	const table = page.getByRole('region', { name: 'Costs by month' })
+	const table = page.getByRole('region', { name: 'Costs in EUR, by month' })
 	// March is the third column head. The cells are asserted rather than read, so they wait out the
 	// current year's answer, which is on screen until last year's arrives.
 	await expect(table.locator('thead th').nth(2)).toHaveText('Mar')
@@ -209,6 +210,11 @@ test('the Costs screen reads a month and exports its trips as CSV', async ({ pag
 	await expect(cell('Energy')).toHaveText('€70.00')
 	await expect(cell('Maintenance')).toHaveText('€120.00')
 	await expect(cell('Total')).toHaveText('€190.00')
+
+	const trips = page.getByRole('region', { name: 'Distance by trip category, by month' })
+	await expect(trips.getByRole('row').filter({ has: page.getByRole('rowheader', { name: 'Business', exact: true }) }).locator('td').nth(2)).toHaveText('250 km')
+	// The owner sees every driver's figures; here they are the only one.
+	await expect(page.getByRole('region', { name: 'Distance by driver' }).locator('tbody td')).toHaveText(['1', '250 km', '100%'])
 
 	await page.getByRole('button', { name: 'Export' }).click()
 	const [download] = await Promise.all([
@@ -383,9 +389,21 @@ for (const viewport of [{ width: 320, height: 640 }, { width: 1280, height: 800 
 
 				await page.getByRole('button', { name: 'Costs', exact: true }).click()
 				await page.getByRole('button', { name: 'Previous year' }).click()
-				await expect(page.getByRole('region', { name: 'Costs by month' })).toBeVisible()
-				await expect(page.locator('.costs__co2-sources').getByRole('link', { name: 'Fuel factors 2022' })).toBeVisible()
-				await check(page, 'the Costs screen', undefined, ['.costs__table', '.costs__months li'])
+				await expect(page.getByRole('region', { name: 'Costs in EUR, by month' })).toBeVisible()
+				await expect(page.locator('.statistics__co2-sources').getByRole('link', { name: 'Fuel factors 2022' })).toBeVisible()
+				await check(page, 'the Statistics screen', undefined, ['.statistics__table', '.statistics__buckets li'])
+
+				if (folded) {
+					await page.getByRole('button', { name: 'Open navigation' }).click()
+				}
+				await page.locator('.app-navigation').getByRole('link', { name: 'Statistics' }).click()
+				if (folded) {
+					await page.getByRole('button', { name: 'Close navigation' }).click()
+				}
+				// Every vehicle: the CO₂ is one vehicle's only.
+				await expect(page.locator('.statistics__co2')).toHaveCount(0)
+				await expect(page.getByRole('region', { name: 'Costs in EUR, by month' })).toBeVisible()
+				await check(page, 'the Statistics screen, every vehicle', undefined, ['.statistics__table', '.statistics__buckets li'])
 
 				if (folded) {
 					await page.getByRole('button', { name: 'Open navigation' }).click()

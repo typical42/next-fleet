@@ -41,9 +41,9 @@ class DesignDiagramsTest extends TestCase {
 	 * and the class's other string constants, so a new one is a state until it is named here.
 	 */
 	private const STATE_LISTS = [
-		Booking::class => [Booking::class, 'STATES', []],
+		Booking::class => [Booking::class, 'STATES', ['REQUESTED', 'ASKED', 'APPROVED', 'DECLINED']],
 		Reminder::class => [Reminder::class, 'STATES', ['DATE', 'ODO', 'EITHER']],
-		Vehicle::class => [VehicleService::class, 'LIFECYCLES', ['MAIL_OFF', 'MAIL_DAILY', 'MAIL_WEEKLY', 'MAIL_MONTHLY']],
+		Vehicle::class => [VehicleService::class, 'LIFECYCLES', ['MAIL_OFF', 'MAIL_DAILY', 'MAIL_WEEKLY', 'MAIL_MONTHLY', 'NOTICE_BOOKED', 'NOTICE_TAKEN', 'NOTICE_RETURNED', 'NOTICE_CANCELLED', 'NOTICE_CHANGED']],
 	];
 
 	public function testEveryClassOfTheDomainIsAClassUnderLib(): void {

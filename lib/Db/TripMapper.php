@@ -113,6 +113,24 @@ class TripMapper extends BaseMapper {
 	}
 
 	/**
+	 * One vehicle's live trips that set off in `[from, to)`, oldest first: a period's driving.
+	 *
+	 * @return list<Trip>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findBetween(int $vehicleId, int $from, int $to): array {
+		return $this->findEntities($this->between('started_at', $vehicleId, $from, $to));
+	}
+
+	/**
+	 * @param list<int> $vehicleIds
+	 * @throws \OCP\DB\Exception
+	 */
+	public function firstAmong(array $vehicleIds): ?int {
+		return $this->earliest('started_at', $vehicleIds);
+	}
+
+	/**
 	 * The trips of one vehicle that set off in `[from, to)`, oldest first as findAllForVehicle()
 	 * orders them - voided ones included. This is the Fahrtenbuch export's own question
 	 * (docs/architecture.md#logbook-mode): a voided trip is listed there, as voided.

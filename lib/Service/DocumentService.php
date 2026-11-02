@@ -49,6 +49,7 @@ class DocumentService {
 		private VehicleAccess $access,
 		private OwnFiles $files,
 		private IDBConnection $db,
+		private CostsShown $costs,
 	) {
 	}
 
@@ -67,7 +68,7 @@ class DocumentService {
 	 * vehicle, under that row's rule (keeps()).
 	 *
 	 * The file must be the user's own, in their own Files (OwnFiles): the download serves it to
-	 * everyone who may view the vehicle (docs/architecture.md#documents).
+	 * everyone who may view the vehicle and list the paper (docs/architecture.md#documents).
 	 *
 	 * @param array<string, mixed> $fields `file_id`, `kind`, and `linked_type` with `linked_uuid` or neither
 	 * @return list<Listed> the list as it now stands
@@ -202,16 +203,20 @@ class DocumentService {
 	}
 
 	/**
-	 * The file behind one paper, for whoever may view the vehicle: access follows the vehicle, not
-	 * the file (docs/architecture.md#documents).
+	 * The file behind one paper, for whoever may view the vehicle and list the paper: access follows
+	 * the vehicle, not the file (docs/architecture.md#documents).
 	 *
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not view this vehicle
-	 * @throws \OCP\AppFramework\Db\DoesNotExistException if the vehicle has no such document, or its file is gone
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException if the vehicle has no such document for this user, or its file is gone
 	 * @throws \OCP\DB\Exception
 	 */
 	public function download(string $userId, string $vehicleUuid, string $documentUuid): File {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::VIEW, $vehicleUuid);
 		$document = $this->documents->findOnVehicle((int)$vehicle->getId(), $documentUuid);
+		// Not found rather than refused, as the timeline answers for an expense kept from the reader.
+		if ($this->shown($userId, $vehicle, [$document]) === []) {
+			throw new DoesNotExistException('No document ' . $documentUuid . ' for this user');
+		}
 		$file = $this->asked(fn (): ?Node => $this->files->mine($document->getCreatedBy(), $document->getFileId()));
 
 		return $file instanceof File ? $file
@@ -320,7 +325,30 @@ class DocumentService {
 	 * @throws \OCP\DB\Exception
 	 */
 	private function of(string $userId, Vehicle $vehicle): array {
-		return $this->wired($userId, $vehicle, $this->documents->findByVehicle((int)$vehicle->getId()));
+		return $this->wired($userId, $vehicle, $this->shown($userId, $vehicle, $this->documents->findByVehicle((int)$vehicle->getId())));
+	}
+
+	/**
+	 * The papers of one vehicle the reader may see, in their order: none on an entry whose amounts
+	 * are kept from them (CostsShown::showsPaper()).
+	 *
+	 * @param list<Document> $documents
+	 * @return list<Document>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function shown(string $userId, Vehicle $vehicle, array $documents): array {
+		// A reader who sees every amount sees every paper, and needs no look-up of whose entry it is.
+		if (CostsShown::all($vehicle)) {
+			return $documents;
+		}
+		$owners = $this->owners($vehicle, $documents);
+
+		return array_values(array_filter($documents, function (Document $document) use ($userId, $vehicle, $owners): bool {
+			$owner = $owners[(int)$document->getId()];
+			// A link whose row cannot be found says nothing of whose it was: kept, not shown.
+			return ($owner !== null || $document->getLinkedType() === null)
+				&& $this->costs->showsPaper($userId, $vehicle, $owner);
+		}));
 	}
 
 	/**

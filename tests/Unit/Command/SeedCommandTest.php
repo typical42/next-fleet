@@ -32,6 +32,7 @@ use OCA\NextFleet\Service\MoneyRows;
 use OCA\NextFleet\Service\NotificationService;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\ReminderService;
+use OCA\NextFleet\Service\SyncEpoch;
 use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
@@ -203,7 +204,7 @@ class SeedCommandTest extends TestCase {
 
 		$access = $this->createMock(VehicleAccess::class);
 		$access->method('may')->willReturn(true);
-		$access->method('operations')->willReturn(['view', 'log', 'edit', 'delete', 'own']);
+		$access->method('operations')->willReturn(['view', 'log', 'edit', 'delete', 'own', 'costs']);
 		$access->method('reachable')->willReturn([]);
 
 		$time = $this->createMock(ITimeFactory::class);
@@ -229,6 +230,7 @@ class SeedCommandTest extends TestCase {
 			$this->users,
 			$this->createMock(MoneyRows::class),
 			$this->createMock(AccessMapper::class),
+			$this->createMock(SyncEpoch::class),
 		);
 
 		return new CommandTester(new SeedCommand(
@@ -297,17 +299,22 @@ class SeedCommandTest extends TestCase {
 	 */
 	public function testTheAccountItIsAskedToGrantDrivesThePassat(): void {
 		$tester = $this->tester();
-		$this->grants->expects($this->once())->method('grant')->willReturnCallback(
-			function (string $userId, string $uuid, array $fields): array {
+		$granted = [];
+		$this->grants->method('grant')->willReturnCallback(
+			function (string $userId, string $uuid, array $fields) use (&$granted): array {
 				$this->assertSame(self::OWNER, $userId);
-				$this->assertSame('NF-DE 100', $this->plateOf($uuid));
 				$this->assertSame(['grantee' => self::DRIVER, 'grantee_type' => 'user', 'role' => 'driver'], $fields);
+				$granted[] = $this->plateOf($uuid);
 
 				return [];
 			},
 		);
 
 		$this->assertSame(0, $tester->execute(['user' => self::OWNER, '--grant-to' => self::DRIVER]), $tester->getDisplay());
+		// And the Volvo, whose costs the owner keeps from drivers, so the switch has a car to show on.
+		$this->assertSame(['NF-DE 100', 'NF-PH 200'], $granted);
+		$this->assertFalse($this->fleet()['NF-PH 200']->sharesCosts());
+		$this->assertTrue($this->fleet()['NF-DE 100']->sharesCosts());
 
 		$theirs = array_values(array_filter($this->driven, static fn (array $trip): bool => $trip['by'] === self::DRIVER));
 		$this->assertCount(1, $theirs);
@@ -320,24 +327,28 @@ class SeedCommandTest extends TestCase {
 	/**
 	 * And a booking of theirs, so the Bookings section and the overview have a pool to show: the
 	 * Passat tomorrow from 09:00 to 12:00 in Berlin. The clock reads 01:00 on 2026-01-01 there
-	 * (CET, +60 minutes), so tomorrow 09:00 is 08:00 UTC on the 2nd.
+	 * (CET, +60 minutes), so tomorrow 09:00 is 08:00 UTC on the 2nd. And the Volvo from 14:00 to
+	 * 17:00, which waits for the owner's answer.
 	 */
-	public function testTheAccountItIsAskedToGrantBooksThePassatTomorrowMorning(): void {
+	public function testTheAccountItIsAskedToGrantBooksThePassatTomorrowMorningAndAsksForTheVolvo(): void {
 		$tester = $this->tester();
-		$this->bookings->expects($this->once())->method('book')->willReturnCallback(
-			function (string $userId, string $uuid, array $fields): array {
+		$booked = [];
+		$this->bookings->expects($this->exactly(2))->method('book')->willReturnCallback(
+			function (string $userId, string $uuid, array $fields) use (&$booked): array {
 				$this->assertSame(self::DRIVER, $userId);
-				$this->assertSame('NF-DE 100', $this->plateOf($uuid));
-				$this->assertSame(1767340800, $fields['starts_at']);
-				$this->assertSame(60, $fields['starts_at_off']);
-				$this->assertSame(1767351600, $fields['ends_at']);
-				$this->assertSame(60, $fields['ends_at_off']);
+				$booked[] = [$this->plateOf($uuid), $fields['starts_at'], $fields['starts_at_off'], $fields['ends_at'], $fields['ends_at_off']];
 
 				return [];
 			},
 		);
 
 		$this->assertSame(0, $tester->execute(['user' => self::OWNER, '--grant-to' => self::DRIVER]), $tester->getDisplay());
+		$this->assertSame([
+			['NF-DE 100', 1767340800, 60, 1767351600, 60],
+			['NF-PH 200', 1767358800, 60, 1767369600, 60],
+		], $booked);
+		$this->assertTrue($this->fleet()['NF-PH 200']->needsApproval());
+		$this->assertFalse($this->fleet()['NF-DE 100']->needsApproval());
 	}
 
 	/**

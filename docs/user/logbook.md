@@ -61,4 +61,4 @@ It exists for German vehicles that count kilometres.
 Commutes are not on it.
 The flat rate is only for vehicles that are not business assets.
 
-Next: [Costs](costs.md)
+Next: [Figures and statistics](statistics.md)

@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.5.0 — not released
+
+### Access
+
+- The owner can keep a vehicle's costs from its drivers and viewers: switch off **Drivers and
+  viewers see costs** in the vehicle sheet. They then see no sums, no prices and no expenses of
+  others, no receipts on others' entries, and no mileage claim. They still enter amounts and see
+  the ones they entered. The owner and managers always see the costs.
+- On someone else's booking, the button reads **Hand over to** and the driver's name.
+
+### Bookings
+
+- The owner chooses who gets a notification about a vehicle's bookings, people or groups, in
+  **Booking notices go to**, and what they hear of: a booking ahead, the car taken now, returned,
+  cancelled, or moved to another time. With nobody on the list, the owner hears of them.
+- The owner can make a driver's bookings wait for approval: switch on **Bookings need approval** in
+  the vehicle sheet. The owner and the managers get a notification and answer with **Approve**,
+  **Ask back** or **Decline**, with a comment if they like; the driver gets a notification of the
+  answer. A booking that waits holds its time, and others see it as **Requested**. It cannot be
+  taken until it is approved, and if it is not approved by its end, it is declined. A new start or end
+  makes it wait again. **Take it now** needs no approval while the car is back by midnight. The
+  booking notices list hears of a booking once it is approved.
+
+### Statistics
+
+- **Statistics** in the navigation replaces the Costs page. It shows all your vehicles or one,
+  over a calendar year, the last 12 months, all time or two days you choose. **Costs** on a vehicle
+  opens it on that vehicle.
+- It shows the costs by category and each one's share, the cost per 100 km over time with the
+  vehicles side by side, the consumption, the distance by business, private and commute trips, and
+  each driver's trips, distance and business share. The owner and managers of a vehicle see every
+  driver; everyone else sees only their own trips. All time shows the years side by side.
+- CSV export moved there: choose one vehicle and a calendar year.
+
+### For apps, scripts and admins
+
+- The OCS API carries the new routes and fields, and v1 now promises them: `…/statistics`;
+  `…/vehicles/{uuid}/booking-recipients`; `…/bookings/{booking}/approve`, `…/ask` and
+  `…/decline`; a vehicle's `costs_shared`, `booking_notices` and `booking_approval`, which create
+  and update take too; a booking's `approval`, `approval_comment` and `approval_by`, and its
+  `approval` in a 409 and in the vehicle's `my_next_booking`; `costs`, `approve`, `ask` and `decline` in `may`.
+- Where a reader may not see a vehicle's costs, the money fields they may not read are null, the
+  mileage claim is a 403, and somebody else's expense or receipt is a 404
+  ([API](https://github.com/typical42/next-fleet/blob/main/docs/api.md#costs)).
+- `occ upgrade` adds the new columns and the booking notices table, and changes no row.
+
 ## 0.4.1 — 2026-10-26
 
 Supports Nextcloud 35. NextFleet now runs on Nextcloud 31 to 35.

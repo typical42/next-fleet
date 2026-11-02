@@ -228,9 +228,9 @@ class ReleaseScriptTest extends TestCase {
 		$this->assertStringContainsString(' app35 php occ integrity:sign-app ', $log[$sign]);
 		$this->assertStringContainsString(' app35 php occ integrity:check-app ', $log[$check]);
 		$this->assertSame([
-			'upgrade-check build/artifacts/nextfleet-1.2.3.tar.gz v0.4.0',
-			'upgrade-check --db pgsql build/artifacts/nextfleet-1.2.3.tar.gz v0.4.0',
-			'upgrade-check --db oracle build/artifacts/nextfleet-1.2.3.tar.gz v0.4.0',
+			'upgrade-check build/artifacts/nextfleet-1.2.3.tar.gz v0.4.1',
+			'upgrade-check --db pgsql build/artifacts/nextfleet-1.2.3.tar.gz v0.4.1',
+			'upgrade-check --db oracle build/artifacts/nextfleet-1.2.3.tar.gz v0.4.1',
 		], array_values(array_filter($log, static fn (string $line): bool => str_starts_with($line, 'upgrade-check '))));
 		$this->assertGreaterThan($check, $this->lineOf('upgrade-check '));
 

@@ -139,10 +139,12 @@ class ConsumptionService {
 	}
 
 	/**
+	 * Public for StatisticsService, which sums each vehicle's range the same way.
+	 *
 	 * @param list<Segment> $segments
 	 * @return array{period: list<Period>, measured: list<string>}
 	 */
-	private static function summed(array $segments, int $from, int $to, string $per): array {
+	public static function summed(array $segments, int $from, int $to, string $per): array {
 		$sums = [];
 		$measured = [];
 		foreach ($segments as $segment) {

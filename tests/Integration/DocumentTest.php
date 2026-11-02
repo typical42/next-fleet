@@ -22,10 +22,13 @@ use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Exception\AccessDeniedException;
 use OCA\NextFleet\Exception\AlreadyCreatedException;
 use OCA\NextFleet\Service\BookingService;
+use OCA\NextFleet\Service\CostsShown;
 use OCA\NextFleet\Service\DocumentService;
 use OCA\NextFleet\Service\EnergyService;
+use OCA\NextFleet\Service\ExpenseService;
 use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\OwnFiles;
+use OCA\NextFleet\Service\SyncService;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Db\DoesNotExistException;
@@ -68,7 +71,8 @@ class DocumentTest extends TestCase {
 	private const DRIVER = 'nextfleet-test-doc-driver';
 	/** Moves an attached file into a share they receive; untouched before, as the sharee is. */
 	private const MOVER = 'nextfleet-test-doc-mover';
-	private const ACCOUNTS = [self::OWNER, self::OTHER, self::SHAREE, self::DRIVER, self::MOVER];
+	private const VIEWER = 'nextfleet-test-doc-viewer';
+	private const ACCOUNTS = [self::OWNER, self::OTHER, self::SHAREE, self::DRIVER, self::MOVER, self::VIEWER];
 	/** What the owner's ForeignStorage holds, on the server's disk. */
 	private const FOREIGN_DIR = '/tmp/nextfleet-test-foreign';
 
@@ -466,6 +470,76 @@ class DocumentTest extends TestCase {
 		$this->assertSame([$onMine], array_column($this->documents->detach(self::DRIVER, $vehicle->getUuid(), $onTheirs), 'uuid'));
 	}
 
+	/**
+	 * Where the owner keeps the costs, a driver or viewer lists no paper on an entry somebody else
+	 * made, and the list a write answers keeps the same rule. Papers on the driver's own entries,
+	 * and the vehicle's own, stay.
+	 */
+	public function testADriverTheCostsAreKeptFromListsNoPaperOnSomebodyElsesEntry(): void {
+		$vehicle = $this->vehicle(self::OWNER, costsShared: false);
+		$this->grant($vehicle, self::DRIVER, 'driver');
+		$this->grant($vehicle, self::VIEWER, 'viewer');
+		$papers = $this->papersOnEveryEntry($vehicle);
+
+		$shown = [$papers['vehicle'], $papers['on my fill-up']];
+		$this->assertEqualsCanonicalizing($shown, array_column($this->documents->list(self::DRIVER, $vehicle->getUuid()), 'uuid'));
+		$this->assertSame([$papers['vehicle']], array_column($this->documents->list(self::VIEWER, $vehicle->getUuid()), 'uuid'));
+		$this->assertEqualsCanonicalizing(array_values($papers), array_column($this->documents->list(self::OWNER, $vehicle->getUuid()), 'uuid'));
+		$this->assertSame([$papers['vehicle']], array_column($this->documents->detach(self::DRIVER, $vehicle->getUuid(), $papers['on my fill-up']), 'uuid'));
+	}
+
+	/** A paper the list keeps from the driver is no paper to download either: the route says so as for a removed one. */
+	public function testADriverTheCostsAreKeptFromDownloadsNoPaperOnSomebodyElsesEntry(): void {
+		$vehicle = $this->vehicle(self::OWNER, costsShared: false);
+		$this->grant($vehicle, self::DRIVER, 'driver');
+		$papers = $this->papersOnEveryEntry($vehicle);
+
+		$this->assertSame('Beleg.pdf', $this->documents->download(self::DRIVER, $vehicle->getUuid(), $papers['on my fill-up'])->getName());
+		$this->assertSame('Beleg.pdf', $this->documents->download(self::OWNER, $vehicle->getUuid(), $papers['on their expense'])->getName());
+		foreach (['on their fill-up', 'on their record', 'on their expense'] as $where) {
+			$response = $this->door(self::DRIVER)->download($vehicle->getUuid(), $papers[$where]);
+			$this->assertInstanceOf(DataResponse::class, $response, $where);
+			$this->assertSame([Http::STATUS_NOT_FOUND, ['message' => 'No such document']], [$response->getStatus(), $response->getData()], $where);
+		}
+	}
+
+	/**
+	 * A paper whose entry cannot be found says nothing of whose entry it was: a driver the costs
+	 * are kept from does not list it, the owner does.
+	 */
+	public function testAPaperWhoseEntryIsGoneIsKeptFromADriverTheCostsAreKeptFrom(): void {
+		$vehicle = $this->vehicle(self::OWNER, costsShared: false);
+		$this->grant($vehicle, self::DRIVER, 'driver');
+		$papers = $this->papersOnEveryEntry($vehicle);
+		$db = \OCP\Server::get(IDBConnection::class);
+		$qb = $db->getQueryBuilder();
+		$qb->delete('fleet_energy')->where($qb->expr()->eq('vehicle_id', $qb->createNamedParameter((int)$vehicle->getId(), $qb::PARAM_INT)));
+		$qb->executeStatement();
+
+		$this->assertSame([$papers['vehicle']], array_column($this->documents->list(self::DRIVER, $vehicle->getUuid()), 'uuid'));
+		$this->assertCount(5, $this->documents->list(self::OWNER, $vehicle->getUuid()));
+	}
+
+	/** Sync keeps what the list keeps, a detached paper's tombstone too. */
+	public function testADriverTheCostsAreKeptFromSyncsNoPaperOnSomebodyElsesEntry(): void {
+		$vehicle = $this->vehicle(self::OWNER, costsShared: false);
+		$this->grant($vehicle, self::DRIVER, 'driver');
+		$papers = $this->papersOnEveryEntry($vehicle);
+		$this->documents->detach(self::OWNER, $vehicle->getUuid(), $papers['on their record']);
+		$sync = \OCP\Server::get(SyncService::class);
+
+		$first = $sync->sync(self::DRIVER, '', 500);
+		$this->assertEqualsCanonicalizing([$papers['vehicle'], $papers['on my fill-up']], array_column($first['changes']['documents'], 'uuid'));
+
+		$this->documents->detach(self::OWNER, $vehicle->getUuid(), $papers['on their fill-up']);
+		$this->documents->detach(self::OWNER, $vehicle->getUuid(), $papers['vehicle']);
+		// The cursor's mark lies SyncService::SETTLE behind its answer, so every paper of this test is
+		// a change again: the driver's live one, and the tombstones.
+		$later = $sync->sync(self::DRIVER, $first['cursor'], 500);
+		$this->assertNull(array_column($later['changes']['documents'], 'row', 'uuid')[$papers['vehicle']], 'a tombstone');
+		$this->assertEqualsCanonicalizing([$papers['vehicle'], $papers['on my fill-up']], array_column($later['changes']['documents'], 'uuid'));
+	}
+
 	/** Under the booking's rule: the booker's own booking takes a photo, somebody else's none. */
 	public function testAHandoverPhotoBelongsToTheBooking(): void {
 		$vehicle = $this->vehicle(self::OWNER);
@@ -588,6 +662,7 @@ class DocumentTest extends TestCase {
 			\OCP\Server::get(VehicleAccess::class),
 			$files,
 			\OCP\Server::get(IDBConnection::class),
+			\OCP\Server::get(CostsShown::class),
 		);
 
 		$this->expectException(\OCP\DB\Exception::class);
@@ -742,6 +817,32 @@ class DocumentTest extends TestCase {
 	}
 
 	/**
+	 * A receipt the owner files on each kind of their own costed entry and on the driver's fill-up,
+	 * and one of the vehicle's own papers.
+	 *
+	 * @return array<string, string> paper uuids by where they hang, "my" and "their" as the driver says it
+	 */
+	private function papersOnEveryEntry(Vehicle $vehicle): array {
+		$expense = \OCP\Server::get(ExpenseService::class)->record(self::OWNER, $vehicle->getUuid(), [
+			'spent_at' => 1750000000, 'spent_at_off' => 120, 'amount' => 1600, 'category' => 'parking',
+		])['uuid'];
+		$papers = [];
+		foreach ([
+			'on their fill-up' => ['energy', $this->fillUp($vehicle, self::OWNER)],
+			'on their record' => ['maintenance', $this->maintenance($vehicle)],
+			'on their expense' => ['expense', $expense],
+			'on my fill-up' => ['energy', $this->fillUp($vehicle, self::DRIVER)],
+		] as $where => [$type, $uuid]) {
+			$papers[$where] = array_column($this->documents->attach(self::OWNER, $vehicle->getUuid(), [
+				'file_id' => $this->file(self::OWNER, 'Beleg.pdf'), 'kind' => 'receipt', 'linked_type' => $type, 'linked_uuid' => $uuid,
+			]), 'uuid', 'linked_uuid')[$uuid];
+		}
+		$papers['vehicle'] = array_column($this->documents->attach(self::OWNER, $vehicle->getUuid(), ['file_id' => $this->file(self::OWNER, 'Schein.pdf'), 'kind' => 'registration']), 'uuid', 'kind')['registration'];
+
+		return $papers;
+	}
+
+	/**
 	 * A span a day from now, or `days` from now, which a booking may take.
 	 *
 	 * @return array<string, int>
@@ -762,8 +863,8 @@ class DocumentTest extends TestCase {
 		return new DocumentController(Application::APP_ID, $this->createMock(IRequest::class), $this->documents, $session);
 	}
 
-	private function vehicle(string $owner): Vehicle {
-		$vehicle = $this->vehicles->create($owner, ['plate' => 'B-DC 1']);
+	private function vehicle(string $owner, bool $costsShared = true): Vehicle {
+		$vehicle = $this->vehicles->create($owner, ['plate' => 'B-DC 1', 'costs_shared' => $costsShared]);
 		$this->vehicleIds[] = (int)$vehicle->getId();
 
 		return $vehicle;

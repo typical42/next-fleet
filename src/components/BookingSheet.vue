@@ -13,7 +13,7 @@ import { computed, ref } from 'vue'
 import { BookingConflictError, changeBooking, ConflictError, createBooking, listBookings } from '../services/api.js'
 import { formatSpan, formatWhen } from '../utils/format.js'
 import { t } from '../utils/l10n.js'
-import { refusalWords, spanFault } from '../utils/pool.js'
+import { refusalWords, spanFault, waiting } from '../utils/pool.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -68,7 +68,9 @@ const note = computed(() => {
 	if (clash.value !== null) {
 		const name = clash.value.user_name
 		const span = formatSpan(clash.value.starts_at, clash.value.starts_at_off, clash.value.ends_at, clash.value.ends_at_off)
-		let text = t('nextfleet', 'Booked by {name}, {span}', { name, span })
+		let text = waiting(clash.value)
+			? t('nextfleet', 'Requested by {name}, {span}', { name, span })
+			: t('nextfleet', 'Booked by {name}, {span}', { name, span })
 		// A car still out is in somebody's hands, not just on their calendar: say whose, and when it is
 		// due back - or, overdue, that it still is out, since "until" a time gone by would be wrong.
 		if (clash.value.state === 'out') {

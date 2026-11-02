@@ -146,6 +146,7 @@ describe('booking a vehicle', () => {
 			ends_at: 1790956800,
 			ends_at_off: 120,
 			state: 'booked',
+			approval: null,
 		}))
 		const wrapper = sheet()
 		await wrapper.getComponent(NcTextField).vm.$emit('update:modelValue', 'Client visit')
@@ -155,6 +156,26 @@ describe('booking a vehicle', () => {
 		expect(wrapper.getComponent(NcNoteCard).props('text')).toBe('Booked by Anna, Fri 02/10, 14:00–18:00')
 		expect(wrapper.getComponent(NcTextField).props('modelValue')).toBe('Client visit')
 		expect(wrapper.emitted('saved')).toBeUndefined()
+	})
+
+	/** A request waiting for its answer holds the span all the same (docs/api.md#booking-approval). */
+	it('names a request in the way as one', async () => {
+		vi.mocked(createBooking).mockRejectedValue(new BookingConflictError('the vehicle is booked then', {
+			uuid: 'b-2',
+			user_id: 'anna',
+			user_name: 'Anna',
+			starts_at: 1790942400,
+			starts_at_off: 120,
+			ends_at: 1790956800,
+			ends_at_off: 120,
+			state: 'booked',
+			approval: 'requested',
+		}))
+		const wrapper = sheet()
+
+		await press(wrapper, 'Book')
+
+		expect(wrapper.getComponent(NcNoteCard).props('text')).toBe('Requested by Anna, Fri 02/10, 14:00–18:00')
 	})
 
 	it('says who has the car when the one in the way is out', async () => {
@@ -167,6 +188,7 @@ describe('booking a vehicle', () => {
 			ends_at: 1790956800,
 			ends_at_off: 120,
 			state: 'out',
+			approval: null,
 		}))
 		const wrapper = sheet()
 
@@ -185,6 +207,7 @@ describe('booking a vehicle', () => {
 			ends_at: 1790596800,
 			ends_at_off: 120,
 			state: 'out',
+			approval: null,
 		}))
 		const wrapper = sheet()
 

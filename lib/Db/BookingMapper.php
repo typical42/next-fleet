@@ -22,10 +22,11 @@ class BookingMapper extends BaseMapper {
 	}
 
 	/**
-	 * The booker as well as the author: a booking names the person who plans to drive.
+	 * The booker as well as the author: a booking names the person who plans to drive, and the
+	 * one who answered it.
 	 */
 	protected function accountColumns(): array {
-		return ['user_id', 'created_by'];
+		return ['user_id', 'created_by', 'approval_by'];
 	}
 
 	/**
@@ -224,6 +225,47 @@ class BookingMapper extends BaseMapper {
 		}
 
 		return $found;
+	}
+
+	/**
+	 * One vehicle's bookings that wait for an answer (Booking::waits()) and are not over by `now`,
+	 * by start: the ones still to be answered.
+	 *
+	 * @return list<Booking>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findWaiting(int $vehicleId, int $now): array {
+		$qb = $this->waiting();
+		$qb->andWhere($qb->expr()->eq('vehicle_id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)))
+			->andWhere($qb->expr()->gt('ends_at', $qb->createNamedParameter($now, IQueryBuilder::PARAM_INT)));
+
+		return $this->findEntities($qb);
+	}
+
+	/**
+	 * Every vehicle's bookings that waited for an answer until their end came, by start.
+	 *
+	 * @return list<Booking>
+	 * @throws \OCP\DB\Exception
+	 */
+	public function findWaitingEnded(int $now): array {
+		$qb = $this->waiting();
+		$qb->andWhere($qb->expr()->lte('ends_at', $qb->createNamedParameter($now, IQueryBuilder::PARAM_INT)));
+
+		return $this->findEntities($qb);
+	}
+
+	private function waiting(): IQueryBuilder {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('*')
+			->from($this->tableName)
+			->where($qb->expr()->eq('state', $qb->createNamedParameter(Booking::BOOKED)))
+			->andWhere(InList::in($qb, 'approval', Booking::OPEN, IQueryBuilder::PARAM_STR_ARRAY))
+			->andWhere($qb->expr()->isNull('deleted_at'))
+			->orderBy('starts_at')
+			->addOrderBy('id');
+
+		return $qb;
 	}
 
 	/**

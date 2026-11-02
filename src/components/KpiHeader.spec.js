@@ -29,7 +29,7 @@ function settings(chosen) {
 	return { preferences: { jurisdiction: 'de', dismissed_hints: [], dismissed_logbook_hints: [], reclaim_vat: false, kpi_period: 'last-12', grid_factor: null, inbox_folder: null, ...chosen }, jurisdictions: [] }
 }
 
-const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, odo_value: 48210, odo_unit: 'km', second_unit: null, currency: 'EUR', energy_types: ['diesel'] }
+const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, odo_value: 48210, odo_unit: 'km', second_unit: null, currency: 'EUR', energy_types: ['diesel'], may: ['view', 'costs'] }
 /** @type {(year: number, month: number, day: number) => number} a local midnight, in seconds */
 const at = (year, month, day) => new Date(year, month - 1, day).getTime() / 1000
 

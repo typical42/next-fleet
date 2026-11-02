@@ -97,16 +97,22 @@ class VehicleService {
 		'color' => ['setColor', 'text', 32],
 		'notes' => ['setNotes', 'text', Field::TEXT],
 		'reminder_mail' => ['setReminderMail', 'word', self::MAIL_CADENCES],
+		// These three are the owner's alone to change (update()).
+		'costs_shared' => ['setCostsShared', 'flag', null],
+		'booking_notices' => ['setBookingNotices', 'set', Vehicle::NOTICES],
+		'booking_approval' => ['setBookingApproval', 'flag', null],
 	];
 
 	/** How often the reminder digest goes out for this vehicle (docs/architecture.md#reminder-engine). */
 	private const MAIL_CADENCES = [Vehicle::MAIL_OFF, Vehicle::MAIL_DAILY, Vehicle::MAIL_WEEKLY, Vehicle::MAIL_MONTHLY];
 
 	/**
-	 * The columns the database will not default. A request that empties one keeps what the row
-	 * already has rather than being refused: the sheet never blocks on validation (docs/ui.md).
+	 * The columns a null does not clear: the database will not default them, or, for the owner's
+	 * switches and the booking events, a null is no choice. A request that empties one keeps what
+	 * the row already has rather than being refused: the sheet never blocks on validation
+	 * (docs/ui.md). The booking events take `[]` as a choice of their own (apply()).
 	 */
-	private const REQUIRED = ['vehicle_type', 'odo_unit', 'jurisdiction', 'lifecycle', 'reminder_mail'];
+	private const REQUIRED = ['vehicle_type', 'odo_unit', 'jurisdiction', 'lifecycle', 'reminder_mail', 'costs_shared', 'booking_notices', 'booking_approval'];
 
 	/**
 	 * What the create sheet does not ask for (docs/ui.md) and no country decides: neither a car
@@ -157,6 +163,7 @@ class VehicleService {
 		private IUserManager $users,
 		private MoneyRows $money,
 		private AccessMapper $grants,
+		private SyncEpoch $epoch,
 	) {
 	}
 
@@ -270,7 +277,8 @@ class VehicleService {
 	 * @param array<string, mixed> $fields
 	 * @param int $expectedUpdatedAt the `updated_at` the client read
 	 * @throws DoesNotExistException
-	 * @throws AccessDeniedException if the user may not edit this vehicle
+	 * @throws AccessDeniedException if the user may not edit this vehicle, or changes one of the
+	 *                               owner's switches without owning it
 	 * @throws StaleUpdateException if the row has changed since
 	 * @throws CurrencyInUseException if the currency changes on a vehicle with amounts in it
 	 * @throws \InvalidArgumentException if a field is not what its column holds
@@ -280,8 +288,16 @@ class VehicleService {
 		$vehicle = $this->reach($userId, VehicleAccess::EDIT, $uuid);
 		$was = clone $vehicle;
 		$this->apply($vehicle, $fields);
+		// Judged on the change, not on the field: a manager's sheet sends the switch back as it was.
+		$flipped = $was->sharesCosts() !== $vehicle->sharesCosts();
+		$ticked = self::sorted($was->bookingNotices()) !== self::sorted($vehicle->bookingNotices());
+		$gated = $was->needsApproval() !== $vehicle->needsApproval();
+		if (($flipped || $ticked || $gated) && !in_array(VehicleAccess::OWN, $vehicle->getMay(), true)) {
+			throw new AccessDeniedException();
+		}
 
-		$written = $this->atomic(function () use ($userId, $vehicle, $expectedUpdatedAt, $was): Vehicle {
+		$approved = [];
+		$written = $this->atomic(function () use ($userId, $vehicle, $expectedUpdatedAt, $was, $gated, &$approved): Vehicle {
 			// docs/architecture.md#data-model. Only a code is frozen: amounts under none, or under a
 			// sign from before the check, are labelled by naming one, which the import asks for.
 			// Under the hold every money write takes, so one racing this edit is seen.
@@ -294,13 +310,61 @@ class VehicleService {
 			}
 			$written = $this->mapper->updateChecked($vehicle, $expectedUpdatedAt);
 			$this->trail($userId, $written, $was);
+			// With nobody left to ask, whatever waited is the owner's yes. The write above holds
+			// the vehicle's row, and a booking reads the switch under that hold
+			// (BookingService::asksApproval()), so no request slips in behind.
+			if ($gated && !$written->needsApproval()) {
+				$approved = $this->approveWaiting($userId, $written);
+			}
 
 			return $written;
 		}, $this->db);
+		// After the commit, the reason NotificationService::sweep() gives.
+		foreach ($approved as [$booking, $heard]) {
+			$this->bookingNotices->tellAnswered($written, $booking, $userId);
+			$this->bookingNotices->tellSettled($written, $booking, $heard, $userId);
+		}
+		// Rows already synced carry or lack amounts by the old switch, and none of them changed.
+		if ($flipped) {
+			$this->epoch->reset();
+		}
 		// The screen replaces the vehicle it holds with this answer (src/store/index.js).
 		$this->pool($userId, [$written]);
 
 		return $written;
+	}
+
+	/**
+	 * Approves every booking of the vehicle that waits for an answer, as the owner. A question
+	 * asked back is moot once nobody needs to answer. One over already is past answering, and
+	 * BookingService::declineUnanswered() declines it.
+	 *
+	 * @return list<array{Booking, bool}> each booking as approved, and whether its list had
+	 *                                    heard of it before (Booking::heard())
+	 * @throws \OCP\DB\Exception
+	 */
+	private function approveWaiting(string $userId, Vehicle $vehicle): array {
+		$approved = [];
+		foreach ($this->bookings->findWaiting((int)$vehicle->getId(), $this->time->getTime()) as $booking) {
+			$heard = $booking->heard();
+			$booking->approve($userId);
+			$booking->setApprovalComment(null);
+			$approved[] = [$this->bookings->updateChecked($booking, $booking->getUpdatedAt()), $heard];
+		}
+
+		return $approved;
+	}
+
+	/**
+	 * A sheet may send the ticked events in its own order.
+	 *
+	 * @param list<string> $words
+	 * @return list<string>
+	 */
+	private static function sorted(array $words): array {
+		sort($words);
+
+		return $words;
 	}
 
 	/**
@@ -366,7 +430,7 @@ class VehicleService {
 
 	/**
 	 * Takes back what a deleted vehicle's reminders have sent: the job no longer reads a deleted
-	 * vehicle, so nothing else ever would. Its live grants' and cancelled bookings' notices go
+	 * vehicle, so nothing else ever would. Its live grants' and its bookings' notices go
 	 * too, as litter of the same kind. After the delete stands, the reason
 	 * NotificationService::sweep() gives.
 	 *
@@ -533,6 +597,7 @@ class VehicleService {
 					'starts_at_off' => $booking->getStartsAtOff(),
 					'ends_at' => $booking->getEndsAt(),
 					'ends_at_off' => $booking->getEndsAtOff(),
+					'approval' => $booking->getApproval(),
 				]);
 			}
 		}
@@ -569,7 +634,10 @@ class VehicleService {
 				continue;
 			}
 
-			$value = $this->read($column, $kind, $limit, $fields[$column]);
+			// Ticking no event is a choice, where an empty set elsewhere is none.
+			$value = $column === 'booking_notices' && $fields[$column] === []
+				? []
+				: $this->read($column, $kind, $limit, $fields[$column]);
 			if ($value === null && in_array($column, self::REQUIRED, true)) {
 				continue;
 			}

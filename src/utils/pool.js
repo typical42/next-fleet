@@ -51,7 +51,9 @@ export function nextBookingWords(vehicle) {
 	}
 	const span = formatSpan(next.starts_at, next.starts_at_off, next.ends_at, next.ends_at_off)
 
-	return t('nextfleet', 'Your booking: {span}', { span })
+	return waiting(next)
+		? t('nextfleet', 'Your booking, waiting for approval: {span}', { span })
+		: t('nextfleet', 'Your booking: {span}', { span })
 }
 
 /** The span's rules, worded once for the sheets' own check and for the server's answer. */
@@ -61,6 +63,14 @@ const LONGEST = () => t('nextfleet', 'A booking lasts 90 days at most.')
 const AHEAD = () => t('nextfleet', 'A booking ends no more than a year from now.')
 
 const DAY = 86400 * 1000
+
+/**
+ * @param {{approval?: string|null}} booking - as listed, or as a 409 names it
+ * @return {boolean} it waits for an answer (docs/api.md#booking-approval), holding its span meanwhile
+ */
+export function waiting(booking) {
+	return booking.approval === 'requested' || booking.approval === 'asked'
+}
 
 /**
  * What is wrong with a span before it is sent, as BookingService::apply() would refuse it.

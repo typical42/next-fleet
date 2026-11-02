@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
 
 import { perDistanceOnly, periodTilesOf, tilesOf } from './kpis.js'
 
-const CAR = { uuid: 'v-1', updated_at: 1700000000, odo_value: 48210, odo_unit: 'km', second_unit: null, currency: 'EUR', energy_types: ['diesel'] }
+const CAR = { uuid: 'v-1', updated_at: 1700000000, odo_value: 48210, odo_unit: 'km', second_unit: null, currency: 'EUR', energy_types: ['diesel'], may: ['view', 'costs'] }
 
 /**
  * @param {object} [cost] - what differs from a plain euro period with a distance
@@ -46,6 +46,12 @@ describe('the header tiles', () => {
 			['Cost', '€20.00/100 km'],
 			['Energy cost', '€12.00/100 km'],
 		])
+	})
+
+	it('states no cost to a reader the owner keeps the costs from, and still states consumption', () => {
+		const tiles = tilesOf({ ...CAR, may: ['view', 'log'] }, kpis({ consumption: [DIESEL] }), null, 'en')
+
+		expect(tiles.map((one) => one.label)).toEqual(['Odometer', 'Diesel consumption'])
 	})
 
 	it('compares each figure with the period before, signed', () => {

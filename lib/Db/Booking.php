@@ -53,6 +53,14 @@ use OCP\DB\Types;
  * @method void setInNotes(?string $inNotes)
  * @method int|null getTripId()
  * @method void setTripId(?int $tripId)
+ * @method string|null getApproval()
+ * @method void setApproval(?string $approval)
+ * @method string|null getApprovalComment()
+ * @method void setApprovalComment(?string $approvalComment)
+ * @method string|null getApprovalBy()
+ * @method void setApprovalBy(?string $approvalBy)
+ * @method bool|null getAnnounced()
+ * @method void setAnnounced(?bool $announced)
  */
 class Booking extends BaseEntity {
 	public const BOOKED = 'booked';
@@ -62,6 +70,20 @@ class Booking extends BaseEntity {
 	public const STATES = [self::BOOKED, self::OUT, self::RETURNED, self::CANCELLED];
 	/** The states that hold the vehicle: only these collide with another booking. */
 	public const LIVE = [self::BOOKED, self::OUT];
+
+	/**
+	 * Where an answer to the booking stands, beside its state rather than in it, so a client that
+	 * knows only the four states reads a request as `booked` (docs/adr/0011-a-small-firm-may-opt-into-approval-and-hidden-costs.md).
+	 * Null where the vehicle asked for none.
+	 */
+	public const REQUESTED = 'requested';
+	/** The approver asked back; the booker changes or cancels it. */
+	public const ASKED = 'asked';
+	public const APPROVED = 'approved';
+	/** Cancelled by the answer, or by its end come unanswered. */
+	public const DECLINED = 'declined';
+	/** The ones an approver may still answer. */
+	public const OPEN = [self::REQUESTED, self::ASKED];
 
 	protected int $vehicleId = 0;
 	protected string $userId = '';
@@ -82,6 +104,13 @@ class Booking extends BaseEntity {
 	protected ?int $inLevel = null;
 	protected ?string $inNotes = null;
 	protected ?int $tripId = null;
+	protected ?string $approval = null;
+	/** For the booker and the approvers only. */
+	protected ?string $approvalComment = null;
+	/** Who answered last. */
+	protected ?string $approvalBy = null;
+	/** Set once its list has heard of it, for when its approval no longer says so (heard()). */
+	protected ?bool $announced = false;
 
 	public function __construct() {
 		parent::__construct();
@@ -104,5 +133,29 @@ class Booking extends BaseEntity {
 		$this->addType('inLevel', Types::INTEGER);
 		$this->addType('inNotes', Types::STRING);
 		$this->addType('tripId', Types::BIGINT);
+		$this->addType('approval', Types::STRING);
+		$this->addType('approvalComment', Types::STRING);
+		$this->addType('approvalBy', Types::STRING);
+		$this->addType('announced', Types::BOOLEAN);
+	}
+
+	/** Approved by `$by`, which tells its list (heard()). */
+	public function approve(string $by): void {
+		$this->setApproval(self::APPROVED);
+		$this->setApprovalBy($by);
+		$this->setAnnounced(true);
+	}
+
+	/**
+	 * Whether the vehicle's list has heard that it stands (docs/architecture.md#booking-approval):
+	 * at once where nobody was asked, else from its first approval on.
+	 */
+	public function heard(): bool {
+		return $this->approval === null || $this->announced === true;
+	}
+
+	/** Whether an approver still has to answer it: until then it holds its span, but is not taken. */
+	public function waits(): bool {
+		return in_array($this->approval, self::OPEN, true);
 	}
 }

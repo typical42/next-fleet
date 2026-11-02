@@ -82,6 +82,7 @@ class EnergyService {
 		private VehicleMapper $vehicles,
 		private Jurisdictions $jurisdictions,
 		private IDBConnection $db,
+		private CostsShown $costs,
 	) {
 	}
 
@@ -101,7 +102,8 @@ class EnergyService {
 			$fields,
 			$this->energies,
 			static fn (Energy $row): bool => $row->getVehicleId() === (int)$vehicle->getId(),
-			static fn (Energy $row): array => self::wire($vehicle, $row),
+			// The uuid may name somebody else's row, which the reader sees as the timeline shows it.
+			fn (Energy $row): array => self::wire($vehicle, $this->costs->amounts($userId, $vehicle, $row)),
 		);
 
 		// Retried for the reason TripService::record() gives. The replay builds a fresh row.
@@ -257,8 +259,8 @@ class EnergyService {
 	/**
 	 * What the sheet prefills a fill-up with (docs/ui.md): the VAT rate of the vehicle's
 	 * jurisdiction on the day of the fill-up, and the stations this vehicle has filled up at, each
-	 * with the unit price it last charged per energy. Latest first: a driver mostly fills up where
-	 * they did last time.
+	 * with the unit price it last charged per energy, null where the reader may not see that
+	 * fill-up's cost. Latest first: a driver mostly fills up where they did last time.
 	 *
 	 * @param array<string, mixed> $fields `at` and `off`: the moment the sheet is on
 	 * @return array{vat_rate: ?int, stations: list<array{station: string, energy: string, unit_price: ?int}>}
@@ -278,7 +280,7 @@ class EnergyService {
 				$stations[$key] = [
 					'station' => (string)$energy->getStation(),
 					'energy' => $energy->getEnergy(),
-					'unit_price' => $energy->getUnitPrice(),
+					'unit_price' => $this->costs->amounts($userId, $vehicle, $energy)->getUnitPrice(),
 				];
 			}
 		}

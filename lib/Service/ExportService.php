@@ -46,6 +46,7 @@ class ExportService {
 		private ExpenseMapper $expenses,
 		private EnteredBy $enteredBy,
 		private LoggerInterface $logger,
+		private CostsShown $costs,
 	) {
 	}
 
@@ -69,11 +70,12 @@ class ExportService {
 
 		$id = (int)$vehicle->getId();
 		[$start, $end] = LocalYear::window($year);
+		// The money tables as the reader may see them (CostsShown), as the timeline shows them.
 		$rows = match ($table) {
 			'trips' => $this->rows($vehicle, $year, $this->trips->findAnyStartedBetween($id, $start, $end), self::trip(...)),
-			'energy' => $this->rows($vehicle, $year, $this->energy->findBetween($id, $start, $end), self::fillUp(...)),
-			'maintenance' => $this->rows($vehicle, $year, $this->maintenance->findBetween($id, $start, $end), self::record(...)),
-			'expenses' => $this->rows($vehicle, $year, $this->expenses->findBetween($id, $start, $end), self::expense(...)),
+			'energy' => $this->rows($vehicle, $year, $this->costs->entries($userId, $vehicle, $this->energy->findBetween($id, $start, $end)), self::fillUp(...)),
+			'maintenance' => $this->rows($vehicle, $year, $this->costs->entries($userId, $vehicle, $this->maintenance->findBetween($id, $start, $end)), self::record(...)),
+			'expenses' => $this->rows($vehicle, $year, $this->costs->entries($userId, $vehicle, $this->expenses->findBetween($id, $start, $end)), self::expense(...)),
 		};
 		$rows = array_values(array_filter($rows, static fn (?array $row): bool => $row !== null));
 

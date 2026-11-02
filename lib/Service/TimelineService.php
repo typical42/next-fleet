@@ -64,6 +64,7 @@ class TimelineService {
 		private Gaps $gaps,
 		private ConsumptionService $consumption,
 		private EnteredBy $enteredBy,
+		private CostsShown $costs,
 	) {
 	}
 
@@ -105,8 +106,9 @@ class TimelineService {
 		// One row more than the page, from each table: it is what says whether there is a next
 		// page, and it costs one row rather than a second count query.
 		$keyed = [];
+		$expensesBy = CostsShown::expensesBy($userId, $vehicle);
 		foreach ($wanted as $kind) {
-			foreach ($this->before($kind, $vehicleId, $at, $from[$kind]) as $entry) {
+			foreach ($this->before($kind, $vehicleId, $at, $from[$kind], $expensesBy) as $entry) {
 				$keyed[] = $this->row($kind, $entry);
 			}
 		}
@@ -132,7 +134,8 @@ class TimelineService {
 	 *
 	 * @return array<string, mixed>
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not see this vehicle
-	 * @throws \OCP\AppFramework\Db\DoesNotExistException if there is no such live Entry on it
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException if there is no such live Entry on it, or
+	 *                                                    it is an expense kept from the reader
 	 * @throws \InvalidArgumentException if the type is not a kind of Entry
 	 * @throws \OCP\DB\Exception
 	 */
@@ -150,6 +153,10 @@ class TimelineService {
 		if ($entry instanceof OdoReading && $entry->getSourceType() !== OdoReading::MANUAL) {
 			throw new DoesNotExistException('reading ' . $entryUuid . ' is not an Odometer Entry');
 		}
+		// The page leaves it out, so the row is not there either.
+		if ($entry instanceof Expense && !$this->costs->showsExpense($userId, $vehicle, $entry)) {
+			throw new DoesNotExistException('expense ' . $entryUuid . ' is not there for this reader');
+		}
 
 		return $this->dressed($userId, $vehicle, [$this->row($type, $entry)['row']])[0];
 	}
@@ -157,16 +164,19 @@ class TimelineService {
 	/**
 	 * One kind's share of a page: its rows strictly before the cursor, one more than a page.
 	 *
+	 * @param ?string $expensesBy the one author whose expenses the reader may read (CostsShown)
 	 * @return list<Trip|OdoReading|Energy|Maintenance|Expense>
 	 * @throws \OCP\DB\Exception
 	 */
-	private function before(string $kind, int $vehicleId, int $at, int $from): array {
+	private function before(string $kind, int $vehicleId, int $at, int $from, ?string $expensesBy): array {
+		if ($kind === self::EXPENSE) {
+			return $this->expenses->findBefore($vehicleId, $at, $from, self::PAGE + 1, $expensesBy);
+		}
 		$mapper = match ($kind) {
 			self::TRIP => $this->trips->findBefore(...),
 			self::ODOMETER => $this->readings->findEntriesBefore(...),
 			self::ENERGY => $this->energy->findBefore(...),
 			self::MAINTENANCE => $this->maintenance->findBefore(...),
-			self::EXPENSE => $this->expenses->findBefore(...),
 		};
 
 		return $mapper($vehicleId, $at, $from, self::PAGE + 1);
@@ -215,7 +225,25 @@ class TimelineService {
 	 * @throws \OCP\DB\Exception
 	 */
 	private function dressed(string $userId, Vehicle $vehicle, array $rows): array {
-		return $this->withEnteredBy($vehicle, $this->withMay($userId, $vehicle, $this->withClosing((int)$vehicle->getId(), $this->withConsumption($vehicle, $this->withFlags($vehicle, $this->withOverlaps((int)$vehicle->getId(), $this->withMissing($vehicle, $this->withReadings((int)$vehicle->getId(), $rows))))))));
+		return $this->withCosts($userId, $vehicle, $this->withEnteredBy($vehicle, $this->withMay($userId, $vehicle, $this->withClosing((int)$vehicle->getId(), $this->withConsumption($vehicle, $this->withFlags($vehicle, $this->withOverlaps((int)$vehicle->getId(), $this->withMissing($vehicle, $this->withReadings((int)$vehicle->getId(), $rows)))))))));
+	}
+
+	/**
+	 * Each fill-up and record without the amounts the reader may not see (CostsShown). Last, so
+	 * every other step reads the row as it is: a priced fill-up is not flagged as unpriced.
+	 *
+	 * @param list<array<string, mixed>> $rows
+	 * @return list<array<string, mixed>>
+	 */
+	private function withCosts(string $userId, Vehicle $vehicle, array $rows): array {
+		foreach ($rows as $index => $row) {
+			$entry = $row[$row['type']];
+			if ($entry instanceof Energy || $entry instanceof Maintenance) {
+				$rows[$index][$row['type']] = $this->costs->amounts($userId, $vehicle, $entry);
+			}
+		}
+
+		return $rows;
 	}
 
 	/**

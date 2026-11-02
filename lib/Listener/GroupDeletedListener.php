@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Listener;
 
 use OCA\NextFleet\Service\GrantService;
+use OCA\NextFleet\Service\RecipientService;
 use OCP\EventDispatcher\Event;
 use OCP\EventDispatcher\IEventListener;
 use OCP\Group\Events\BeforeGroupDeletedEvent;
@@ -23,6 +24,7 @@ use OCP\Group\Events\GroupDeletedEvent;
 class GroupDeletedListener implements IEventListener {
 	public function __construct(
 		private GrantService $grants,
+		private RecipientService $recipients,
 	) {
 	}
 
@@ -31,6 +33,7 @@ class GroupDeletedListener implements IEventListener {
 			$this->grants->noteGroup($event->getGroup()->getGID());
 		} elseif ($event instanceof GroupDeletedEvent) {
 			$this->grants->forgetGroup($event->getGroup()->getGID());
+			$this->recipients->forgetBookingGroup($event->getGroup()->getGID());
 		}
 	}
 }

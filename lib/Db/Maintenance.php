@@ -73,6 +73,14 @@ class Maintenance extends BaseEntity implements \JsonSerializable {
 		$this->addType('reminderId', Types::BIGINT);
 	}
 
+	/** The record as Energy::withoutCost() hands a fill-up out. */
+	public function withoutCost(): static {
+		$copy = clone $this;
+		$copy->cost = null;
+
+		return $copy;
+	}
+
 	/** @return NextFleetMaintenanceEntry */
 	public function jsonSerialize(): array {
 		return [

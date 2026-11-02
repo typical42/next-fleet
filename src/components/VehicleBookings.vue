@@ -4,15 +4,17 @@
 -->
 <script setup>
 import { mdiPaperclip } from '@mdi/js'
+import { getCurrentUser } from '@nextcloud/auth'
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcIconSvgWrapper from '@nextcloud/vue/components/NcIconSvgWrapper'
 import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
+import NcTextArea from '@nextcloud/vue/components/NcTextArea'
 import { computed, nextTick, ref, watch } from 'vue'
 
 import BookingSheet from './BookingSheet.vue'
 import HandoverSheet from './HandoverSheet.vue'
-import { cancelBooking, ConflictError, documentUrl, listBookings, readEntry } from '../services/api.js'
+import { answerBooking, cancelBooking, ConflictError, documentUrl, listBookings, readEntry } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
 import { may } from '../utils/access.js'
 import { formatSpan } from '../utils/format.js'
@@ -84,6 +86,10 @@ const unsaved = ref({})
 /** The booking whose cancel is being asked about, by uuid. */
 const asking = ref('')
 const cancelling = ref(false)
+/** The booking whose answers are open, by uuid, and the comment that goes with the answer. */
+const answering = ref('')
+const comment = ref('')
+const sending = ref(false)
 /** @type {import('vue').Ref<HTMLElement|null>} */
 const root = ref(null)
 
@@ -178,6 +184,7 @@ watch(() => props.vehicle.uuid, () => {
 	bookings.value = null
 	refusal.value = ''
 	asking.value = ''
+	answering.value = ''
 	sheet.value = null
 	handover.value = null
 	load()
@@ -265,9 +272,27 @@ function spanOf(booking) {
 
 /**
  * @param {import('../services/api.js').Booking} booking - as listed
+ * @return {boolean} the reader booked it
+ */
+function mine(booking) {
+	return booking.user_id === getCurrentUser()?.uid
+}
+
+/**
+ * @param {import('../services/api.js').Booking} booking - as listed
  * @return {string} where it stands, in words
  */
 function stateWord(booking) {
+	// The answer says more than `booked` or `cancelled` while there is one (docs/api.md#booking-approval).
+	if (booking.state === 'booked' && booking.approval === 'requested') {
+		return mine(booking) ? t('nextfleet', 'Waiting for approval') : t('nextfleet', 'Requested')
+	}
+	if (booking.state === 'booked' && booking.approval === 'asked') {
+		return t('nextfleet', 'Asked back')
+	}
+	if (booking.state === 'cancelled' && booking.approval === 'declined') {
+		return t('nextfleet', 'Declined')
+	}
 	/** @type {Record<string, string>} */
 	const words = {
 		booked: t('nextfleet', 'Booked'),
@@ -277,6 +302,49 @@ function stateWord(booking) {
 	}
 
 	return words[booking.state] ?? booking.state
+}
+
+/**
+ * Opens or closes a row's answers, as ask() does its cancel question.
+ *
+ * @param {string} uuid - the booking to answer, or empty to close
+ * @param {string} [back] - the booking whose Answer button takes focus back
+ */
+async function openAnswer(uuid, back = '') {
+	answering.value = uuid
+	comment.value = ''
+	await nextTick()
+	const at = uuid !== '' ? `[data-booking="${uuid}"] .bookings__answer textarea` : `[data-booking="${back}"] .bookings__answer-open`
+	const target = root.value?.querySelector(at) ?? root.value?.querySelector(`[data-booking="${back}"]`) ?? root.value?.querySelector('h3')
+	target?.focus()
+}
+
+/**
+ * @param {import('../services/api.js').Booking} booking - the one to answer, as read
+ * @param {'approve'|'ask'|'decline'} answer - which of the three
+ * @return {Promise<void>} when it is answered, or the refusal is on screen
+ */
+async function sendAnswer(booking, answer) {
+	sending.value = true
+	refusal.value = ''
+	let answered = false
+	try {
+		await answerBooking(props.vehicle.uuid, booking, answer, comment.value)
+		answered = true
+	} catch (error) {
+		refusal.value = error instanceof ConflictError
+			? t('nextfleet', 'This booking was changed somewhere else. It is shown as it now stands.')
+			: refusalWords(error.message) ?? t('nextfleet', 'The answer was not saved: {reason}', { reason: error.message })
+	} finally {
+		sending.value = false
+	}
+	// A decline frees the span the header may be counting on.
+	emit('changed')
+	await load()
+	// A refused answer keeps the comment typed for it, to send again.
+	if (answered) {
+		await openAnswer('', booking.uuid)
+	}
 }
 </script>
 
@@ -319,17 +387,29 @@ function stateWord(booking) {
 							<span>{{ booking.user_name }}</span>
 							<span v-if="booking.purpose" class="bookings__purpose">{{ booking.purpose }}</span>
 							<span class="bookings__state">{{ stateWord(booking) }}</span>
+							<span v-if="booking.approval_comment" class="bookings__purpose">{{ t('nextfleet', 'Comment: {comment}', { comment: booking.approval_comment }) }}</span>
 							<span v-for="flag in booking.flags ?? []" :key="flag" class="bookings__flag">{{ FLAG_WORDS[flag] ?? flag }}</span>
 							<span v-if="booking.trip_voided" class="bookings__state">{{ t('nextfleet', 'Trip voided') }}</span>
 							<span v-else-if="booking.trip_uuid && !may(booking, 'open_trip')" class="bookings__state">{{ t('nextfleet', 'Trip logged') }}</span>
 						</span>
 						<!-- Each label names the booking, after the words the button shows: read out of its row,
 						     "Change" says not which. -->
-						<span v-if="asking !== booking.uuid" class="bookings__actions">
-							<NcButton v-if="may(booking, 'check_out')"
+						<span v-if="asking !== booking.uuid && answering !== booking.uuid" class="bookings__actions">
+							<NcButton v-if="may(booking, 'approve')"
+								class="bookings__answer-open"
+								:aria-label="t('nextfleet', 'Answer the booking {span}', { span: spanOf(booking) })"
+								@click="openAnswer(booking.uuid)">
+								{{ t('nextfleet', 'Answer') }}
+							</NcButton>
+							<NcButton v-if="may(booking, 'check_out') && mine(booking)"
 								:aria-label="t('nextfleet', 'Take the car, booked {span}', { span: spanOf(booking) })"
 								@click="handover = booking">
 								{{ t('nextfleet', 'Take the car') }}
+							</NcButton>
+							<NcButton v-else-if="may(booking, 'check_out')"
+								:aria-label="t('nextfleet', 'Hand over to {name}, booked {span}', { name: booking.user_name, span: spanOf(booking) })"
+								@click="handover = booking">
+								{{ t('nextfleet', 'Hand over to {name}', { name: booking.user_name }) }}
 							</NcButton>
 							<NcButton v-if="may(booking, 'check_in')"
 								:aria-label="t('nextfleet', 'Return the car, booked {span}', { span: spanOf(booking) })"
@@ -383,6 +463,30 @@ function stateWord(booking) {
 						</NcButton>
 						<NcButton variant="warning" :disabled="cancelling" @click="cancel(booking)">
 							{{ t('nextfleet', 'Yes, cancel it') }}
+						</NcButton>
+					</div>
+					<!-- Each answer goes to the booker with the comment, if any. -->
+					<div v-if="answering === booking.uuid" class="bookings__question bookings__answer">
+						<NcTextArea v-model="comment"
+							:label="t('nextfleet', 'Comment for {name}', { name: booking.user_name })"
+							:disabled="sending" />
+						<NcButton v-if="may(booking, 'approve')"
+							variant="primary"
+							:disabled="sending"
+							@click="sendAnswer(booking, 'approve')">
+							{{ t('nextfleet', 'Approve') }}
+						</NcButton>
+						<NcButton v-if="may(booking, 'ask')" :disabled="sending" @click="sendAnswer(booking, 'ask')">
+							{{ t('nextfleet', 'Ask back') }}
+						</NcButton>
+						<NcButton v-if="may(booking, 'decline')"
+							variant="warning"
+							:disabled="sending"
+							@click="sendAnswer(booking, 'decline')">
+							{{ t('nextfleet', 'Decline') }}
+						</NcButton>
+						<NcButton variant="tertiary" :disabled="sending" @click="openAnswer('', booking.uuid)">
+							{{ t('nextfleet', 'Not now') }}
 						</NcButton>
 					</div>
 				</li>

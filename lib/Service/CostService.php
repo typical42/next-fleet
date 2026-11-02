@@ -158,13 +158,32 @@ class CostService {
 	}
 
 	/**
+	 * A period's cost for a reader the costs are kept from (VehicleAccess::COSTS): every amount
+	 * null, as in a period with nothing recorded, and nothing said about amounts they cannot see.
+	 * What the period covered stays. Built whole rather than merged over, so a field added to
+	 * the shape is one Psalm asks about here, not one handed out by default.
+	 *
+	 * @param Cost $cost
+	 * @return Cost
+	 */
+	public static function withheld(array $cost): array {
+		return [
+			'currency' => $cost['currency'], 'net' => $cost['net'], 'per' => $cost['per'],
+			'distance' => $cost['distance'], 'hours' => $cost['hours'],
+			'total' => null, 'energy' => null, 'maintenance' => null, 'expenses' => null,
+			'value' => null, 'energy_value' => null, 'value_per_hour' => null, 'energy_value_per_hour' => null,
+			'tco' => null, 'incomplete' => false, 'unstated' => false,
+		];
+	}
+
+	/**
 	 * In the sheet's order, then any word it does not offer, then the uncategorised: they are not
-	 * "other", they are unstated.
+	 * "other", they are unstated. Public for StatisticsService, which adds vehicles up by it.
 	 *
 	 * @param array<string, int> $byCategory '' for no category
 	 * @return list<Itemised>
 	 */
-	private static function itemised(array $byCategory): array {
+	public static function itemised(array $byCategory): array {
 		$order = array_unique([...ExpenseService::CATEGORIES, ...array_map('strval', array_keys($byCategory))]);
 		$items = [];
 		foreach ($order as $category) {
@@ -179,8 +198,11 @@ class CostService {
 		return $items;
 	}
 
-	/** Cents per 100 km or per hour; none without a distance, when the period total stands alone. */
-	private static function value(int $cents, ?int $distance, string $per): ?float {
+	/**
+	 * Cents per 100 km or per hour; none without a distance, when the period total stands alone.
+	 * Public for StatisticsService, which rates vehicles added up.
+	 */
+	public static function value(int $cents, ?int $distance, string $per): ?float {
 		return $distance === null ? null : $cents * ($per === 'h' ? 1.0 : 100.0) / $distance;
 	}
 }

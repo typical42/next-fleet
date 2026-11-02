@@ -146,6 +146,8 @@ class UserMigrationTest extends TestCase {
 			// Their trip under Logbook Mode.
 			'nextfleet/fleet_audit.json' => 1,
 			'nextfleet/fleet_bookings.json' => 1,
+			// On the shared car's booking list.
+			'nextfleet/fleet_booking_recipients.json' => 1,
 		], array_map('count', $files));
 		foreach ($files as $name => $rows) {
 			foreach ($rows as $row) {
@@ -190,6 +192,7 @@ class UserMigrationTest extends TestCase {
 		$grants = \OCP\Server::get(GrantService::class);
 		$grants->grant(self::OWNER, $uuid, ['grantee' => self::DRIVER, 'grantee_type' => 'user', 'role' => 'manager']);
 		\OCP\Server::get(RecipientService::class)->add(self::OWNER, $uuid, self::DRIVER);
+		\OCP\Server::get(RecipientService::class)->addBooking(self::OWNER, $uuid, self::DRIVER, 'user');
 		self::trip(self::OWNER, $shared, 1750000000, 12000);
 		// Under the mode, so the trip leaves an audit row by the driver.
 		self::trip(self::DRIVER, $shared, 1750010000, 12040);

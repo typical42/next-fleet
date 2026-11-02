@@ -11,6 +11,7 @@ namespace OCA\NextFleet\Tests\Integration;
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
+use OCA\NextFleet\Db\BookingRecipientMapper;
 use OCA\NextFleet\Db\ReminderRecipient;
 use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\Vehicle;
@@ -198,9 +199,11 @@ class RecipientTest extends TestCase {
 		$users->method('getDisplayName')->willReturnCallback(static fn (string $uid): ?string => $real->getDisplayName($uid));
 		$racing = new RecipientService(
 			\OCP\Server::get(ReminderRecipientMapper::class),
+			\OCP\Server::get(BookingRecipientMapper::class),
 			$this->vehicles,
 			\OCP\Server::get(VehicleMapper::class),
 			$users,
+			\OCP\Server::get(IGroupManager::class),
 			\OCP\Server::get(Sharable::class),
 			\OCP\Server::get(VehicleAccess::class),
 			\OCP\Server::get(NotificationService::class),

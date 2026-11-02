@@ -26,6 +26,11 @@ vi.mock('@nextcloud/l10n', async (original) => ({
 	getCanonicalLocale: () => 'en-GB',
 }))
 
+vi.mock('@nextcloud/auth', async (original) => ({
+	...await original(),
+	getCurrentUser: () => ({ uid: 'me' }),
+}))
+
 const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', lifecycle: 'active', odo_value: 52000, odo_unit: 'km', may: ['view', 'log'] }
 
 /** Built from a local wall clock, so the expectations hold in whatever zone the run is in. */
@@ -53,7 +58,7 @@ const MINE = /** @type {any} */ ({
  *
  * @type {import('../services/api.js').BookingHeld}
  */
-const ANNAS = { uuid: 'b-2', user_id: 'anna', user_name: 'Anna', starts_at: Date.UTC(2026, 9, 2, 8) / 1000, starts_at_off: 120, ends_at: Date.UTC(2026, 9, 2, 10) / 1000, ends_at_off: 120, state: 'booked' }
+const ANNAS = { uuid: 'b-2', user_id: 'anna', user_name: 'Anna', starts_at: Date.UTC(2026, 9, 2, 8) / 1000, starts_at_off: 120, ends_at: Date.UTC(2026, 9, 2, 10) / 1000, ends_at_off: 120, state: 'booked', approval: null }
 
 /**
  * @param {object|null} [booking] - the booking the car is taken or given back under, or none to take it now
@@ -65,7 +70,7 @@ function sheet(booking = MINE, lastIn = null) {
 		props: { vehicle: VEHICLE, booking, lastIn },
 		global: {
 			renderStubDefaultSlot: true,
-			stubs: { NcDialog: { template: '<div class="dialog"><slot /><slot name="actions" /></div>' } },
+			stubs: { NcDialog: { props: ['name'], template: '<div class="dialog"><h2>{{ name }}</h2><slot /><slot name="actions" /></div>' } },
 		},
 	})
 }
@@ -112,6 +117,21 @@ describe('taking the car', () => {
 
 		expect(checkOut).toHaveBeenCalledWith('v-1', MINE, { odo: 52140, level: 80, at_off: -FRIDAY_ONE_TWENTY.getTimezoneOffset() })
 		expect(wrapper.emitted('saved')).toEqual([[out]])
+	})
+
+	/** The owner or a manager taking someone else's booking is not the one who drives. */
+	it('hands the car over to the booker on someone else\'s booking', async () => {
+		const annas = { ...MINE, user_id: 'anna', user_name: 'Anna' }
+		vi.mocked(checkOut).mockResolvedValue({ ...annas, state: /** @type {const} */ ('out') })
+		const wrapper = sheet(annas)
+
+		expect(wrapper.get('h2').text()).toBe('Hand over to Anna')
+		await button(wrapper, 'Hand over to Anna').vm.$emit('click')
+		await flushPromises()
+
+		expect(checkOut).toHaveBeenCalledWith('v-1', annas, expect.anything())
+		expect(sheet().get('h2').text()).toBe('Take the car')
+		expect(sheet(null).get('h2').text()).toBe('Take the car')
 	})
 
 	it('prefills the larger of the vehicle\'s counter and the one the car last came back at', () => {
@@ -248,6 +268,20 @@ describe('taking it now', () => {
 		expect(wrapper.emitted('saved')).toHaveLength(1)
 	})
 
+	/** Kept past the day on a vehicle that wants answers, it is a request: booked, not taken. */
+	it('leaves a take-now that waits for approval booked, and takes nothing', async () => {
+		const requested = { ...BOOKED_NOW, approval: /** @type {const} */ ('requested'), may: ['edit', 'cancel'] }
+		vi.mocked(createBooking).mockResolvedValue(requested)
+		const wrapper = sheet(null)
+
+		await wrapper.getComponent(NcDateTimePickerNative).vm.$emit('update:modelValue', new Date(2026, 9, 3, 9, 0))
+		await button(wrapper, 'Take the car').vm.$emit('click')
+		await flushPromises()
+
+		expect(checkOut).not.toHaveBeenCalled()
+		expect(wrapper.emitted('saved')).toEqual([[requested]])
+	})
+
 	/** A booking that starts within the hour may stand in the way; it is named as on the booking sheet. */
 	it('names the booking in the way of the span', async () => {
 		vi.mocked(createBooking).mockRejectedValue(new BookingConflictError('the vehicle is booked then', ANNAS))
@@ -258,6 +292,16 @@ describe('taking it now', () => {
 
 		expect(wrapper.getComponent(NcNoteCard).props('text')).toBe('Booked by Anna, Fri 02/10, 10:00–12:00')
 		expect(checkOut).not.toHaveBeenCalled()
+	})
+
+	it('names a request in the way as one', async () => {
+		vi.mocked(createBooking).mockRejectedValue(new BookingConflictError('the vehicle is booked then', { ...ANNAS, approval: 'asked' }))
+		const wrapper = sheet(null)
+
+		await button(wrapper, 'Take the car').vm.$emit('click')
+		await flushPromises()
+
+		expect(wrapper.getComponent(NcNoteCard).props('text')).toBe('Requested by Anna, Fri 02/10, 10:00–12:00')
 	})
 
 	/** Checked before sending, in words; the start is now, so an end gone by is also before it. */
