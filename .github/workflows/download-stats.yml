@@ -1,0 +1,57 @@
+# SPDX-FileCopyrightText: 2026 Johannes Kolb
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
+# The app store installs from the tarball attached to each GitHub release, so its download
+# count is the only install figure there is: installs plus updates, not servers. GitHub shows
+# it only through the API, so once a week this posts it as a comment on one issue, and the
+# notification email brings it to the maintainer. The comments are the history.
+
+name: Download statistics
+
+on:
+  schedule:
+    # Monday, 06:00 UTC.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+# No checkout and no `uses`: the job runs only gh and jq, which the runner ships.
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  report:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TITLE: Download statistics
+    steps:
+      - name: Post this week's counts
+        run: |
+          now=$(gh api "repos/$GH_REPO/releases" --paginate \
+            --jq '.[] | {(.tag_name): ([.assets[].download_count] | add // 0)}' | jq -s 'add // {}')
+
+          issue=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number,title \
+            --jq "map(select(.title == \"$TITLE\")) | .[0].number // empty")
+          if [ -z "$issue" ]; then
+            url=$(gh issue create --title "$TITLE" --body 'Created by `.github/workflows/download-stats.yml`.')
+            issue=${url##*/}
+          fi
+
+          # The last counts live in the issue body, so the difference needs no comment paging.
+          before=$(gh issue view "$issue" --json body --jq .body | sed -n 's/^<!-- counts \(.*\) -->$/\1/p')
+          [ -n "$before" ] || before='{}'
+
+          jq -rn --argjson now "$now" --argjson before "$before" '
+            "| Release | Downloads | Since last report |", "|---|---:|---:|",
+            ($now | to_entries[] | "| \(.key) | \(.value) | +\(.value - ($before[.key] // 0)) |"),
+            "",
+            "**All releases:** \($now | add // 0), +\(($now | add // 0) - ($before | add // 0)) since last report"
+          ' > comment.md
+          gh issue comment "$issue" --body-file comment.md
+
+          printf '%s\n\n<!-- counts %s -->\n' \
+            'Weekly download counts of the release tarballs, posted by `.github/workflows/download-stats.yml`.' \
+            "$(jq -c . <<< "$now")" > body.md
+          gh issue edit "$issue" --body-file body.md
