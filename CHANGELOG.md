@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 — not released
+## 0.5.0 — 2026-11-02
 
 ### Access
 
