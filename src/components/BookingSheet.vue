@@ -8,10 +8,12 @@ import NcButton from '@nextcloud/vue/components/NcButton'
 import NcDateTimePickerNative from '@nextcloud/vue/components/NcDateTimePickerNative'
 import NcDialog from '@nextcloud/vue/components/NcDialog'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
+import NcSelect from '@nextcloud/vue/components/NcSelect'
 import NcTextField from '@nextcloud/vue/components/NcTextField'
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
-import { BookingConflictError, changeBooking, ConflictError, createBooking, listBookings } from '../services/api.js'
+import { BookingConflictError, changeBooking, ConflictError, createBooking, listBookers, listBookings } from '../services/api.js'
+import { may } from '../utils/access.js'
 import { formatSpan, formatWhen } from '../utils/format.js'
 import { t } from '../utils/l10n.js'
 import { refusalWords, spanFault, waiting } from '../utils/pool.js'
@@ -53,6 +55,33 @@ const clash = ref(null)
 const stale = ref(false)
 /** The booking the next write is checked against: the prop, until a refused write reads a newer one. */
 const held = ref(props.booking)
+
+/**
+ * Whom the booking is for, asked only of an approver booking a car that is shared: their
+ * booking for somebody stands at once (docs/architecture.md#booking-for-a-driver).
+ */
+const asksWhom = !editing.value && props.vehicle.ever_granted === true && may(props.vehicle, 'edit')
+// TRANSLATORS: the label of the field that says whom a booking is for.
+const forLabel = t('nextfleet', 'For')
+// TRANSLATORS: the first choice under "For": the booking is your own.
+const ME = { id: '', label: t('nextfleet', 'Me') }
+/** @type {import('vue').Ref<{id: string, label: string}[]>} */
+const whoms = ref([ME])
+const whom = ref(ME)
+const whomsFailure = ref('')
+
+onMounted(async () => {
+	if (!asksWhom) {
+		return
+	}
+	try {
+		const uid = getCurrentUser()?.uid
+		const others = (await listBookers(props.vehicle.uuid)).filter((one) => one.user_id !== uid)
+		whoms.value = [ME, ...others.map((one) => ({ id: one.user_id, label: one.display_name }))]
+	} catch (error) {
+		whomsFailure.value = t('nextfleet', 'The list could not be read: {reason}', { reason: error.message })
+	}
+})
 
 /**
  * Asked back, the booker answers by changing the booking (BookingService::change()). Only the
@@ -137,7 +166,7 @@ async function save() {
 		const written = fields()
 		const booking = await current()
 		emit('saved', booking === null
-			? await createBooking(props.vehicle.uuid, written)
+			? await createBooking(props.vehicle.uuid, whom.value.id === ME.id ? written : { ...written, user_id: whom.value.id })
 			: await changeBooking(props.vehicle.uuid, booking, written))
 	} catch (error) {
 		if (error instanceof BookingConflictError) {
@@ -219,6 +248,15 @@ function requestClose() {
 		@update:open="requestClose">
 		<div class="sheet" @keydown.esc.stop="requestClose">
 			<NcNoteCard v-if="note.text" :type="note.type" :text="note.text" />
+			<NcNoteCard v-if="whomsFailure" type="warning" :text="whomsFailure" />
+
+			<NcSelect v-if="whoms.length > 1"
+				v-model="whom"
+				:options="whoms"
+				:input-label="forLabel"
+				:disabled="saving"
+				:clearable="false"
+				label="label" />
 
 			<NcDateTimePickerNative v-model="start"
 				type="datetime-local"

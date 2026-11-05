@@ -66,6 +66,7 @@ class PreferencesController extends OCSController {
 	 * @param string|null $kpi_period last-12, this-year, last-year or month
 	 * @param int|null $grid_factor grams of CO₂ per kWh from the caller's tariff, 0 to 2000; null for the country's
 	 * @param int|null $inbox_folder the id of a folder in the caller's Files; null for none
+	 * @param bool|null $booking_approval bookings wait for an answer on every vehicle of the caller's whose booking_approval_rule is default; turned off, what waits there is approved
 	 * @return DataResponse<Http::STATUS_OK, NextFleetPreferences, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>
 	 * @throws OCSForbiddenException never: no vehicle is named; listed because every read can answer it
 	 * @throws OCSNotFoundException never: no vehicle is named; listed because every read can answer it
@@ -83,6 +84,7 @@ class PreferencesController extends OCSController {
 		mixed $kpi_period = null,
 		mixed $grid_factor = null,
 		mixed $inbox_folder = null,
+		mixed $booking_approval = null,
 	): DataResponse {
 		return $this->read(fn (): DataResponse => new DataResponse($this->service->write($this->userId(), $this->request->getParams())));
 	}

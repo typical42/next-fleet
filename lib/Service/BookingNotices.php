@@ -9,8 +9,6 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Service;
 
 use OCA\NextFleet\AppInfo\Application;
-use OCA\NextFleet\Db\Access;
-use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\Booking;
 use OCA\NextFleet\Db\BookingMapper;
 use OCA\NextFleet\Db\BookingRecipientMapper;
@@ -35,10 +33,15 @@ class BookingNotices {
 	 * where its approval stood when it was sent (Booking::REQUESTED and the answers).
 	 */
 	public const APPROVAL = 'booking_approval';
+	/** A booking an approver made for somebody else (Booking::madeByAnother()), under its own type. */
+	public const MADE_FOR = 'booking_for';
+	/** Its subject to the booker, who confirms it from the notice. */
+	public const BOOKED_FOR = 'booked_for';
+	/** Its subject to whoever made it, once the booker cancelled it. */
+	public const CANCELLED_BY_BOOKER = 'cancelled_by_booker';
 
 	public function __construct(
 		private BookingMapper $bookings,
-		private AccessMapper $grants,
 		private BookingRecipientMapper $recipients,
 		private Names $names,
 		private VehicleAccess $access,
@@ -64,26 +67,24 @@ class BookingNotices {
 	}
 
 	/**
-	 * Tells the vehicle's list of one event, if the owner ticked it: whoever is on it, a group by
-	 * its members, and an empty list is the owner. Never the one who acted, nor, of a cancel, the
-	 * booker, whom tellCancelled() tells. Only whoever sees the vehicle: being on the list grants
-	 * nothing. For after the commit, as NotificationService::sweep() sends; a send that fails is
-	 * logged, and the rest still go.
+	 * Tells the vehicle's list of one event: each row that hears it, a group by its members, each
+	 * account once; an empty list is the owner, hearing the vehicle's events. Never the one who
+	 * acted, nor, of a cancel, the booker, whom tellCancelled() tells. Only whoever sees the
+	 * vehicle: being on the list grants nothing. For after the commit, as
+	 * NotificationService::sweep() sends; a send that fails is logged, and the rest still go.
 	 *
 	 * The booking's span, or its handover back, rides along as it stands now, so a later change
 	 * does not rewrite the notice; the booker is named when it is read, for the reason
 	 * tellCancelled() gives.
 	 *
 	 * @param value-of<Vehicle::NOTICES> $event
+	 * @param list<string> $told who heard of it in a notice of their own already
 	 * @throws \OCP\DB\Exception
 	 */
-	public function tell(Vehicle $vehicle, Booking $booking, string $event, string $actor): void {
-		if (!in_array($event, $vehicle->bookingNotices(), true)) {
-			return;
-		}
+	public function tell(Vehicle $vehicle, Booking $booking, string $event, string $actor, array $told = []): void {
 		// The booking stands already: a failed lookup must not answer its write with an error.
 		try {
-			$listeners = $this->listeners($vehicle);
+			$listeners = $this->listeners($vehicle, $event);
 		} catch (\Throwable $e) {
 			$this->logger->error('The booking notices of vehicle ' . $vehicle->getUuid() . ' were not sent', ['exception' => $e]);
 
@@ -92,7 +93,10 @@ class BookingNotices {
 		$parameters = ['vehicle' => $vehicle->getUuid()] + ($event === Vehicle::NOTICE_RETURNED
 			? ['odo' => $booking->getInOdo(), 'level' => $booking->getInLevel()]
 			: self::span($booking));
-		$skipped = $event === Vehicle::NOTICE_CANCELLED ? [$actor, $booking->getUserId()] : [$actor];
+		$skipped = [$actor, ...$told];
+		if ($event === Vehicle::NOTICE_CANCELLED) {
+			$skipped[] = $booking->getUserId();
+		}
 		foreach ($listeners as $uid) {
 			if (in_array($uid, $skipped, true)) {
 				continue;
@@ -120,14 +124,56 @@ class BookingNotices {
 	 * request is no news to the list, nor is its end.
 	 *
 	 * @param bool $heard whether the list had heard of it before this write
+	 * @param list<string> $told as tell() takes it
 	 * @throws \OCP\DB\Exception
 	 */
-	public function tellSettled(Vehicle $vehicle, Booking $booking, bool $heard, string $actor): void {
+	public function tellSettled(Vehicle $vehicle, Booking $booking, bool $heard, string $actor, array $told = []): void {
 		if ($booking->getState() === Booking::BOOKED && !$booking->waits()) {
-			$this->tell($vehicle, $booking, $heard ? Vehicle::NOTICE_CHANGED : Vehicle::NOTICE_BOOKED, $actor);
+			$this->tell($vehicle, $booking, $heard ? Vehicle::NOTICE_CHANGED : Vehicle::NOTICE_BOOKED, $actor, $told);
 		} elseif ($booking->getState() === Booking::CANCELLED && $heard) {
-			$this->tell($vehicle, $booking, Vehicle::NOTICE_CANCELLED, $actor);
+			$this->tell($vehicle, $booking, Vehicle::NOTICE_CANCELLED, $actor, $told);
 		}
+	}
+
+	/**
+	 * Tells the booker of a booking an approver made for them, who confirms it from the notice
+	 * (Notifier). The list is told apart, without them. For after the commit, logged on failure,
+	 * as tell() is.
+	 *
+	 * @return list<string> who was told: tell()'s `$told`
+	 */
+	public function tellBookedFor(Vehicle $vehicle, Booking $booking): array {
+		return $this->tellMadeFor($booking->getUserId(), $vehicle, $booking, self::BOOKED_FOR);
+	}
+
+	/**
+	 * Tells whoever made a booking for its booker that the booker cancelled it. The list is told
+	 * apart, without them. For after the commit, logged on failure, as tell() is.
+	 *
+	 * @return list<string> who was told: tellSettled()'s `$told`
+	 */
+	public function tellCancelledByBooker(Vehicle $vehicle, Booking $booking): array {
+		return $this->tellMadeFor($booking->getCreatedBy(), $vehicle, $booking, self::CANCELLED_BY_BOOKER);
+	}
+
+	/** @return list<string> */
+	private function tellMadeFor(string $uid, Vehicle $vehicle, Booking $booking, string $subject): array {
+		try {
+			$notification = $this->notifications->createNotification();
+			$notification->setApp(Application::APP_ID)
+				->setUser($uid)
+				->setDateTime(\DateTime::createFromImmutable($this->time->now()))
+				->setObject(self::MADE_FOR, $booking->getUuid())
+				->setSubject($subject, ['vehicle' => $vehicle->getUuid()] + self::span($booking));
+			$this->notifications->notify($notification);
+		} catch (\Throwable $e) {
+			$this->logger->error('A notice of a booking made for a driver of vehicle ' . $vehicle->getUuid() . ' was not sent', ['exception' => $e]);
+
+			// Nobody was told, so the list does not leave them out.
+			return [];
+		}
+
+		return [$uid];
 	}
 
 	/**
@@ -141,7 +187,8 @@ class BookingNotices {
 			$this->notifications->markProcessed($this->notifications->createNotification()
 				->setApp(Application::APP_ID)
 				->setObject(self::APPROVAL, $booking->getUuid()));
-			foreach ($this->approvers($vehicle) as $uid) {
+			// The approvers: `edit` is what VehicleAccess::mayApprove() asks for.
+			foreach ($this->access->holders($vehicle, VehicleAccess::EDIT) as $uid) {
 				if ($uid !== $booking->getUserId()) {
 					$this->send($uid, $vehicle, $booking, Booking::REQUESTED);
 				}
@@ -212,16 +259,25 @@ class BookingNotices {
 
 	/**
 	 * Asks again what withdrawAll() took back and still waits for an answer: each request of the
-	 * approvers, each question of its booker. Nothing else would: a request has no next round, only
-	 * its end. For a vehicle brought back, after the commit, logged on failure, as tell() is.
+	 * approvers, each question of its booker, each booking made for a booker who has not confirmed
+	 * it. Nothing else would: a request has no next round, only its end. For a vehicle brought
+	 * back, after the commit, logged on failure, as tell() is.
 	 */
 	public function tellRestored(Vehicle $vehicle): void {
+		$now = $this->time->getTime();
 		try {
-			$waiting = $this->bookings->findWaiting((int)$vehicle->getId(), $this->time->getTime());
+			$waiting = $this->bookings->findWaiting((int)$vehicle->getId(), $now);
+			$unseen = array_filter(
+				$this->bookings->findSpanning((int)$vehicle->getId(), $now, null),
+				static fn (Booking $booking): bool => $booking->getState() === Booking::BOOKED && $booking->madeByAnother() && $booking->getSeenAt() === null,
+			);
 		} catch (\Throwable $e) {
 			$this->logger->error('The waiting bookings of vehicle ' . $vehicle->getUuid() . ' were not asked again', ['exception' => $e]);
 
 			return;
+		}
+		foreach ($unseen as $booking) {
+			$this->tellBookedFor($vehicle, $booking);
 		}
 		foreach ($waiting as $booking) {
 			if ($booking->getApproval() === Booking::REQUESTED) {
@@ -247,38 +303,11 @@ class BookingNotices {
 	}
 
 	/**
-	 * The owner and everyone a live grant makes a manager, a group by its members, each once
-	 * and only while they hold `edit`, which VehicleAccess::mayApprove() asks for.
-	 *
-	 * @return list<string>
-	 * @throws \OCP\DB\Exception
-	 */
-	private function approvers(Vehicle $vehicle): array {
-		$uids = [$vehicle->getUserId()];
-		$roles = VehicleAccess::rolesCovering(VehicleAccess::EDIT);
-		foreach ($this->grants->findByVehicle((int)$vehicle->getId()) as $grant) {
-			if (!in_array($grant->getRole(), $roles, true)) {
-				continue;
-			}
-			if ($grant->getGranteeType() === Access::USER) {
-				$uids[] = $grant->getGrantee();
-				continue;
-			}
-			array_push($uids, ...$this->names->members($grant->getGrantee()));
-		}
-
-		return array_values(array_filter(
-			array_unique($uids),
-			fn (string $uid): bool => $this->access->may($uid, VehicleAccess::EDIT, $vehicle),
-		));
-	}
-
-	/**
-	 * The booking's span as it stands, for a notice to keep.
+	 * The booking's span as it stands, for a notice to keep, and for the notifier to word.
 	 *
 	 * @return array{starts_at: int, starts_at_off: int, ends_at: int, ends_at_off: int}
 	 */
-	private static function span(Booking $booking): array {
+	public static function span(Booking $booking): array {
 		return [
 			'starts_at' => $booking->getStartsAt(),
 			'starts_at_off' => $booking->getStartsAtOff(),
@@ -294,7 +323,10 @@ class BookingNotices {
 	 */
 	public function withdrawAll(Vehicle $vehicle): void {
 		foreach ($this->bookings->findSpanning((int)$vehicle->getId(), 0, null) as $booking) {
-			$types = $booking->getState() === Booking::CANCELLED ? [self::OBJECT, self::EVENT, self::APPROVAL] : [self::EVENT, self::APPROVAL];
+			$types = [self::EVENT, self::APPROVAL, self::MADE_FOR];
+			if ($booking->getState() === Booking::CANCELLED) {
+				$types[] = self::OBJECT;
+			}
 			foreach ($types as $type) {
 				$notification = $this->notifications->createNotification();
 				$notification->setApp(Application::APP_ID)->setObject($type, $booking->getUuid());
@@ -304,19 +336,22 @@ class BookingNotices {
 	}
 
 	/**
-	 * The accounts on the list, each once, a group's members in its place; the owner for an
-	 * empty one. A group deleted since names nobody.
+	 * The accounts on the list that hear the event, each once, a group's members in its place;
+	 * the owner for an empty one. A group deleted since names nobody.
 	 *
 	 * @return list<string>
 	 * @throws \OCP\DB\Exception
 	 */
-	private function listeners(Vehicle $vehicle): array {
+	private function listeners(Vehicle $vehicle, string $event): array {
 		$rows = $this->recipients->findByVehicle((int)$vehicle->getId());
 		if ($rows === []) {
-			return [$vehicle->getUserId()];
+			return in_array($event, $vehicle->bookingNotices(), true) ? [$vehicle->getUserId()] : [];
 		}
 		$uids = [];
 		foreach ($rows as $row) {
+			if (!in_array($event, $row->events($vehicle), true)) {
+				continue;
+			}
 			$groupId = $row->getGroupId();
 			if ($groupId === null) {
 				$uids[] = (string)$row->getUserId();

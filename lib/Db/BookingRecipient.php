@@ -22,17 +22,31 @@ use OCP\DB\Types;
  * @method void setUserId(?string $userId)
  * @method string|null getGroupId()
  * @method void setGroupId(?string $groupId)
+ * @method void setEvents(?array $events)
  */
 class BookingRecipient extends BaseEntity {
 	protected int $vehicleId = 0;
 	protected ?string $userId = null;
 	protected ?string $groupId = null;
+	/**
+	 * The booking events this row hears, from Vehicle::NOTICES. Every write sets them; null hears
+	 * the vehicle's (events()).
+	 *
+	 * @var list<string>|null
+	 */
+	protected ?array $events = null;
 
 	public function __construct() {
 		parent::__construct();
 		$this->addType('vehicleId', Types::BIGINT);
 		$this->addType('userId', Types::STRING);
 		$this->addType('groupId', Types::STRING);
+		$this->addType('events', Types::JSON);
+	}
+
+	/** @return list<string> */
+	public function events(Vehicle $vehicle): array {
+		return $this->events ?? $vehicle->bookingNotices();
 	}
 
 	/** @return Access::USER|Access::GROUP */

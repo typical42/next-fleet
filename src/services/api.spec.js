@@ -4,7 +4,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { addGrant, addRecipient, attachDocument, BookingConflictError, cancelBooking, ChangedError, changeBooking, changeGrant, checkIn, checkOut, closeGap, createBooking, ImportRefusedError, listBookings, ConflictError, previewImport, runImport, undoImport, createReminder, createVehicle, csvUrl, deleteEntry, deleteVehicle, detachDocument, dismissReminder, documentUrl, energyPrefill, expensePrefill, fetchDocument, getPreferences, getVehicle, leaveVehicle, LockedError, maintenancePrefill, readHeld, recordEnergy, recordExpense, recordMaintenance, tripPrefill, restoreDocument, listDocuments, listFleetReminders, listGrants, listRecipients, listReminders, listVehicles, logbookUrl, mileageClaimUrl, NotFoundError, OfflineError, readEntry, readGaps, readInbox, readKpis, readStatistics, readTimeline, recordReading, recordTrip, RefusedError, reminderTemplates, removeBookingRecipient, removeRecipient, resetReading, restoreEntry, revokeGrant, searchGrantees, searchUsers, restoreVehicle, savePreferences, snoozeReminder, stickerUrl, thumbnailUrl, updateEntry, updateVehicle } from './api.js'
+import { addBookingRecipient, addGrant, addRecipient, attachDocument, BookingConflictError, cancelBooking, ChangedError, changeBooking, changeGrant, checkIn, checkOut, closeGap, createBooking, ImportRefusedError, listBookers, listBookings, ConflictError, previewImport, runImport, undoImport, createReminder, createVehicle, csvUrl, deleteEntry, deleteVehicle, detachDocument, dismissReminder, documentUrl, energyPrefill, expensePrefill, fetchDocument, getPreferences, getVehicle, leaveVehicle, LockedError, maintenancePrefill, readHeld, recordEnergy, recordExpense, recordMaintenance, tripPrefill, restoreDocument, listDocuments, listFleetReminders, listGrants, listRecipients, listReminders, listVehicles, logbookUrl, mileageClaimUrl, NotFoundError, OfflineError, readEntry, readGaps, readInbox, readKpis, readStatistics, readTimeline, recordReading, recordTrip, RefusedError, reminderTemplates, removeBookingRecipient, removeRecipient, resetReading, restoreEntry, revokeGrant, searchGrantees, searchUsers, restoreVehicle, savePreferences, snoozeReminder, stickerUrl, thumbnailUrl, updateEntry, updateVehicle } from './api.js'
 
 vi.mock('@nextcloud/router', () => ({
 	generateUrl: (/** @type {string} */ path) => `/index.php${path}`,
@@ -606,6 +606,17 @@ describe('the recipient calls', () => {
 		expect(fetch.mock.calls[2][1].method).toBe('DELETE')
 	})
 
+	it('adds a booking recipient with the events it hears, or without', async () => {
+		const fetch = answers(200, [])
+
+		await addBookingRecipient(vehicle.uuid, { recipient: 'crew', recipient_type: 'group', events: ['taken'] })
+		await addBookingRecipient(vehicle.uuid, { recipient: 'ben', recipient_type: 'user' })
+
+		expect(fetch.mock.calls[0][0]).toBe(`/index.php/apps/nextfleet/api/vehicles/${vehicle.uuid}/booking-recipients`)
+		expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ recipient: 'crew', recipient_type: 'group', events: ['taken'] })
+		expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ recipient: 'ben', recipient_type: 'user' })
+	})
+
 	// A web server refuses an encoded slash in a path by default, and the route takes a plain one.
 	it('removes a booking recipient whose group id holds a slash with the slash as it is', async () => {
 		const fetch = answers(200, [])
@@ -653,6 +664,14 @@ describe('the booking calls', () => {
 		expect(JSON.parse(fetch.mock.calls[2][1].body)).toEqual({ ...span, updated_at: 1750000300 })
 		expect(fetch.mock.calls[3][0]).toBe(`${base}/b-1?updated_at=1750000300`)
 		expect(fetch.mock.calls[3][1].method).toBe('DELETE')
+	})
+
+	it('reads whom an approver may book for', async () => {
+		const fetch = answers(200, [{ user_id: 'ben', display_name: 'Ben' }])
+
+		expect(await listBookers(vehicle.uuid)).toEqual([{ user_id: 'ben', display_name: 'Ben' }])
+		expect(fetch.mock.calls[0][0]).toBe(`/index.php/apps/nextfleet/api/vehicles/${vehicle.uuid}/bookers`)
+		expect(fetch.mock.calls[0][1].method).toBe('GET')
 	})
 
 	it('hands over the booking that holds the span', async () => {

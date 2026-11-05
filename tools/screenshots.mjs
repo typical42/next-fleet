@@ -4,7 +4,7 @@
  */
 
 /**
- * Store screenshots, taken from a seeded dev container.
+ * Store screenshots, and the ones the user docs show, taken from a seeded dev container.
  *
  * The app store fetches the images by URL rather than reading the repository, so these are
  * committed and served from `main`; `appinfo/info.xml` names them. Re-run whenever a screen
@@ -13,7 +13,13 @@
  * The fleet is what `occ nextfleet:seed` writes, so the pictures show the awkward rows the
  * demo fleet exists for rather than a tidy invention.
  *
- *   docker compose -f .docker/compose.yml exec -u www-data app php occ nextfleet:seed admin
+ * The two `--grant-to` accounts make the Volvo a pool car with every booking rule set; its edit
+ * sheet and its bookings are the shots that need other people. Their display names are what the
+ * pictures show, so give them real ones:
+ *
+ *   docker compose -f .docker/compose.yml exec -u www-data -e OC_PASS=… app php occ user:add --password-from-env --display-name "Anna Berger" anna
+ *   docker compose -f .docker/compose.yml exec -u www-data -e OC_PASS=… app php occ user:add --password-from-env --display-name "Ben Krause" ben
+ *   docker compose -f .docker/compose.yml exec -u www-data app php occ nextfleet:seed admin --grant-to anna --grant-to ben
  *   npm run screenshots:docker
  */
 
@@ -80,6 +86,30 @@ await page.waitForFunction(() => [...document.querySelectorAll('[role="dialog"]'
 	.every((d) => getComputedStyle(d).opacity === '1'))
 await shoot(page, 'entry-sheet')
 await page.keyboard.press('Escape')
+
+// The pool car, for docs/user/ rather than the store: its bookings, then its edit sheet. Waiting on
+// the booking made for a driver fails a seed without `--grant-to`, and waiting on Ben's notice row
+// one without the second, instead of shooting a car without them.
+await page.locator('.app-navigation').getByText('NF-PH 200').click()
+const bookings = page.locator('#nextfleet section.bookings')
+await bookings.getByText('Not seen yet by').waitFor({ timeout: 10000 })
+await shoot(page, 'pool-bookings', bookings)
+
+// Scrolled to Access, then to Bookings, so each frame holds sections a shared vehicle adds. The
+// access and notice lists fill in after the sheet is up.
+await page.getByRole('button', { name: 'Edit vehicle' }).click()
+const editing = page.getByRole('dialog', { name: 'Edit vehicle' })
+await editing.getByRole('heading', { name: 'Bookings' }).waitFor({ timeout: 10000 })
+await editing.getByRole('button', { name: 'Give access' }).waitFor()
+await editing.getByRole('group', { name: 'Ben Krause' }).waitFor()
+await page.waitForFunction(() => [...document.querySelectorAll('[role="dialog"]')]
+	.every((d) => getComputedStyle(d).opacity === '1'))
+await editing.getByRole('heading', { name: 'Access' }).evaluate((one) => one.scrollIntoView({ block: 'start' }))
+await shoot(page, 'vehicle-sheet', editing)
+await editing.getByRole('heading', { name: 'Bookings' }).evaluate((one) => one.scrollIntoView({ block: 'start' }))
+await shoot(page, 'booking-rules', editing)
+await page.keyboard.press('Escape')
+await editing.waitFor({ state: 'hidden' })
 
 // Statistics over every vehicle for this year, which the seed fills to the current month. The
 // table answers after the chart's frame is up, so wait on a cell. Beside the navigation the

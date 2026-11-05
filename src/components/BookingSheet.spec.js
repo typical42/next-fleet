@@ -6,17 +6,19 @@
 import NcButton from '@nextcloud/vue/components/NcButton'
 import NcDateTimePickerNative from '@nextcloud/vue/components/NcDateTimePickerNative'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
+import NcSelect from '@nextcloud/vue/components/NcSelect'
 import NcTextField from '@nextcloud/vue/components/NcTextField'
 import { flushPromises, shallowMount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { BookingConflictError, changeBooking, ConflictError, createBooking, listBookings } from '../services/api.js'
+import { BookingConflictError, changeBooking, ConflictError, createBooking, listBookers, listBookings } from '../services/api.js'
 import BookingSheet from './BookingSheet.vue'
 
 vi.mock('../services/api.js', async (original) => ({
 	...await original(),
 	changeBooking: vi.fn(),
 	createBooking: vi.fn(),
+	listBookers: vi.fn(),
 	listBookings: vi.fn(),
 }))
 
@@ -59,11 +61,12 @@ const MINE = /** @type {any} */ ({
 
 /**
  * @param {object|null} [booking] - the booking to change, or none to book
+ * @param {object} [vehicle] - the vehicle it is on
  * @return {import('@vue/test-utils').VueWrapper} the sheet
  */
-function sheet(booking = null) {
+function sheet(booking = null, vehicle = VEHICLE) {
 	return shallowMount(BookingSheet, {
-		props: { vehicle: VEHICLE, booking },
+		props: { vehicle, booking },
 		global: {
 			renderStubDefaultSlot: true,
 			stubs: { NcDialog: { template: '<div class="dialog"><slot /><slot name="actions" /></div>' } },
@@ -286,6 +289,72 @@ describe('booking a vehicle', () => {
 		await press(wrapper, 'Book')
 
 		expect(wrapper.getComponent(NcNoteCard).props('text')).toBe('A booking does not start in the past.')
+	})
+})
+
+describe('booking for a driver', () => {
+	/** The owner's view of a car that is shared. */
+	const POOL = { ...VEHICLE, ever_granted: true, may: ['view', 'log', 'edit', 'delete', 'own', 'costs', 'take_now'] }
+	const BOOKERS = [{ user_id: 'anna', display_name: 'Anna' }, { user_id: 'me', display_name: 'Maria' }, { user_id: 'ben', display_name: 'Ben' }]
+
+	/**
+	 * @param {import('@vue/test-utils').VueWrapper} wrapper - the sheet
+	 * @return {any} the For field, or undefined
+	 */
+	function whom(wrapper) {
+		return wrapper.findAllComponents(NcSelect).find((/** @type {any} */ one) => one.props('inputLabel') === 'For')
+	}
+
+	beforeEach(() => {
+		vi.mocked(listBookers).mockResolvedValue(BOOKERS)
+	})
+
+	it('offers the approver of a shared car Me first, then whoever else may book it', async () => {
+		const wrapper = sheet(null, POOL)
+		await flushPromises()
+
+		expect(whom(wrapper).props('options').map((/** @type {any} */ one) => one.label)).toEqual(['Me', 'Anna', 'Ben'])
+		expect(whom(wrapper).props('modelValue').label).toBe('Me')
+		expect(listBookers).toHaveBeenCalledWith('v-1')
+	})
+
+	it('books for the driver chosen, and for the session without a name', async () => {
+		const wrapper = sheet(null, POOL)
+		await flushPromises()
+
+		await press(wrapper, 'Book')
+		await whom(wrapper).vm.$emit('update:modelValue', whom(wrapper).props('options')[2])
+		await press(wrapper, 'Book')
+
+		expect(vi.mocked(createBooking).mock.calls[0][1]).not.toHaveProperty('user_id')
+		expect(vi.mocked(createBooking).mock.calls[1][1]).toMatchObject({ user_id: 'ben' })
+	})
+
+	it('asks nobody whom to book for where only the session may', async () => {
+		vi.mocked(listBookers).mockResolvedValue([{ user_id: 'me', display_name: 'Maria' }])
+		const wrapper = sheet(null, POOL)
+		await flushPromises()
+
+		expect(whom(wrapper)).toBeUndefined()
+	})
+
+	it('offers no choice to a driver, on a car never shared, or on a change', async () => {
+		const driver = sheet(null, { ...POOL, may: ['view', 'log', 'take_now'] })
+		const alone = sheet(null, { ...POOL, ever_granted: false })
+		const change = sheet(MINE, POOL)
+		await flushPromises()
+
+		expect([whom(driver), whom(alone), whom(change)]).toEqual([undefined, undefined, undefined])
+		expect(listBookers).not.toHaveBeenCalled()
+	})
+
+	it('says the list could not be read, and books for the session', async () => {
+		vi.mocked(listBookers).mockRejectedValue(new Error('the server went away'))
+		const wrapper = sheet(null, POOL)
+		await flushPromises()
+
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('The list could not be read: the server went away')
+		expect(whom(wrapper)).toBeUndefined()
 	})
 })
 

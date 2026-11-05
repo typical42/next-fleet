@@ -69,9 +69,15 @@ const VEHICLE = {
 	color: 'blue',
 	notes: 'two rows of seats',
 	may: ['view', 'log', 'edit', 'delete', 'own'],
+	// Shared, so that every section of the sheet shows.
+	ever_granted: true,
 }
 /** What a manager holds: everything but the vehicle's existence and its access. */
 const MANAGED = { ...VEHICLE, may: ['view', 'log', 'edit', 'delete'] }
+/** A vehicle nobody else ever had access to: its owner's alone. */
+const SOLO = { ...VEHICLE, ever_granted: false }
+/** The label of the vehicle's choice whether bookings wait for an answer. */
+const APPROVAL = 'Bookings need approval'
 
 /**
  * The sheet, mounted and past whatever it reads on the way up.
@@ -163,6 +169,35 @@ function day(wrapper, label) {
 	return wrapper.findAllComponents(NcDateTimePickerNative).find((one) => one.props('label') === label)
 }
 
+/**
+ * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted sheet
+ * @return {string[]} the headings of the sheet's sections, top to bottom
+ */
+function headings(wrapper) {
+	return wrapper.findAll('.body section > h3').map((one) => one.text())
+}
+
+/**
+ * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted sheet
+ * @param {string} heading - what the section's heading says
+ * @return {any} the section, which fails every find when the sheet does not show it
+ */
+function section(wrapper, heading) {
+	return wrapper.findAll('.body section').find((one) => one.find('h3').text() === heading) ?? wrapper.find('.no-such-section')
+}
+
+/**
+ * @param {any} part - a section of the sheet
+ * @return {string[]} the labels of the fields, dropdowns, date fields and switches in it, top to bottom
+ */
+function labels(part) {
+	return part.findAll('*')
+		// A dropdown's `label` names the option key; its words are the input label, which a stub
+		// renders as an attribute in lower case.
+		.map((/** @type {any} */ one) => one.attributes('inputlabel') ?? one.attributes('label'))
+		.filter(Boolean)
+}
+
 beforeEach(() => {
 	setActivePinia(createPinia())
 	vi.resetAllMocks()
@@ -217,6 +252,84 @@ describe('the vehicle sheet, importing', () => {
 	it('offers no import to a disposed vehicle, nor while creating one', async () => {
 		expect(button(await sheet({ ...VEHICLE, lifecycle: 'disposed' }), 'Import from a file…')).toBeUndefined()
 		expect(button(await sheet(), 'Import from a file…')).toBeUndefined()
+	})
+})
+
+describe('the vehicle sheet, its sections', () => {
+	it('puts a shared vehicle under four headings, in order', async () => {
+		const wrapper = await sheet(VEHICLE)
+
+		expect(headings(wrapper)).toEqual(['Vehicle', 'Costs', 'Access', 'Bookings'])
+	})
+
+	it('keeps the costs apart from the vehicle', async () => {
+		const wrapper = await sheet(VEHICLE)
+
+		expect(labels(section(wrapper, 'Costs')))
+			.toEqual(['Purchase price', 'Residual value', 'Currency', 'Drivers and viewers see costs'])
+		expect(labels(section(wrapper, 'Vehicle'))).not.toContain('Purchase price')
+		expect(labels(section(wrapper, 'Vehicle')).slice(-3)).toEqual(['Lifecycle', 'Colour', 'Notes'])
+	})
+
+	it('holds the access list under Access, and the booking rules under Bookings', async () => {
+		const wrapper = await sheet(VEHICLE)
+
+		expect(section(wrapper, 'Access').findComponent(VehicleGrants).exists()).toBe(true)
+		expect(labels(section(wrapper, 'Bookings'))).toEqual(['Bookings need approval'])
+		expect(section(wrapper, 'Bookings').findComponent(BookingRecipients).exists()).toBe(true)
+	})
+
+	/** Freelancers first (docs/adr/0012-nextfleet-also-serves-a-small-fleet.md). */
+	it('shows a vehicle only its owner uses no fleet setting, and still the way to share it', async () => {
+		const wrapper = await sheet({ ...SOLO, costs_shared: false, booking_approval: true, booking_approval_rule: 'always', booking_notices: ['returned'] })
+
+		expect(headings(wrapper)).toEqual(['Vehicle', 'Costs', 'Access'])
+		expect(toggle(wrapper, 'Drivers and viewers see costs')).toBeUndefined()
+		expect(dropdown(wrapper, APPROVAL)).toBeUndefined()
+		expect(wrapper.findComponent(BookingRecipients).exists()).toBe(false)
+		expect(section(wrapper, 'Access').findComponent(VehicleGrants).exists()).toBe(true)
+
+		// A hidden setting keeps its value.
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ costs_shared: false, booking_approval_rule: 'always', booking_notices: ['returned'] }))
+	})
+
+	it('shows its booking rules once the first grant made the vehicle shared', async () => {
+		const wrapper = await sheet(SOLO)
+
+		await wrapper.setProps({ vehicle: VEHICLE })
+
+		expect(headings(wrapper)).toEqual(['Vehicle', 'Costs', 'Access', 'Bookings'])
+	})
+
+	/** Access and the booking rules are the owner's alone. */
+	it('shows a manager the vehicle and its costs only', async () => {
+		const wrapper = await sheet(MANAGED)
+
+		expect(headings(wrapper)).toEqual(['Vehicle', 'Costs'])
+	})
+
+	it('has no headings while creating', async () => {
+		const wrapper = await sheet()
+
+		expect(headings(wrapper)).toEqual([])
+	})
+
+	/** A switch says what it does, not only what it is called. */
+	it('says beside each switch what it does', async () => {
+		const wrapper = await sheet({ ...VEHICLE, eu_category: 'N3' })
+
+		const switches = wrapper.findAllComponents(NcFormBoxSwitch)
+		expect(switches.map((one) => one.props('label'))).toEqual([
+			'Off-road vehicle (G)',
+			'Also counts engine hours',
+			'Logbook mode',
+			'Drivers and viewers see costs',
+		])
+		for (const one of switches) {
+			expect(one.props('description'), one.props('label')).toBeTruthy()
+		}
 	})
 })
 
@@ -359,24 +472,57 @@ describe('the vehicle sheet, editing', () => {
 
 	/** Whether a booking waits for an answer is the owner's to say too (docs/user/access.md). */
 	it('lets the owner make bookings wait for approval, and not a manager', async () => {
-		const owned = await sheet({ ...VEHICLE, booking_approval: false })
+		const owned = await sheet({ ...VEHICLE, booking_approval: false, booking_approval_rule: 'default' })
 
-		expect(toggle(owned, 'Bookings need approval')?.props('modelValue')).toBe(false)
-		await toggle(owned, 'Bookings need approval').vm.$emit('update:modelValue', true)
+		expect(dropdown(owned, APPROVAL).props('modelValue').id).toBe('default')
+		await dropdown(owned, APPROVAL).vm.$emit('update:modelValue', { id: 'always', label: 'Always' })
 		await saveButton(owned).vm.$emit('click')
 		await flushPromises()
-		expect(updateVehicle).toHaveBeenLastCalledWith(expect.objectContaining({ booking_approval: true }))
+		expect(updateVehicle).toHaveBeenLastCalledWith(expect.objectContaining({ booking_approval_rule: 'always' }))
 
-		// A flipped switch is a change like any other: the import waits for it.
-		const touched = await sheet({ ...VEHICLE, booking_approval: false })
-		await toggle(touched, 'Bookings need approval').vm.$emit('update:modelValue', true)
+		// A new choice is a change like any other: the import waits for it.
+		const touched = await sheet({ ...VEHICLE, booking_approval_rule: 'default' })
+		await dropdown(touched, APPROVAL).vm.$emit('update:modelValue', { id: 'never', label: 'Never' })
 		expect(button(touched, 'Import from a file…').props('disabled')).toBe(true)
 
-		const managed = await sheet({ ...MANAGED, booking_approval: true })
-		expect(toggle(managed, 'Bookings need approval')).toBeUndefined()
+		const managed = await sheet({ ...MANAGED, booking_approval: true, booking_approval_rule: 'always' })
+		expect(dropdown(managed, APPROVAL)).toBeUndefined()
 		await saveButton(managed).vm.$emit('click')
 		await flushPromises()
-		expect(updateVehicle).toHaveBeenLastCalledWith(expect.objectContaining({ booking_approval: true }))
+		expect(updateVehicle).toHaveBeenLastCalledWith(expect.objectContaining({ booking_approval_rule: 'always' }))
+	})
+
+	/** The first choice names what the owner's default makes of it now, read off the vehicle or the settings. */
+	it('says what "as for all my vehicles" means now, and where to change it', async () => {
+		const follows = await sheet({ ...VEHICLE, booking_approval: true, booking_approval_rule: 'default' })
+		expect(dropdown(follows, APPROVAL).props('options').map((/** @type {any} */ one) => one.label))
+			.toEqual(['As for all my vehicles (now: on)', 'Always', 'Never'])
+		expect(section(follows, 'Bookings').find('a').attributes('href')).toContain('/settings/user/additional')
+
+		// A pinned vehicle says nothing of the default; the settings the app holds do, off until read.
+		const pinned = await sheet({ ...VEHICLE, booking_approval: true, booking_approval_rule: 'always' })
+		expect(dropdown(pinned, APPROVAL).props('options')[0].label).toBe('As for all my vehicles (now: off)')
+	})
+
+	/** The sheet stays open with its edits; the link is set apart from its sentence as the sheet's other links are. */
+	it('opens the settings in a new tab', async () => {
+		const wrapper = await sheet({ ...VEHICLE, booking_approval: true, booking_approval_rule: 'default' })
+		const link = section(wrapper, 'Bookings').find('a')
+
+		expect(link.attributes()).toEqual(expect.objectContaining({ target: '_blank', rel: 'noopener noreferrer', class: 'sheet__help' }))
+	})
+
+	/** The access list offers Take it now by the choice as it stands in the sheet, saved or not. */
+	it('tells the access list whether approval applies, by the choice not yet saved', async () => {
+		const wrapper = await sheet({ ...VEHICLE, booking_approval: true, booking_approval_rule: 'default' })
+		const grants = () => /** @type {any} */ (wrapper.findComponent(VehicleGrants))
+		expect(grants().props('approval')).toBe(true)
+
+		await dropdown(wrapper, APPROVAL).vm.$emit('update:modelValue', { id: 'never', label: 'Never' })
+		expect(grants().props('approval')).toBe(false)
+
+		await dropdown(wrapper, APPROVAL).vm.$emit('update:modelValue', { id: 'always', label: 'Always' })
+		expect(grants().props('approval')).toBe(true)
 	})
 
 	/** Who hears of bookings is the owner's to say; the events are a vehicle column, saved with it. */

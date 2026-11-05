@@ -53,7 +53,7 @@ erDiagram
         bigint residual_est
         boolean costs_shared
         json booking_notices
-        boolean booking_approval
+        boolean booking_approval "null follows the owner's default"
         string(3) currency
         string(8) jurisdiction
         boolean logbook_mode
@@ -203,7 +203,9 @@ A booking's handover is its own columns, and `trip_id` points at the trip logged
 Its answer is its own columns too: `approval`, the comment, and who gave it in `approval_by` ([booking approval](../architecture.md#booking-approval)).
 `fleet_bkg_wait_end_idx` on `(approval, ends_at)` serves the hourly search across vehicles for requests whose end came unanswered.
 `announced` marks that the booking notice list has heard of it, so a booking moved back to a request is "changed" once approved again, not "booked".
+A booking whose `created_by` is not its `user_id` was made for the booker by an approver; `seen_at` is when the booker confirmed it ([booking for a driver](../architecture.md#booking-for-a-driver)).
 A booking notice recipient names a user in `user_id` or a group in `group_id`, never both ([booking notices](../architecture.md#booking-notices)).
+Its `events` are the booking events it hears; the vehicle's `booking_notices` are those of an empty list, and what a new recipient starts with.
 
 ```mermaid
 erDiagram
@@ -216,6 +218,7 @@ erDiagram
         bigint vehicle_id FK
         string(64) user_id
         string(64) group_id
+        json events
     }
 
     fleet_access {
@@ -223,6 +226,7 @@ erDiagram
         string(64) grantee
         string(8) grantee_type
         string(16) role
+        boolean take_now
     }
     fleet_bookings {
         bigint vehicle_id FK
@@ -248,6 +252,7 @@ erDiagram
         text approval_comment
         string(64) approval_by
         boolean announced
+        bigint seen_at
     }
 ```
 

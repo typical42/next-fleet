@@ -8,16 +8,20 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Integration;
 
+use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\Booking;
 use OCA\NextFleet\Db\BookingMapper;
 use OCA\NextFleet\Db\Vehicle;
+use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Exception\AccessDeniedException;
 use OCA\NextFleet\Exception\BookingConflictException;
 use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\BookingService;
+use OCA\NextFleet\Service\PreferencesService;
 use OCA\NextFleet\Service\VehicleService;
+use OCP\IConfig;
 use OCP\IDBConnection;
 use PHPUnit\Framework\TestCase;
 
@@ -58,8 +62,9 @@ class BookingApprovalTest extends TestCase {
 		$this->forgetTestRows();
 	}
 
-	/** The rows this suite invents, gone for real. */
+	/** The rows and the owner's default this suite invents, gone for real. */
 	private function forgetTestRows(): void {
+		\OCP\Server::get(IConfig::class)->deleteUserValue(self::OWNER, Application::APP_ID, Vehicle::OWNER_APPROVAL);
 		$db = \OCP\Server::get(IDBConnection::class);
 		$people = [self::OWNER, self::MANAGER, self::DRIVER, self::OTHER];
 		foreach (['fleet_vehicles' => 'user_id', 'fleet_access' => 'grantee', 'fleet_bookings' => 'created_by'] as $table => $column) {
@@ -354,6 +359,193 @@ class BookingApprovalTest extends TestCase {
 		$this->assertSame('Could you take the van?', $this->listed(self::MANAGER, $asked['uuid'])['approval_comment']);
 	}
 
+	/** A new vehicle asks as its owner's default says, which starts off. */
+	public function testAVehicleFollowsItsOwnersDefault(): void {
+		$follows = $this->shared('NF-AP 102');
+		$this->assertSame([false, Vehicle::APPROVAL_DEFAULT], [$follows->needsApproval(), $follows->approvalRule()]);
+		$this->assertFalse(\OCP\Server::get(PreferencesService::class)->forUser(self::OWNER)['preferences']['booking_approval']);
+
+		\OCP\Server::get(PreferencesService::class)->write(self::OWNER, ['booking_approval' => true]);
+
+		$this->assertTrue($this->vehicles->find(self::DRIVER, $follows->getUuid())->jsonSerialize()['booking_approval']);
+		$this->assertSame(Booking::REQUESTED, $this->bookings->book(self::DRIVER, $follows->getUuid(), $this->span($this->tomorrow, 2))['approval']);
+	}
+
+	/** Turned off for all, what waits on a vehicle that follows is approved; one that always asks keeps asking. */
+	public function testTurningTheOwnersDefaultOffApprovesWhatWaitsWhereItApplied(): void {
+		$preferences = \OCP\Server::get(PreferencesService::class);
+		$preferences->write(self::OWNER, ['booking_approval' => true]);
+		$follows = $this->shared('NF-AP 102');
+		$waiting = $this->bookings->book(self::DRIVER, $follows->getUuid(), $this->span($this->tomorrow, 2));
+		$always = $this->bookings->book(self::DRIVER, $this->vehicle->getUuid(), $this->span($this->tomorrow, 2));
+
+		$preferences->write(self::OWNER, ['booking_approval' => false]);
+
+		$answered = $this->listedOn($follows, self::OWNER, $waiting['uuid']);
+		$this->assertSame([Booking::APPROVED, self::OWNER], [$answered['approval'], $answered['approval_by']]);
+		$this->assertSame(Booking::REQUESTED, $this->listed(self::OWNER, $always['uuid'])['approval']);
+	}
+
+	/** A vehicle in the trash misses the default going off; brought back, it approves what waits. */
+	public function testARestoredVehicleThatNoLongerAsksApprovesWhatWaits(): void {
+		$preferences = \OCP\Server::get(PreferencesService::class);
+		$preferences->write(self::OWNER, ['booking_approval' => true]);
+		$follows = $this->shared('NF-AP 102');
+		$waiting = $this->bookings->book(self::DRIVER, $follows->getUuid(), $this->span($this->tomorrow, 2));
+		$trashed = $this->vehicles->delete(self::OWNER, $follows->getUuid(), $this->vehicles->find(self::OWNER, $follows->getUuid())->getUpdatedAt());
+
+		$preferences->write(self::OWNER, ['booking_approval' => false]);
+		$this->vehicles->restore(self::OWNER, $follows->getUuid(), $trashed->getUpdatedAt());
+
+		$answered = $this->listedOn($follows, self::OWNER, $waiting['uuid']);
+		$this->assertSame([Booking::APPROVED, self::OWNER], [$answered['approval'], $answered['approval_by']]);
+	}
+
+	/**
+	 * IConfig keeps the default it read for the rest of the request. A save that read it off while
+	 * it was on still approves what waits once the vehicle stops asking.
+	 */
+	public function testASaveThatReadAnOldDefaultStillApprovesWhatWaits(): void {
+		$follows = $this->shared('NF-AP 102');
+		$this->turnedOnBehindTheCache();
+		// The driver's request, as the request that read the default on writes it.
+		$waiting = $this->bookings->book(self::DRIVER, $follows->getUuid(), $this->span($this->tomorrow, 2));
+		$mapper = \OCP\Server::get(BookingMapper::class);
+		$row = $mapper->findOnVehicle((int)$follows->getId(), $waiting['uuid']);
+		$row->setApproval(Booking::REQUESTED);
+		$mapper->updateChecked($row, $row->getUpdatedAt());
+		$read = $this->vehicles->find(self::OWNER, $follows->getUuid());
+		$this->assertFalse($read->needsApproval(), 'the request still reads the old default');
+
+		$this->vehicles->update(self::OWNER, $follows->getUuid(), $read->getUpdatedAt(), ['booking_approval_rule' => Vehicle::APPROVAL_NEVER]);
+
+		$this->assertSame(Booking::APPROVED, $this->listedOn($follows, self::OWNER, $waiting['uuid'])['approval']);
+	}
+
+	/**
+	 * Two writes of the default at once: this request read it off before the other wrote it on.
+	 * Turned off here, it is stored off, and the answer says so.
+	 */
+	public function testTheDefaultIsWrittenPastTheValueTheRequestRead(): void {
+		$this->shared('NF-AP 102');
+		$this->turnedOnBehindTheCache();
+
+		$answer = \OCP\Server::get(PreferencesService::class)->write(self::OWNER, ['booking_approval' => false]);
+
+		$this->assertFalse(\OCP\Server::get(VehicleMapper::class)->storedOwnerApproval(self::OWNER), 'the stored default');
+		$this->assertFalse($answer['preferences']['booking_approval'], 'the answer');
+	}
+
+	/** The vehicle's own way off: from Always to as for all, while the default is off. */
+	public function testAVehicleThatStopsAskingApprovesWhatWaits(): void {
+		$asked = $this->bookings->book(self::DRIVER, $this->vehicle->getUuid(), $this->span($this->tomorrow, 2));
+		$read = $this->vehicles->find(self::OWNER, $this->vehicle->getUuid());
+
+		$written = $this->vehicles->update(self::OWNER, $this->vehicle->getUuid(), $read->getUpdatedAt(), ['booking_approval_rule' => Vehicle::APPROVAL_DEFAULT]);
+
+		$this->assertSame([false, Vehicle::APPROVAL_DEFAULT], [$written->needsApproval(), $written->approvalRule()]);
+		$this->assertSame(Booking::APPROVED, $this->listed(self::OWNER, $asked['uuid'])['approval']);
+	}
+
+	/**
+	 * A client of the bool sets Always or Never by changing it. Sent back as it reads, it changes
+	 * nothing, so a sheet that sends the whole vehicle keeps the vehicle following its owner.
+	 */
+	public function testTheBoolPinsTheVehicleOnlyWhenItChangesTheAnswer(): void {
+		$follows = $this->shared('NF-AP 102');
+
+		$kept = $this->vehicles->update(self::OWNER, $follows->getUuid(), $follows->getUpdatedAt(), ['booking_approval' => false, 'color' => 'red']);
+		$this->assertSame(Vehicle::APPROVAL_DEFAULT, $kept->approvalRule());
+		$on = $this->vehicles->update(self::OWNER, $follows->getUuid(), $kept->getUpdatedAt(), ['booking_approval' => true]);
+		$this->assertSame(Vehicle::APPROVAL_ALWAYS, $on->approvalRule());
+		$off = $this->vehicles->update(self::OWNER, $follows->getUuid(), $on->getUpdatedAt(), ['booking_approval' => false]);
+		$this->assertSame(Vehicle::APPROVAL_NEVER, $off->approvalRule());
+		$ruled = $this->vehicles->update(self::OWNER, $follows->getUuid(), $off->getUpdatedAt(), ['booking_approval' => true, 'booking_approval_rule' => Vehicle::APPROVAL_DEFAULT]);
+		$this->assertSame(Vehicle::APPROVAL_DEFAULT, $ruled->approvalRule(), 'the choice outranks the bool');
+	}
+
+	/**
+	 * A vehicle that follows answers differently once the default moves, so its token moves too: a
+	 * save that sends the old answer back is stale, not refused, and pins nothing.
+	 */
+	public function testANewDefaultMakesASaveReadBeforeItStale(): void {
+		$follows = $this->shared('NF-AP 102');
+		$read = $this->vehicles->find(self::MANAGER, $follows->getUuid());
+
+		\OCP\Server::get(PreferencesService::class)->write(self::OWNER, ['booking_approval' => true]);
+
+		try {
+			$this->vehicles->update(self::MANAGER, $follows->getUuid(), $read->getUpdatedAt(), ['booking_approval' => false, 'color' => 'red']);
+			$this->fail('a save read before the default moved went through');
+		} catch (StaleUpdateException) {
+		}
+		$this->assertSame(Vehicle::APPROVAL_DEFAULT, $this->vehicles->find(self::OWNER, $follows->getUuid())->approvalRule());
+	}
+
+	/** A manager's sheet sends the choice back as it read it. */
+	public function testOnlyTheOwnerChangesTheChoice(): void {
+		$read = $this->vehicles->find(self::MANAGER, $this->vehicle->getUuid());
+		$kept = $this->vehicles->update(self::MANAGER, $this->vehicle->getUuid(), $read->getUpdatedAt(), ['booking_approval_rule' => Vehicle::APPROVAL_ALWAYS, 'color' => 'red']);
+
+		$this->expectException(AccessDeniedException::class);
+		$this->vehicles->update(self::MANAGER, $this->vehicle->getUuid(), $kept->getUpdatedAt(), ['booking_approval_rule' => Vehicle::APPROVAL_NEVER]);
+	}
+
+	public function testAChoiceNotOfferedIsRefused(): void {
+		$this->expectException(\InvalidArgumentException::class);
+		$this->vehicles->update(self::OWNER, $this->vehicle->getUuid(), $this->vehicle->getUpdatedAt(), ['booking_approval_rule' => 'sometimes']);
+	}
+
+	/** The switch for all vehicles is offered to an owner whose vehicle somebody else uses or used. */
+	public function testThePreferencesSayWhetherTheUserOwnsASharedVehicle(): void {
+		$preferences = \OCP\Server::get(PreferencesService::class);
+
+		$this->assertTrue($preferences->forUser(self::OWNER)['owns_shared']);
+		$this->assertFalse($preferences->forUser(self::MANAGER)['owns_shared']);
+	}
+
+	public function testTheOwnersDefaultIsTrueOrFalse(): void {
+		$this->expectException(\InvalidArgumentException::class);
+		\OCP\Server::get(PreferencesService::class)->write(self::OWNER, ['booking_approval' => 'yes']);
+	}
+
+	/**
+	 * The owner's default as two requests see it: this one read it off, and another turned it on
+	 * past this one's IConfig since.
+	 */
+	private function turnedOnBehindTheCache(): void {
+		$config = \OCP\Server::get(IConfig::class);
+		$config->setUserValue(self::OWNER, Application::APP_ID, Vehicle::OWNER_APPROVAL, '0');
+		$this->assertSame('0', $config->getUserValue(self::OWNER, Application::APP_ID, Vehicle::OWNER_APPROVAL, '0'));
+		$qb = \OCP\Server::get(IDBConnection::class)->getQueryBuilder();
+		$qb->update('preferences')
+			->set('configvalue', $qb->createNamedParameter('1'))
+			->where($qb->expr()->eq('userid', $qb->createNamedParameter(self::OWNER)))
+			->andWhere($qb->expr()->eq('appid', $qb->createNamedParameter(Application::APP_ID)))
+			->andWhere($qb->expr()->eq('configkey', $qb->createNamedParameter(Vehicle::OWNER_APPROVAL)))
+			->executeStatement();
+	}
+
+	/** A second vehicle of the owner's that follows their default, with the two drivers on it. */
+	private function shared(string $plate): Vehicle {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => $plate]);
+		$this->grant(self::MANAGER, 'manager', $vehicle);
+		$this->grant(self::DRIVER, 'driver', $vehicle);
+		$this->grant(self::OTHER, 'driver', $vehicle);
+
+		return $vehicle;
+	}
+
+	/** @return array<string, mixed> the booking as the user's list of that vehicle answers it */
+	private function listedOn(Vehicle $vehicle, string $userId, string $uuid): array {
+		foreach ($this->bookings->list($userId, $vehicle->getUuid(), []) as $booking) {
+			if ($booking['uuid'] === $uuid) {
+				return $booking;
+			}
+		}
+		$this->fail('no booking ' . $uuid);
+	}
+
 	/** Moves the booking to the day that ended a minute ago, which no sheet may book. */
 	private function pastEnd(string $uuid): void {
 		$mapper = \OCP\Server::get(BookingMapper::class);
@@ -365,12 +557,7 @@ class BookingApprovalTest extends TestCase {
 
 	/** @return array<string, mixed> the booking as the user's list answers it */
 	private function listed(string $userId, string $uuid): array {
-		foreach ($this->bookings->list($userId, $this->vehicle->getUuid(), []) as $booking) {
-			if ($booking['uuid'] === $uuid) {
-				return $booking;
-			}
-		}
-		$this->fail('no booking ' . $uuid);
+		return $this->listedOn($this->vehicle, $userId, $uuid);
 	}
 
 	/**
@@ -381,9 +568,9 @@ class BookingApprovalTest extends TestCase {
 		return ['starts_at' => $from, 'starts_at_off' => 120, 'ends_at' => $from + $hours * self::HOUR, 'ends_at_off' => 120] + $more;
 	}
 
-	private function grant(string $grantee, string $role): void {
+	private function grant(string $grantee, string $role, ?Vehicle $vehicle = null): void {
 		$grant = new Access();
-		$grant->setVehicleId((int)$this->vehicle->getId());
+		$grant->setVehicleId((int)($vehicle ?? $this->vehicle)->getId());
 		$grant->setGrantee($grantee);
 		$grant->setGranteeType(Access::USER);
 		$grant->setRole($role);

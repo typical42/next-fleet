@@ -136,6 +136,7 @@ Usage: `occ nextfleet:restore <vehicle>`
 Gives a live vehicle to another owner.
 The grants stay.
 The old owner keeps **Viewer**, if the account still exists.
+Bookings need approval stays as it was: the vehicle is set to **Always** or **Never**.
 
 Usage: `occ nextfleet:transfer <vehicle> <owner>`
 
@@ -161,10 +162,10 @@ Usage: `occ nextfleet:import <user> <vehicle> <path> [options]`
 
 Adds a demonstration fleet to an account, to try the app.
 
-Usage: `occ nextfleet:seed <user> [--grant-to <uid>]`
+Usage: `occ nextfleet:seed <user> [--grant-to <uid>] [--grant-to <uid>]`
 
 | Option | Description |
 |---|---|
-| `--grant-to` | Give this account driver access to two vehicles: one with a trip and a booking of its own, and one whose costs drivers do not see, with a booking of its own waiting for approval. |
+| `--grant-to` | Give this account driver access to two vehicles: one with a trip and a booking of its own, and a pool car whose costs drivers do not see, with a booking of its own waiting for approval. Give it a second time to add a second driver to the pool car. The pool car shows each booking rule: approval for all vehicles, a driver who needs approval also for **Take it now**, notices per person, and a booking for a driver. |
 
 Next: [Troubleshooting](troubleshooting.md)

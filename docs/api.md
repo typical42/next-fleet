@@ -143,18 +143,30 @@ Of everything else:
 
 ## Booking notices
 
-A vehicle's `booking_notices` lists the booking events its notice list hears: `booked`, `taken`, `returned`, `cancelled`, `changed`.
-A new vehicle hears `booked` and `taken`; an empty list hears none.
-`…/booking-recipients` is the list: accounts and groups, each `recipient` with its `recipient_type`.
+There are five booking events: `booked`, `taken`, `returned`, `cancelled`, `changed`.
+`…/booking-recipients` is the list: accounts and groups, each `recipient` with its `recipient_type` and the `events` it hears.
+`POST` puts one on the list.
+Posting one already on it with `events` sets them; without, it changes nothing.
+A new one hears the events sent, else the vehicle's `booking_notices`.
 `DELETE …/booking-recipients/{type}/{recipient}` takes one off, `type` being its `recipient_type`; a slash in a group id stays a plain slash in the path.
-An empty list means the owner.
-Only the owner changes either; a manager reads the list and may send `booking_notices` back unchanged.
+An empty list means the owner, who hears the vehicle's `booking_notices`.
+A new vehicle's are `booked` and `taken`; `[]` hears none.
+A change of `booking_notices` changes no recipient already on the list.
+Only the owner changes the list, its events and `booking_notices`; a manager reads the list and may send `booking_notices` back unchanged.
 The notices are Nextcloud notifications ([architecture](architecture.md#booking-notices)).
 
 ## Booking approval
 
 While a vehicle's `booking_approval` is true, a driver's booking waits for an answer ([architecture](architecture.md#booking-approval)).
-Only the owner changes the switch; a manager may send it back unchanged.
+`booking_approval_rule` makes it so: `default` follows the owner's `booking_approval` in `/api/v1/preferences`, `always` and `never` do not.
+A new vehicle is `default`, and the owner's default starts false.
+
+- Writing `booking_approval_rule` sets the rule; it outranks `booking_approval` in the same request.
+- Writing `booking_approval` sets `always` or `never`, but only where it differs from the value read.
+  Sent back unchanged, it changes nothing, so a client that writes the whole vehicle keeps it `default`.
+- Only the owner changes the rule; a manager may send both back unchanged.
+- `/api/v1/preferences` also answers `owns_shared`: whether the caller owns a vehicle somebody else has or had access to.
+  The web UI offers the default only then.
 
 - A booking's `state` keeps its four values.
   `approval` says where the answer stands: null (none asked), `requested`, `asked`, `approved` or `declined`.
@@ -163,7 +175,10 @@ Only the owner changes the switch; a manager may send it back unchanged.
   `approval_comment` and `approval_by` hold the last answer's comment and who gave it; a change that makes the booking `requested` again clears both.
   `approval_comment` is null to anyone but the booker and the approvers.
 - The owner's and the managers' own bookings are `approved` at once, and so are those they move.
-  A booking that starts within five minutes and ends by midnight in its `starts_at_off` is *Take it now*: its `approval` is null.
+  A booking that starts within five minutes and ends by the next midnight after the server's now is *Take it now*: its `approval` is null while the vehicle's `may` holds `take_now`, and `requested` without it.
+  Midnight is in the booker's Nextcloud time zone, or in `starts_at_off` when they set none.
+- A vehicle's `may` holds `take_now` always for the owner and the managers, and for a driver while one of their grants' `take_now` is true.
+  A new grant's is true unless the request says otherwise; a request that does not send it keeps the grant's as it is.
 - `POST …/bookings/{booking}/approve`, `…/ask` and `…/decline` answer a `requested` or `asked` booking before its end.
   Each takes `updated_at` and an optional `comment`, and is offered in the booking's `may` as `approve`, `ask` and `decline`.
   A decline cancels the booking.
@@ -174,7 +189,28 @@ Only the owner changes the switch; a manager may send it back unchanged.
 - A `PUT` with a new start or end makes the booking `requested` again, whatever its `approval`, unless an approver sends it: then it is `approved`.
   On an approved booking, a new purpose keeps the answer.
   The booker's `PUT` to an `asked` booking is their answer, a new purpose too: the booking is `requested` again.
-- Turning `booking_approval` off approves every booking that waits.
+- When `booking_approval` turns false, every booking that waits on the vehicle is approved: by its rule, or by the owner's default for each vehicle that follows it.
+- `occ nextfleet:transfer` pins the rule to `always` or `never`, as `booking_approval` stood, so the new owner's default changes nothing.
+
+## Booking for a driver
+
+The owner or a manager may book for somebody else ([architecture](architecture.md#booking-for-a-driver)).
+
+- `POST …/bookings` takes an optional `user_id`: whom the booking is for.
+  Left out, or the caller's own, it books for the caller.
+  Anybody else is refused with a 403 unless the caller answers the vehicle's bookings, and with a 400 unless the account may book the vehicle.
+- `GET …/bookers` lists whom the caller may name: `user_id` and `display_name` of everybody who may book the vehicle, the caller included, by name.
+  It answers 403 to anybody who does not answer the vehicle's bookings.
+- The booking is the named account's: `user_id` and `user_name` are theirs, `created_by` and `created_by_name` the caller's.
+  `user_id` is the uid as the instance spells it, in whatever case the request sent it.
+  It is `approved` at once where the vehicle asks for approval, *Take it now* included, and has null `approval` where it does not.
+- A retry under the same `client_uuid` answers the row it wrote, whatever became of the booker's access since.
+- `seen_at` is when the booker confirmed it, null until then and on every booking they made themselves.
+  Anyone but the booker and the approvers reads it as null.
+- `POST …/bookings/{booking}/seen` confirms it, as its booker only, with no token; the first moment stays.
+  It answers 403 to anybody else, and 400 on a booking the caller made themselves.
+  The first confirmation moves the booking's `updated_at`, so sync hands it out; a client that read the booking before gets a 412 on its next write and reads it again.
+  The booker's notice has a **Seen** action that posts this route.
 
 ## Sync
 

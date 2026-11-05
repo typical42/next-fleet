@@ -104,8 +104,9 @@ class VehicleController extends OCSController {
 	 * @param string|null $notes anything else
 	 * @param string|null $reminder_mail off, daily, weekly or monthly
 	 * @param bool|null $costs_shared drivers and viewers see what it costs; true by default
-	 * @param list<string>|null $booking_notices the booking events its notice list hears: booked, taken, returned, cancelled, changed; booked and taken by default
-	 * @param bool|null $booking_approval a driver's booking waits for the owner's or a manager's answer; false by default
+	 * @param list<string>|null $booking_notices the booking events the owner hears while the notice list is empty, and a new recipient starts with: booked, taken, returned, cancelled, changed; booked and taken by default
+	 * @param bool|null $booking_approval a driver's booking waits for the owner's or a manager's answer; sets booking_approval_rule to always or never where it differs from the owner's default
+	 * @param string|null $booking_approval_rule default (as the owner's default says), always or never; default by default, and it outranks booking_approval
 	 * @param string|null $client_uuid a uuid of the client's for the new row: a retry under it answers that row
 	 * @return DataResponse<Http::STATUS_CREATED, NextFleetVehicle, array{}>|DataResponse<Http::STATUS_OK, NextFleetVehicle, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
 	 * @throws OCSForbiddenException never for a create; listed because every write can answer it
@@ -148,6 +149,7 @@ class VehicleController extends OCSController {
 		mixed $costs_shared = null,
 		mixed $booking_notices = null,
 		mixed $booking_approval = null,
+		mixed $booking_approval_rule = null,
 		mixed $client_uuid = null,
 	): DataResponse {
 		return $this->write(fn (): DataResponse => $this->created(
@@ -191,10 +193,11 @@ class VehicleController extends OCSController {
 	 * @param string|null $notes anything else
 	 * @param string|null $reminder_mail off, daily, weekly or monthly
 	 * @param bool|null $costs_shared drivers and viewers see what it costs; the owner's alone to change
-	 * @param list<string>|null $booking_notices the booking events its notice list hears: booked, taken, returned, cancelled, changed; the owner's alone to change
-	 * @param bool|null $booking_approval a driver's booking waits for the owner's or a manager's answer; the owner's alone to change
+	 * @param list<string>|null $booking_notices the booking events the owner hears while the notice list is empty, and a new recipient starts with: booked, taken, returned, cancelled, changed; the owner's alone to change
+	 * @param bool|null $booking_approval a driver's booking waits for the owner's or a manager's answer; a change sets booking_approval_rule to always or never; the owner's alone to change
+	 * @param string|null $booking_approval_rule default (as the owner's default says), always or never; outranks booking_approval; the owner's alone to change
 	 * @return DataResponse<Http::STATUS_OK, NextFleetVehicle, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
-	 * @throws OCSForbiddenException the caller may not edit this vehicle, or changes costs_shared, booking_notices or booking_approval without owning it
+	 * @throws OCSForbiddenException the caller may not edit this vehicle, or changes costs_shared, booking_notices or booking approval without owning it
 	 * @throws OCSNotFoundException no such vehicle
 	 *
 	 * 200: the vehicle as edited, with its new `updated_at`
@@ -235,6 +238,7 @@ class VehicleController extends OCSController {
 		mixed $costs_shared = null,
 		mixed $booking_notices = null,
 		mixed $booking_approval = null,
+		mixed $booking_approval_rule = null,
 	): DataResponse {
 		return $this->write(fn (): DataResponse => new DataResponse(
 			$this->service->update($this->userId(), $uuid, $this->token(), $this->request->getParams())->jsonSerialize(),

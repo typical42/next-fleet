@@ -8,8 +8,11 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Db;
 
+use OCA\NextFleet\AppInfo\Application;
+use OCP\AppFramework\Db\Entity;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\DB\QueryBuilder\IQueryBuilder;
+use OCP\IConfig;
 use OCP\IDBConnection;
 use OCP\Security\ISecureRandom;
 
@@ -17,8 +20,56 @@ use OCP\Security\ISecureRandom;
  * @template-extends BaseMapper<Vehicle>
  */
 class VehicleMapper extends BaseMapper {
-	public function __construct(IDBConnection $db, ITimeFactory $time, ISecureRandom $random) {
+	public function __construct(
+		IDBConnection $db,
+		ITimeFactory $time,
+		ISecureRandom $random,
+		private IConfig $config,
+	) {
 		parent::__construct($db, $time, $random, 'fleet_vehicles', Vehicle::class);
+	}
+
+	/**
+	 * Every vehicle read carries its owner's default, so Vehicle::needsApproval() answers alone.
+	 *
+	 * @return Vehicle
+	 */
+	protected function mapRowToEntity(array $row): Entity {
+		$vehicle = parent::mapRowToEntity($row);
+		$vehicle->setOwnerApproval($this->ownerApproval($vehicle->getUserId()));
+
+		return $vehicle;
+	}
+
+	/** Reads the vehicle's owner's default again, as storedOwnerApproval() does. */
+	public function refreshOwnerApproval(Vehicle $vehicle): void {
+		$vehicle->setOwnerApproval($this->storedOwnerApproval($vehicle->getUserId()));
+	}
+
+	/**
+	 * The owner's default, read from the database itself. IConfig keeps what it read once for the
+	 * rest of the request, so a caller that holds a vehicle would otherwise miss the owner changing
+	 * the default meanwhile (VehicleService::approveByDefault()).
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	public function storedOwnerApproval(string $owner): bool {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('configvalue')
+			->from('preferences')
+			->where($qb->expr()->eq('userid', $qb->createNamedParameter($owner)))
+			->andWhere($qb->expr()->eq('appid', $qb->createNamedParameter(Application::APP_ID)))
+			->andWhere($qb->expr()->eq('configkey', $qb->createNamedParameter(Vehicle::OWNER_APPROVAL)));
+		$result = $qb->executeQuery();
+		$stored = $result->fetchOne();
+		$result->closeCursor();
+
+		return $stored === '1';
+	}
+
+	/** The owner's default, as PreferencesService writes it; a vehicle not yet written asks here. */
+	public function ownerApproval(string $owner): bool {
+		return $this->config->getUserValue($owner, Application::APP_ID, Vehicle::OWNER_APPROVAL, '0') === '1';
 	}
 
 	/**

@@ -18,7 +18,7 @@ import BookingRecipients from './BookingRecipients.vue'
 import InspectionSticker from './InspectionSticker.vue'
 import ReminderRecipients from './ReminderRecipients.vue'
 import VehicleGrants from './VehicleGrants.vue'
-import { ConflictError, RefusedError, getPreferences, getVehicle, listReminders, reminderTemplates } from '../services/api.js'
+import { ConflictError, RefusedError, getPreferences, getVehicle, listReminders, reminderTemplates, settingsUrl } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
 import { usePreferencesStore } from '../store/preferences.js'
 import { may } from '../utils/access.js'
@@ -182,8 +182,28 @@ const logbookMode = ref(props.vehicle?.logbook_mode === true)
 const costsShared = ref(props.vehicle?.costs_shared !== false)
 // The owner's alone too (docs/api.md#booking-notices); the server sends them with every vehicle.
 const bookingNotices = ref(props.vehicle?.booking_notices ?? [])
-// The owner's alone (docs/api.md#booking-approval); off unless switched on.
-const bookingApproval = ref(props.vehicle?.booking_approval === true)
+// The owner's alone (docs/api.md#booking-approval). The choice, never the bool: sent back as read,
+// that would pin a vehicle that follows the owner's default.
+const approvalRule = ref(props.vehicle?.booking_approval_rule ?? 'default')
+// What "as for all my vehicles" makes of it now: a vehicle that follows says it itself, the app's
+// settings say it for one that does not.
+const ownerApproval = computed(() => props.vehicle?.booking_approval_rule === 'default'
+	? props.vehicle?.booking_approval === true
+	: preferences.bookingApproval)
+const approvalRules = computed(() => [
+	{ id: 'default', label: ownerApproval.value ? t('nextfleet', 'As for all my vehicles (now: on)') : t('nextfleet', 'As for all my vehicles (now: off)') },
+	// TRANSLATORS: an answer to "Bookings need approval": they always do.
+	{ id: 'always', label: t('nextfleet', 'Always') },
+	// TRANSLATORS: an answer to "Bookings need approval": they never do.
+	{ id: 'never', label: t('nextfleet', 'Never') },
+])
+const approvalChoice = computed(() => chosen(approvalRules.value, approvalRule.value))
+// Whether bookings wait for an answer by the choice as it now stands, saved or not: the access list
+// offers Take it now per driver only then.
+const approves = computed(() => approvalRule.value === 'always' || (approvalRule.value === 'default' && ownerApproval.value))
+// The fleet settings wait for somebody else to have had access: a freelancer's own car shows none
+// (docs/adr/0012-nextfleet-also-serves-a-small-fleet.md). Hidden, they still save as they were.
+const everShared = computed(() => props.vehicle?.ever_granted === true)
 
 /**
  * Whether switching the mode off has been confirmed. The switch itself is not intercepted: the
@@ -253,7 +273,7 @@ function typed() {
 		vehicleType.value?.id, engine.value?.id, energyTypes.value.map((/** @type {{ id: string }} */ one) => one.id),
 		odoUnit.value?.id, lifecycle.value?.id, jurisdiction.value, countsHours.value, logbookMode.value,
 		category.value?.id, offRoad.value, body.value?.id, addOn.value?.id, costsShared.value, bookingNotices.value,
-		bookingApproval.value,
+		approvalRule.value,
 	])
 }
 const untyped = typed()
@@ -445,7 +465,7 @@ function fields(read) {
 		notes: notes.value,
 		reminder_mail: reminderMail.value,
 		// Left out for anyone else: the save spreads the vehicle current() read, which carries it as stored.
-		...(may(props.vehicle, 'own') ? { costs_shared: costsShared.value, booking_notices: bookingNotices.value, booking_approval: bookingApproval.value } : {}),
+		...(may(props.vehicle, 'own') ? { costs_shared: costsShared.value, booking_notices: bookingNotices.value, booking_approval_rule: approvalRule.value } : {}),
 	}
 }
 
@@ -696,241 +716,278 @@ function chosen(options, id) {
 				:text="note.text" />
 
 			<!-- Creating asks for five fields, not twelve: the rest arrives through the vehicle's
-			     own edit sheet and the hint that points at it (docs/ui.md). -->
-			<NcTextField v-model="plate"
-				:label="t('nextfleet', 'Registration plate')"
-				:disabled="saving || !!created"
-				autofocus />
-			<NcTextField v-model="displayName"
-				:label="t('nextfleet', 'Display name')"
-				:disabled="saving || !!created" />
-			<NcTextField v-model="manufacturer"
-				:label="t('nextfleet', 'Manufacturer')"
-				:disabled="saving || !!created" />
-			<NcTextField v-model="model"
-				:label="t('nextfleet', 'Model')"
-				:disabled="saving || !!created" />
-			<NcSelect v-model="engine"
-				:options="engines"
-				:input-label="t('nextfleet', 'Engine')"
-				:disabled="saving || !!created"
-				label="label" />
-			<!-- Type and unit sit with the counter on a create, because the number means nothing
-			     without them. Both come prefilled, so they cost no field (docs/ui.md). -->
-			<NcSelect :model-value="vehicleType"
-				:options="types"
-				:input-label="t('nextfleet', 'Vehicle type')"
-				:disabled="saving || !!created"
-				:clearable="false"
-				label="label"
-				@update:model-value="chooseType" />
-			<!-- The registration codes are data beside the type, which drives the rules; choosing one
-			     may pre-fill the type. Edited only: nobody has the certificate at hand on a create. -->
-			<fieldset v-if="editing" class="sheet__wide sheet__registration">
-				<legend>{{ t('nextfleet', 'Registration') }}</legend>
-				<NcSelect :model-value="category"
-					:options="categories"
-					:input-label="t('nextfleet', 'EU vehicle category')"
-					:disabled="saving"
-					:filter="filterOptions"
-					:selectable="(option) => !option.header"
+			     own edit sheet and the hint that points at it (docs/ui.md). Only the edit has
+			     sections to tell apart. -->
+			<section class="sheet__section">
+				<h3 v-if="editing" class="sheet__wide sheet__heading">
+					{{ t('nextfleet', 'Vehicle') }}
+				</h3>
+				<NcTextField v-model="plate"
+					:label="t('nextfleet', 'Registration plate')"
+					:disabled="saving || !!created"
+					autofocus />
+				<NcTextField v-model="displayName"
+					:label="t('nextfleet', 'Display name')"
+					:disabled="saving || !!created" />
+				<NcTextField v-model="manufacturer"
+					:label="t('nextfleet', 'Manufacturer')"
+					:disabled="saving || !!created" />
+				<NcTextField v-model="model"
+					:label="t('nextfleet', 'Model')"
+					:disabled="saving || !!created" />
+				<NcSelect v-model="engine"
+					:options="engines"
+					:input-label="t('nextfleet', 'Engine')"
+					:disabled="saving || !!created"
+					label="label" />
+				<!-- Type and unit sit with the counter on a create, because the number means nothing
+				     without them. Both come prefilled, so they cost no field (docs/ui.md). -->
+				<NcSelect :model-value="vehicleType"
+					:options="types"
+					:input-label="t('nextfleet', 'Vehicle type')"
+					:disabled="saving || !!created"
+					:clearable="false"
 					label="label"
-					@update:model-value="chooseCategory">
-					<template #option="option">
-						<strong v-if="option.header">{{ option.label }}</strong>
-						<NcEllipsisedOption v-else :name="option.label" />
-					</template>
-				</NcSelect>
-				<NcFormBoxSwitch v-if="offersOffRoad"
-					v-model="offRoad"
-					:label="t('nextfleet', 'Off-road vehicle (G)')"
-					:disabled="saving" />
-				<a class="sheet__help"
-					:href="REGISTRATION_HELP"
-					target="_blank"
-					rel="noopener noreferrer">{{ t('nextfleet', 'Field J on the registration certificate') }}</a>
-				<!-- Closed without a category, and for one that has no body codes (L, T, C, R, S). -->
-				<NcSelect v-model="body"
-					:options="bodies"
-					:input-label="t('nextfleet', 'EU body type')"
-					:disabled="saving || bodies.length === 0"
-					:filter="filterOptions"
-					:selectable="(option) => !option.header"
-					label="label">
-					<template #option="option">
-						<strong v-if="option.header">{{ option.label }}</strong>
-						<NcEllipsisedOption v-else :name="option.label" />
-					</template>
-				</NcSelect>
-				<NcSelect v-if="offersAddOn"
-					v-model="addOn"
-					:options="addOns"
-					:input-label="t('nextfleet', 'Body add-on')"
+					@update:model-value="chooseType" />
+				<!-- The registration codes are data beside the type, which drives the rules; choosing one
+				     may pre-fill the type. Edited only: nobody has the certificate at hand on a create. -->
+				<fieldset v-if="editing" class="sheet__wide sheet__registration">
+					<legend>{{ t('nextfleet', 'Registration') }}</legend>
+					<NcSelect :model-value="category"
+						:options="categories"
+						:input-label="t('nextfleet', 'EU vehicle category')"
+						:disabled="saving"
+						:filter="filterOptions"
+						:selectable="(option) => !option.header"
+						label="label"
+						@update:model-value="chooseCategory">
+						<template #option="option">
+							<strong v-if="option.header">{{ option.label }}</strong>
+							<NcEllipsisedOption v-else :name="option.label" />
+						</template>
+					</NcSelect>
+					<NcFormBoxSwitch v-if="offersOffRoad"
+						v-model="offRoad"
+						:label="t('nextfleet', 'Off-road vehicle (G)')"
+						:description="t('nextfleet', 'Adds the letter G to the category, for a vehicle that is built to drive off the road.')"
+						:disabled="saving" />
+					<a class="sheet__help"
+						:href="REGISTRATION_HELP"
+						target="_blank"
+						rel="noopener noreferrer">{{ t('nextfleet', 'Field J on the registration certificate') }}</a>
+					<!-- Closed without a category, and for one that has no body codes (L, T, C, R, S). -->
+					<NcSelect v-model="body"
+						:options="bodies"
+						:input-label="t('nextfleet', 'EU body type')"
+						:disabled="saving || bodies.length === 0"
+						:filter="filterOptions"
+						:selectable="(option) => !option.header"
+						label="label">
+						<template #option="option">
+							<strong v-if="option.header">{{ option.label }}</strong>
+							<NcEllipsisedOption v-else :name="option.label" />
+						</template>
+					</NcSelect>
+					<NcSelect v-if="offersAddOn"
+						v-model="addOn"
+						:options="addOns"
+						:input-label="t('nextfleet', 'Body add-on')"
+						:disabled="saving"
+						:filter="filterOptions"
+						label="label">
+						<template #option="option">
+							<NcEllipsisedOption :name="option.label" />
+						</template>
+					</NcSelect>
+					<a class="sheet__help"
+						:href="REGISTRATION_HELP"
+						target="_blank"
+						rel="noopener noreferrer">{{ t('nextfleet', 'Field 4 on the registration certificate (EU body code)') }}</a>
+				</fieldset>
+				<NcSelect v-model="odoUnit"
+					:options="units"
+					:input-label="t('nextfleet', 'Counter unit')"
+					:disabled="saving || !!created"
+					:clearable="false"
+					label="label" />
+				<NcTextField v-if="!editing"
+					v-model="counter"
+					:label="t('nextfleet', 'Counter reading')"
 					:disabled="saving"
-					:filter="filterOptions"
-					label="label">
-					<template #option="option">
-						<NcEllipsisedOption :name="option.label" />
-					</template>
-				</NcSelect>
-				<a class="sheet__help"
-					:href="REGISTRATION_HELP"
-					target="_blank"
-					rel="noopener noreferrer">{{ t('nextfleet', 'Field 4 on the registration certificate (EU body code)') }}</a>
-			</fieldset>
-			<NcSelect v-model="odoUnit"
-				:options="units"
-				:input-label="t('nextfleet', 'Counter unit')"
-				:disabled="saving || !!created"
-				:clearable="false"
-				label="label" />
-			<NcTextField v-if="!editing"
-				v-model="counter"
-				:label="t('nextfleet', 'Counter reading')"
-				:disabled="saving"
-				inputmode="numeric" />
+					inputmode="numeric" />
 
-			<template v-if="editing">
-				<!-- Switching off hides the hour field and keeps the hour Readings. Beside the unit,
-				     whose second counter it is. -->
-				<NcFormBoxSwitch v-if="offersHours"
-					v-model="countsHours"
-					:label="t('nextfleet', 'Also counts engine hours')"
-					:disabled="saving" />
-				<NcSelect v-model="energyTypes"
-					:options="energies"
-					:input-label="t('nextfleet', 'Energy types')"
-					:disabled="saving"
-					:multiple="true"
-					label="label" />
-				<NcTextField v-model="vin"
-					:label="t('nextfleet', 'VIN')"
-					:disabled="saving" />
-				<NcDateTimePickerNative v-model="firstReg"
-					type="date"
-					:label="t('nextfleet', 'First registration')"
-					:disabled="saving"
-					@keydown.esc.stop="keepPicker" />
-				<!-- The interval is stored on the HU/AU reminder, so without one there is nothing to
-				     set it on yet (docs/ui.md, the due banner). -->
-				<NcSelect v-if="inspection !== null && showsInterval"
-					v-model="interval"
-					:options="intervals"
-					:input-label="t('nextfleet', 'Inspection interval')"
-					:disabled="saving"
-					:clearable="false"
-					label="label" />
-				<div v-else-if="inspection !== null && inspected === null" class="sheet__wide">
-					<InspectionSticker v-if="adding"
-						:vehicle="held"
-						:template="inspection"
-						@saved="added" />
-					<NcButton v-else :disabled="saving" @click="adding = true">
-						{{ t('nextfleet', 'Add HU/AU reminder') }}
-					</NcButton>
-				</div>
-				<!-- The list takes `edit` (docs/ui.md). Re-keyed on a revoke, which prunes it server
-				     side. -->
-				<ReminderRecipients v-if="may(props.vehicle, 'edit')"
-					:key="recipientsRead"
-					v-model:cadence="reminderMail"
-					class="sheet__wide"
-					:vehicle="props.vehicle.uuid"
-					:disabled="saving" />
-				<!-- Asked in litres, kWh and the vehicle's currency, kept as millilitres, watt-hours
-				     and cents (docs/contributing.md) - decimal() converts. -->
-				<NcTextField v-model="tank"
-					:label="t('nextfleet', 'Tank size (l)')"
-					:disabled="saving"
-					inputmode="decimal" />
-				<NcTextField v-model="battery"
-					:label="t('nextfleet', 'Battery capacity (kWh)')"
-					:disabled="saving"
-					inputmode="decimal" />
-				<NcTextField v-model="purchasePrice"
-					:label="t('nextfleet', 'Purchase price')"
-					:disabled="saving"
-					inputmode="decimal" />
-				<NcTextField v-model="residualEst"
-					:label="t('nextfleet', 'Residual value')"
-					:disabled="saving"
-					inputmode="decimal" />
-				<NcTextField v-model="currency"
-					:label="t('nextfleet', 'Currency')"
-					:disabled="saving"
-					maxlength="3" />
-				<!-- The jurisdiction is not a create field: it defaults from the personal
-				     setting and is changed here (docs/ui.md). -->
-				<NcSelect :model-value="country"
-					:options="jurisdictions"
-					:input-label="t('nextfleet', 'Country')"
-					:disabled="saving"
-					:clearable="false"
-					label="label"
-					@update:model-value="jurisdiction = $event?.id ?? jurisdiction" />
-				<!-- The switch the vehicle's logbook rules hang off (docs/architecture.md#logbook-mode),
-				     beside the country whose ruleset it invokes. -->
-				<NcFormBoxSwitch v-model="logbookMode"
-					class="sheet__wide"
-					:label="t('nextfleet', 'Logbook mode')"
-					:description="`${t('nextfleet', 'Trips are recorded with an audit trail, and a delete voids the trip instead of removing it.')} ${t('nextfleet', 'Not reviewed by a lawyer.')}`"
-					:disabled="saving" />
-				<div v-if="askingOff" class="sheet__wide sheet__question">
-					<NcNoteCard type="warning"
-						:text="t('nextfleet', 'Switching Logbook mode off ends the audited period for this vehicle. What is already recorded stays as it is.')" />
-					<div class="sheet__answers">
-						<NcButton :disabled="saving" @click="logbookMode = true">
-							{{ t('nextfleet', 'Keep it on') }}
-						</NcButton>
-						<NcButton variant="warning" :disabled="saving" @click="confirmedOff = true">
-							{{ t('nextfleet', 'Switch it off') }}
+				<template v-if="editing">
+					<!-- Switching off hides the hour field and keeps the hour Readings. Beside the unit,
+					     whose second counter it is. -->
+					<NcFormBoxSwitch v-if="offersHours"
+						v-model="countsHours"
+						:label="t('nextfleet', 'Also counts engine hours')"
+						:description="t('nextfleet', 'Energy, maintenance and odometer entries also ask for the engine hours. If you switch this off, the recorded hours stay.')"
+						:disabled="saving" />
+					<NcSelect v-model="energyTypes"
+						:options="energies"
+						:input-label="t('nextfleet', 'Energy types')"
+						:disabled="saving"
+						:multiple="true"
+						label="label" />
+					<NcTextField v-model="vin"
+						:label="t('nextfleet', 'VIN')"
+						:disabled="saving" />
+					<NcDateTimePickerNative v-model="firstReg"
+						type="date"
+						:label="t('nextfleet', 'First registration')"
+						:disabled="saving"
+						@keydown.esc.stop="keepPicker" />
+					<!-- The interval is stored on the HU/AU reminder, so without one there is nothing to
+					     set it on yet (docs/ui.md, the due banner). -->
+					<NcSelect v-if="inspection !== null && showsInterval"
+						v-model="interval"
+						:options="intervals"
+						:input-label="t('nextfleet', 'Inspection interval')"
+						:disabled="saving"
+						:clearable="false"
+						label="label" />
+					<div v-else-if="inspection !== null && inspected === null" class="sheet__wide">
+						<InspectionSticker v-if="adding"
+							:vehicle="held"
+							:template="inspection"
+							@saved="added" />
+						<NcButton v-else :disabled="saving" @click="adding = true">
+							{{ t('nextfleet', 'Add HU/AU reminder') }}
 						</NcButton>
 					</div>
-				</div>
-				<NcSelect v-model="lifecycle"
-					:options="lifecycles"
-					:input-label="t('nextfleet', 'Lifecycle')"
-					:disabled="saving"
-					:clearable="false"
-					label="label" />
-				<NcDateTimePickerNative v-if="disposing"
-					v-model="disposedAt"
-					type="date"
-					:label="t('nextfleet', 'Disposed on')"
-					:disabled="saving"
-					@keydown.esc.stop="keepPicker" />
-				<NcTextField v-model="color"
-					:label="t('nextfleet', 'Colour')"
-					:disabled="saving" />
-				<NcTextArea v-model="notes"
-					class="sheet__wide"
-					:label="t('nextfleet', 'Notes')"
-					:disabled="saving" />
-				<!-- Beside who has access, whom it is about; saved with the vehicle. -->
-				<NcFormBoxSwitch v-if="may(props.vehicle, 'own')"
-					v-model="costsShared"
-					class="sheet__wide"
-					:label="t('nextfleet', 'Drivers and viewers see costs')"
-					:description="t('nextfleet', 'Switched off, they see only the amounts they entered: no sums, no prices, no expenses of others. Managers always see the costs.')"
-					:disabled="saving" />
-				<NcFormBoxSwitch v-if="may(props.vehicle, 'own')"
-					v-model="bookingApproval"
-					class="sheet__wide"
-					:label="t('nextfleet', 'Bookings need approval')"
-					:description="t('nextfleet', 'A booking by a driver waits until you or a manager approve it. Bookings by you and the managers are approved at once.')"
-					:disabled="saving" />
-				<!-- The list is written on each pick; the events are a column, saved with the vehicle. -->
-				<BookingRecipients v-if="may(props.vehicle, 'own')"
-					v-model:events="bookingNotices"
-					class="sheet__wide"
-					:vehicle="props.vehicle.uuid"
-					:disabled="saving" />
-				<!-- Written on each change, like the recipients; the owner's alone. -->
-				<VehicleGrants class="sheet__wide"
-					:vehicle="props.vehicle"
-					:disabled="saving"
-					@granted="granted"
-					@revoked="recipientsRead++" />
+					<!-- The list takes `edit` (docs/ui.md). Re-keyed on a revoke, which prunes it server
+					     side. -->
+					<ReminderRecipients v-if="may(props.vehicle, 'edit')"
+						:key="recipientsRead"
+						v-model:cadence="reminderMail"
+						class="sheet__wide"
+						:vehicle="props.vehicle.uuid"
+						:disabled="saving" />
+					<!-- Asked in litres, kWh and the vehicle's currency, kept as millilitres, watt-hours
+					     and cents (docs/contributing.md) - decimal() converts. -->
+					<NcTextField v-model="tank"
+						:label="t('nextfleet', 'Tank size (l)')"
+						:disabled="saving"
+						inputmode="decimal" />
+					<NcTextField v-model="battery"
+						:label="t('nextfleet', 'Battery capacity (kWh)')"
+						:disabled="saving"
+						inputmode="decimal" />
+					<!-- The jurisdiction is not a create field: it defaults from the personal
+					     setting and is changed here (docs/ui.md). -->
+					<NcSelect :model-value="country"
+						:options="jurisdictions"
+						:input-label="t('nextfleet', 'Country')"
+						:disabled="saving"
+						:clearable="false"
+						label="label"
+						@update:model-value="jurisdiction = $event?.id ?? jurisdiction" />
+					<!-- The switch the vehicle's logbook rules hang off (docs/architecture.md#logbook-mode),
+					     beside the country whose ruleset it invokes. -->
+					<NcFormBoxSwitch v-model="logbookMode"
+						class="sheet__wide"
+						:label="t('nextfleet', 'Logbook mode')"
+						:description="`${t('nextfleet', 'Trips are recorded with an audit trail, and a delete voids the trip instead of removing it.')} ${t('nextfleet', 'Not reviewed by a lawyer.')}`"
+						:disabled="saving" />
+					<div v-if="askingOff" class="sheet__wide sheet__question">
+						<NcNoteCard type="warning"
+							:text="t('nextfleet', 'Switching Logbook mode off ends the audited period for this vehicle. What is already recorded stays as it is.')" />
+						<div class="sheet__answers">
+							<NcButton :disabled="saving" @click="logbookMode = true">
+								{{ t('nextfleet', 'Keep it on') }}
+							</NcButton>
+							<NcButton variant="warning" :disabled="saving" @click="confirmedOff = true">
+								{{ t('nextfleet', 'Switch it off') }}
+							</NcButton>
+						</div>
+					</div>
+					<NcSelect v-model="lifecycle"
+						:options="lifecycles"
+						:input-label="t('nextfleet', 'Lifecycle')"
+						:disabled="saving"
+						:clearable="false"
+						label="label" />
+					<NcDateTimePickerNative v-if="disposing"
+						v-model="disposedAt"
+						type="date"
+						:label="t('nextfleet', 'Disposed on')"
+						:disabled="saving"
+						@keydown.esc.stop="keepPicker" />
+					<NcTextField v-model="color"
+						:label="t('nextfleet', 'Colour')"
+						:disabled="saving" />
+					<NcTextArea v-model="notes"
+						class="sheet__wide"
+						:label="t('nextfleet', 'Notes')"
+						:disabled="saving" />
+				</template>
+			</section>
+
+			<template v-if="editing">
+				<section class="sheet__section">
+					<h3 class="sheet__wide sheet__heading">
+						{{ t('nextfleet', 'Costs') }}
+					</h3>
+					<NcTextField v-model="purchasePrice"
+						:label="t('nextfleet', 'Purchase price')"
+						:disabled="saving"
+						inputmode="decimal" />
+					<NcTextField v-model="residualEst"
+						:label="t('nextfleet', 'Residual value')"
+						:disabled="saving"
+						inputmode="decimal" />
+					<NcTextField v-model="currency"
+						:label="t('nextfleet', 'Currency')"
+						:disabled="saving"
+						maxlength="3" />
+					<!-- Saved with the vehicle, unlike the access list below, which saves on each change. -->
+					<NcFormBoxSwitch v-if="may(props.vehicle, 'own') && everShared"
+						v-model="costsShared"
+						class="sheet__wide"
+						:label="t('nextfleet', 'Drivers and viewers see costs')"
+						:description="t('nextfleet', 'Switched off, they see only the amounts they entered: no sums, no prices, no expenses of others. Managers always see the costs.')"
+						:disabled="saving" />
+				</section>
+				<!-- Shown on an unshared vehicle too: it is how a vehicle becomes shared. Written on each
+				     change, like the recipients; the owner's alone. -->
+				<section v-if="may(props.vehicle, 'own')" class="sheet__section">
+					<h3 class="sheet__wide sheet__heading">
+						{{ t('nextfleet', 'Access') }}
+					</h3>
+					<VehicleGrants class="sheet__wide"
+						:vehicle="props.vehicle"
+						:disabled="saving"
+						:approval="approves"
+						@granted="granted"
+						@revoked="recipientsRead++" />
+				</section>
+				<section v-if="may(props.vehicle, 'own') && everShared" class="sheet__section">
+					<h3 class="sheet__wide sheet__heading">
+						{{ t('nextfleet', 'Bookings') }}
+					</h3>
+					<NcSelect :model-value="approvalChoice"
+						class="sheet__wide"
+						:options="approvalRules"
+						:input-label="t('nextfleet', 'Bookings need approval')"
+						:disabled="saving"
+						:clearable="false"
+						label="label"
+						@update:model-value="(one) => approvalRule = one?.id ?? approvalRule" />
+					<p class="sheet__wide sheet__hint">
+						{{ t('nextfleet', 'A booking by a driver waits until you or a manager approve it. Bookings by you and the managers are approved at once.') }}
+						<!-- A new tab, as the sheet has no guard for its unsaved edits. -->
+						<a class="sheet__help"
+							:href="settingsUrl()"
+							target="_blank"
+							rel="noopener noreferrer">{{ t('nextfleet', 'Set it for all your vehicles in the settings') }}</a>
+					</p>
+					<!-- The list is written on each pick; the events are a column, saved with the vehicle. -->
+					<BookingRecipients v-model:events="bookingNotices"
+						class="sheet__wide"
+						:vehicle="props.vehicle.uuid"
+						:disabled="saving" />
+				</section>
 				<!-- Importing is `edit`, and a disposed vehicle takes none (docs/architecture.md#import).
 				     The screen swaps this sheet for the import's (src/views/VehicleView.vue). -->
 				<div v-if="may(props.vehicle, 'edit') && props.vehicle.lifecycle !== 'disposed'" class="sheet__wide sheet__import">
@@ -968,6 +1025,21 @@ function chosen(options, id) {
 .sheet {
 	display: grid;
 	gap: calc(var(--default-grid-baseline) * 2);
+}
+
+/* A section groups by its heading, not by a box of its own: its fields stay in the sheet's grid. */
+.sheet__section {
+	display: contents;
+}
+
+.sheet__heading {
+	margin: calc(var(--default-grid-baseline) * 4) 0 0;
+	font-size: 1.1em;
+	font-weight: bold;
+}
+
+.sheet__section:first-of-type .sheet__heading {
+	margin-top: 0;
 }
 
 /* The question and the two answers to it read as one block, whatever the grid does around them. */

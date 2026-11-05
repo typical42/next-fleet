@@ -27,6 +27,7 @@ use OCP\DB\QueryBuilder\IExpressionBuilder;
 use OCP\DB\QueryBuilder\IFunctionBuilder;
 use OCP\DB\QueryBuilder\IQueryBuilder;
 use OCP\DB\QueryBuilder\IQueryFunction;
+use OCP\IConfig;
 use OCP\IDBConnection;
 use OCP\Security\ISecureRandom;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -175,7 +176,8 @@ class InListTest extends TestCase {
 		$db = $this->createMock(IDBConnection::class);
 		$db->method('getQueryBuilder')->willReturnCallback(fn () => $this->queryBuilder());
 
-		return new $class($db, $this->createMock(ITimeFactory::class), $this->createMock(ISecureRandom::class));
+		// The config only VehicleMapper takes; PHP lets the others ignore it.
+		return new $class($db, $this->createMock(ITimeFactory::class), $this->createMock(ISecureRandom::class), $this->createMock(IConfig::class));
 	}
 
 	private function queryBuilder(): IQueryBuilder {

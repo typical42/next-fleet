@@ -52,6 +52,8 @@
                     "created_at",
                     "updated_at",
                     "created_by",
+                    "created_by_name",
+                    "seen_at",
                     "may"
                 ],
                 "properties": {
@@ -220,6 +222,14 @@
                     "created_by": {
                         "type": "string"
                     },
+                    "created_by_name": {
+                        "type": "string"
+                    },
+                    "seen_at": {
+                        "type": "integer",
+                        "format": "int64",
+                        "nullable": true
+                    },
                     "may": {
                         "type": "array",
                         "items": {
@@ -293,7 +303,8 @@
                 "required": [
                     "recipient",
                     "recipient_type",
-                    "display_name"
+                    "display_name",
+                    "events"
                 ],
                 "properties": {
                     "recipient": {
@@ -304,6 +315,12 @@
                     },
                     "display_name": {
                         "type": "string"
+                    },
+                    "events": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        }
                     }
                 }
             },
@@ -1273,7 +1290,8 @@
                     "grantee",
                     "grantee_type",
                     "display_name",
-                    "role"
+                    "role",
+                    "take_now"
                 ],
                 "properties": {
                     "uuid": {
@@ -1290,6 +1308,9 @@
                     },
                     "role": {
                         "type": "string"
+                    },
+                    "take_now": {
+                        "type": "boolean"
                     }
                 }
             },
@@ -2131,6 +2152,7 @@
                 "type": "object",
                 "required": [
                     "preferences",
+                    "owns_shared",
                     "jurisdictions"
                 ],
                 "properties": {
@@ -2143,7 +2165,8 @@
                             "reclaim_vat",
                             "kpi_period",
                             "grid_factor",
-                            "inbox_folder"
+                            "inbox_folder",
+                            "booking_approval"
                         ],
                         "properties": {
                             "jurisdiction": {
@@ -2176,8 +2199,14 @@
                                 "type": "integer",
                                 "format": "int64",
                                 "nullable": true
+                            },
+                            "booking_approval": {
+                                "type": "boolean"
                             }
                         }
+                    },
+                    "owns_shared": {
+                        "type": "boolean"
                     },
                     "jurisdictions": {
                         "type": "array",
@@ -3360,6 +3389,7 @@
                     "costs_shared",
                     "booking_notices",
                     "booking_approval",
+                    "booking_approval_rule",
                     "created_at",
                     "updated_at",
                     "deleted_at",
@@ -3510,6 +3540,9 @@
                     },
                     "booking_approval": {
                         "type": "boolean"
+                    },
+                    "booking_approval_rule": {
+                        "type": "string"
                     },
                     "created_at": {
                         "type": "integer",
@@ -3991,7 +4024,7 @@
                                         "type": "array",
                                         "nullable": true,
                                         "default": null,
-                                        "description": "the booking events its notice list hears: booked, taken, returned, cancelled, changed; booked and taken by default",
+                                        "description": "the booking events the owner hears while the notice list is empty, and a new recipient starts with: booked, taken, returned, cancelled, changed; booked and taken by default",
                                         "items": {
                                             "type": "string"
                                         }
@@ -4000,7 +4033,13 @@
                                         "type": "boolean",
                                         "nullable": true,
                                         "default": null,
-                                        "description": "a driver's booking waits for the owner's or a manager's answer; false by default"
+                                        "description": "a driver's booking waits for the owner's or a manager's answer; sets booking_approval_rule to always or never where it differs from the owner's default"
+                                    },
+                                    "booking_approval_rule": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "default (as the owner's default says), always or never; default by default, and it outranks booking_approval"
                                     },
                                     "client_uuid": {
                                         "type": "string",
@@ -4619,7 +4658,7 @@
                                         "type": "array",
                                         "nullable": true,
                                         "default": null,
-                                        "description": "the booking events its notice list hears: booked, taken, returned, cancelled, changed; the owner's alone to change",
+                                        "description": "the booking events the owner hears while the notice list is empty, and a new recipient starts with: booked, taken, returned, cancelled, changed; the owner's alone to change",
                                         "items": {
                                             "type": "string"
                                         }
@@ -4628,7 +4667,13 @@
                                         "type": "boolean",
                                         "nullable": true,
                                         "default": null,
-                                        "description": "a driver's booking waits for the owner's or a manager's answer; the owner's alone to change"
+                                        "description": "a driver's booking waits for the owner's or a manager's answer; a change sets booking_approval_rule to always or never; the owner's alone to change"
+                                    },
+                                    "booking_approval_rule": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "default (as the owner's default says), always or never; outranks booking_approval; the owner's alone to change"
                                     }
                                 }
                             }
@@ -4748,7 +4793,7 @@
                         }
                     },
                     "403": {
-                        "description": "the caller may not edit this vehicle, or changes costs_shared, booking_notices or booking_approval without owning it",
+                        "description": "the caller may not edit this vehicle, or changes costs_shared, booking_notices or booking approval without owning it",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -16617,7 +16662,7 @@
             },
             "post": {
                 "operationId": "ocs_booking_recipient-create",
-                "summary": "Add an account or a group to hear of the bookings",
+                "summary": "Add an account or a group to hear of the bookings, or set the events of one on the list",
                 "tags": [
                     "ocs_booking_recipient"
                 ],
@@ -16647,6 +16692,15 @@
                                         "nullable": true,
                                         "default": null,
                                         "description": "required: `user` or `group`"
+                                    },
+                                    "events": {
+                                        "type": "array",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "the booking events it hears: booked, taken, returned, cancelled, changed. A new one hears the vehicle's `booking_notices` without them; one on the list keeps its own",
+                                        "items": {
+                                            "type": "string"
+                                        }
                                     }
                                 }
                             }
@@ -16709,7 +16763,7 @@
                         }
                     },
                     "400": {
-                        "description": "no such account or group on this instance",
+                        "description": "no such account or group on this instance, or an unknown event",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -17318,6 +17372,12 @@
                                         "default": null,
                                         "description": "required: manager, driver or viewer"
                                     },
+                                    "take_now": {
+                                        "type": "boolean",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "whether a driver's Take it now, back by midnight, skips approval; unless sent, true for a new grant and kept for a grantee who holds one"
+                                    },
                                     "client_uuid": {
                                         "type": "string",
                                         "nullable": true,
@@ -17385,7 +17445,7 @@
                         }
                     },
                     "400": {
-                        "description": "no grantee the owner may grant to, the grantee is the owner, or the role is none",
+                        "description": "no grantee the owner may grant to, the grantee is the owner, the role is none, or `take_now` no boolean",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -17534,7 +17594,7 @@
         "/ocs/v2.php/apps/nextfleet/api/v1/vehicles/{uuid}/grants/{grant}": {
             "put": {
                 "operationId": "ocs_grant-update",
-                "summary": "Change a grant's role",
+                "summary": "Change a grant's role, and whether it allows Take it now",
                 "tags": [
                     "ocs_grant"
                 ],
@@ -17558,6 +17618,12 @@
                                         "nullable": true,
                                         "default": null,
                                         "description": "required: manager, driver or viewer"
+                                    },
+                                    "take_now": {
+                                        "type": "boolean",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "whether a driver's Take it now, back by midnight, skips approval; kept unless sent"
                                     }
                                 }
                             }
@@ -17629,7 +17695,7 @@
                         }
                     },
                     "400": {
-                        "description": "the role is none",
+                        "description": "the role is none, or `take_now` no boolean",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -20490,7 +20556,7 @@
             "post": {
                 "operationId": "ocs_booking-create",
                 "summary": "Book a vehicle",
-                "description": "For the caller; a 409 names the booking in the way.",
+                "description": "For the caller, or, as the owner or a manager, for `user_id`: the booking is theirs and stands at once. A 409 names the booking in the way.",
                 "tags": [
                     "ocs_booking"
                 ],
@@ -20548,6 +20614,12 @@
                                         "nullable": true,
                                         "default": null,
                                         "description": "a uuid of the client's for the new row: a retry under it answers that row"
+                                    },
+                                    "user_id": {
+                                        "type": "string",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "whom to book for, somebody who may book the vehicle; the caller when left out"
                                     }
                                 }
                             }
@@ -20637,7 +20709,7 @@
                         }
                     },
                     "400": {
-                        "description": "a field is not what it holds, or the vehicle is not in service",
+                        "description": "a field is not what it holds, the vehicle is not in service, or `user_id` may not book it",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -20727,7 +20799,7 @@
                         }
                     },
                     "403": {
-                        "description": "the caller may not log on this vehicle",
+                        "description": "the caller may not log on this vehicle, or names somebody else without answering its bookings",
                         "content": {
                             "application/json": {
                                 "schema": {
@@ -22656,6 +22728,418 @@
                 }
             }
         },
+        "/ocs/v2.php/apps/nextfleet/api/v1/vehicles/{uuid}/bookings/{booking}/seen": {
+            "post": {
+                "operationId": "ocs_booking-seen",
+                "summary": "Confirm a booking made for you",
+                "description": "As its booker, of a booking the owner or a manager made for you. No token: it changes nothing the booking plans. The first confirmation stays.",
+                "tags": [
+                    "ocs_booking"
+                ],
+                "security": [
+                    {
+                        "bearer_auth": []
+                    },
+                    {
+                        "basic_auth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "uuid",
+                        "in": "path",
+                        "description": "the vehicle's uuid",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "booking",
+                        "in": "path",
+                        "description": "the booking's uuid",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "OCS-APIRequest",
+                        "in": "header",
+                        "description": "Required to be true for the API request to pass",
+                        "required": true,
+                        "schema": {
+                            "type": "boolean",
+                            "default": true
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "the booking, with its `seen_at`",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/Booking"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "the caller made the booking themselves",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/Refusal"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "412": {
+                        "description": "another write to the booking raced this one; read it again",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/Conflict"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "the booking is not the caller's",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "no such vehicle or booking",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Current user is not logged in",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/ocs/v2.php/apps/nextfleet/api/v1/vehicles/{uuid}/bookers": {
+            "get": {
+                "operationId": "ocs_booking-bookers",
+                "summary": "List whom the caller may book for",
+                "description": "The `user_id`s a create takes from the owner or a manager: everybody who may book the vehicle, the caller included, by display name.",
+                "tags": [
+                    "ocs_booking"
+                ],
+                "security": [
+                    {
+                        "bearer_auth": []
+                    },
+                    {
+                        "basic_auth": []
+                    }
+                ],
+                "parameters": [
+                    {
+                        "name": "uuid",
+                        "in": "path",
+                        "description": "the vehicle's uuid",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "name": "OCS-APIRequest",
+                        "in": "header",
+                        "description": "Required to be true for the API request to pass",
+                        "required": true,
+                        "schema": {
+                            "type": "boolean",
+                            "default": true
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "who may be booked for",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "type": "array",
+                                                    "items": {
+                                                        "$ref": "#/components/schemas/Recipient"
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "the request is not one this route takes",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {
+                                                    "$ref": "#/components/schemas/Refusal"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "the caller answers no bookings of this vehicle",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "no such vehicle",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Current user is not logged in",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "type": "object",
+                                    "required": [
+                                        "ocs"
+                                    ],
+                                    "properties": {
+                                        "ocs": {
+                                            "type": "object",
+                                            "required": [
+                                                "meta",
+                                                "data"
+                                            ],
+                                            "properties": {
+                                                "meta": {
+                                                    "$ref": "#/components/schemas/OCSMeta"
+                                                },
+                                                "data": {}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/ocs/v2.php/apps/nextfleet/api/v1/preferences": {
             "get": {
                 "operationId": "ocs_preferences-index",
@@ -22816,6 +23300,12 @@
                                         "nullable": true,
                                         "default": null,
                                         "description": "the id of a folder in the caller's Files; null for none"
+                                    },
+                                    "booking_approval": {
+                                        "type": "boolean",
+                                        "nullable": true,
+                                        "default": null,
+                                        "description": "bookings wait for an answer on every vehicle of the caller's whose booking_approval_rule is default; turned off, what waits there is approved"
                                     }
                                 }
                             }

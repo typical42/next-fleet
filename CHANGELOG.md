@@ -1,5 +1,72 @@
 # Changelog
 
+## 0.6.0 — not released
+
+### Vehicles
+
+- **Edit vehicle** has four sections, each under a heading: **Vehicle**, **Costs**, **Access** and
+  **Bookings**.
+- A vehicle that only its owner uses shows no **Bookings** section and no **Drivers and viewers see
+  costs**. They show once somebody else has or had access. A hidden setting keeps its value.
+- Each switch says in a short line what it does.
+
+### Bookings
+
+- The owner decides in one place whether bookings need approval on all their vehicles: in
+  **Settings**, under **Bookings**. The switch shows once somebody else has or had access to one
+  of their vehicles.
+- Each vehicle chooses **As for all my vehicles**, **Always** or **Never** in place of its switch.
+  A vehicle that asked for approval is now **Always**; every other one follows the owner, whose
+  setting starts off, so nothing changes until the owner changes it.
+- When approval stops, by the vehicle or by the setting for all, the bookings that wait are
+  approved. A vehicle given to a new owner keeps its approval.
+- The owner can make one driver ask for approval for each **Take it now**, also when the car is
+  back by midnight: switch off **Take it now without approval** on the driver's row under
+  **Access**. The switch shows while the vehicle asks for approval. Every driver keeps **Take it
+  now** as before.
+- Each person or group on the booking notice list hears its own events: the owner can hear of
+  everything while the drivers hear only of a car taken now. Each one on the list keeps the
+  events the list heard before. Somebody on the list twice gets each notice once.
+- While the list is empty, it shows the owner's row, **You (owner)**. **Booking notices go to**
+  offers the owner first, so the owner can stay on a list that holds others.
+- The owner or a manager can book a vehicle for a driver, or for anybody else who may book it.
+  The booking is the driver's and needs no approval. The driver gets a notification with a
+  **Seen** button. If the driver cancels it, whoever made it hears of it.
+- **Book** asks the owner or a manager **For** whom. The booking shows the driver who booked it
+  for them, and the approvers whether the driver has seen it yet.
+
+### For apps, scripts and admins
+
+- The OCS API carries the new routes and fields, and v1 now promises them:
+  - `POST …/bookings/{booking}/seen`, and `GET …/vehicles/{uuid}/bookers`, whom an approver may
+    book for.
+  - A vehicle's `booking_approval_rule`: `default`, `always` or `never`. Create and update take it.
+  - `booking_approval` in `/api/v1/preferences`, the owner's setting for all vehicles, and
+    `owns_shared`, whether the switch shows.
+  - A grant's `take_now` and a booking recipient's `events`, on read and on write.
+  - `user_id` on a new booking, and a booking's `seen_at` and `created_by_name`.
+  - `take_now` in `may`, when the caller's **Take it now** skips approval.
+- A vehicle's `booking_approval` stays the approval that applies. Writing a value that differs
+  from it sets **Always** or **Never**
+  ([API](https://github.com/typical42/next-fleet/blob/main/docs/api.md#booking-approval)).
+- Posting a booking recipient that is already on the list, with `events`, sets its events.
+- A vehicle's `booking_notices` are now what the owner hears while the list is empty, and what a
+  new recipient starts with. Changing them changes no recipient on the list.
+- The first **Seen** on a booking moves its `updated_at`, so a client that read it before gets a
+  412 on its next write.
+- `occ upgrade` adds the new columns and keeps every setting's effect, as the Bookings section above says.
+- `occ nextfleet:seed --grant-to` makes the demo Volvo a pool car with every booking rule set.
+  Give `--grant-to` twice for a pool car of two drivers.
+
+### Documentation
+
+- The user manual shows how to set up a pool car, step by step, from the first driver to a
+  booking for a driver
+  ([access](https://github.com/typical42/next-fleet/blob/main/docs/user/access.md#set-up-a-pool-car)).
+- The docs warn that a German tax audit can reject the logbook: the admin of the Nextcloud can
+  change its database without a trace
+  ([legal](https://github.com/typical42/next-fleet/blob/main/docs/legal.md#a-german-tax-audit-can-reject-the-logbook)).
+
 ## 0.5.0 — 2026-11-02
 
 ### Access

@@ -25,14 +25,13 @@ notifications, mail. Frontend: Nextcloud web UI. An Android client comes later, 
 
 ## Who it is for
 
-A freelancer or small business with one to five vehicles
-([ADR 0004](docs/adr/0004-freelancers-not-fleets.md)). The private owner is already served by two
-Nextcloud apps; the company fleet manager brings roles, pool bookings and employee-data law, and
-waits behind v1.
+A freelancer first, and beside them a small firm in which one person runs up to about 10 vehicles
+for several drivers ([ADR 0012](docs/adr/0012-nextfleet-also-serves-a-small-fleet.md)). The
+private owner is already served by two Nextcloud apps.
 
 That choice decides the rest of this document. The features that justify switching apps are the
 tax-grade logbook, gap detection and the mileage claim. v1 deferred everything multi-driver, and
-M6–M7 added only what two or three people sharing the owner's car need.
+M6–M7 added what two or three people sharing the owner's car need.
 
 ## Scope
 
@@ -45,7 +44,8 @@ protocols, the receipt inbox, the OCS API, import from LubeLogger and Spritmonit
 
 **Later:** the Android client, and the rest of the [backlog](docs/features.md#feature-backlog).
 
-**Out of scope:** telematics/OBD hardware, GPS tracking, route planning, OCR of receipts.
+**Out of scope:** telematics/OBD hardware, GPS tracking, route planning, OCR of receipts, and every
+fleet feature [ADR 0012](docs/adr/0012-nextfleet-also-serves-a-small-fleet.md) keeps out.
 
 **Germany is the first jurisdiction, not the only one.** v1 ships `de` and a generic profile;
 the UK exists as a test jurisdiction that breaks unit assumptions before release
@@ -95,7 +95,8 @@ the index.
 
 **Shape of the product**
 
-1. **A freelancer, not a fleet** — [ADR 0004](docs/adr/0004-freelancers-not-fleets.md).
+1. **Freelancers first, and a small fleet beside them** —
+   [ADR 0012](docs/adr/0012-nextfleet-also-serves-a-small-fleet.md).
 2. **Nextcloud 31–35.** Covers older installs; we pay for it with Vue compatibility shims and with
    the M0 gate above, which is where that price becomes visible. `@nextcloud/vue` 9 spans the
    range, so the 31 floor held. NC 35's own APIs (attribute-based occ commands, the typed query

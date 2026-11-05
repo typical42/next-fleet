@@ -71,18 +71,19 @@ class GrantController extends OCSController {
 	 * @param string|null $grantee required: the user's or the group's id
 	 * @param string|null $grantee_type required: user or group
 	 * @param string|null $role required: manager, driver or viewer
+	 * @param bool|null $take_now whether a driver's Take it now, back by midnight, skips approval; unless sent, true for a new grant and kept for a grantee who holds one
 	 * @param string|null $client_uuid a uuid of the client's for the new row: a retry under it answers that row
 	 * @return DataResponse<Http::STATUS_OK, list<NextFleetGrant>, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
 	 * @throws OCSForbiddenException the caller does not own this vehicle
 	 * @throws OCSNotFoundException no such vehicle
 	 *
 	 * 200: the grants as they now stand; a retry under the same `client_uuid` writes nothing
-	 * 400: no grantee the owner may grant to, the grantee is the owner, or the role is none
+	 * 400: no grantee the owner may grant to, the grantee is the owner, the role is none, or `take_now` no boolean
 	 * 412: another write to the grant raced this one; send it again
 	 */
 	#[NoAdminRequired]
 	#[UserRateLimit(limit: 60, period: 60)]
-	public function create(string $uuid, mixed $grantee = null, mixed $grantee_type = null, mixed $role = null, mixed $client_uuid = null): DataResponse {
+	public function create(string $uuid, mixed $grantee = null, mixed $grantee_type = null, mixed $role = null, mixed $take_now = null, mixed $client_uuid = null): DataResponse {
 		return $this->write(fn (): DataResponse => $this->created(
 			fn (): array => $this->service->grant($this->userId(), $uuid, $this->request->getParams()),
 			Http::STATUS_OK,
@@ -90,22 +91,23 @@ class GrantController extends OCSController {
 	}
 
 	/**
-	 * Change a grant's role
+	 * Change a grant's role, and whether it allows Take it now
 	 *
 	 * @param string $uuid the vehicle's uuid
 	 * @param string $grant the grant's uuid
 	 * @param string|null $role required: manager, driver or viewer
+	 * @param bool|null $take_now whether a driver's Take it now, back by midnight, skips approval; kept unless sent
 	 * @return DataResponse<Http::STATUS_OK, list<NextFleetGrant>, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
 	 * @throws OCSForbiddenException the caller does not own this vehicle
 	 * @throws OCSNotFoundException no such vehicle or grant
 	 *
 	 * 200: the grants as they now stand
-	 * 400: the role is none
+	 * 400: the role is none, or `take_now` no boolean
 	 * 412: another write to the grant raced this one; send it again
 	 */
 	#[NoAdminRequired]
 	#[UserRateLimit(limit: 60, period: 60)]
-	public function update(string $uuid, string $grant, mixed $role = null): DataResponse {
+	public function update(string $uuid, string $grant, mixed $role = null, mixed $take_now = null): DataResponse {
 		return $this->write(fn (): DataResponse => new DataResponse(
 			$this->service->change($this->userId(), $uuid, $grant, $this->request->getParams()),
 		));

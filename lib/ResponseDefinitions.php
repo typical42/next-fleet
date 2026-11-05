@@ -56,6 +56,7 @@ namespace OCA\NextFleet;
  *     costs_shared: bool,
  *     booking_notices: list<string>,
  *     booking_approval: bool,
+ *     booking_approval_rule: string,
  *     created_at: int,
  *     updated_at: int,
  *     deleted_at: ?int,
@@ -372,9 +373,11 @@ namespace OCA\NextFleet;
  *
  * @psalm-type NextFleetRecipient = array{user_id: string, display_name: string}
  *
- * @psalm-type NextFleetBookingRecipient = array{recipient: string, recipient_type: string, display_name: string}
+ * `events` are the booking events the recipient hears, of the five `booking_notices` names.
  *
- * @psalm-type NextFleetGrant = array{uuid: string, grantee: string, grantee_type: string, display_name: string, role: string}
+ * @psalm-type NextFleetBookingRecipient = array{recipient: string, recipient_type: string, display_name: string, events: list<string>}
+ *
+ * @psalm-type NextFleetGrant = array{uuid: string, grantee: string, grantee_type: string, display_name: string, role: string, take_now: bool}
  *
  * What the caller holds on a vehicle: their own grant's role, and each group's that reaches them.
  * `holders` is who reads the vehicle, by display name and role (`owner` for the owner), empty for
@@ -388,7 +391,10 @@ namespace OCA\NextFleet;
  *
  * A booking, the booker by name and its trip by uuid; `may` is what the caller may do to it.
  * `approval` is where its answer stands, null where the vehicle asks for none
- * (docs/architecture.md#booking-approval).
+ * (docs/architecture.md#booking-approval). `created_by` differs from `user_id` where an approver
+ * booked for the booker, `created_by_name` names who did, and `seen_at` is when the booker
+ * confirmed it, null until then and to anyone but the booker and the approvers
+ * (docs/architecture.md#booking-for-a-driver).
  *
  * @psalm-type NextFleetBooking = array{
  *     uuid: string,
@@ -420,6 +426,8 @@ namespace OCA\NextFleet;
  *     created_at: int,
  *     updated_at: int,
  *     created_by: string,
+ *     created_by_name: string,
+ *     seen_at: ?int,
  *     may: list<string>,
  * }
  *
@@ -462,10 +470,12 @@ namespace OCA\NextFleet;
  * @psalm-type NextFleetWaiting = array{file_id: int, name: string, mime: string, mtime: int, size: int}
  * @psalm-type NextFleetInbox = array{folder: ?array{file_id: int, path: string}, files: list<NextFleetWaiting>, count: int}
  *
- * A country's average grid factor, and the caller's settings with the jurisdictions to pick from.
+ * A country's average grid factor, and the caller's settings with the jurisdictions to pick from;
+ * `owns_shared` says whether the caller owns a vehicle somebody else uses or used, which the
+ * default `booking_approval` is for.
  *
  * @psalm-type NextFleetGridAverage = array{grams: int, year: int, source: string}
- * @psalm-type NextFleetPreferences = array{preferences: array{jurisdiction: string, dismissed_hints: list<string>, dismissed_logbook_hints: list<string>, reclaim_vat: bool, kpi_period: string, grid_factor: ?int, inbox_folder: ?int}, jurisdictions: list<array{key: string, name: string, logbook_export: bool, mileage_claim: bool, logbook_rules: bool, grid_factor: ?NextFleetGridAverage}>}
+ * @psalm-type NextFleetPreferences = array{preferences: array{jurisdiction: string, dismissed_hints: list<string>, dismissed_logbook_hints: list<string>, reclaim_vat: bool, kpi_period: string, grid_factor: ?int, inbox_folder: ?int, booking_approval: bool}, owns_shared: bool, jurisdictions: list<array{key: string, name: string, logbook_export: bool, mileage_claim: bool, logbook_rules: bool, grid_factor: ?NextFleetGridAverage}>}
  *
  * What importing a file would do (docs/architecture.md#import). A proposal is one source row as the
  * entry it would become: `fields` by the entry routes' names, in their units, empty when the row is

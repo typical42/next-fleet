@@ -175,6 +175,26 @@ class ErasureTest extends TestCase {
 	}
 
 	/**
+	 * A booking made for somebody else names both: the erased one becomes the pseudonym on either
+	 * side, the other stays.
+	 */
+	public function testABookingMadeForAnotherKeepsWhoIsNotErased(): void {
+		$shared = $this->vehicle(self::OWNER, 'B-XY 123');
+		$this->grant($shared, self::DRIVER, 'manager');
+		$bookings = \OCP\Server::get(BookingService::class);
+		$span = static fn (int $hours): array => ['starts_at' => time() + $hours * 3600, 'starts_at_off' => 120, 'ends_at' => time() + ($hours + 1) * 3600, 'ends_at_off' => 120];
+		$forDriver = $this->idOf('fleet_bookings', (string)$bookings->book(self::OWNER, $shared->getUuid(), $span(1) + ['user_id' => self::DRIVER])['uuid']);
+		$byDriver = $this->idOf('fleet_bookings', (string)$bookings->book(self::DRIVER, $shared->getUuid(), $span(3) + ['user_id' => self::OWNER])['uuid']);
+
+		\OCP\Server::get(IUserManager::class)->get(self::DRIVER)?->delete();
+
+		$this->assertStringStartsWith(ErasureService::PREFIX, $this->column('fleet_bookings', 'user_id', $forDriver));
+		$this->assertSame(self::OWNER, $this->column('fleet_bookings', 'created_by', $forDriver));
+		$this->assertSame(self::OWNER, $this->column('fleet_bookings', 'user_id', $byDriver));
+		$this->assertStringStartsWith(ErasureService::PREFIX, $this->column('fleet_bookings', 'created_by', $byDriver));
+	}
+
+	/**
 	 * A driver who used every part of the app is named in every column that can name an account,
 	 * and after the erasure in none. The fixture is checked first, so a column it stopped reaching
 	 * fails here rather than passing unvisited.
@@ -497,7 +517,7 @@ class ErasureTest extends TestCase {
 		$this->recipients->add(self::OWNER, $listed->getUuid(), self::DRIVER);
 		$own = $this->vehicle(self::DRIVER, 'B-DR 1');
 		$this->assertGreaterThan($listed->getId(), $own->getId());
-		$vehicles = new class(\OCP\Server::get(IDBConnection::class), \OCP\Server::get(ITimeFactory::class), \OCP\Server::get(ISecureRandom::class)) extends VehicleMapper {
+		$vehicles = new class(\OCP\Server::get(IDBConnection::class), \OCP\Server::get(ITimeFactory::class), \OCP\Server::get(ISecureRandom::class), \OCP\Server::get(\OCP\IConfig::class)) extends VehicleMapper {
 			/** @var list<int> */
 			public array $held = [];
 

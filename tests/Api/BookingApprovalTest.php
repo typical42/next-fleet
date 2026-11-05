@@ -102,4 +102,45 @@ class BookingApprovalTest extends TestCase {
 		$this->assertSame(['cancelled', 'declined'], [$declined->data()['state'], $declined->data()['approval']]);
 		$this->assertSame(400, self::$server->ocs(self::$owner, 'POST', "$path/approve", ['updated_at' => $declined->data()['updated_at']])->status);
 	}
+
+	/** The vehicle follows the owner's default; turned off, what waits is approved. */
+	#[Depends('testTheOwnerDeclinesAndTheSpanIsFree')]
+	public function testTheOwnersDefaultDecidesForAVehicleThatFollowsIt(): void {
+		$uuid = self::$vehicle['uuid'];
+		$on = self::$server->ocs(self::$owner, 'PUT', '/preferences', ['booking_approval' => true]);
+		$this->assertSame(200, $on->status, $on->body);
+		$this->assertSame([true, true], [$on->data()['preferences']['booking_approval'], $on->data()['owns_shared']]);
+		$read = self::$server->ocs(self::$owner, 'GET', "/vehicles/$uuid")->data();
+		$follows = self::$server->ocs(self::$owner, 'PUT', "/vehicles/$uuid", ['updated_at' => $read['updated_at'], 'booking_approval_rule' => 'default']);
+		$this->assertSame(200, $follows->status, $follows->body);
+		$this->assertSame([true, 'default'], [$follows->data()['booking_approval'], $follows->data()['booking_approval_rule']]);
+		$start = time() + 2 * 86400;
+		$asked = self::$server->ocs(self::$driver, 'POST', "/vehicles/$uuid/bookings", ['starts_at' => $start, 'starts_at_off' => 60, 'ends_at' => $start + 3600, 'ends_at_off' => 60]);
+		$this->assertSame('requested', $asked->data()['approval'], $asked->body);
+
+		$this->assertSame(200, self::$server->ocs(self::$owner, 'PUT', '/preferences', ['booking_approval' => false])->status);
+
+		$listed = array_column(self::$server->ocs(self::$owner, 'GET', "/vehicles/$uuid/bookings")->data(), 'approval', 'uuid');
+		$this->assertSame('approved', $listed[$asked->data()['uuid']]);
+	}
+
+	/** The owner blocks the driver's Take it now: the vehicle says so, and a take-now asks. */
+	#[Depends('testTheOwnersDefaultDecidesForAVehicleThatFollowsIt')]
+	public function testABlockedDriversTakeItNowIsARequest(): void {
+		$uuid = self::$vehicle['uuid'];
+		$read = self::$server->ocs(self::$owner, 'GET', "/vehicles/$uuid")->data();
+		$this->assertSame(200, self::$server->ocs(self::$owner, 'PUT', "/vehicles/$uuid", ['updated_at' => $read['updated_at'], 'booking_approval_rule' => 'always'])->status);
+		[$grant] = self::$server->ocs(self::$owner, 'GET', "/vehicles/$uuid/grants")->data();
+		$this->assertTrue($grant['take_now']);
+
+		$blocked = self::$server->ocs(self::$owner, 'PUT', "/vehicles/$uuid/grants/{$grant['uuid']}", ['role' => 'driver', 'take_now' => false]);
+		$this->assertSame(200, $blocked->status, $blocked->body);
+		$this->assertFalse($blocked->data()[0]['take_now']);
+		$this->assertNotContains('take_now', self::$server->ocs(self::$driver, 'GET', "/vehicles/$uuid")->data()['may']);
+
+		$now = time();
+		$taken = self::$server->ocs(self::$driver, 'POST', "/vehicles/$uuid/bookings", ['starts_at' => $now, 'starts_at_off' => 0, 'ends_at' => $now + 60, 'ends_at_off' => 0]);
+		$this->assertSame(201, $taken->status, $taken->body);
+		$this->assertSame('requested', $taken->data()['approval']);
+	}
 }

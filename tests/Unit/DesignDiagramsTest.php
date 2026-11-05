@@ -45,7 +45,7 @@ class DesignDiagramsTest extends TestCase {
 	private const STATE_LISTS = [
 		Booking::class => [[[Booking::class, 'STATES'], [Booking::class, 'OPEN'], [BookingService::class, 'ANSWERS']], []],
 		Reminder::class => [[[Reminder::class, 'STATES']], ['DATE', 'ODO', 'EITHER']],
-		Vehicle::class => [[[VehicleService::class, 'LIFECYCLES']], ['MAIL_OFF', 'MAIL_DAILY', 'MAIL_WEEKLY', 'MAIL_MONTHLY', 'NOTICE_BOOKED', 'NOTICE_TAKEN', 'NOTICE_RETURNED', 'NOTICE_CANCELLED', 'NOTICE_CHANGED']],
+		Vehicle::class => [[[VehicleService::class, 'LIFECYCLES']], ['MAIL_OFF', 'MAIL_DAILY', 'MAIL_WEEKLY', 'MAIL_MONTHLY', 'NOTICE_BOOKED', 'NOTICE_TAKEN', 'NOTICE_RETURNED', 'NOTICE_CANCELLED', 'NOTICE_CHANGED', 'APPROVAL_DEFAULT', 'APPROVAL_ALWAYS', 'APPROVAL_NEVER', 'OWNER_APPROVAL']],
 	];
 
 	public function testEveryClassOfTheDomainIsAClassUnderLib(): void {

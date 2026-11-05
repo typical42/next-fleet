@@ -40,6 +40,7 @@ use PHPUnit\Framework\TestCase;
  */
 class BookingNotificationTest extends TestCase {
 	use Accounts;
+	use SharingRules;
 
 	/** Shown as "Anna": the sentence names who cancelled. */
 	private const OWNER = 'nextfleet-test-pool-owner';
@@ -290,7 +291,7 @@ class BookingNotificationTest extends TestCase {
 		$vehicle = $this->vehicle(manager: self::CLEO);
 
 		$listed = $this->recipients->addBooking(self::OWNER, $vehicle->getUuid(), self::BEN, 'user');
-		$this->assertSame([['recipient' => self::BEN, 'recipient_type' => 'user', 'display_name' => 'Ben']], $listed);
+		$this->assertSame([['recipient' => self::BEN, 'recipient_type' => 'user', 'display_name' => 'Ben', 'events' => ['booked', 'taken']]], $listed);
 		$this->assertSame($listed, $this->recipients->addBooking(self::OWNER, $vehicle->getUuid(), self::BEN, 'user'));
 		$this->assertSame($listed, $this->recipients->listBooking(self::CLEO, $vehicle->getUuid()));
 
@@ -300,6 +301,64 @@ class BookingNotificationTest extends TestCase {
 		} catch (AccessDeniedException) {
 		}
 		$this->assertSame([], $this->recipients->removeBooking(self::OWNER, $vehicle->getUuid(), 'user', self::BEN));
+	}
+
+	/**
+	 * A new row hears what the vehicle's list hears. Adding it again with events sets them, in the
+	 * order of the five; adding it again without changes nothing.
+	 */
+	public function testEachRecipientHasItsOwnEvents(): void {
+		$vehicle = $this->vehicle(['returned']);
+
+		$this->assertSame([['returned']], array_column($this->recipients->addBooking(self::OWNER, $vehicle->getUuid(), self::BEN, 'user'), 'events'));
+		$this->assertSame([['taken', 'cancelled']], array_column($this->recipients->addBooking(self::OWNER, $vehicle->getUuid(), self::BEN, 'user', ['cancelled', 'taken']), 'events'));
+		$this->assertSame([['taken', 'cancelled']], array_column($this->recipients->addBooking(self::OWNER, $vehicle->getUuid(), self::BEN, 'user'), 'events'));
+		$this->assertSame([[]], array_column($this->recipients->addBooking(self::OWNER, $vehicle->getUuid(), self::BEN, 'user', []), 'events'));
+		$this->assertSame([[]], array_column($this->recipients->listBooking(self::OWNER, $vehicle->getUuid()), 'events'));
+		$this->assertSame(['returned'], $this->vehicles->reach(self::OWNER, 'view', $vehicle->getUuid())->bookingNotices());
+
+		try {
+			$this->recipients->addBooking(self::OWNER, $vehicle->getUuid(), self::BEN, 'user', ['parked']);
+			$this->fail('events took an unknown event');
+		} catch (\InvalidArgumentException) {
+		}
+		try {
+			$this->recipients->addBooking(self::OWNER, $vehicle->getUuid(), self::BEN, 'user', 'taken');
+			$this->fail('events took a word, not a list');
+		} catch (\InvalidArgumentException) {
+		}
+	}
+
+	/** A group the owner may no longer share with stays on the list, and its events still change. */
+	public function testTheEventsOfOneTheOwnerCanNoLongerAddStillChange(): void {
+		$vehicle = $this->vehicle();
+		$this->recipients->addBooking(self::OWNER, $vehicle->getUuid(), self::CREW, 'group');
+
+		$this->underSharingRules(['shareapi_enabled' => 'no'], function () use ($vehicle): void {
+			$listed = $this->recipients->addBooking(self::OWNER, $vehicle->getUuid(), self::CREW, 'group', ['returned']);
+
+			$this->assertSame([['returned']], array_column($listed, 'events'));
+		});
+	}
+
+	/**
+	 * The owner hears all five events, the group only a car taken now: a booking ahead reaches the
+	 * owner alone, a car taken now reaches the group's members who see it too.
+	 */
+	public function testEachRowHearsItsOwnEvents(): void {
+		$vehicle = $this->vehicle();
+		$this->recipients->addBooking(self::OWNER, $vehicle->getUuid(), self::OWNER, 'user', ['booked', 'taken', 'returned', 'cancelled', 'changed']);
+		$this->recipients->addBooking(self::OWNER, $vehicle->getUuid(), self::CREW, 'group', ['taken']);
+
+		$this->bookings->book(self::BEN, $vehicle->getUuid(), $this->span());
+		$this->assertCount(1, $this->notifications(self::OWNER));
+		$this->assertSame([], $this->notifications(self::CLEO));
+
+		$now = time();
+		$this->bookings->book(self::BEN, $vehicle->getUuid(), ['starts_at' => $now, 'starts_at_off' => 120, 'ends_at' => $now + self::HOUR, 'ends_at_off' => 120]);
+		$this->assertCount(2, $this->notifications(self::OWNER));
+		$this->assertCount(1, $this->notifications(self::CLEO));
+		$this->assertSame([], $this->notifications(self::DORA));
 	}
 
 	/** addBooking() takes any spelling, so removeBooking() does too. */

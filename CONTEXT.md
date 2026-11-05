@@ -180,10 +180,12 @@ The row saying a Warning Point was sent to one Recipient on one channel (`app` o
 
 **Vehicle Access**:
 Our own permission to see or change a vehicle: owner, or a grant with role manager, driver or
-viewer. It comes as six operations: `view` (every role), `log` (driver and manager: add an Entry,
+viewer. It comes as seven operations: `view` (every role), `log` (driver and manager: add an Entry,
 change one you entered), `edit` and `delete` (manager: the vehicle's settings and anybody's
-Entries), `own` (the owner alone: access, and whether the vehicle exists), and `costs` (owner and
-manager, and driver and viewer while the owner shares them: every amount, sum and price). Decided
+Entries), `own` (the owner alone: access, and whether the vehicle exists), `costs` (owner and
+manager, and driver and viewer while the owner shares them: every amount, sum and price), and
+`take_now` (owner and manager, and a driver unless the owner blocked it on their grant: Take it now
+without approval while the car is back by midnight). Decided
 in one place, `VehicleAccess::may`. A grant ends when the owner revokes it, its grantee Leaves, its
 group is deleted, or the owner's account is deleted.
 _Avoid_: Share, permission, ACL
@@ -201,10 +203,23 @@ The Nextcloud user a vehicle belongs to. Holds every operation without a grant, 
 grantee. Only an admin changes who it is, by a **Transfer** (`occ nextfleet:transfer`).
 
 **Driver**:
-The grant role between viewer and manager: `view` and `log`, so a driver adds Entries and changes
-the ones they entered, and books the vehicle. Always an account, or a group of them.
+The grant role between viewer and manager: `view`, `log` and, unless the owner blocked it on the
+grant, `take_now`. A driver adds Entries, changes the ones they entered, and books the vehicle.
+Always an account, or a group of them.
+
+**Approver**:
+Whoever answers a Booking that waits for Approval: the owner or a manager (`edit`). One step, never
+a chain.
+_Avoid_: Supervisor, admin
 
 ### Pool
+
+**Pool**:
+The vehicles of one owner that other people book: a small firm in which one person runs up to about
+ten vehicles for several drivers ([ADR 0012](docs/adr/0012-nextfleet-also-serves-a-small-fleet.md)).
+A vehicle joins it with its first grant (`ever_granted`) and is then a pool car; a vehicle only its
+owner uses shows no Pool setting.
+_Avoid_: Car sharing
 
 **Booking**:
 One person's plan to use a vehicle from one instant to another, `booked`, `out`, `returned` or
@@ -212,12 +227,41 @@ One person's plan to use a vehicle from one instant to another, `booked`, `out`,
 `booked` or `out` one holds the vehicle.
 _Avoid_: Reservation, appointment, event
 
+**Booker**:
+The person a Booking is for (`user_id`): who takes the car and logs the Trip. Usually its Maker.
+
+**Maker**:
+Who wrote a Booking (`created_by`). An Approver may make one for a driver: it is the driver's, it
+needs no Approval, and nothing waits on the driver's Seen.
+
+**Seen**:
+The Booker's word that they know of a Booking made for them (`seen_at`). Nothing waits on it; until
+it comes or the car is taken, the Approvers read "Not seen yet".
+_Avoid_: Accepted (nothing is refused)
+
 **Approval**:
-The owner's or a manager's answer to a driver's Booking, on a vehicle whose owner asks for one:
+An Approver's answer to a driver's Booking, on a vehicle whose Approval Rule asks for one:
 `requested`, then `approved`, `asked` (a question back) or `declined` (which cancels it). Beside
 the Booking's state, not one of them: a Booking waiting for it is `booked` and holds the vehicle,
 but is not taken. Given to a span: a new start or end asks again. Still waiting at its end, `declined`.
 _Avoid_: Confirmation, release
+
+**Approval Rule**:
+A vehicle's choice whether its bookings need Approval: `default` (as the owner's default for all
+their vehicles says), `always` or `never`. A new vehicle follows the default, which starts off.
+_Avoid_: Approval flag
+
+**Take It Now**:
+A Booking that starts at once and is taken in the same step. It needs no Approval while the car is
+back by midnight, unless the owner blocked the driver's `take_now`.
+_Avoid_: Instant booking, walk-up
+
+**Booking Notice**:
+A notification of an event on a Booking — booked ahead, taken now, returned, cancelled, moved — to
+the people on the vehicle's notice list. Each row of the list hears its own events, and a person on
+two rows hears their union once. An empty list means the owner, with the vehicle's own events. The
+list grants no Vehicle Access and is not a Reminder's Recipient list.
+_Avoid_: Subscription, alert
 
 **Handover**:
 The two moments a Booking changes hands, Check-out and Check-in, each with the counter, the tank or

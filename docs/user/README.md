@@ -50,6 +50,9 @@ After the second full tank, NextFleet shows the consumption.
 | Timeline | All entries of a vehicle, newest first. |
 | Owner | The user who added the vehicle. |
 | Access | The right of another user or group to see or use a vehicle. |
+| Booking | A plan to use a vehicle from a start to an end. |
+| Approval | The answer of the owner or a manager to a booking by a driver. |
+| Pool car | A vehicle that several drivers book ([Set up a pool car](access.md#set-up-a-pool-car)). |
 
 ## The pages
 
@@ -58,7 +61,7 @@ After the second full tank, NextFleet shows the consumption.
 3. [Logbook for the tax office](logbook.md): Logbook mode, the logbook and the mileage claim.
 4. [Figures and statistics](statistics.md): the figures, the Statistics page, CO₂ and CSV export.
 5. [Reminders](reminders.md): get told before a service or an inspection.
-6. [Access and bookings](access.md): share a vehicle, book it, take it and return it.
+6. [Access and bookings](access.md): share a vehicle, set up a pool car, book it, take it and return it.
 7. [Documents and the receipt inbox](documents.md): attach files from your Files.
 8. [Import](import.md): bring your history from LubeLogger or Spritmonitor.
 9. [Settings](settings.md): your defaults, and app passwords.

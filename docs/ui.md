@@ -92,11 +92,11 @@ Drawn in [design/components.md#frontend](design/components.md#frontend).
 | **Overview** | All vehicles, sorted by urgency: laid-up ones last, then by the most urgent reminder. A traffic light with its word. A shared vehicle says "Owned by". A car that is out says who has it. Disposed vehicles in a list below. | Open a vehicle |
 | **Vehicle** | Header, due banner, bookings, documents, timeline | **New entry** |
 | **Entry sheet** | Trip, Energy, Maintenance, Odometer or Expense ([below](#the-entry-sheet-in-detail)) | Save |
-| **Vehicle sheet** | Create with a few fields; edit everything, the [access](#the-access-section) included | Save |
+| **Vehicle sheet** | Create with a few fields; edit everything, in [four sections](#the-edit-sheets-sections) | Save |
 | **Statistics** | Every vehicle or one, over a range ([below](#the-statistics-screen)); the vehicle's *Costs* opens it on that vehicle | Pick a range |
 | **Inbox** | The receipts waiting in the inbox folder ([below](#the-inbox-screen)) | Attach |
 | **Reports** | The logbook and the mileage claim, as a page to print ([ADR 0005](adr/0005-no-pdf-library.md)) | Open |
-| **Personal settings** | Country, "I reclaim VAT", grid factor, inbox folder. A block on Nextcloud's settings page, with its own bundle. | Pick, it saves |
+| **Personal settings** | Country, "I reclaim VAT", grid factor, inbox folder, and *Bookings need approval* under *Bookings* for an owner of a shared vehicle. A block on Nextcloud's settings page, with its own bundle. | Pick, it saves |
 
 **Reports** offers each button only where the country prints it, because any other opens a 404.
 Sold vehicles are offered too.
@@ -190,14 +190,44 @@ The app drops `entry` after it opens the sheet, so a reload does not open a seco
 `uqr` (MIT) draws it in the browser.
 The code is no credential ([security](security.md#things-that-are-visible-in-the-real-world)).
 
+### The edit sheet's sections
+
+*Edit vehicle* has four sections, each under a heading, in this order:
+
+1. *Vehicle*: identity, registration, counter, energy, VIN, first registration, the HU/AU with its reminder recipients, tank, battery, country, Logbook mode, lifecycle, colour, notes.
+2. *Costs*: purchase price, residual value, currency, and *Drivers and viewers see costs*.
+3. *Access*: the grant list ([below](#the-access-section)).
+4. *Bookings*: *Bookings need approval*, and the booking notices with their events.
+   Approval is a dropdown, not a switch: *As for all my vehicles (now: on)* or *(now: off)*, *Always*, *Never*.
+   "Now" is the vehicle's own answer while it follows the owner, else the app's preferences say it.
+   Beneath it, a link to the settings, where *Bookings need approval* under the heading *Bookings* sets the owner's default.
+   That heading shows only to an owner of a shared vehicle, as this section does.
+   The link opens a new tab, so the sheet keeps its unsaved edits.
+   The booking notices show one row per person or group, each with its own five events, saved at once.
+   While the list is empty, one row *You (owner)* shows the vehicle's events, saved with the sheet.
+   The first one picked takes that row's events as they stand, saved or not; a later one, the vehicle's as saved.
+   The picker offers the owner first until they are on the list: Nextcloud's search never finds the one searching.
+
+*Import from a file…* and *Delete vehicle* follow, as the last rows.
+Headings only, no tabs and nothing that folds: the sheet is read top to bottom, and a folded section hides the setting somebody looks for.
+The create sheet has no sections; its few fields need none.
+
+*Access* and *Bookings* are the owner's alone.
+*Drivers and viewers see costs* and the whole *Bookings* section show only once anybody else has or had access (`ever_granted`, as for the [Bookings section](#the-bookings-section)): a vehicle only its owner uses shows no fleet setting ([ADR 0012](adr/0012-nextfleet-also-serves-a-small-fleet.md)).
+Hidden, a setting keeps its value and saves as it was read.
+*Access* always shows to the owner, because it is how a vehicle becomes shared.
+Each switch carries a line that says what it does, in plain words.
+
+The switches and the events of *You (owner)* save with the vehicle; the notice list and its rows' events, like the grants, save on each pick and tick.
+
 ### The Access section
 
-The last section of the edit sheet, for the owner alone.
-Above it are the settings about the people with access: *Drivers and viewers see costs*, *Bookings need approval*, and the booking notices with their events.
-The two switches and the events save with the vehicle; the notice list, like the grants below, saves on each pick.
+The third section of the edit sheet, for the owner alone.
 It lists each grant with a role picker and *Remove*.
 A search finds accounts and groups through core's autocomplete, which applies the instance's rules on who may find whom.
 The role picker offers driver first: a car is lent to be driven.
+While the sheet's approval choice applies, a driver row also has the switch *Take it now without approval*.
+Managers approve their own bookings and viewers book nothing, so their rows have none; a hidden value stays.
 Each change saves at once.
 *Remove* asks once, because only the owner can grant again.
 It is never called "Share" ([CONTEXT.md](../CONTEXT.md)).
@@ -212,6 +242,10 @@ It shows only once anybody else has or had access (`ever_granted`): alone with a
 
 - *Book* asks start, end and purpose.
   A clash keeps the sheet open and names the booking in the way: "Booked by Anna, Fri 02/10, 14:00–18:00", or "With Anna until …" when it is out.
+  For an approver, a new booking also asks *For*: "Me" first, then everybody else who may book the car, by name ([booking for a driver](architecture.md#booking-for-a-driver)).
+  It shows only when somebody else may book; if the list cannot be read, the sheet says so and books for the approver.
+- A booking made for a driver reads "Booked for you by Anna" to the driver.
+  An approver reads "Not seen yet by Ben" on it until the driver presses *Seen* in their notification, and only while the car is still to be taken.
 - *Cancel booking* asks once, because a cancel has no undo.
 - On a vehicle whose bookings need approval, a waiting booking reads "Waiting for approval" to its booker and "Requested" to everyone else, and a clash with it "Requested by Anna, …".
   An asked-back booking reads "Asked back", a declined one "Declined".
@@ -219,6 +253,7 @@ It shows only once anybody else has or had access (`ever_granted`): alone with a
   The answer's comment shows on the row, to the booker and the approvers only.
   A waiting booking offers no *Take the car*.
   *Take it now* kept past midnight is a request: before the save the sheet says so and its button reads *Request*; after it, the sheet stays open with the alert "The booking waits for approval." and focus on *Close*.
+  So is every take-now of a driver whose switch is off, which the vehicle's `may` tells the sheet.
 - *Take the car* and *Return the car* ask the counter, the tank or battery level, and a note.
   On return the counter starts empty, because a prefilled one would be saved unread.
   On someone else's booking *Take the car* reads "Hand over to Anna", in the button and its sheet: the owner or a manager is not the one who drives.
@@ -266,12 +301,13 @@ Drawn in [design/context.md#by-role](design/context.md#by-role).
 | *New entry*, `n`, the QR sticker, *Done* on a reminder, *Close gap*, *Add document* | `log` |
 | *Book*, *Take it now* | `book`: `log` on a car in service |
 | *Change*, *Cancel booking*, *Take the car*, *Return the car*, *Log the trip*, *Answer* | the booking's own `may` |
-| *Edit vehicle*, the reminder sheet, the recipients, the HU/AU question | `edit` |
+| *Edit vehicle*, the reminder sheet, the recipients, the HU/AU question, *For* and "Not seen yet" on a booking | `edit` |
 | *Import from a file…* | `edit`, on a vehicle not disposed of |
 | A timeline row that opens | the row's `edit` |
 | *Delete* or *Void trip* | the row's `delete` |
 | *Delete vehicle*, the Access section, *Drivers and viewers see costs*, *Bookings need approval*, the booking notices | `own` |
 | *Costs*, the header's cost tiles, *Open mileage claim* | `costs` |
+| *Take the car* rather than *Request* on *Take it now*, back by midnight, where approval applies | `take_now` |
 
 A row the reader may not change still says everything, and opens nothing.
 Without `costs`, a row somebody else entered comes without its amount, and their expenses not at all ([API](api.md#costs)).

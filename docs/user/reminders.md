@@ -64,7 +64,7 @@ To end a reminder for good, click **Delete reminder**.
 
 ## Who gets them
 
-In **Edit vehicle**, **Reminders go to** lists who gets the notifications and mails.
+In **Edit vehicle**, under **Vehicle**, **Reminders go to** lists who gets the notifications and mails.
 The owner is on it at the start.
 A change to the list saves at once.
 

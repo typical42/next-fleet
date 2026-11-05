@@ -15,6 +15,7 @@ use OCA\NextFleet\Db\AuditMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Service\GrantService;
+use OCA\NextFleet\Service\PreferencesService;
 use OCA\NextFleet\Service\RecipientService;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
@@ -187,6 +188,21 @@ class TransferCommandTest extends TestCase {
 		$this->assertStringStartsWith('erased:', $was);
 		$this->assertSame(self::NEW_OWNER, $now);
 		$this->assertSame([$was => 'viewer'], $this->grantsOn($vehicle), 'one erasure, one pseudonym');
+	}
+
+	/** A vehicle that followed its owner's default keeps the answer it had: the new owner's default may differ. */
+	public function testATransferNeverChangesWhetherBookingsWaitForAnAnswer(): void {
+		$preferences = \OCP\Server::get(PreferencesService::class);
+		$preferences->write(self::OWNER, ['booking_approval' => true]);
+		$asked = $this->vehicle();
+		$this->command->execute(['vehicle' => $asked->getUuid(), 'owner' => self::NEW_OWNER]);
+		$this->assertSame([true, Vehicle::APPROVAL_ALWAYS], [$this->fresh($asked)->needsApproval(), $this->fresh($asked)->approvalRule()]);
+
+		$preferences->write(self::OWNER, ['booking_approval' => false]);
+		$preferences->write(self::NEW_OWNER, ['booking_approval' => true]);
+		$free = $this->vehicle();
+		$this->command->execute(['vehicle' => $free->getUuid(), 'owner' => self::NEW_OWNER]);
+		$this->assertSame([false, Vehicle::APPROVAL_NEVER], [$this->fresh($free)->needsApproval(), $this->fresh($free)->approvalRule()]);
 	}
 
 	private function vehicle(): Vehicle {

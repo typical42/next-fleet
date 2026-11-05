@@ -46,6 +46,22 @@ The **Overview** page lists all your vehicles, the most urgent reminders first.
 ## Edit a vehicle
 
 Click **Edit vehicle**, change the fields, and click **Save**.
+
+The sheet has four sections, each with a heading:
+
+1. **Vehicle**: the data of the vehicle, its counter, the technical inspection (HU/AU), who gets the reminders, **Logbook mode**, the lifecycle and your notes.
+2. **Costs**: the purchase price, the residual value, the currency, and the switch **Drivers and viewers see costs**.
+3. **Access**: who else can use the vehicle ([Give access](access.md#give-access)).
+   Only the owner sees this section.
+4. **Bookings**: whether bookings need approval, and who hears of bookings ([Set up a pool car](access.md#set-up-a-pool-car)).
+   Only the owner sees this section.
+
+**Bookings** and the switch **Drivers and viewers see costs** show only after you gave access to another user or a group.
+A vehicle that only you use does not need them.
+Each switch, and **Bookings need approval**, has a short text below it that tells what it does.
+
+![Edit vehicle on a pool car that two drivers use, scrolled to the sections Access and Bookings.](../../design/screenshots/vehicle-sheet.png)
+
 Some fields need a word:
 
 - **Energy types**: the energies that the vehicle takes.

@@ -56,7 +56,7 @@ class VehicleAccessTest extends TestCase {
 		]);
 	}
 
-	private function grant(string $role, string $grantee = self::STRANGER, string $type = Access::USER): Access {
+	private static function grant(string $role, string $grantee = self::STRANGER, string $type = Access::USER, ?bool $takeNow = true): Access {
 		return Access::fromRow([
 			'id' => 1,
 			'uuid' => '0195e2f1-0000-4000-8000-000000000002',
@@ -64,6 +64,7 @@ class VehicleAccessTest extends TestCase {
 			'grantee' => $grantee,
 			'grantee_type' => $type,
 			'role' => $role,
+			'take_now' => $takeNow,
 		]);
 	}
 
@@ -99,6 +100,7 @@ class VehicleAccessTest extends TestCase {
 		yield 'delete' => [VehicleAccess::DELETE];
 		yield 'own' => [VehicleAccess::OWN];
 		yield 'costs' => [VehicleAccess::COSTS];
+		yield 'take_now' => [VehicleAccess::TAKE_NOW];
 	}
 
 	/** The switch is for drivers and viewers: the owner sees what the car costs whatever it says. */
@@ -243,6 +245,37 @@ class VehicleAccessTest extends TestCase {
 		yield 'a role the domain does not have' => ['admin', VehicleAccess::VIEW, false];
 	}
 
+	/**
+	 * Take it now skips approval for a driver while their grant allows it, the column's default.
+	 * The owner and the managers answer their own bookings, so a value kept from when a manager
+	 * drove narrows nothing; a viewer books nothing, whatever their row says.
+	 *
+	 * @dataProvider takeNow
+	 * @param list<Access> $grants
+	 */
+	public function testTakeItNowIsADriversWhileAGrantAllowsIt(array $grants, bool $expected): void {
+		$this->grants = $this->createMock(AccessMapper::class);
+		$this->grants->method('findGrants')->willReturn($grants);
+
+		$this->assertSame($expected, $this->access()->may(self::STRANGER, VehicleAccess::TAKE_NOW, $this->vehicle()));
+	}
+
+	/**
+	 * @return iterable<string, array{list<Access>, bool}>
+	 */
+	public static function takeNow(): iterable {
+		yield 'a driver, allowed' => [[self::grant('driver')], true];
+		yield 'a driver, a row from before the column' => [[self::grant('driver', takeNow: null)], true];
+		yield 'a driver, blocked' => [[self::grant('driver', takeNow: false)], false];
+		// Widest wins, as for roles: one row that allows is enough.
+		yield 'blocked in person, allowed through a group' => [[self::grant('driver', takeNow: false), self::grant('driver', 'drivers', Access::GROUP)], true];
+		yield 'allowed in person, blocked through a group' => [[self::grant('driver'), self::grant('driver', 'drivers', Access::GROUP, false)], true];
+		yield 'blocked in person and through a group' => [[self::grant('driver', takeNow: false), self::grant('driver', 'drivers', Access::GROUP, false)], false];
+		yield 'a manager, blocked from when they drove' => [[self::grant('manager', takeNow: false)], true];
+		yield 'a viewer, allowed' => [[self::grant('viewer')], false];
+		yield 'a viewer allowed, a driver blocked' => [[self::grant('viewer'), self::grant('driver', 'drivers', Access::GROUP, false)], false];
+	}
+
 	/** Granted in person and again through a group: the widest of the two decides. */
 	public function testTheWidestGrantDecides(): void {
 		$this->grants = $this->createMock(AccessMapper::class);
@@ -273,11 +306,11 @@ class VehicleAccessTest extends TestCase {
 	 * @return iterable<string, array{string, list<string>, list<string>}>
 	 */
 	public static function operationLists(): iterable {
-		yield 'the owner' => [self::OWNER, [], ['view', 'log', 'edit', 'delete', 'own', 'costs']];
-		yield 'a manager' => [self::STRANGER, ['manager'], ['view', 'log', 'edit', 'delete', 'costs']];
-		yield 'a driver' => [self::STRANGER, ['driver'], ['view', 'log', 'costs']];
+		yield 'the owner' => [self::OWNER, [], ['view', 'log', 'edit', 'delete', 'own', 'costs', 'take_now']];
+		yield 'a manager' => [self::STRANGER, ['manager'], ['view', 'log', 'edit', 'delete', 'costs', 'take_now']];
+		yield 'a driver' => [self::STRANGER, ['driver'], ['view', 'log', 'costs', 'take_now']];
 		yield 'a viewer' => [self::STRANGER, ['viewer'], ['view', 'costs']];
-		yield 'a viewer and a driver at once' => [self::STRANGER, ['viewer', 'driver'], ['view', 'log', 'costs']];
+		yield 'a viewer and a driver at once' => [self::STRANGER, ['viewer', 'driver'], ['view', 'log', 'costs', 'take_now']];
 		yield 'a stranger' => [self::STRANGER, [], []];
 	}
 
@@ -291,11 +324,11 @@ class VehicleAccessTest extends TestCase {
 		$this->grants->expects($this->once())
 			->method('findReachable')
 			->with(self::STRANGER, ['drivers'], ['manager', 'driver', 'viewer'])
-			->willReturn([7 => ['viewer', 'driver'], 9 => ['manager']]);
+			->willReturn([7 => [['viewer', true], ['driver', true]], 8 => [['driver', false]], 9 => [['manager', false]]]);
 
 		// The switch is on each vehicle, so what it adds is listed()'s to read; the role alone is here.
 		$this->assertSame(
-			[7 => ['view', 'log'], 9 => ['view', 'log', 'edit', 'delete', 'costs']],
+			[7 => ['view', 'log', 'take_now'], 8 => ['view', 'log'], 9 => ['view', 'log', 'edit', 'delete', 'costs', 'take_now']],
 			$this->access()->reachable(self::STRANGER),
 		);
 	}
@@ -308,7 +341,7 @@ class VehicleAccessTest extends TestCase {
 		$this->grants->expects($this->never())->method('findGrants');
 		$reachable = [self::VEHICLE_ID => ['view']];
 
-		$this->assertSame(['view', 'log', 'edit', 'delete', 'own', 'costs'], $this->access()->listed(self::OWNER, $this->vehicle(), $reachable));
+		$this->assertSame(['view', 'log', 'edit', 'delete', 'own', 'costs', 'take_now'], $this->access()->listed(self::OWNER, $this->vehicle(), $reachable));
 		$this->assertSame(['view', 'costs'], $this->access()->listed(self::STRANGER, $this->vehicle(), $reachable));
 		$this->assertSame(['view'], $this->access()->listed(self::STRANGER, $this->vehicle(costsShared: false), $reachable));
 		$this->assertSame([], $this->access()->listed(self::STRANGER, $this->vehicle(), []));
@@ -355,7 +388,7 @@ class VehicleAccessTest extends TestCase {
 		$erased = 'erased:k3x9qk3x9qk3x9qk3x9q';
 		$this->grants = $this->createMock(AccessMapper::class);
 		$this->grants->method('findGrants')->willReturn([$this->grant('manager', $erased)]);
-		$this->grants->method('findReachable')->willReturn([self::VEHICLE_ID => ['manager']]);
+		$this->grants->method('findReachable')->willReturn([self::VEHICLE_ID => [['manager', true]]]);
 		$owned = Vehicle::fromRow(['id' => self::VEHICLE_ID, 'uuid' => '0195e2f1-0000-4000-8000-000000000001', 'user_id' => $erased]);
 		$granted = $this->vehicle();
 		$granted->setMay(['view', 'log']);

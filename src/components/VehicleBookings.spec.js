@@ -50,7 +50,7 @@ const NOW = 1790940000
  * @return {import('../services/api.js').Booking} the booking
  */
 function booking(more) {
-	return /** @type {any} */ ({
+	const plain = {
 		uuid: 'b-0',
 		updated_at: 1790000000,
 		user_id: 'anna',
@@ -60,9 +60,13 @@ function booking(more) {
 		purpose: null,
 		state: 'booked',
 		trip_uuid: null,
+		seen_at: null,
 		may: [],
 		...more,
-	})
+	}
+
+	// Made by its booker unless it says otherwise.
+	return /** @type {any} */ ({ created_by: plain.user_id, created_by_name: plain.user_name, ...plain })
 }
 
 /** Monday's, over. */
@@ -452,6 +456,47 @@ describe('approval', () => {
 		await flushPromises()
 
 		expect(answerBooking).toHaveBeenCalledWith('v-1', waiting, 'decline', '')
+	})
+})
+
+describe('a booking made for a driver', () => {
+	/** The owner's view of the car. */
+	const OWNER = { ...VEHICLE, may: ['view', 'log', 'edit', 'delete', 'own', 'costs', 'take_now', 'book'] }
+	/** Anna's, which the reader booked for her. */
+	const FOR_ANNA = booking({ ...ANNAS, created_by: 'me', created_by_name: 'Maria' })
+	/** The reader's, which Olga booked for them. */
+	const FOR_ME = booking({ ...COMING, created_by: 'olga', created_by_name: 'Olga' })
+
+	it('tells an approver whom it is not yet seen by, until it is', async () => {
+		vi.mocked(listBookings).mockResolvedValue([FOR_ANNA, booking({ ...FOR_ANNA, uuid: 'b-4', seen_at: 1790900000 }), booking({ ...FOR_ANNA, uuid: 'b-5', state: 'cancelled' })])
+		const wrapper = await section(OWNER)
+
+		expect(row(wrapper, 'b-3').text()).toContain('Not seen yet by Anna')
+		expect(row(wrapper, 'b-4').text()).not.toContain('Not seen yet')
+		expect(row(wrapper, 'b-5').text()).not.toContain('Not seen yet')
+	})
+
+	it('tells nobody else whether it was seen', async () => {
+		vi.mocked(listBookings).mockResolvedValue([FOR_ANNA])
+		const wrapper = await section()
+
+		expect(row(wrapper, 'b-3').text()).not.toContain('Not seen yet')
+	})
+
+	it('tells the driver who booked it for them, and not that they have not seen it', async () => {
+		vi.mocked(listBookings).mockResolvedValue([FOR_ME, COMING])
+		const wrapper = await section(OWNER)
+
+		expect(row(wrapper, 'b-2').text()).toContain('Booked for you by Olga')
+		expect(row(wrapper, 'b-2').text()).not.toContain('Not seen yet')
+	})
+
+	it('says nothing of whom a booking was made by when its booker made it', async () => {
+		vi.mocked(listBookings).mockResolvedValue([COMING, ANNAS])
+		const wrapper = await section(OWNER)
+
+		expect(wrapper.text()).not.toContain('Booked for you')
+		expect(wrapper.text()).not.toContain('Not seen yet')
 	})
 })
 

@@ -37,12 +37,21 @@ use Symfony\Component\Console\Output\OutputInterface;
 class FleetMigrator implements IMigrator {
 	/**
 	 * What the account wrote about its own doing: a trip it drove, a fill-up it paid. Theirs in
-	 * full, whoever may see the vehicle now - but for a booking it only answered (ANSWER).
+	 * full, whoever may see the vehicle now - but for a booking that is not its own (ANSWER).
 	 */
 	private const AUTHORED = ['fleet_trips', 'fleet_energy', 'fleet_maintenance', 'fleet_expenses', 'fleet_odo_readings', 'fleet_bookings', 'fleet_documents', 'fleet_reminder_receipts'];
 
-	/** What an approver wrote on somebody else's booking: their answer, and when it was asked. */
-	private const ANSWER = ['uuid', 'created_at', 'approval', 'approval_comment', 'approval_by'];
+	/**
+	 * What is left of somebody else's booking the account made or answered: that it made it, for
+	 * when, and its answer. Each part only while the account wrote it (WRITTEN_BY).
+	 */
+	private const ANSWER = ['uuid', 'created_at', 'created_by', 'starts_at', 'starts_at_off', 'ends_at', 'ends_at_off', 'approval', 'approval_comment', 'approval_by'];
+
+	/**
+	 * The columns of ANSWER that name an account, each with what that account wrote. Somebody
+	 * else's answer may follow the account's: a driver's move asks again, another approver answers.
+	 */
+	private const WRITTEN_BY = ['created_by' => ['created_by'], 'approval_by' => ['approval', 'approval_comment', 'approval_by']];
 
 	/** The vehicle's columns that only `costs` shows, as Vehicle::jsonSerialize() hides them. */
 	private const PRICES = ['purchase_price', 'residual_est'];
@@ -125,8 +134,9 @@ class FleetMigrator implements IMigrator {
 	 */
 	private function rowFor(string $uid, string $table, BaseEntity $entity): array {
 		$row = self::row($entity);
-		if ($entity instanceof Booking && $row['user_id'] !== $uid && $row['created_by'] !== $uid) {
-			return $this->may($uid, VehicleAccess::VIEW, $entity->getVehicleId()) ? $row : array_intersect_key($row, array_flip(self::ANSWER));
+		// Made or answered for somebody else, it holds the booker's purpose, counter and notes.
+		if ($entity instanceof Booking && $row['user_id'] !== $uid) {
+			return $this->may($uid, VehicleAccess::VIEW, $entity->getVehicleId()) ? $row : self::answer($uid, $row);
 		}
 		$vehicle = $entity instanceof Vehicle ? $entity : null;
 		if (in_array($table, self::AUTHORED, true) || ($row['created_by'] ?? null) !== $uid || $this->may($uid, VehicleAccess::VIEW, $this->vehicleOf($entity), $vehicle)) {
@@ -180,6 +190,21 @@ class FleetMigrator implements IMigrator {
 		}
 
 		return in_array($operation, $this->held[$key], true);
+	}
+
+	/**
+	 * @param array<string, mixed> $row
+	 * @return array<string, mixed>
+	 */
+	private static function answer(string $uid, array $row): array {
+		$kept = array_intersect_key($row, array_flip(self::ANSWER));
+		foreach (self::WRITTEN_BY as $writer => $columns) {
+			if ($row[$writer] !== $uid) {
+				$kept = array_diff_key($kept, array_flip($columns));
+			}
+		}
+
+		return $kept;
 	}
 
 	/** @return array<string, mixed> column => value, as the table holds it */

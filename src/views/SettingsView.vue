@@ -21,6 +21,9 @@ const offered = ref([])
 /** The stored key, which is not always one of the offered ones. */
 const chosen = ref('')
 const reclaimVat = ref(false)
+/** The owner's default for their vehicles' bookings, and whether it is for anything (docs/ui.md). */
+const bookingApproval = ref(false)
+const ownsShared = ref(false)
 const busy = ref(true)
 const failure = ref('')
 
@@ -90,6 +93,8 @@ function hold(settings) {
 	offered.value = settings.jurisdictions
 	chosen.value = settings.preferences.jurisdiction
 	reclaimVat.value = settings.preferences.reclaim_vat
+	bookingApproval.value = settings.preferences.booking_approval === true
+	ownsShared.value = settings.owns_shared === true
 	stored.gridFactor = settings.preferences.grid_factor
 	showGrid()
 	gridUnreadable.value = false
@@ -166,6 +171,26 @@ async function reclaim(reclaims) {
 		hold(await savePreferences({ reclaim_vat: reclaims }))
 	} catch (error) {
 		reclaimVat.value = stored
+		failure.value = error.message
+	} finally {
+		busy.value = false
+	}
+}
+
+/**
+ * As for VAT. Switched off, the server approves what waits on the vehicles that follow it.
+ *
+ * @param {boolean} asks - what the switch now holds
+ */
+async function approve(asks) {
+	const stored = bookingApproval.value
+	bookingApproval.value = asks
+	busy.value = true
+	failure.value = ''
+	try {
+		hold(await savePreferences({ booking_approval: asks }))
+	} catch (error) {
+		bookingApproval.value = stored
 		failure.value = error.message
 	} finally {
 		busy.value = false
@@ -288,6 +313,21 @@ async function saveInbox(folder) {
 				{{ t('nextfleet', 'Point the auto-upload of the Nextcloud mobile app at this folder. Its photos and PDFs that belong to no vehicle yet wait under Inbox in NextFleet. The app never moves or deletes them.') }}
 			</p>
 		</div>
+
+		<!-- Freelancers first: a vehicle only its owner uses has no bookings to approve
+		     (docs/adr/0012-nextfleet-also-serves-a-small-fleet.md). -->
+		<div v-if="ownsShared" class="bookings">
+			<h3>{{ t('nextfleet', 'Bookings') }}</h3>
+			<NcCheckboxRadioSwitch :model-value="bookingApproval"
+				type="switch"
+				:disabled="busy"
+				@update:model-value="approve">
+				{{ t('nextfleet', 'Bookings need approval') }}
+			</NcCheckboxRadioSwitch>
+			<p class="hint">
+				{{ t('nextfleet', 'A booking by a driver waits until you or a manager approve it. This applies to each of your vehicles that is set to "As for all my vehicles". When you switch it off, the bookings that wait are approved.') }}
+			</p>
+		</div>
 	</NcSettingsSection>
 </template>
 
@@ -296,7 +336,8 @@ async function saveInbox(folder) {
 	color: var(--color-text-maxcontrast);
 }
 
-.inbox {
+.inbox,
+.bookings {
 	margin-top: calc(var(--default-grid-baseline) * 4);
 }
 

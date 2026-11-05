@@ -18,6 +18,7 @@ use OCA\NextFleet\Jurisdiction\IReportRenderer;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCA\NextFleet\Service\OwnFiles;
 use OCA\NextFleet\Service\PreferencesService;
+use OCA\NextFleet\Service\VehicleService;
 use OCA\NextFleet\Tests\Stub\RegisteredProfiles;
 use OCP\IConfig;
 use PHPUnit\Framework\MockObject\MockObject;
@@ -35,6 +36,7 @@ class PreferencesServiceTest extends TestCase {
 	private const OTHER = '0195e2f1-0000-4000-8000-000000000002';
 
 	private IConfig&MockObject $config;
+	private VehicleService&MockObject $vehicles;
 
 	/** This user's config, as the double holds it. @var array<string, string> */
 	private array $stored = [];
@@ -44,6 +46,7 @@ class PreferencesServiceTest extends TestCase {
 	 * that went nowhere.
 	 */
 	protected function setUp(): void {
+		$this->vehicles = $this->createMock(VehicleService::class);
 		$this->config = $this->createMock(IConfig::class);
 		$this->config->method('getUserValue')->willReturnCallback(
 			function (string $userId, string $appId, string $key, string $default): string {
@@ -63,7 +66,7 @@ class PreferencesServiceTest extends TestCase {
 
 	/** The real registration list: only it can say what the screen may offer. */
 	private function service(): PreferencesService {
-		return new PreferencesService($this->config, RegisteredProfiles::jurisdictions(), $this->createMock(OwnFiles::class));
+		return new PreferencesService($this->config, RegisteredProfiles::jurisdictions(), $this->createMock(OwnFiles::class), $this->vehicles);
 	}
 
 	/**
@@ -95,7 +98,7 @@ class PreferencesServiceTest extends TestCase {
 			return $profile;
 		});
 
-		$jurisdictions = (new PreferencesService($this->config, new Jurisdictions($container), $this->createMock(OwnFiles::class)))->forUser(self::USER)['jurisdictions'];
+		$jurisdictions = (new PreferencesService($this->config, new Jurisdictions($container), $this->createMock(OwnFiles::class), $this->vehicles))->forUser(self::USER)['jurisdictions'];
 
 		$this->assertSame(['de' => false, 'generic' => true], array_column($jurisdictions, 'logbook_export', 'key'));
 	}
@@ -116,7 +119,7 @@ class PreferencesServiceTest extends TestCase {
 		$jurisdictions = $this->createMock(Jurisdictions::class);
 		$jurisdictions->method('all')->willReturn($profiles);
 
-		$answers = (new PreferencesService($this->config, $jurisdictions, $this->createMock(OwnFiles::class)))->forUser(self::USER)['jurisdictions'];
+		$answers = (new PreferencesService($this->config, $jurisdictions, $this->createMock(OwnFiles::class), $this->vehicles))->forUser(self::USER)['jurisdictions'];
 
 		$this->assertSame(['both' => true, 'no rates' => false, 'no page' => false], array_column($answers, 'mileage_claim', 'key'));
 	}
@@ -136,7 +139,7 @@ class PreferencesServiceTest extends TestCase {
 		$jurisdictions = $this->createMock(Jurisdictions::class);
 		$jurisdictions->method('all')->willReturn($profiles);
 
-		$answers = (new PreferencesService($this->config, $jurisdictions, $this->createMock(OwnFiles::class)))->forUser(self::USER)['jurisdictions'];
+		$answers = (new PreferencesService($this->config, $jurisdictions, $this->createMock(OwnFiles::class), $this->vehicles))->forUser(self::USER)['jurisdictions'];
 
 		$this->assertSame(['ruled' => true, 'free' => false], array_column($answers, 'logbook_rules', 'key'));
 	}
@@ -304,6 +307,22 @@ class PreferencesServiceTest extends TestCase {
 		yield 'a grid factor no grid has' => ['grid_factor', 5001];
 		yield 'an inbox folder as a path' => ['inbox_folder', 'Belege'];
 		yield 'an inbox folder as a word' => ['inbox_folder', '42'];
+		yield 'approval as a word' => ['booking_approval', 'yes'];
+	}
+
+	/** Off until the owner says so; the vehicles write it, so turning it off answers what waits on them. */
+	public function testTheVehiclesWriteTheDefaultForBookings(): void {
+		$this->assertFalse($this->service()->forUser(self::USER)['preferences']['booking_approval']);
+		$this->vehicles->expects($this->once())->method('approveByDefault')->with(self::USER, false);
+
+		$this->service()->write(self::USER, ['booking_approval' => false]);
+	}
+
+	/** Offered only to an owner of a vehicle somebody else uses or used. */
+	public function testItSaysWhetherTheUserOwnsASharedVehicle(): void {
+		$this->vehicles->method('ownsShared')->willReturn(true);
+
+		$this->assertTrue($this->service()->forUser(self::USER)['owns_shared']);
 	}
 
 	/**

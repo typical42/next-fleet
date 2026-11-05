@@ -62,6 +62,19 @@ class BookingNoticesTest extends TestCase {
 		$this->assertSame(200, $added->status, $added->body);
 		$this->assertSame([self::$manager->uid], array_column($added->data(), 'recipient'));
 		$this->assertSame(['user'], array_column($added->data(), 'recipient_type'));
+		$this->assertSame([['returned']], array_column($added->data(), 'events'));
+	}
+
+	/** Each one on the list hears its own events; posting it again with events sets them. */
+	#[Depends('testTheOwnerTicksTheEventsAndPutsAManagerOnTheList')]
+	public function testTheOwnerSetsTheEventsOfOneOnTheList(): void {
+		$uuid = self::$vehicle['uuid'];
+
+		$set = self::$server->ocs(self::$owner, 'POST', "/vehicles/$uuid/booking-recipients", ['recipient' => self::$manager->uid, 'recipient_type' => 'user', 'events' => ['taken', 'booked']]);
+		$this->assertSame(200, $set->status, $set->body);
+		$this->assertSame([['booked', 'taken']], array_column($set->data(), 'events'));
+		$this->assertSame([['booked', 'taken']], array_column(self::$server->ocs(self::$owner, 'GET', "/vehicles/$uuid/booking-recipients")->data(), 'events'));
+		$this->assertSame(400, self::$server->ocs(self::$owner, 'POST', "/vehicles/$uuid/booking-recipients", ['recipient' => self::$manager->uid, 'recipient_type' => 'user', 'events' => ['parked']])->status);
 	}
 
 	/** A manager reads the list; the list and the events are the owner's to change. */

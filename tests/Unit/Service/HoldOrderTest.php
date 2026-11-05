@@ -45,6 +45,7 @@ use OCA\NextFleet\Service\Pending;
 use OCA\NextFleet\Service\ReminderService;
 use OCA\NextFleet\Service\Sharable;
 use OCA\NextFleet\Service\SyncEpoch;
+use OCA\NextFleet\Service\UserZone;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Db\DoesNotExistException;
@@ -289,8 +290,10 @@ class HoldOrderTest extends TestCase {
 			$this->vehicles,
 			$access,
 			$this->createMock(IUserManager::class),
+			$this->createMock(Names::class),
 			$this->createMock(BookingNotices::class),
 			$this->clock(),
+			$this->createMock(UserZone::class),
 			$this->db,
 			$this->createMock(LoggerInterface::class),
 		);

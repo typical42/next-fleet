@@ -134,6 +134,10 @@ return [
 		['name' => 'booking#approve', 'url' => '/api/vehicles/{uuid}/bookings/{booking}/approve', 'verb' => 'POST'],
 		['name' => 'booking#ask', 'url' => '/api/vehicles/{uuid}/bookings/{booking}/ask', 'verb' => 'POST'],
 		['name' => 'booking#decline', 'url' => '/api/vehicles/{uuid}/bookings/{booking}/decline', 'verb' => 'POST'],
+		// The booker confirms a booking an approver made for them.
+		['name' => 'booking#seen', 'url' => '/api/vehicles/{uuid}/bookings/{booking}/seen', 'verb' => 'POST'],
+		// Whom an approver may book for.
+		['name' => 'booking#bookers', 'url' => '/api/vehicles/{uuid}/bookers', 'verb' => 'GET'],
 
 		// What happened to the vehicle, every table at once and a page at a time
 		// (docs/architecture.md#the-timeline). `odometer#index` stays where it is: the counter on
@@ -267,6 +271,8 @@ return [
 		['name' => 'Ocs\Booking#approve', 'url' => '/api/v1/vehicles/{uuid}/bookings/{booking}/approve', 'verb' => 'POST'],
 		['name' => 'Ocs\Booking#ask', 'url' => '/api/v1/vehicles/{uuid}/bookings/{booking}/ask', 'verb' => 'POST'],
 		['name' => 'Ocs\Booking#decline', 'url' => '/api/v1/vehicles/{uuid}/bookings/{booking}/decline', 'verb' => 'POST'],
+		['name' => 'Ocs\Booking#seen', 'url' => '/api/v1/vehicles/{uuid}/bookings/{booking}/seen', 'verb' => 'POST'],
+		['name' => 'Ocs\Booking#bookers', 'url' => '/api/v1/vehicles/{uuid}/bookers', 'verb' => 'GET'],
 
 		['name' => 'Ocs\Preferences#index', 'url' => '/api/v1/preferences', 'verb' => 'GET'],
 		['name' => 'Ocs\Preferences#update', 'url' => '/api/v1/preferences', 'verb' => 'PUT'],

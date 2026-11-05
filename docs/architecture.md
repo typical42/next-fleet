@@ -95,6 +95,7 @@ Names stay under 27 characters, because Nextcloud adds `oc_`.
 
 ### The audit trail
 
+- **It sees only changes made through the app** ([what that means in a tax audit](legal.md#a-german-tax-audit-can-reject-the-logbook)).
 - A row's author and instant are its `created_by` and `created_at`.
   It is written in the same transaction as the change and never updated.
 - **What kind of change it was lives in `diff_json`, not in a column.**
@@ -189,8 +190,18 @@ It writes no Reading and is on no timeline, logbook or report.
 
 ### Booking approval
 
-The owner may make a vehicle's bookings wait for an answer: `booking_approval`, off by default ([ADR 0011](adr/0011-a-small-firm-may-opt-into-approval-and-hidden-costs.md)).
+The owner may make a vehicle's bookings wait for an answer ([ADR 0011](adr/0011-a-small-firm-may-opt-into-approval-and-hidden-costs.md)).
 
+- **A vehicle follows its owner, or not.**
+  The column `booking_approval` is true for always, false for never, and null for as the owner's default says.
+  The default is the owner's preference `booking_approval`, off until set ([ADR 0012](adr/0012-nextfleet-also-serves-a-small-fleet.md): one switch for a small fleet).
+  `VehicleMapper` reads it with every vehicle, so `Vehicle::needsApproval()` answers alone.
+- **Off approves what waits**, as the owner, whichever way approval turns off: the vehicle's rule (`VehicleService::update()`) or the owner's default (`VehicleService::approveByDefault()`).
+  The default approves nothing in the trash, so a vehicle restored without approval approves what waits on it then (`VehicleService::restore()`).
+  The default is written under the holds of all the owner's vehicles, trashed ones too, and a booking or a restore reads it again under its vehicle's hold, from the database: `IConfig` keeps what it read for the rest of a request.
+  A new default moves the `updated_at` of each vehicle that follows it, so sync sends them and a client that read the old answer saves into a 412.
+  A transfer and the vehicle's own switch read the default from the database too, under their hold.
+- **A transfer pins the rule** to what it was, since the new owner's default is not the one the drivers booked under.
 - **The answer sits beside the state, not in it.**
   A booking waiting for one is `booked` with `approval: requested`, so a client that knows the four states still reads it.
   `approval` is null where the vehicle asks for none.
@@ -205,9 +216,13 @@ The owner may make a vehicle's bookings wait for an answer: `booking_approval`, 
   A new start or end makes the booking a request again, unless an approver moves it; a new purpose keeps the answer.
   Asked back, the booker answers by changing the booking, a new purpose too: it is a request again.
 - **A cancel keeps the last `approval`** as history, so a client reads `approval` with the state.
-- ***Take it now* asks nobody** while the car is back by midnight on the booker's clock (the offset the sheet sends).
+- ***Take it now* asks nobody** while the car is back by midnight on the booker's clock.
+  Midnight is the next one after the server's now, not after the start, which may lie five minutes ahead.
+  The clock is the booker's Nextcloud time zone, or the offset the sheet sends when they set none.
   Kept longer, it is a request, and the sheet leaves it booked.
-- **Turning the switch off approves** every booking that waits, as the owner.
+  The owner may block it per driver: `fleet_access.take_now` false takes `VehicleAccess::TAKE_NOW` off that grant, and the driver's take-now is a request like any booking.
+  Widest wins, as for roles; a role that covers `edit` approves its own anyway, so its value narrows nothing.
+  The vehicle's `may` carries the word, so the sheet foresees the request by the server's answer.
 - **The comment is the booker's and the approvers'.**
   Everyone else reads `approval_comment` as null.
 - **Notices:** a request goes to the owner and the managers whatever the list says; each answer goes to the booker, in place of the one before.
@@ -222,13 +237,15 @@ The owner may make a vehicle's bookings wait for an answer: `booking_approval`, 
 Nextcloud notifications only, sent after the commit by `BookingNotices`.
 
 - **The booker hears of a cancel by somebody else.**
-- **The vehicle's list hears the events the owner ticked** in `booking_notices`: `booked`, `taken`, `returned`, `cancelled`, `changed`.
-  A new vehicle hears `booked` and `taken`.
+- **The vehicle's list hears five events**: `booked`, `taken`, `returned`, `cancelled`, `changed`.
   A booking that starts within five minutes of now is *Take it now*, so it is `taken`, not `booked`; one that waits for approval is `booked` once approved.
   Only a new start or end is `changed`; a new purpose alone is not.
 - **The list is `fleet_booking_recipients`**: accounts and groups, the owner's to write, a manager's to read.
-  An empty list means the owner.
   A group is its members when the event happens.
+- **Each row hears its own `events`.**
+  Somebody on two rows, by name and through a group, hears what either row hears, one notice per event.
+  An empty list means the owner, who hears the vehicle's `booking_notices`; a new vehicle's are `booked` and `taken`.
+  A new row starts with the vehicle's `booking_notices`, so they are also the list's default.
 - **Nobody hears of their own action**, and a booker never hears of a cancel twice.
 - **Only those who see the vehicle are told**, then and when they read it.
   Being on the list grants nothing, so a member who lost the car needs no pruning.
@@ -237,6 +254,31 @@ Nextcloud notifications only, sent after the commit by `BookingNotices`.
   The notifier names the booker from the booking when the list is read, so an erasure reaches it.
 - Deleting the vehicle takes back every notice of its bookings.
   Undoing the delete asks again what waits for an answer: each request of the approvers, each question of its booker.
+
+### Booking for a driver
+
+The owner or a manager may book a vehicle for somebody else ([ADR 0012](adr/0012-nextfleet-also-serves-a-small-fleet.md)).
+
+- **The booking is the driver's.**
+  `user_id` is the driver, `created_by` the approver (`Booking::madeByAnother()`).
+  The driver changes, cancels and takes it as their own; a move by them asks for an answer again, as any of theirs does.
+- **Only somebody who may book the vehicle** is named: `log` on it, through a grant or a group, or the owner.
+  The name is stored as the instance spells it (`Names::spelled()`), whatever case the request sends.
+  A viewer, an account without access and a group are refused, so a booking hands out nothing.
+  `…/bookers` lists them by the same rule (`VehicleAccess::holders()`), which also finds the approvers a request goes to.
+- **It stands at once.**
+  The approver made it, so it is approved by them where the vehicle asks for approval, *Take it now* too; overlaps are refused as for any booking.
+  A retry under the same `client_uuid` asks nothing about the booker again.
+- **`seen_at` is the booker's and the approvers'**, as `approval_comment` is; anybody else reads null.
+- **The driver confirms it.**
+  Their notice has a **Seen** button, which posts `…/bookings/{uuid}/seen`; `seen_at` is the first confirmation.
+  Nothing waits on it, and the maker hears nothing of it.
+  The notice goes once confirmed, or once the booking is cancelled.
+  The trash takes it back, and a restore sends it again while the booking is still to come and not confirmed.
+- **Notices:** the list hears `booked`, without the driver, whose own notice is the one with the button.
+  It hears `booked` also for a booking that starts now: nobody took the car yet, and the check-out tells nobody.
+  A cancel by the driver tells whoever made the booking, also outside the list, once.
+- An erasure reaches `user_id` and `created_by` as it reaches every account column ([ADR 0008](adr/0008-erasing-a-driver-pseudonymises.md)); `seen_at` names nobody.
 
 ## Time
 
@@ -512,11 +554,14 @@ A link like the logbook: no token, rate-limited, logged by ids, `view` access.
 
 - **A row on a vehicle the account no longer sees is withheld.**
   Shared state, such as a vehicle handed to a new owner, would show somebody else's data.
-  Such a row is reduced to its id (Art. 15(4) GDPR).
+  Such a row is reduced to its id, its writer and when it was written (Art. 15(4) GDPR).
   What the account wrote itself is exported whole (`FleetMigrator::AUTHORED`).
-- **A booking the account only answered is the booker's.**
-  It is the account's own only where `user_id` or `created_by` names it.
-  Named only as `approval_by`, it is exported whole while the account sees the vehicle, else reduced to the answer (`FleetMigrator::ANSWER`).
+- **A booking is the booker's.**
+  It is the account's own only where `user_id` names it.
+  One it answered (`approval_by`) or made for somebody else (`created_by`) holds the booker's purpose, counter and notes.
+  Such a booking is exported whole while the account sees the vehicle.
+  Else it is reduced to its id, when it was made, its span as it stands, and what the account wrote: that it made it, its answer (`FleetMigrator::ANSWER`).
+  An answer somebody else gave later stays out.
 - **A vehicle row carries its prices only while the account may see costs** ([costs](api.md#costs)).
   Else `purchase_price` and `residual_est` are null.
 - **Export only.**
@@ -612,6 +657,7 @@ The strongest row wins, and no row narrows another.
 | `delete` | manager | Delete any entry |
 | `own` | the owner alone | Access; delete and restore the vehicle; whether the costs are shared, whether bookings need approval, and who hears of bookings |
 | `costs` | manager; viewer and driver while `costs_shared` | Every amount, sum and price, and the mileage claim |
+| `take_now` | manager; driver while a grant's `take_now` is true | *Take it now* without approval while the car is back by midnight ([booking approval](#booking-approval)) |
 
 - A route about one vehicle asks `may`.
   A list asks `reachable`, one query instead of one per row.

@@ -77,6 +77,14 @@ function vatSwitch(wrapper) {
 
 /**
  * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted screen
+ * @return {any} the "Bookings need approval" switch, the second one
+ */
+function approvalSwitch(wrapper) {
+	return wrapper.findAllComponents(NcCheckboxRadioSwitch).at(1)
+}
+
+/**
+ * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted screen
  * @return {any} the grid factor field
  */
 function gridField(wrapper) {
@@ -201,6 +209,36 @@ describe('settings screen', () => {
 
 		expect(vatSwitch(wrapper).props('modelValue')).toBe(false)
 		expect(note(wrapper)).toBe('reclaim_vat is true or false')
+	})
+
+	/** Freelancers first (docs/adr/0012-nextfleet-also-serves-a-small-fleet.md). */
+	it('offers the default for bookings only to an owner of a shared vehicle', async () => {
+		const freelancer = await screen()
+		expect(freelancer.findAll('h3').map((one) => one.text())).toEqual([])
+		expect(freelancer.findAllComponents(NcCheckboxRadioSwitch)).toHaveLength(1)
+
+		vi.mocked(getPreferences).mockResolvedValue({ ...settings, owns_shared: true, preferences: { ...settings.preferences, booking_approval: true } })
+		const owner = await screen()
+		expect(owner.findAll('h3').map((one) => one.text())).toEqual(['Bookings'])
+		expect(approvalSwitch(owner).props('modelValue')).toBe(true)
+		expect(approvalSwitch(owner).text()).toBe('Bookings need approval')
+	})
+
+	it('saves the default for bookings as it is changed, and puts it back when refused', async () => {
+		vi.mocked(getPreferences).mockResolvedValue({ ...settings, owns_shared: true, preferences: { ...settings.preferences, booking_approval: false } })
+		vi.mocked(savePreferences).mockResolvedValue({ ...settings, owns_shared: true, preferences: { ...settings.preferences, booking_approval: true } })
+		const wrapper = await screen()
+
+		await approvalSwitch(wrapper).vm.$emit('update:modelValue', true)
+		await flushPromises()
+		expect(savePreferences).toHaveBeenCalledWith({ booking_approval: true })
+		expect(approvalSwitch(wrapper).props('modelValue')).toBe(true)
+
+		vi.mocked(savePreferences).mockRejectedValue(new Error('booking_approval is true or false'))
+		await approvalSwitch(wrapper).vm.$emit('update:modelValue', false)
+		await flushPromises()
+		expect(approvalSwitch(wrapper).props('modelValue')).toBe(true)
+		expect(note(wrapper)).toBe('booking_approval is true or false')
 	})
 
 	it('shows this user\'s grid factor, and the country average an empty field stands for', async () => {

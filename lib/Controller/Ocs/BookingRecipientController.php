@@ -59,26 +59,27 @@ class BookingRecipientController extends OCSController {
 	}
 
 	/**
-	 * Add an account or a group to hear of the bookings
+	 * Add an account or a group to hear of the bookings, or set the events of one on the list
 	 *
 	 * @param string $uuid the vehicle's uuid
 	 * @param string|null $recipient required: the account or the group; being on the list grants nothing
 	 * @param string|null $recipient_type required: `user` or `group`
+	 * @param list<string>|null $events the booking events it hears: booked, taken, returned, cancelled, changed. A new one hears the vehicle's `booking_notices` without them; one on the list keeps its own
 	 * @return DataResponse<Http::STATUS_OK, list<NextFleetBookingRecipient>, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
 	 * @throws OCSForbiddenException the caller does not own this vehicle
 	 * @throws OCSNotFoundException no such vehicle
 	 *
 	 * 200: the recipients as they now stand
-	 * 400: no such account or group on this instance
+	 * 400: no such account or group on this instance, or an unknown event
 	 * 412: another write to the list raced this one; send it again
 	 */
 	#[NoAdminRequired]
 	#[UserRateLimit(limit: 60, period: 60)]
-	public function create(string $uuid, mixed $recipient = null, mixed $recipient_type = null): DataResponse {
+	public function create(string $uuid, mixed $recipient = null, mixed $recipient_type = null, mixed $events = null): DataResponse {
 		$params = $this->request->getParams();
 
 		return $this->write(fn (): DataResponse => new DataResponse(
-			$this->service->addBooking($this->userId(), $uuid, $params['recipient'] ?? null, $params['recipient_type'] ?? null),
+			$this->service->addBooking($this->userId(), $uuid, $params['recipient'] ?? null, $params['recipient_type'] ?? null, $params['events'] ?? null),
 		));
 	}
 

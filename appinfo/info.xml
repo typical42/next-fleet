@@ -30,7 +30,9 @@ service and inspection dates, a trip log, and who has the car when.
   entered it. You can keep the costs from drivers and viewers.
 - **Bookings and handover.** Book the car for a time, take it and give it back with the counter,
   the tank or battery level and a note. Giving it back fills in the trip. Bookings can wait for
-  approval by the owner or a manager, and you choose who gets a notification of them.
+  approval by the owner or a manager, and you choose who gets a notification of them. To run a
+  pool of cars, set approval for all your vehicles in one place, book a car for a driver, and
+  choose which drivers may take a car without approval.
 - **Papers from Files.** Attach the registration or a workshop invoice to the vehicle, or to the
   entry it belongs to. Everyone who may see the vehicle can open it, except receipts while the
   costs are kept from them.
@@ -76,7 +78,9 @@ hat.
 - **Buchungen und Übergabe.** Buchen Sie das Fahrzeug für eine Zeit, übernehmen Sie es und geben
   Sie es zurück, mit Kilometerstand, Tank- oder Akkustand und einer Notiz. Die Rückgabe füllt die
   Fahrt aus. Buchungen können auf die Genehmigung durch den Besitzer oder einen Verwalter warten, und
-  Sie wählen, wer zu ihnen benachrichtigt wird.
+  Sie wählen, wer zu ihnen benachrichtigt wird. Für einen Fahrzeugpool legen Sie die Genehmigung
+  für alle Ihre Fahrzeuge an einer Stelle fest, buchen ein Fahrzeug für einen Fahrer und wählen,
+  welche Fahrer ein Fahrzeug ohne Genehmigung sofort nehmen dürfen.
 - **Unterlagen aus Dateien.** Fahrzeugschein oder Werkstattrechnung hängen am Fahrzeug oder am
   Eintrag, zu dem sie gehören. Alle, die das Fahrzeug sehen dürfen, können sie öffnen, außer Belegen,
   solange die Kosten vor ihnen verborgen sind.
@@ -99,7 +103,7 @@ dass das Ergebnis von einem Finanzamt, einer Prüferin oder einem Gericht anerka
 und Sätze stammen aus öffentlichen Quellen, können falsch sein und veralten. Fragen Sie Ihre eigene
 Beraterin oder Ihren Berater, bevor Sie sich darauf verlassen.
   ]]></description>
-  <version>0.5.0</version>
+  <version>0.6.0</version>
   <licence>AGPL-3.0-or-later</licence>
   <author>Johannes Kolb</author>
   <namespace>NextFleet</namespace>

@@ -93,6 +93,9 @@ Each merge request:
 - updates the docs and `CHANGELOG.md` in the same request, the user manual included,
 - adds each new UI text to all translation files,
 - runs `composer openapi` after a change in `lib/Controller/` and commits `openapi.json`,
+- gives a new feature its OCS route next to the internal one, and only adds to API v1 ([ADR 0009](../adr/0009-the-ocs-api-v1-is-the-public-contract.md)),
+- adds a new table that names an account to `AccountTables`, so the erasure and the personal data export reach it ([deleting and erasing](../architecture.md#deleting-and-erasing)),
+- adds a new table with a `vehicle_id` to `VehicleTables`, and says how sync hands out its rows ([sync](../api.md#sync)),
 - names each AI tool that helped ([AI assistance](../contributing.md#ai-assistance)).
 
 Report a security problem privately, as [SECURITY.md](../../SECURITY.md) says.

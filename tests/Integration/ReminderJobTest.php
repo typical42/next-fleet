@@ -508,7 +508,7 @@ class ReminderJobTest extends TestCase {
 					private ?int $breaking,
 					private bool $unlisted,
 				) {
-					parent::__construct($db, $time, $random);
+					parent::__construct($db, $time, $random, \OCP\Server::get(\OCP\IConfig::class));
 				}
 
 				public function findReminded(bool $lists = true): array {

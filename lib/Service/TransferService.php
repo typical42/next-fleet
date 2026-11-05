@@ -51,6 +51,8 @@ class TransferService {
 	 * Every grant stands but the new owner's own, which owning makes spent. The former owner keeps a
 	 * viewer grant while their account exists, so what they entered stays readable to them. The new
 	 * owner answers the bookings now, and is asked those that wait (BookingNotices::tellWaiting()).
+	 * Whether bookings wait stays as it was, pinned to always or never: the new owner's default is
+	 * not the one the drivers booked under.
 	 *
 	 * @return array{vehicle: Vehicle, from: string} the vehicle as it now stands, and whose it was
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException if no live vehicle has this uuid
@@ -81,6 +83,8 @@ class TransferService {
 					$spent[] = $grant->getUuid();
 				}
 			}
+			$this->vehicles->refreshOwnerApproval($vehicle);
+			$vehicle->setBookingApproval($vehicle->needsApproval());
 			$vehicle->setUserId($newOwner);
 			$vehicle = $this->vehicles->updateChecked($vehicle, $vehicle->getUpdatedAt());
 			if ($this->users->userExists($from)) {

@@ -22,7 +22,7 @@ const admin = `Basic ${Buffer.from('admin:admin').toString('base64')}`
  * Every account and group a run makes: the run's own and those the spec files invent under their
  * prefixes (`m4e2e-` and the like). What deleting one takes with it is in docs/development.md#testing.
  */
-const made = /^(nextfleet-e2e-|m\d+e2e-|rolese2e-)/
+const made = /^(nextfleet-e2e-|m\d+e2e-|rolese2e-|poole2e-)/
 
 /**
  * @param {string} baseURL - the server

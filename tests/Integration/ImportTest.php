@@ -508,7 +508,7 @@ class ImportTest extends TestCase {
 				ISecureRandom $random,
 				private ?\Closure $held,
 			) {
-				parent::__construct($db, $time, $random);
+				parent::__construct($db, $time, $random, \OCP\Server::get(\OCP\IConfig::class));
 			}
 
 			public function hold(int $vehicleId): void {

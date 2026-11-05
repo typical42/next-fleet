@@ -128,18 +128,20 @@ class AccessMapperTest extends TestCase {
 	/**
 	 * The ordinary case still asks: the user by name or one of their groups, in one of the roles,
 	 * and not a grant that was withdrawn. A vehicle granted twice - in person and through a group
-	 * - comes back once, with both roles.
+	 * - comes back once, with both grants. Take it now arrives as each database spells a boolean,
+	 * and a row from before the column allows it.
 	 */
 	public function testGrantsAreFoundForTheUserTheirGroupsAndTheGivenRoles(): void {
 		$this->rows = [
-			['vehicle_id' => '7', 'role' => 'viewer'],
-			['vehicle_id' => '9', 'role' => 'manager'],
-			['vehicle_id' => '7', 'role' => 'manager'],
+			['vehicle_id' => '7', 'role' => 'viewer', 'take_now' => '1'],
+			['vehicle_id' => '9', 'role' => 'manager', 'take_now' => null],
+			['vehicle_id' => '7', 'role' => 'driver', 'take_now' => '0'],
+			['vehicle_id' => '8', 'role' => 'driver', 'take_now' => false],
 		];
 
 		$reachable = $this->mapper()->findReachable('alice', ['staff'], ['manager', 'viewer']);
 
-		$this->assertSame([7 => ['viewer', 'manager'], 9 => ['manager']], $reachable);
+		$this->assertSame([7 => [['viewer', true], ['driver', false]], 9 => [['manager', true]], 8 => [['driver', false]]], $reachable);
 		$this->assertSame([
 			'((grantee_type = user AND grantee = alice) OR (grantee_type = group AND grantee IN (staff)))',
 			'role IN (manager, viewer)',

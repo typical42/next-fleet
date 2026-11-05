@@ -30,6 +30,7 @@ use OCP\IURLGenerator;
 use OCP\IUserManager;
 use OCP\L10N\IFactory;
 use OCP\Notification\AlreadyProcessedException;
+use OCP\Notification\IAction;
 use OCP\Notification\INotification;
 use OCP\Notification\UnknownNotificationException;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -449,6 +450,110 @@ class NotifierTest extends TestCase {
 
 		$this->assertSame('Anna has a question about your booking of B-XY 123 from 1 May 2036, 09:00', $subject);
 		$this->assertSame($expected, $message);
+	}
+
+	/**
+	 * A booking made for Erin names who made it and the span as it stands, and holds the button
+	 * that confirms it (docs/architecture.md#booking-for-a-driver).
+	 */
+	public function testABookingMadeForTheReaderAsksThemToConfirm(): void {
+		$subject = null;
+		$labels = [];
+		$notification = $this->madeForNotice(BookingNotices::BOOKED_FOR);
+		$notification->method('setParsedSubject')->willReturnCallback(function (string $parsed) use (&$subject, $notification) {
+			$subject = $parsed;
+
+			return $notification;
+		});
+		$action = $this->createMock(IAction::class);
+		foreach (['setLabel', 'setPrimary'] as $setter) {
+			$action->method($setter)->willReturnSelf();
+		}
+		$action->method('setParsedLabel')->willReturnCallback(function (string $label) use (&$labels, $action) {
+			$labels[] = $label;
+
+			return $action;
+		});
+		$action->method('setLink')->willReturnCallback(function (string $link, string $type) use (&$labels, $action) {
+			$labels[] = $type;
+
+			return $action;
+		});
+		$notification->method('createAction')->willReturn($action);
+		$notification->expects($this->once())->method('addParsedAction')->with($action);
+
+		$this->notifier(null, $this->madeFor())->prepare($notification, 'en');
+
+		$this->assertSame('Anna booked B-XY 123 for you from 1 May 2036, 09:00 to 1 May 2036, 12:00', $subject);
+		$this->assertSame(['Seen', 'POST'], $labels);
+	}
+
+	/** @return array<string, array{\Closure(Booking): void}> */
+	public static function settled(): array {
+		return [
+			'confirmed' => [static fn (Booking $booking) => $booking->setSeenAt(2093000000)],
+			'cancelled' => [static fn (Booking $booking) => $booking->setState(Booking::CANCELLED)],
+		];
+	}
+
+	/**
+	 * Confirmed or cancelled, there is nothing left to confirm.
+	 *
+	 * @param \Closure(Booking): void $settle
+	 */
+	#[DataProvider('settled')]
+	public function testABookingMadeForTheReaderAndSettledIsProcessed(\Closure $settle): void {
+		$booking = $this->madeFor();
+		$settle($booking);
+
+		$this->expectException(AlreadyProcessedException::class);
+		$this->notifier(null, $booking)->prepare($this->madeForNotice(BookingNotices::BOOKED_FOR), 'en');
+	}
+
+	/** Its maker hears of the booker's cancel while it stays cancelled. */
+	public function testTheMakerHearsWhoCancelled(): void {
+		$booking = $this->madeFor();
+		$booking->setUserId('dave');
+		$booking->setState(Booking::CANCELLED);
+		$subject = null;
+		$notification = $this->madeForNotice(BookingNotices::CANCELLED_BY_BOOKER);
+		$notification->method('setParsedSubject')->willReturnCallback(function (string $parsed) use (&$subject, $notification) {
+			$subject = $parsed;
+
+			return $notification;
+		});
+
+		$this->notifier(null, $booking)->prepare($notification, 'en');
+
+		$this->assertSame('Dave cancelled the booking of B-XY 123 from 1 May 2036, 09:00 that you made for them', $subject);
+	}
+
+	/** Anna's booking for Erin, ahead, at the span the notices print. */
+	private function madeFor(): Booking {
+		$booking = new Booking();
+		$booking->setUserId('erin');
+		$booking->setCreatedBy('anna');
+		$booking->setState(Booking::BOOKED);
+		$booking->setStartsAt(2093238000);
+		$booking->setStartsAtOff(120);
+		$booking->setEndsAt(2093248800);
+		$booking->setEndsAtOff(120);
+
+		return $booking;
+	}
+
+	/** @return INotification&\PHPUnit\Framework\MockObject\MockObject */
+	private function madeForNotice(string $subject): INotification {
+		$notification = $this->createMock(INotification::class);
+		$notification->method('getApp')->willReturn('nextfleet');
+		$notification->method('getUser')->willReturn('erin');
+		$notification->method('getObjectType')->willReturn(BookingNotices::MADE_FOR);
+		$notification->method('getObjectId')->willReturn('b-1');
+		$notification->method('getSubject')->willReturn($subject);
+		$notification->method('getSubjectParameters')->willReturn(['vehicle' => 'v-1', 'starts_at' => 2093238000, 'starts_at_off' => 120, 'ends_at' => 2093248800, 'ends_at_off' => 120]);
+		$notification->method('setIcon')->willReturnSelf();
+
+		return $notification;
 	}
 
 	/** The upgrade kept an account named like an erased driver; the admin is told which to look at. */
