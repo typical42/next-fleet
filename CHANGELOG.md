@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.0 — not released
+## 0.6.0 — 2026-11-05
 
 ### Vehicles
 
