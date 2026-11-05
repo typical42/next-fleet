@@ -492,7 +492,10 @@ describe('the vehicle sheet, editing', () => {
 		expect(updateVehicle).toHaveBeenLastCalledWith(expect.objectContaining({ booking_approval_rule: 'always' }))
 	})
 
-	/** The first choice names what the owner's default makes of it now, read off the vehicle or the settings. */
+	/**
+	 * The first choice names what the owner's default makes of it now. Until the settings read brings
+	 * the default, or when it fails, the vehicle or the app's settings say it (the fixture sends none).
+	 */
 	it('says what "as for all my vehicles" means now, and where to change it', async () => {
 		const follows = await sheet({ ...VEHICLE, booking_approval: true, booking_approval_rule: 'default' })
 		expect(dropdown(follows, APPROVAL).props('options').map((/** @type {any} */ one) => one.label))
