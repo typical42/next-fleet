@@ -61,6 +61,8 @@ use OCP\DB\Types;
  * @method void setApprovalBy(?string $approvalBy)
  * @method bool|null getAnnounced()
  * @method void setAnnounced(?bool $announced)
+ * @method int|null getSeenAt()
+ * @method void setSeenAt(?int $seenAt)
  */
 class Booking extends BaseEntity {
 	public const BOOKED = 'booked';
@@ -111,6 +113,8 @@ class Booking extends BaseEntity {
 	protected ?string $approvalBy = null;
 	/** Set once its list has heard of it, for when its approval no longer says so (heard()). */
 	protected ?bool $announced = false;
+	/** When the booker confirmed a booking somebody else made for them (madeByAnother()). */
+	protected ?int $seenAt = null;
 
 	public function __construct() {
 		parent::__construct();
@@ -137,6 +141,12 @@ class Booking extends BaseEntity {
 		$this->addType('approvalComment', Types::STRING);
 		$this->addType('approvalBy', Types::STRING);
 		$this->addType('announced', Types::BOOLEAN);
+		$this->addType('seenAt', Types::BIGINT);
+	}
+
+	/** Whether somebody else made it for its booker, who then confirms that they saw it. */
+	public function madeByAnother(): bool {
+		return $this->createdBy !== $this->userId;
 	}
 
 	/** Approved by `$by`, which tells its list (heard()). */

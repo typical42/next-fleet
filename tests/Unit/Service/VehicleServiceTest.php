@@ -1072,6 +1072,47 @@ class VehicleServiceTest extends TestCase {
 		$this->assertSame('B-XY 1', $updated->getPlate());
 	}
 
+	/**
+	 * A restore holds its vehicle and then reads the default. Holding the trashed vehicles too
+	 * makes it wait for a new default, or the new default wait for it, so neither answers by the
+	 * other's old state.
+	 */
+	public function testANewDefaultHoldsEveryOwnedVehicleTrashedOnesToo(): void {
+		$owned = [];
+		foreach ([3 => null, 5 => 1750000000, 9 => null] as $id => $deletedAt) {
+			$vehicle = $this->stored();
+			$vehicle->setId($id);
+			$vehicle->setDeletedAt($deletedAt);
+			$owned[] = $vehicle;
+		}
+		$this->mapper->method('findAnyOwnedBy')->willReturnCallback(
+			static fn (): array => array_map(static fn (Vehicle $vehicle): Vehicle => clone $vehicle, $owned),
+		);
+		$held = [];
+		$this->mapper->method('hold')->willReturnCallback(function (int $vehicleId) use (&$held): void {
+			$held[] = $vehicleId;
+		});
+		$this->config->method('setUserValue')->willReturnCallback(function () use (&$held): void {
+			$held[] = 'default';
+		});
+
+		$this->service()->approveByDefault(self::OWNER, true);
+
+		$this->assertSame([3, 5, 9, 'default'], $held);
+	}
+
+	/**
+	 * With no vehicle nothing is held, so two writes at once would both delete and then both
+	 * insert the key. Then it is written as IConfig writes it, and no vehicle reads it.
+	 */
+	public function testANewDefaultWithoutAVehicleIsNotDeletedFirst(): void {
+		$this->mapper->method('findAnyOwnedBy')->willReturn([]);
+		$this->config->expects($this->never())->method('deleteUserValue');
+		$this->config->expects($this->once())->method('setUserValue')->with(self::OWNER, 'nextfleet', Vehicle::OWNER_APPROVAL, '1');
+
+		$this->service()->approveByDefault(self::OWNER, true);
+	}
+
 	/** A code typed in lower case is the code. */
 	public function testACurrencyIsKeptUpperCase(): void {
 		$this->assertSame('CHF', $this->service()->create('alice', ['currency' => ' chf '])->getCurrency());

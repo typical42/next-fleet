@@ -8,6 +8,7 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Service;
 
+use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\Booking;
 use OCA\NextFleet\Db\BookingMapper;
 use OCA\NextFleet\Db\Trip;
@@ -29,6 +30,7 @@ use Psr\Log\LoggerInterface;
  * none of the Entry rules apply: no Reading, no audit row, no timeline.
  *
  * @psalm-import-type NextFleetBooking from \OCA\NextFleet\ResponseDefinitions
+ * @psalm-import-type NextFleetRecipient from \OCA\NextFleet\ResponseDefinitions
  */
 class BookingService {
 	use TTransactional;
@@ -53,8 +55,10 @@ class BookingService {
 		private VehicleMapper $vehicles,
 		private VehicleAccess $access,
 		private IUserManager $users,
+		private Names $names,
 		private BookingNotices $notices,
 		private ITimeFactory $time,
+		private UserZone $zones,
 		private IDBConnection $db,
 		private LoggerInterface $logger,
 	) {
@@ -84,13 +88,14 @@ class BookingService {
 	}
 
 	/**
-	 * Books the vehicle for the caller.
+	 * Books the vehicle for the caller, or, as its owner or a manager, for `user_id`: anybody who
+	 * may book it (docs/architecture.md#booking-for-a-driver).
 	 *
 	 * @param array<string, mixed> $fields
 	 * @return NextFleetBooking the booking as written, in its wire form
-	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not log on this vehicle
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not log on this vehicle, or names somebody else without answering its bookings
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
-	 * @throws \InvalidArgumentException if a field is not what its column holds
+	 * @throws \InvalidArgumentException if a field is not what its column holds, or `user_id` names nobody who may book the vehicle
 	 * @throws \OCP\DB\Exception
 	 */
 	public function book(string $userId, string $vehicleUuid, array $fields): array {
@@ -102,11 +107,70 @@ class BookingService {
 			fn (Booking $row): array => $this->wired($userId, $vehicle, [$row])[0],
 		);
 
-		return $once->run(fn (): array => $this->insert($userId, $vehicle, $fields, $once));
+		// Whom it is for is asked of a new booking only: a retry answers the row it wrote, whatever
+		// became of the booker's access since.
+		return $once->run(fn (): array => $this->insert($userId, $this->booker($userId, $vehicle, $fields['user_id'] ?? null), $vehicle, $fields, $once));
 	}
 
 	/**
-	 * What book() writes once it knows the request is no retry.
+	 * Whom an approver may name to book() for: booker()'s rule, asked of everybody who holds `log`,
+	 * the caller included, by name.
+	 *
+	 * @return list<NextFleetRecipient>
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user answers no bookings of this vehicle
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException
+	 * @throws \OCP\DB\Exception
+	 */
+	public function bookers(string $userId, string $vehicleUuid): array {
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::VIEW, $vehicleUuid);
+		if (!$this->access->mayApprove($userId, $vehicle)) {
+			throw new AccessDeniedException();
+		}
+		$named = [];
+		foreach ($this->access->holders($vehicle, VehicleAccess::LOG) as $uid) {
+			if ($this->users->userExists($uid)) {
+				$named[] = ['user_id' => $uid, 'display_name' => $this->nameOf($uid)];
+			}
+		}
+		usort($named, static fn (array $one, array $other): int => strnatcasecmp($one['display_name'], $other['display_name']));
+
+		return $named;
+	}
+
+	/**
+	 * Whom book() books for: the caller unless they name somebody else. Only an approver names
+	 * another, since the booking stands at once; and only somebody who may book the vehicle
+	 * themselves, so a booking never hands out access. The name is stored as the instance spells
+	 * it (Names::spelled()), or the booking would be nobody's to confirm or check out.
+	 *
+	 * @throws AccessDeniedException
+	 * @throws \InvalidArgumentException
+	 * @throws \OCP\DB\Exception
+	 */
+	private function booker(string $userId, Vehicle $vehicle, mixed $named): string {
+		if ($named === null || $named === '') {
+			return $userId;
+		}
+		if (!is_string($named)) {
+			throw new \InvalidArgumentException('user_id is a uid');
+		}
+		$uid = $this->names->spelled(Access::USER, $named);
+		if ($uid === $userId) {
+			return $userId;
+		}
+		if (!$this->access->mayApprove($userId, $vehicle)) {
+			throw new AccessDeniedException();
+		}
+		if ($uid === null || !$this->access->may($uid, VehicleAccess::LOG, $vehicle)) {
+			throw new \InvalidArgumentException('user_id names nobody who may book this vehicle');
+		}
+
+		return $uid;
+	}
+
+	/**
+	 * What book() writes once it knows the request is no retry. A booking for somebody else stands
+	 * on its approver's word, so it waits for nobody.
 	 *
 	 * @param array<string, mixed> $fields
 	 * @param Once<Booking> $once
@@ -115,18 +179,20 @@ class BookingService {
 	 * @throws BookingConflictException
 	 * @throws \OCP\DB\Exception
 	 */
-	private function insert(string $userId, Vehicle $vehicle, array $fields, Once $once): array {
+	private function insert(string $userId, string $booker, Vehicle $vehicle, array $fields, Once $once): array {
 		$booking = new Booking();
 		$once->stamp($booking);
 		$booking->setVehicleId((int)$vehicle->getId());
-		$booking->setUserId($userId);
+		$booking->setUserId($booker);
 		$booking->setCreatedBy($userId);
 		$booking->setState(Booking::BOOKED);
 		$this->apply($booking, $fields);
 		// Take it now books, then checks out, from the client: a start within the slack is the car
-		// taken. A car needed now waits for nobody, but kept past the day it is a booking ahead.
+		// taken. A car needed now waits for nobody, but kept past the day it is a booking ahead,
+		// and a driver the owner blocked asks for it like any booking.
 		$takenNow = $booking->getStartsAt() <= $this->time->getTime() + self::START_SLACK;
-		$skips = $takenNow && $booking->getEndsAt() <= self::dayEnd($booking);
+		// Made for somebody else, it is approved by its maker even when taken now.
+		$skips = $takenNow && $booking->getEndsAt() <= $this->dayEnd($userId, $booking) && $this->access->mayTakeNow($userId, $vehicle) && $booker === $userId;
 
 		// Retried for the reason TripService::record() gives.
 		$written = $this->atomicRetry(function () use ($userId, $vehicle, $booking, $once, $skips): Booking {
@@ -144,7 +210,11 @@ class BookingService {
 		if ($written->waits()) {
 			$this->notices->tellRequested($vehicle, $written);
 		} else {
-			$this->notices->tell($vehicle, $written, $takenNow ? Vehicle::NOTICE_TAKEN : Vehicle::NOTICE_BOOKED, $userId);
+			// The booker of a booking made for them hears of it in a notice of their own. Nobody took
+			// that car yet, whatever its start: the driver checks it out, and a check-out tells nobody.
+			$told = $written->madeByAnother() ? $this->notices->tellBookedFor($vehicle, $written) : [];
+			$taken = $takenNow && !$written->madeByAnother();
+			$this->notices->tell($vehicle, $written, $taken ? Vehicle::NOTICE_TAKEN : Vehicle::NOTICE_BOOKED, $userId, $told);
 		}
 
 		return $this->wired($userId, $vehicle, [$written])[0];
@@ -227,12 +297,48 @@ class BookingService {
 			return $this->bookings->updateChecked($booking, $expectedUpdatedAt);
 		}, $this->db);
 		// After the cancel stands, the reason NotificationService::sweep() gives.
+		$told = [];
 		if ($cancelled->getUserId() !== $userId) {
 			$this->notices->tellCancelled($vehicle, $cancelled);
+		} elseif ($cancelled->madeByAnother()) {
+			$told = $this->notices->tellCancelledByBooker($vehicle, $cancelled);
 		}
-		$this->notices->tellSettled($vehicle, $cancelled, $cancelled->heard(), $userId);
+		$this->notices->tellSettled($vehicle, $cancelled, $cancelled->heard(), $userId, $told);
 
 		return $this->wired($userId, $vehicle, [$cancelled])[0];
+	}
+
+	/**
+	 * Confirms, as its booker, a booking somebody else made for them. Nothing waits on it: the
+	 * booking stood before. The first confirmation is the one kept.
+	 *
+	 * @return NextFleetBooking the booking, `seen_at` set, in its wire form
+	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the booking is not the user's
+	 * @throws \OCP\AppFramework\Db\DoesNotExistException
+	 * @throws \InvalidArgumentException if the user made it themselves
+	 * @throws \OCP\DB\Exception
+	 */
+	public function seen(string $userId, string $vehicleUuid, string $bookingUuid): array {
+		$vehicle = $this->fleet->reach($userId, VehicleAccess::VIEW, $vehicleUuid);
+
+		$seen = $this->atomicRetry(function () use ($userId, $vehicle, $bookingUuid): Booking {
+			$this->vehicles->hold((int)$vehicle->getId());
+			$booking = $this->bookings->findOnVehicle((int)$vehicle->getId(), $bookingUuid);
+			if ($booking->getUserId() !== $userId) {
+				throw new AccessDeniedException();
+			}
+			if (!$booking->madeByAnother()) {
+				throw new \InvalidArgumentException('only a booking somebody else made for you is confirmed');
+			}
+			if ($booking->getSeenAt() !== null) {
+				return $booking;
+			}
+			$booking->setSeenAt($this->time->getTime());
+
+			return $this->bookings->updateChecked($booking, $booking->getUpdatedAt());
+		}, $this->db);
+
+		return $this->wired($userId, $vehicle, [$seen])[0];
 	}
 
 	/**
@@ -542,24 +648,38 @@ class BookingService {
 		return [$odo, is_int($level) ? $level : null, is_string($notes) ? $notes : null, self::required('at_off', 'offset', $fields)];
 	}
 
-	/** Midnight after the booking's start, on the booker's clock: the offset the sheet sent. */
-	private static function dayEnd(Booking $booking): int {
-		return Jurisdictions::localTime($booking->getStartsAt(), $booking->getStartsAtOff())
-			->setTime(0, 0)
-			->modify('+1 day')
-			->getTimestamp();
+	/**
+	 * The next midnight after now where the user lives: their Nextcloud zone, else the offset the
+	 * sheet sent. From now rather than the start, which may lie five minutes ahead and past
+	 * midnight; and from their zone where they set one, since a client may send any offset.
+	 */
+	private function dayEnd(string $userId, Booking $booking): int {
+		$now = $this->time->getTime();
+		$zone = $this->zones->own($userId);
+		$here = $zone === null
+			? Jurisdictions::localTime($now, $booking->getStartsAtOff())
+			: (new \DateTimeImmutable('@' . $now))->setTimezone($zone);
+
+		return $here->modify('tomorrow')->getTimestamp();
 	}
 
 	/**
 	 * Whether the vehicle's bookings wait for an answer, read again under its hold: the vehicle
-	 * the caller reached was read before it, and turning the switch off approves what waits under
-	 * the same row (VehicleService::update()). Only that way round matters: a booking made while
-	 * the switch is turned on is one made before it.
+	 * the caller reached was read before it, and turning approval off, the vehicle's or the
+	 * owner's default, approves what waits under the same row (VehicleService::update(),
+	 * VehicleService::approveByDefault()). Only that way round matters: a booking made while
+	 * approval is turned on is one made before it.
 	 *
 	 * @throws \OCP\DB\Exception
 	 */
 	private function asksApproval(Vehicle $vehicle): bool {
-		return $vehicle->needsApproval() && $this->vehicles->findAnyById((int)$vehicle->getId())->needsApproval();
+		if (!$vehicle->needsApproval()) {
+			return false;
+		}
+		$held = $this->vehicles->findAnyById((int)$vehicle->getId());
+		$this->vehicles->refreshOwnerApproval($held);
+
+		return $held->needsApproval();
 	}
 
 	/**
@@ -719,6 +839,8 @@ class BookingService {
 		return array_map(function (Booking $booking) use ($userId, $vehicle, $trips, $counters, $now, $approves, &$names): array {
 			$booker = $booking->getUserId();
 			$names[$booker] ??= $this->nameOf($booker);
+			$maker = $booking->getCreatedBy();
+			$names[$maker] ??= $this->nameOf($maker);
 			$state = $booking->getState();
 			$trip = $trips[$booking->getTripId() ?? 0] ?? null;
 			$untripped = $state === Booking::RETURNED && $booking->getTripId() === null;
@@ -775,7 +897,10 @@ class BookingService {
 				'flags' => self::flags($booking, $counters[(int)$booking->getId()] ?? null),
 				'created_at' => $booking->getCreatedAt(),
 				'updated_at' => $booking->getUpdatedAt(),
-				'created_by' => $booking->getCreatedBy(),
+				'created_by' => $maker,
+				'created_by_name' => $names[$maker],
+				// Whether the booker read their notice is the booker's and their approvers' to know.
+				'seen_at' => $booker === $userId || $approves ? $booking->getSeenAt() : null,
 				'may' => $may,
 			];
 		}, $bookings);

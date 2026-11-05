@@ -31,4 +31,22 @@ class UserZoneTest extends TestCase {
 
 		$this->assertSame($expected, (new UserZone($config))->of('anna')->getName());
 	}
+
+	/** @return array<string, array{string, ?string}> */
+	public static function own(): array {
+		return [
+			'the user\'s own' => ['Europe/Berlin', 'Europe/Berlin'],
+			'none when the user set none' => ['', null],
+			'none for a name PHP does not know' => ['Mars/Olympus', null],
+		];
+	}
+
+	/** @dataProvider own */
+	public function testTheOwnZoneIsOnlyTheOneTheUserSet(string $user, ?string $expected): void {
+		$config = $this->createMock(IConfig::class);
+		$config->method('getUserValue')->with('anna', 'core', 'timezone', '')->willReturn($user);
+		$config->expects($this->never())->method('getSystemValueString');
+
+		$this->assertSame($expected, (new UserZone($config))->own('anna')?->getName());
+	}
 }

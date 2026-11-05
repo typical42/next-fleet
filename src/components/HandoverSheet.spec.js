@@ -31,10 +31,13 @@ vi.mock('@nextcloud/auth', async (original) => ({
 	getCurrentUser: () => ({ uid: 'me' }),
 }))
 
-const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', lifecycle: 'active', odo_value: 52000, odo_unit: 'km', may: ['view', 'log'] }
+const VEHICLE = { uuid: 'v-1', updated_at: 1700000000, plate: 'B-XY 123', lifecycle: 'active', odo_value: 52000, odo_unit: 'km', may: ['view', 'log', 'take_now'] }
 
 /** A driver's bookings on it wait for an answer. */
 const APPROVAL = { ...VEHICLE, booking_approval: true }
+
+/** The same, for a driver whose Take it now the owner blocked. */
+const BLOCKED = { ...APPROVAL, may: ['view', 'log'] }
 
 /** Built from a local wall clock, so the expectations hold in whatever zone the run is in. */
 const FRIDAY_ONE_TWENTY = new Date(2026, 9, 2, 13, 20)
@@ -315,6 +318,23 @@ describe('taking it now', () => {
 		expect(button(wrapper, 'Request')).toBeDefined()
 		expect(wrapper.findComponent(NcTextField).exists()).toBe(false)
 		expect(wrapper.findComponent(NcTextArea).exists()).toBe(false)
+	})
+
+	/** A driver the owner blocked asks for any take-now, back by midnight or not. */
+	it('says before saving that a blocked driver\'s take-now is a request', () => {
+		const wrapper = sheet(null, null, BLOCKED)
+
+		expect(wrapper.getComponent(NcNoteCard).props('heading')).toBe('This is a request that waits for approval.')
+		expect(button(wrapper, 'Request')).toBeDefined()
+		expect(wrapper.findComponent(NcTextField).exists()).toBe(false)
+	})
+
+	/** The block narrows approval only: where nothing waits for an answer, the car is taken. */
+	it('takes the car for a blocked driver where no approval applies', () => {
+		const wrapper = sheet(null, null, { ...BLOCKED, booking_approval: false })
+
+		expect(wrapper.findComponent(NcNoteCard).exists()).toBe(false)
+		expect(button(wrapper, 'Take the car')).toBeDefined()
 	})
 
 	/** The owner and the managers answer requests, so theirs never waits (BookingService::insert()). */

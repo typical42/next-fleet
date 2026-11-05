@@ -213,10 +213,12 @@ trait SchemaExpectations {
 			// Whether drivers and viewers see the costs. Defaulted on, so the vehicles already
 			// there show what they always showed.
 			'costs_shared' => 'boolean, null, default true',
-			// The booking events the notice list hears; null reads as booked and taken.
+			// The events the owner hears while the list is empty, and what a new recipient starts
+			// with; null reads as booked and taken.
 			'booking_notices' => 'json, null',
-			// Whether a booking ahead waits for an answer. Off, so nothing waits that did not.
-			'booking_approval' => 'boolean, null, default false',
+			// Whether a booking ahead waits for an answer: always, never, or null for as the
+			// owner's default says, which starts off.
+			'booking_approval' => 'boolean, null',
 		]);
 	}
 
@@ -368,6 +370,7 @@ trait SchemaExpectations {
 			'vehicle_id' => 'bigint, not null',
 			'user_id' => 'string(64), null',
 			'group_id' => 'string(64), null',
+			'events' => 'json, null',
 		]);
 	}
 
@@ -402,6 +405,8 @@ trait SchemaExpectations {
 			'grantee' => 'string(64), not null',
 			'grantee_type' => 'string(8), not null',
 			'role' => 'string(16), not null',
+			// Whether a driver's Take it now skips approval; null reads as allowed.
+			'take_now' => 'boolean, null, default true',
 		]);
 	}
 
@@ -437,6 +442,8 @@ trait SchemaExpectations {
 			'approval_comment' => 'text, null',
 			'approval_by' => 'string(64), null',
 			'announced' => 'boolean, null, default false',
+			// When the booker confirmed a booking somebody else made for them; null until then.
+			'seen_at' => 'bigint, null',
 		]);
 	}
 
@@ -584,7 +591,12 @@ trait SchemaExpectations {
 					$name . '.' . $column->getName() . ' is a NOT NULL boolean, which NC 31 rejects',
 				);
 				// A nullable boolean has to say what its absence means, or an entity that never
-				// touched it writes null and reading the row back is a TypeError.
+				// touched it writes null and reading the row back is a TypeError. Unless null is
+				// an answer of its own, which its entity property reads: a vehicle's approval
+				// that follows its owner (Vehicle::needsApproval()).
+				if ($name . '.' . $column->getName() === 'fleet_vehicles.booking_approval') {
+					continue;
+				}
 				$this->assertNotNull(
 					$column->getDefault(),
 					$name . '.' . $column->getName() . ' is a nullable boolean without a default',

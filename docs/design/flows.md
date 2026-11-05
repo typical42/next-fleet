@@ -29,11 +29,11 @@ sequenceDiagram
     alt the caller is an erased account's pseudonym
         Access-->>Fleet: nothing
     else the caller is the vehicle's user_id
-        Access-->>Fleet: view, log, edit, delete, own, costs
+        Access-->>Fleet: view, log, edit, delete, own, costs, take_now
     else anybody else
         Access->>Groups: getUserGroupIds(user)
         Access->>db: AccessMapper::findGrants(vehicle_id, userId, groupIds)
-        Access-->>Fleet: what the grants' roles cover together, costs too while costs_shared
+        Access-->>Fleet: what the grants' roles cover together, take_now where a driver's grant allows it, costs too while costs_shared
     end
     break log is not among them
         Fleet-->>Controller: AccessDeniedException → 403
@@ -230,15 +230,24 @@ sequenceDiagram
         Booking-->>Controller: BookingConflictException → 409, that booking
     end
     Booking->>db: BookingMapper::insert, state booked, approval as approvalFor() says
-    alt approval requested: booking_approval on, the driver no approver, not a take-now back by midnight
+    alt approval requested: the vehicle's rule or the owner's default asks, the driver no approver, not a take-now back by midnight that their grant allows
         Booking->>Notices: tellRequested(vehicle, booking)
         Notices->>Notices: notify the owner and the managers, whatever the list says
-    else
-        Booking->>Notices: tell(vehicle, booking, booked or taken, driver)
+    else no answer needed
+        opt made for the driver: an approver posted it with the driver's user_id
+            Booking->>Notices: tellBookedFor(vehicle, booking)
+            Notices->>Notices: notify the driver with a Seen action, and answer who was told
+        end
+        Booking->>Notices: tell(vehicle, booking, booked or taken, maker, told)
         Notices->>db: BookingRecipientMapper::findByVehicle
-        Notices->>Notices: if booking_notices ticks the event: notify the list, each who sees the vehicle, not the driver
+        Notices->>Notices: notify each row's people that hear the event, or the owner of an empty list if booking_notices does, each who sees the vehicle once, not the maker nor who was told
     end
     Booking-->>Controller: 201, the booking with may
+    opt made for the driver
+        Driver->>Controller: POST …/bookings/{booking}/seen
+        Controller->>Booking: seen(userId, uuid, booking)
+        Booking->>db: VehicleMapper::hold, BookingMapper::updateChecked, seen_at once
+    end
     opt approval requested
         Approver->>Controller: POST …/bookings/{booking}/approve, ask or decline, updated_at, comment
         Controller->>Booking: answer(userId, uuid, booking, token, answer, fields)
@@ -297,6 +306,7 @@ sequenceDiagram
 The handover takes no token.
 Check-in works on any lifecycle.
 A cancel by anybody but the booker notifies the booker.
+A cancel by the driver of a booking made for them notifies its maker.
 
 ## The reminder round
 

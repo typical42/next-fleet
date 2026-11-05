@@ -15,7 +15,8 @@ vehicles under a plate prefix each of them owns — `E2E-` for `m1-slice.spec.js
 `m2-slice.spec.js`, and so on, `ROLES-` for `roles.spec.js`, which signs in as each role on a
 vehicle — and delete what they find under it before they start. The prefixes are disjoint on
 purpose: the files run at once. The demo fleet's `NF-` survives all of them, so they share an
-instance.
+instance. `pool.spec.js`, the newcomer's path through a pool car, keeps `POOL-` but deletes
+nothing: its owner is an account it makes each run, so no earlier run's vehicle is in its fleet.
 
 `app.js` holds what more than one file needs: signing in, the app's API from inside the page, and
 the few locators every file reaches for. `server.js` and `job.php` run the reminder job at a moved

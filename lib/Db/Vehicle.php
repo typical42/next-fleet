@@ -102,6 +102,14 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 	public const NOTICES = [self::NOTICE_BOOKED, self::NOTICE_TAKEN, self::NOTICE_RETURNED, self::NOTICE_CANCELLED, self::NOTICE_CHANGED];
 	public const DEFAULT_NOTICES = [self::NOTICE_BOOKED, self::NOTICE_TAKEN];
 
+	/** Whether bookings wait for an answer: as the owner's default says, always, or never. */
+	public const APPROVAL_DEFAULT = 'default';
+	public const APPROVAL_ALWAYS = 'always';
+	public const APPROVAL_NEVER = 'never';
+	public const APPROVAL_RULES = [self::APPROVAL_DEFAULT, self::APPROVAL_ALWAYS, self::APPROVAL_NEVER];
+	/** The owner's default, a preference of theirs (PreferencesService) under this key. */
+	public const OWNER_APPROVAL = 'booking_approval';
+
 	protected string $userId = '';
 	protected ?string $plate = null;
 	protected ?string $manufacturer = null;
@@ -145,17 +153,18 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 	 */
 	protected ?bool $costsShared = true;
 	/**
-	 * The booking events the vehicle's notice list hears (BookingNotices). Null reads as
-	 * `DEFAULT_NOTICES`: a JSON column takes no default on every database.
+	 * The booking events the owner hears while the notice list is empty, and those a new row of
+	 * the list starts with (BookingNotices). Null reads as `DEFAULT_NOTICES`: a JSON column takes
+	 * no default on every database.
 	 *
 	 * @var list<string>|null
 	 */
 	protected ?array $bookingNotices = null;
 	/**
 	 * Whether a booking ahead waits for the owner or a manager to answer it
-	 * (BookingService::book()). Null reads as no, for the reason `costsShared` gives.
+	 * (BookingService::book()): yes, no, or null for as the owner's default says (`ownerApproval`).
 	 */
-	protected ?bool $bookingApproval = false;
+	protected ?bool $bookingApproval = null;
 
 	/**
 	 * What whoever asked may do on the vehicle (VehicleAccess::operations()). Not a column:
@@ -187,6 +196,11 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 	 * *Entered by* follows, and the screen shows Bookings by. Not a column, like `may`.
 	 */
 	private bool $everGranted = false;
+	/**
+	 * The owner's default for their vehicles' bookings, which a null `bookingApproval` follows
+	 * (VehicleMapper reads it with the row). Not a column, like `may`.
+	 */
+	private bool $ownerApproval = false;
 
 	public function __construct() {
 		parent::__construct();
@@ -226,7 +240,29 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 	}
 
 	public function needsApproval(): bool {
-		return $this->bookingApproval === true;
+		return $this->bookingApproval ?? $this->ownerApproval;
+	}
+
+	/** One of APPROVAL_RULES. */
+	public function approvalRule(): string {
+		return match ($this->bookingApproval) {
+			true => self::APPROVAL_ALWAYS,
+			false => self::APPROVAL_NEVER,
+			null => self::APPROVAL_DEFAULT,
+		};
+	}
+
+	/** @param string $rule one of APPROVAL_RULES */
+	public function setApprovalRule(string $rule): void {
+		$this->setBookingApproval(match ($rule) {
+			self::APPROVAL_ALWAYS => true,
+			self::APPROVAL_NEVER => false,
+			default => null,
+		});
+	}
+
+	public function setOwnerApproval(bool $ownerApproval): void {
+		$this->ownerApproval = $ownerApproval;
 	}
 
 	public function sharesCosts(): bool {
@@ -327,6 +363,7 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 			'costs_shared' => $this->sharesCosts(),
 			'booking_notices' => $this->bookingNotices(),
 			'booking_approval' => $this->needsApproval(),
+			'booking_approval_rule' => $this->approvalRule(),
 			'created_at' => $this->createdAt,
 			'updated_at' => $this->updatedAt,
 			'deleted_at' => $this->deletedAt,

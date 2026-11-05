@@ -4,6 +4,7 @@
  */
 
 import NcButton from '@nextcloud/vue/components/NcButton'
+import NcFormBoxSwitch from '@nextcloud/vue/components/NcFormBoxSwitch'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import NcSelect from '@nextcloud/vue/components/NcSelect'
 import NcSelectUsers from '@nextcloud/vue/components/NcSelectUsers'
@@ -25,17 +26,18 @@ vi.mock('../services/api.js', async (original) => ({
 const OWNED = { uuid: 'v-1', may: ['view', 'log', 'edit', 'delete', 'own'] }
 
 /** @type {import('../services/api.js').Grant} */
-const ANNA = { uuid: 'g-1', grantee: 'anna', grantee_type: 'user', display_name: 'Anna O\'Brien', role: 'driver' }
+const ANNA = { uuid: 'g-1', grantee: 'anna', grantee_type: 'user', display_name: 'Anna O\'Brien', role: 'driver', take_now: true }
 /** @type {import('../services/api.js').Grant} */
-const CREW = { uuid: 'g-2', grantee: 'crew', grantee_type: 'group', display_name: 'R&D', role: 'viewer' }
+const CREW = { uuid: 'g-2', grantee: 'crew', grantee_type: 'group', display_name: 'R&D', role: 'viewer', take_now: true }
 
 /**
  * @param {object} [vehicle] - the vehicle the sheet edits
+ * @param {boolean} [approval] - whether its bookings wait for an answer, as the sheet now says
  * @return {Promise<import('@vue/test-utils').VueWrapper>} the section, once its list was read
  */
-async function section(vehicle = OWNED) {
+async function section(vehicle = OWNED, approval = false) {
 	const wrapper = shallowMount(VehicleGrants, {
-		props: { vehicle },
+		props: { vehicle, approval },
 		global: { renderStubDefaultSlot: true },
 	})
 	await flushPromises()
@@ -59,6 +61,14 @@ function select(wrapper, label) {
  */
 function button(wrapper, text) {
 	return wrapper.findAllComponents(NcButton).find((one) => one.text() === text || one.props('ariaLabel') === text)
+}
+
+/**
+ * @param {import('@vue/test-utils').VueWrapper} wrapper - the section
+ * @return {any[]} the Take it now switches, row by row
+ */
+function switches(wrapper) {
+	return wrapper.findAllComponents(NcFormBoxSwitch)
 }
 
 /**
@@ -91,6 +101,16 @@ describe('the Access section', () => {
 
 		expect(listGrants).not.toHaveBeenCalled()
 		expect(wrapper.html()).toBe('<!--v-if-->')
+	})
+
+	/** The heading above is the sheet's, so an unread list says why it is empty. */
+	it('says so when the list cannot be read, and offers no change', async () => {
+		vi.mocked(listGrants).mockRejectedValue(new Error('the server is down'))
+
+		const wrapper = await section()
+
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('The list could not be read: the server is down')
+		expect(button(wrapper, 'Give access')).toBeUndefined()
 	})
 
 	it('says when nobody else has access', async () => {
@@ -171,6 +191,42 @@ describe('the Access section', () => {
 
 		expect(changeGrant).toHaveBeenCalledWith('v-1', 'g-1', 'manager')
 		expect(select(wrapper, 'Role of Anna O\'Brien').props('modelValue').id).toBe('manager')
+	})
+
+	/**
+	 * Only a driver's Take it now asks anybody: managers approve their own, viewers book nothing. The
+	 * switch names its driver, as the row's other controls do, so a screen reader tells the rows apart.
+	 */
+	it('offers the Take it now switch on driver rows while approval applies', async () => {
+		vi.mocked(listGrants).mockResolvedValue([ANNA, CREW, { ...CREW, uuid: 'g-3', role: 'manager' }])
+		const wrapper = await section(OWNED, true)
+
+		expect(switches(wrapper)).toHaveLength(1)
+		expect(switches(wrapper)[0].props()).toMatchObject({
+			label: 'Anna O\'Brien may take it now without approval',
+			description: 'May take the car at once, without approval, if it is back by midnight.',
+			modelValue: true,
+		})
+	})
+
+	/** The value stays stored while hidden, and asks nothing of the vehicle. */
+	it('offers no Take it now switch where no approval applies', async () => {
+		const wrapper = await section(OWNED, false)
+
+		expect(switches(wrapper)).toHaveLength(0)
+	})
+
+	it('blocks and allows Take it now in place, keeping the role', async () => {
+		vi.mocked(listGrants).mockResolvedValue([{ ...ANNA, take_now: false }, CREW])
+		vi.mocked(changeGrant).mockResolvedValue([ANNA, CREW])
+		const wrapper = await section(OWNED, true)
+		expect(switches(wrapper)[0].props('modelValue')).toBe(false)
+
+		await switches(wrapper)[0].vm.$emit('update:modelValue', true)
+		await flushPromises()
+
+		expect(changeGrant).toHaveBeenCalledWith('v-1', 'g-1', 'driver', true)
+		expect(switches(wrapper)[0].props('modelValue')).toBe(true)
 	})
 
 	/** Revoking may take people off the recipients, which the sheet shows beside this section. */

@@ -10,6 +10,7 @@ Each setting saves at once; the grid factor when you leave the field.
 | **I reclaim VAT** | Shows the costs net of VAT, for example for a business. |
 | **Grid factor for charging, g CO₂/kWh** | The CO₂ of your electricity. Keep it empty for the average of the country. |
 | **Inbox folder** | The folder of the [receipt inbox](documents.md#use-the-receipt-inbox). |
+| **Bookings need approval** (under **Bookings**) | A driver's booking waits until you or a manager approve it. It applies to each of your vehicles that is set to **As for all my vehicles**. You see it only after you gave access to another user or a group. See [Approve bookings](access.md#approve-bookings). |
 
 ## Connect a phone app or a script
 

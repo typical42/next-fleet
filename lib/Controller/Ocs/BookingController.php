@@ -29,6 +29,7 @@ use OCP\IUserSession;
  * @psalm-import-type NextFleetRefusal from ResponseDefinitions
  * @psalm-import-type NextFleetConflict from ResponseDefinitions
  * @psalm-import-type NextFleetBookingConflict from ResponseDefinitions
+ * @psalm-import-type NextFleetRecipient from ResponseDefinitions
  */
 class BookingController extends OCSController {
 	use OcsAnswers;
@@ -65,7 +66,8 @@ class BookingController extends OCSController {
 	/**
 	 * Book a vehicle
 	 *
-	 * For the caller; a 409 names the booking in the way.
+	 * For the caller, or, as the owner or a manager, for `user_id`: the booking is theirs and
+	 * stands at once. A 409 names the booking in the way.
 	 *
 	 * @param string $uuid the vehicle's uuid
 	 * @param int|null $starts_at required: unix seconds
@@ -74,13 +76,14 @@ class BookingController extends OCSController {
 	 * @param int|null $ends_at_off required: its UTC offset in minutes
 	 * @param string|null $purpose what it is booked for
 	 * @param string|null $client_uuid a uuid of the client's for the new row: a retry under it answers that row
+	 * @param string|null $user_id whom to book for, somebody who may book the vehicle; the caller when left out
 	 * @return DataResponse<Http::STATUS_CREATED, NextFleetBooking, array{}>|DataResponse<Http::STATUS_OK, NextFleetBooking, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_CONFLICT, NextFleetBookingConflict, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
-	 * @throws OCSForbiddenException the caller may not log on this vehicle
+	 * @throws OCSForbiddenException the caller may not log on this vehicle, or names somebody else without answering its bookings
 	 * @throws OCSNotFoundException no such vehicle
 	 *
 	 * 201: the booking
 	 * 200: the booking an earlier create under the same `client_uuid` wrote
-	 * 400: a field is not what it holds, or the vehicle is not in service
+	 * 400: a field is not what it holds, the vehicle is not in service, or `user_id` may not book it
 	 * 409: another booking holds part of the span
 	 * 412: never for a create; listed because every write can answer it
 	 */
@@ -94,6 +97,7 @@ class BookingController extends OCSController {
 		mixed $ends_at_off = null,
 		mixed $purpose = null,
 		mixed $client_uuid = null,
+		mixed $user_id = null,
 	): DataResponse {
 		return $this->booked(fn (): DataResponse => $this->created(
 			fn (): array => $this->service->book($this->userId(), $uuid, $this->request->getParams()),
@@ -308,5 +312,48 @@ class BookingController extends OCSController {
 		return $this->write(fn (): DataResponse => new DataResponse(
 			$this->service->answer($this->userId(), $uuid, $booking, $this->token(), Booking::DECLINED, $this->request->getParams()),
 		));
+	}
+
+	/**
+	 * Confirm a booking made for you
+	 *
+	 * As its booker, of a booking the owner or a manager made for you. No token: it changes
+	 * nothing the booking plans. The first confirmation stays.
+	 *
+	 * @param string $uuid the vehicle's uuid
+	 * @param string $booking the booking's uuid
+	 * @return DataResponse<Http::STATUS_OK, NextFleetBooking, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
+	 * @throws OCSForbiddenException the booking is not the caller's
+	 * @throws OCSNotFoundException no such vehicle or booking
+	 *
+	 * 200: the booking, with its `seen_at`
+	 * 400: the caller made the booking themselves
+	 * 412: another write to the booking raced this one; read it again
+	 */
+	#[NoAdminRequired]
+	#[UserRateLimit(limit: 60, period: 60)]
+	public function seen(string $uuid, string $booking): DataResponse {
+		return $this->write(fn (): DataResponse => new DataResponse(
+			$this->service->seen($this->userId(), $uuid, $booking),
+		));
+	}
+
+	/**
+	 * List whom the caller may book for
+	 *
+	 * The `user_id`s a create takes from the owner or a manager: everybody who may book the
+	 * vehicle, the caller included, by display name.
+	 *
+	 * @param string $uuid the vehicle's uuid
+	 * @return DataResponse<Http::STATUS_OK, list<NextFleetRecipient>, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>
+	 * @throws OCSForbiddenException the caller answers no bookings of this vehicle
+	 * @throws OCSNotFoundException no such vehicle
+	 *
+	 * 200: who may be booked for
+	 * 400: the request is not one this route takes
+	 */
+	#[NoAdminRequired]
+	public function bookers(string $uuid): DataResponse {
+		return $this->read(fn (): DataResponse => new DataResponse($this->service->bookers($this->userId(), $uuid)));
 	}
 }

@@ -108,6 +108,11 @@ class SchemaTest extends TestCase {
 		return $this->migrate()->getTable($name);
 	}
 
+	/** What MigrationSteps::tables() promises. */
+	public function testTheStepsListEveryTableTheyCreate(): void {
+		$this->assertEqualsCanonicalizing($this->fleetTableNames(), Steps::tables());
+	}
+
 	/**
 	 * A re-install meets its own leftover columns and indexes, and Doctrine refuses to add one
 	 * twice. Every step guards for that, so running them all again over what they built changes

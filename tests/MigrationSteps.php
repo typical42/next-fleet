@@ -19,6 +19,7 @@ use OCA\NextFleet\Migration\Version000007Date20261003000000;
 use OCA\NextFleet\Migration\Version000008Date20261010000000;
 use OCA\NextFleet\Migration\Version000009Date20261011000000;
 use OCA\NextFleet\Migration\Version000010Date20261101000000;
+use OCA\NextFleet\Migration\Version000011Date20261104000000;
 use OCP\IDBConnection;
 use OCP\Migration\SimpleMigrationStep;
 
@@ -31,7 +32,7 @@ final class MigrationSteps {
 	/**
 	 * The fourth step writes rows after its schema change, so it is handed what it writes them
 	 * with; a schema test calls only changeSchema() and can pass stand-ins. The ninth asks the
-	 * connection which database it is on.
+	 * connection which database it is on; the eleventh writes rows after its schema change too.
 	 *
 	 * @return list<SimpleMigrationStep>
 	 */
@@ -47,6 +48,7 @@ final class MigrationSteps {
 			new Version000008Date20261010000000(),
 			new Version000009Date20261011000000($db),
 			new Version000010Date20261101000000(),
+			new Version000011Date20261104000000($db),
 		];
 	}
 
@@ -61,6 +63,7 @@ final class MigrationSteps {
 			'fleet_vehicles', 'fleet_odo_readings', 'fleet_access', 'fleet_trips', 'fleet_audit',
 			'fleet_energy', 'fleet_maintenance', 'fleet_expenses', 'fleet_reminders',
 			'fleet_reminder_receipts', 'fleet_reminder_recipients', 'fleet_documents', 'fleet_bookings',
+			'fleet_booking_recipients',
 		];
 	}
 }

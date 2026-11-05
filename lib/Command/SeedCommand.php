@@ -17,6 +17,7 @@ use OCA\NextFleet\Service\ExpenseService;
 use OCA\NextFleet\Service\GrantService;
 use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\OdometerService;
+use OCA\NextFleet\Service\RecipientService;
 use OCA\NextFleet\Service\ReminderService;
 use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleService;
@@ -83,6 +84,9 @@ class SeedCommand extends Command {
 				'currency' => 'EUR',
 				'jurisdiction' => self::HOME_COUNTRY,
 				'lifecycle' => 'active',
+				// The car one driver uses for their field work: their bookings need no answer,
+				// whatever the owner's default for the pool says.
+				'booking_approval_rule' => Vehicle::APPROVAL_NEVER,
 			],
 			// A reading below the one derived before it, so the derived row is the one in question
 			// and the number somebody read stands (rule 6). The last three fall inside the 45 days
@@ -175,10 +179,9 @@ class SeedCommand extends Command {
 				'jurisdiction' => self::HOME_COUNTRY,
 				'lifecycle' => 'active',
 				'notes' => 'Cluster replaced under warranty; the counter starts over.',
-				// The management's car: its drivers see what it used, not what it cost, and wait
-				// for the owner's answer before they have it.
+				// The pool car: its drivers see what it used, not what it cost, and wait for the
+				// owner's answer before they have it, as the owner's default says (self::POOL).
 				'costs_shared' => false,
-				'booking_approval' => true,
 			],
 			// A counter that goes backwards because the instrument cluster was swapped: the row
 			// is kept and flagged, and the timeline asks about it (rule 3). The swap and a reading
@@ -406,10 +409,10 @@ class SeedCommand extends Command {
 	];
 
 	/**
-	 * What `--grant-to` adds: the Passat as a car two people use, with one business trip the
-	 * other account entered - so the timeline, the Fahrtenbuch and their mileage claim each have
-	 * somebody else's row to show. It sets off where the Passat's last Reading left the counter,
-	 * so no Gap opens before it, and ends short of the oil change's 112900.
+	 * What the first `--grant-to` adds: the Passat as a car two people use, with one business trip
+	 * the other account entered - so the timeline, the Fahrtenbuch and their mileage claim each
+	 * have somebody else's row to show. It sets off where the Passat's last Reading left the
+	 * counter, so no Gap opens before it, and ends short of the oil change's 112900.
 	 *
 	 * And one booking of theirs, tomorrow morning in Berlin's hours: ahead of any day it is
 	 * seeded on, so the Bookings section has a coming one and the overview a pool.
@@ -424,6 +427,22 @@ class SeedCommand extends Command {
 		'booking' => ['from' => 9, 'to' => 12, 'purpose' => 'Kundentermin Esslingen'],
 		'request' => ['from' => 14, 'to' => 17, 'purpose' => 'Messe Stuttgart'],
 	];
+
+	/**
+	 * The Volvo as a small firm's pool car, with each booking rule a pool has
+	 * (docs/user/access.md#approve-bookings): it asks for approval because the owner's default
+	 * does; the first account asks for each Take it now too; the owner hears of everything and
+	 * each driver only that the car was taken; and the owner booked it tomorrow evening for the
+	 * last account, who has not pressed Seen yet.
+	 */
+	private const POOL = [
+		'heard' => [Vehicle::NOTICE_TAKEN],
+		// After the first account's request, so even a single account is never booked twice at once.
+		'booked_for' => ['from' => 18, 'to' => 20, 'purpose' => 'Abendtermin Waiblingen'],
+	];
+
+	/** One account to drive the Passat, and a second to share the pool car with. */
+	private const MAX_GRANTEES = 2;
 
 	/**
 	 * What a fill-up row leaves out: full, and the German standard rate every day of the year
@@ -457,6 +476,7 @@ class SeedCommand extends Command {
 		private TripService $trips,
 		private GrantService $grants,
 		private BookingService $bookings,
+		private RecipientService $recipients,
 		private DocumentService $documents,
 		private SeedPapers $papers,
 		private ITimeFactory $time,
@@ -468,7 +488,7 @@ class SeedCommand extends Command {
 		$this->setName('nextfleet:seed')
 			->setDescription('Write a demo fleet into one user\'s account')
 			->addArgument('user', InputArgument::REQUIRED, 'the uid the fleet belongs to')
-			->addOption('grant-to', null, InputOption::VALUE_REQUIRED, 'a uid to give two vehicles to as a driver: the Passat, with a trip and a booking of theirs, and the Volvo, whose costs drivers do not see, with a booking of theirs waiting for approval');
+			->addOption('grant-to', null, InputOption::VALUE_REQUIRED | InputOption::VALUE_IS_ARRAY, 'a uid to give vehicles to as a driver, at most twice. The first gets the Passat, with a trip and a booking of theirs, and the Volvo, a pool car whose costs drivers do not see, with a booking of theirs waiting for approval. A second shares the Volvo. The owner books the Volvo for the last one given');
 	}
 
 	protected function execute(InputInterface $input, OutputInterface $output): int {
@@ -481,13 +501,22 @@ class SeedCommand extends Command {
 
 			return self::FAILURE;
 		}
-		/** @var string|null $grantTo */
+		/** @var list<string> $grantTo */
 		$grantTo = $input->getOption('grant-to');
-		$driver = $grantTo === null ? null : $this->users->get($grantTo)?->getUID();
-		if ($grantTo !== null && ($driver === null || $driver === $userId)) {
-			$output->writeln('<error>Cannot give access to ' . $grantTo . ': not another user</error>');
+		if (count($grantTo) > self::MAX_GRANTEES) {
+			$output->writeln('<error>--grant-to takes at most ' . self::MAX_GRANTEES . ' accounts</error>');
 
 			return self::FAILURE;
+		}
+		$drivers = [];
+		foreach ($grantTo as $asked) {
+			$driver = $this->users->get($asked)?->getUID();
+			if ($driver === null || $driver === $userId || in_array($driver, $drivers, true)) {
+				$output->writeln('<error>Cannot give access to ' . $asked . ': not another user, or named twice</error>');
+
+				return self::FAILURE;
+			}
+			$drivers[] = $driver;
 		}
 
 		$retired = $this->retire($userId);
@@ -561,28 +590,47 @@ class SeedCommand extends Command {
 			$userId,
 		));
 
-		if ($driver !== null) {
-			$uuid = $uuids[self::GRANTED['plate']];
+		if ($drivers === []) {
+			return self::SUCCESS;
+		}
+		$first = $drivers[0];
+		$uuid = $uuids[self::GRANTED['plate']];
+		$pool = $uuids[self::GRANTED['costs_kept']];
+		foreach ($drivers as $driver) {
+			$granted = $driver === $first ? [$uuid, $pool] : [$pool];
 			try {
-				foreach ([$uuid, $uuids[self::GRANTED['costs_kept']]] as $granted) {
-					$this->grants->grant($userId, $granted, ['grantee' => $driver, 'grantee_type' => 'user', 'role' => 'driver']);
+				foreach ($granted as $one) {
+					$asksForEachUse = $one === $pool && $driver === $first;
+					$this->grants->grant($userId, $one, ['grantee' => $driver, 'grantee_type' => 'user', 'role' => 'driver', 'take_now' => !$asksForEachUse]);
 				}
 			} catch (\InvalidArgumentException) {
 				// Both accounts exist and differ (checked above), so only the admin's sharing
 				// settings are left to refuse: GrantService answers "no user you may grant to" alike.
-				$output->writeln('<error>Did not give ' . $driver . ' access to ' . self::GRANTED['plate']
+				$output->writeln('<error>Did not give ' . $driver . ' access to the demo vehicles'
 					. ': the sharing settings do not let ' . $userId . ' share with ' . $driver
 					. '. Sharing is off for ' . $userId . ', or "share only with group members" is on and the two share no group.'
 					. ' The fleet is seeded, without a trip or booking of theirs.</error>');
 
 				return self::FAILURE;
 			}
-			$this->trips->record($driver, $uuid, $this->driven(self::GRANTED['trip']));
-			$this->bookings->book($driver, $uuid, $this->booked(self::GRANTED['booking']));
-			$this->bookings->book($driver, $uuids[self::GRANTED['costs_kept']], $this->booked(self::GRANTED['request']));
-			$output->writeln('Gave ' . $driver . ' access to ' . self::GRANTED['plate'] . ' as a driver, with one trip and one booking of theirs, and to '
-				. self::GRANTED['costs_kept'] . ', whose costs are kept from drivers, with a booking of theirs waiting for approval.');
 		}
+		// Before any booking, so the pool car's request waits for an answer.
+		$this->fleet->approveByDefault($userId, true);
+		$this->recipients->addBooking($userId, $pool, $userId, 'user', Vehicle::NOTICES);
+		foreach ($drivers as $driver) {
+			$this->recipients->addBooking($userId, $pool, $driver, 'user', self::POOL['heard']);
+		}
+
+		$this->trips->record($first, $uuid, $this->driven(self::GRANTED['trip']));
+		$this->bookings->book($first, $uuid, $this->booked(self::GRANTED['booking']));
+		$this->bookings->book($first, $pool, $this->booked(self::GRANTED['request']));
+		$last = $drivers[count($drivers) - 1];
+		$this->bookings->book($userId, $pool, $this->booked(self::POOL['booked_for']) + ['user_id' => $last]);
+		$output->writeln('Gave ' . $first . ' access to ' . self::GRANTED['plate'] . ' as a driver, with one trip and one booking of theirs, and to '
+			. self::GRANTED['costs_kept'] . ', a pool car whose costs are kept from drivers, with a booking of theirs waiting for approval.');
+		$output->writeln('The pool car ' . self::GRANTED['costs_kept'] . ' asks for approval as ' . $userId . '\'s default says; '
+			. implode(' and ', $drivers) . ' drive it, ' . $first . ' asks for each Take it now, and ' . $userId . ' booked it for ' . $last . '.');
+		$output->writeln('"Bookings need approval" is now on for all of ' . $userId . '\'s vehicles that follow the default, not only the demo ones.');
 
 		return self::SUCCESS;
 	}

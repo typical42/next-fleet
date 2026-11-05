@@ -98,11 +98,12 @@ class GrantService {
 	 * already holds a grant changes its role, so no second row is left for "strongest wins" to
 	 * quietly pick between.
 	 *
-	 * @param array<string, mixed> $fields `grantee`, `grantee_type` (`user` or `group`) and `role`
+	 * @param array<string, mixed> $fields `grantee`, `grantee_type` (`user` or `group`) and `role`;
+	 *                                     `take_now` optional: true for a new grant, kept on one given again
 	 * @return list<NextFleetGrant> the list as it now stands
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user does not own this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
-	 * @throws \InvalidArgumentException if the grantee does not exist, is the owner, or the role is none
+	 * @throws \InvalidArgumentException if the grantee does not exist, is the owner, the role is none, or `take_now` no boolean
 	 * @throws \OCP\DB\Exception
 	 */
 	public function grant(string $userId, string $vehicleUuid, array $fields): array {
@@ -128,6 +129,7 @@ class GrantService {
 	 */
 	private function insert(string $userId, Vehicle $vehicle, array $fields, Once $once): array {
 		$role = Field::word('role', $fields['role'] ?? null, VehicleAccess::roles());
+		$takeNow = self::requestedTakeNow($fields);
 		[$grantee, $type] = $this->grantee($userId, $fields['grantee'] ?? null, $fields['grantee_type'] ?? null);
 		if ($type === Access::USER && $grantee === $vehicle->getUserId()) {
 			throw new \InvalidArgumentException('The owner holds every right already');
@@ -135,14 +137,14 @@ class GrantService {
 
 		// Retried for the reason TripService::record() gives.
 		/** @var array{?Access, list<string>, ?string} $done */
-		$done = $this->atomicRetry(function () use ($userId, $vehicle, $grantee, $type, $role, $once): array {
+		$done = $this->atomicRetry(function () use ($userId, $vehicle, $grantee, $type, $role, $takeNow, $once): array {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$once->check();
 			$answering = $this->answering($vehicle, $grantee, $type, $role);
 			foreach ($this->grants->findByVehicle((int)$vehicle->getId()) as $one) {
 				if ($one->getGrantee() === $grantee && $one->getGranteeType() === $type) {
 					$was = $one->getRole();
-					$this->recast($one, $role);
+					$this->recast($one, $role, $takeNow);
 					return [null, $answering, $was];
 				}
 			}
@@ -153,6 +155,7 @@ class GrantService {
 			$row->setGrantee($grantee);
 			$row->setGranteeType($type);
 			$row->setRole($role);
+			$row->setTakeNow($takeNow ?? true);
 			$row->setCreatedBy($userId);
 
 			return [$this->grants->insert($row), $answering, null];
@@ -172,28 +175,29 @@ class GrantService {
 	}
 
 	/**
-	 * A new role on one grant. Every role covers `view`, so a change takes nobody off the
-	 * vehicle and nobody off its recipients.
+	 * A new role on one grant, and whether it allows Take it now. Every role covers `view`, so a
+	 * change takes nobody off the vehicle and nobody off its recipients.
 	 *
-	 * @param array<string, mixed> $fields `role`
+	 * @param array<string, mixed> $fields `role`; `take_now` optional, kept as it is without it
 	 * @return list<NextFleetGrant> the list as it now stands
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user does not own this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException if either the vehicle or the grant on it is not there
-	 * @throws \InvalidArgumentException if the role is none
+	 * @throws \InvalidArgumentException if the role is none, or `take_now` no boolean
 	 * @throws \OCP\DB\Exception
 	 */
 	public function change(string $userId, string $vehicleUuid, string $grantUuid, array $fields): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::OWN, $vehicleUuid);
 		$role = Field::word('role', $fields['role'] ?? null, VehicleAccess::roles());
+		$takeNow = self::requestedTakeNow($fields);
 
 		/** @var list<string> $answering */
 		/** @var string $was */
-		[$answering, $was] = $this->atomicRetry(function () use ($vehicle, $grantUuid, $role): array {
+		[$answering, $was] = $this->atomicRetry(function () use ($vehicle, $grantUuid, $role, $takeNow): array {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$grant = $this->grants->findOnVehicle((int)$vehicle->getId(), $grantUuid);
 			$answering = $this->answering($vehicle, $grant->getGrantee(), $grant->getGranteeType(), $role);
 			$was = $grant->getRole();
-			$this->recast($grant, $role);
+			$this->recast($grant, $role, $takeNow);
 
 			return [$answering, $was];
 		}, $this->db);
@@ -611,16 +615,31 @@ class GrantService {
 	}
 
 	/**
-	 * A new role on a grant the caller holds the vehicle for. Checked against the token the row
-	 * was just read with: the vehicle is held, so nobody moved it since.
+	 * Whether a grant allows Take it now, as the request says, or null where it says nothing: a
+	 * client that sends the role alone must not undo the owner's block. A null says nothing too,
+	 * as openapi.json offers it.
+	 *
+	 * @param array<string, mixed> $fields
+	 * @throws \InvalidArgumentException
+	 */
+	private static function requestedTakeNow(array $fields): ?bool {
+		return isset($fields['take_now']) ? Field::flag('take_now', $fields['take_now']) : null;
+	}
+
+	/**
+	 * A new role on a grant the caller holds the vehicle for, and its Take it now unless null.
+	 * Checked against the token the row was just read with: the vehicle is held, so nobody moved
+	 * it since. The value stays while the role is one the switch is not shown for.
 	 *
 	 * @throws \OCP\DB\Exception
 	 */
-	private function recast(Access $grant, string $role): void {
-		if ($grant->getRole() === $role) {
+	private function recast(Access $grant, string $role, ?bool $takeNow): void {
+		$takeNow ??= $grant->takesNow();
+		if ($grant->getRole() === $role && $grant->takesNow() === $takeNow) {
 			return;
 		}
 		$grant->setRole($role);
+		$grant->setTakeNow($takeNow);
 		$this->grants->updateChecked($grant, $grant->getUpdatedAt());
 	}
 
@@ -645,6 +664,7 @@ class GrantService {
 			'grantee_type' => $grant->getGranteeType(),
 			'display_name' => $this->displayName($grant),
 			'role' => $grant->getRole(),
+			'take_now' => $grant->takesNow(),
 		], $grants);
 	}
 

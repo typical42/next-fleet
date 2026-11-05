@@ -13,12 +13,12 @@ import NcContent from '@nextcloud/vue/components/NcContent'
 import NcCounterBubble from '@nextcloud/vue/components/NcCounterBubble'
 import NcEmptyContent from '@nextcloud/vue/components/NcEmptyContent'
 import NcLoadingIcon from '@nextcloud/vue/components/NcLoadingIcon'
-import { generateUrl } from '@nextcloud/router'
 import { computed, onMounted, ref, watch } from 'vue'
 
 import UndoToast from './components/UndoToast.vue'
 import VehicleList from './components/VehicleList.vue'
 import VehicleSheet from './components/VehicleSheet.vue'
+import { settingsUrl } from './services/api.js'
 import { useInboxStore } from './store/inbox.js'
 import { useVehiclesStore } from './store/index.js'
 import { usePreferencesStore } from './store/preferences.js'
@@ -58,8 +58,6 @@ const creating = ref(false)
 const failure = ref('')
 /** Until the fleet is read, an empty store is no empty fleet, and the overview would say it is. */
 const loading = ref(true)
-/** The app's own settings are on the personal settings page (lib/Settings/). */
-const settingsUrl = generateUrl('/settings/user/additional')
 
 /** Whether the selected vehicle was opened from the overview's list of disposed ones. */
 const openedDisposed = ref(false)
@@ -191,7 +189,7 @@ function count(uuid) {
 					<NcAppNavigationItem :name="t('nextfleet', 'Reports')"
 						:active="reporting"
 						@click="report" />
-					<NcAppNavigationItem :name="t('nextfleet', 'Settings')" :href="settingsUrl" />
+					<NcAppNavigationItem :name="t('nextfleet', 'Settings')" :href="settingsUrl()" />
 				</NcAppNavigationList>
 			</template>
 		</NcAppNavigation>

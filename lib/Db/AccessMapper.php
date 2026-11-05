@@ -186,14 +186,15 @@ class AccessMapper extends BaseMapper {
 	}
 
 	/**
-	 * Every vehicle one user reaches through a grant in one of the given roles, with the roles
+	 * Every vehicle one user reaches through a grant in one of the given roles, with the grants
 	 * they hold on it: what the overview shows beyond their own vehicles, and what they may do
 	 * there. Ids, not vehicles: the rows live in the other table. Which roles count is
 	 * VehicleAccess's to say - the column takes any word.
 	 *
 	 * @param list<string> $groupIds
 	 * @param list<string> $roles
-	 * @return array<int, list<string>> roles by vehicle id
+	 * @return array<int, list<array{string, bool}>> by vehicle id, each grant's role and whether it
+	 *                                               allows Take it now (Access::takesNow())
 	 * @throws \OCP\DB\Exception
 	 */
 	public function findReachable(string $userId, array $groupIds, array $roles): array {
@@ -203,7 +204,7 @@ class AccessMapper extends BaseMapper {
 		}
 
 		$qb = $this->db->getQueryBuilder();
-		$qb->selectDistinct(['vehicle_id', 'role'])
+		$qb->selectDistinct(['vehicle_id', 'role', 'take_now'])
 			->from($this->tableName)
 			->where($this->grantedTo($qb, $userId, $groupIds))
 			->andWhere(InList::in($qb, 'role', $roles, IQueryBuilder::PARAM_STR_ARRAY))
@@ -212,7 +213,9 @@ class AccessMapper extends BaseMapper {
 		$result = $qb->executeQuery();
 		$reachable = [];
 		while (($row = $result->fetch()) !== false) {
-			$reachable[(int)$row['vehicle_id']][] = (string)$row['role'];
+			// A raw row: false arrives as '0' or false by database; null reads as allowed.
+			$takeNow = $row['take_now'] ?? null;
+			$reachable[(int)$row['vehicle_id']][] = [(string)$row['role'], $takeNow === null || (bool)$takeNow];
 		}
 		$result->closeCursor();
 

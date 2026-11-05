@@ -77,9 +77,13 @@ const clash = ref(null)
  */
 const held = ref(props.booking)
 
+/** The owner blocked the user's take-now, back by midnight or not. */
+const blocked = computed(() => !may(props.vehicle, 'take_now'))
+
 /**
- * Kept past midnight on a vehicle that wants answers, a take-now is a request, unless the user
- * answers requests: the rule BookingService::insert() applies, on the same clock.
+ * On a vehicle that wants answers, a take-now is a request when it is blocked or kept past
+ * midnight, unless the user answers requests: the rule BookingService::insert() applies. The server
+ * takes midnight in the user's Nextcloud time zone, which is the browser's unless they travel.
  */
 const asks = computed(() => {
 	if (props.booking !== null || props.vehicle.booking_approval !== true || may(props.vehicle, 'edit')) {
@@ -88,7 +92,7 @@ const asks = computed(() => {
 	const midnight = new Date()
 	midnight.setHours(24, 0, 0, 0)
 
-	return end.value instanceof Date && end.value.getTime() > midnight.getTime()
+	return blocked.value || (end.value instanceof Date && end.value.getTime() > midnight.getTime())
 })
 
 /** The take-now came back a request: it stands booked, and the sheet stays open to say so. */
@@ -258,7 +262,9 @@ function requestClose() {
 				:show-alert="requested"
 				:heading="requested
 					? t('nextfleet', 'The booking waits for approval.')
-					: t('nextfleet', 'Kept past midnight, this is a request that waits for approval.')"
+					: blocked
+						? t('nextfleet', 'This is a request that waits for approval.')
+						: t('nextfleet', 'Kept past midnight, this is a request that waits for approval.')"
 				:text="t('nextfleet', 'You state the counter, the tank and the notes when you take the car.')" />
 			<NcNoteCard v-if="freed"
 				type="info"

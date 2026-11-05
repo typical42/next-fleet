@@ -82,10 +82,10 @@ stateDiagram-v2
     state "asked<br/>Booking::ASKED<br/>with approval_comment" as asked
     state "approved<br/>Booking::APPROVED" as approved
     state "declined<br/>Booking::DECLINED<br/>state cancelled" as declined
-    [*] --> none : book, no approval asked, or take it now back by midnight
+    [*] --> none : book, no approval asked, or take it now back by midnight, not blocked
     [*] --> requested : book, approval on, by anyone but an approver
     [*] --> approved : book, approval on, by an approver
-    none --> requested : change of span, the switch turned on since
+    none --> requested : change of span, approval turned on since
     none --> approved : the same, by an approver
     requested --> approved : approve, or a change of span by an approver
     requested --> asked : ask back
@@ -97,9 +97,11 @@ stateDiagram-v2
     asked --> declined : decline, or PendingJob at ends_at
     approved --> requested : change of span, by anyone but an approver
     approved --> approved : change of span by an approver
-    requested --> approved : the switch turned off
-    asked --> approved : the switch turned off
+    requested --> approved : approval turned off
+    asked --> approved : approval turned off
 ```
+
+Approval turns on or off by the vehicle's rule, or by the owner's default while the vehicle follows it.
 
 A new purpose alone leaves `approved` as it is.
 `PendingJob` declines by nobody and with no comment.

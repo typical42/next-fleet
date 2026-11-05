@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Service;
 
 use OCA\NextFleet\AppInfo\Application;
+use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Jurisdiction\IJurisdiction;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCP\Files\Folder;
@@ -77,6 +78,7 @@ class PreferencesService {
 		private IConfig $config,
 		private Jurisdictions $jurisdictions,
 		private OwnFiles $files,
+		private VehicleService $vehicles,
 	) {
 	}
 
@@ -106,7 +108,11 @@ class PreferencesService {
 				self::GRID_FACTOR => $this->gridFactor($userId),
 				// As stored, even once the folder is gone: GET /api/inbox is what says so.
 				self::INBOX => $this->inboxId($userId),
+				// VehicleMapper reads it too, with every vehicle of this owner's.
+				Vehicle::OWNER_APPROVAL => $this->config->getUserValue($userId, Application::APP_ID, Vehicle::OWNER_APPROVAL, '0') === '1',
 			],
+			// The vehicles the default for bookings is for: the screen offers it only where one is.
+			'owns_shared' => $this->vehicles->ownsShared($userId),
 			'jurisdictions' => array_map(
 				// The name is English; the screen translates it (docs/ui.md#languages) and falls
 				// back to this. The export flags let the Reports screen offer each only where its
@@ -155,6 +161,10 @@ class PreferencesService {
 			}
 			$values[self::RECLAIM_VAT] = $fields[self::RECLAIM_VAT] ? '1' : '0';
 		}
+		$approval = $fields[Vehicle::OWNER_APPROVAL] ?? null;
+		if (array_key_exists(Vehicle::OWNER_APPROVAL, $fields) && !is_bool($approval)) {
+			throw new \InvalidArgumentException(Vehicle::OWNER_APPROVAL . ' is true or false');
+		}
 		if (array_key_exists(self::KPI_PERIOD, $fields)) {
 			if (!in_array($fields[self::KPI_PERIOD], self::PERIODS, true)) {
 				throw new \InvalidArgumentException(self::KPI_PERIOD . ' is one of ' . implode(', ', self::PERIODS));
@@ -179,6 +189,10 @@ class PreferencesService {
 
 		foreach ($values as $key => $value) {
 			$this->config->setUserValue($userId, Application::APP_ID, $key, $value);
+		}
+		// Written by the vehicles: turned off, it answers what waits on them.
+		if (is_bool($approval)) {
+			$this->vehicles->approveByDefault($userId, $approval);
 		}
 
 		return $this->forUser($userId);

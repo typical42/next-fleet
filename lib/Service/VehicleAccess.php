@@ -32,6 +32,12 @@ class VehicleAccess {
 	 * a reader still sees the amounts they entered (mayCost()).
 	 */
 	public const COSTS = 'costs';
+	/**
+	 * Take the car at once without approval while it is back by midnight (BookingService::book()).
+	 * The owner and the managers answer their own bookings anyway; a driver holds it while a
+	 * grant allows it (covered()).
+	 */
+	public const TAKE_NOW = 'take_now';
 
 	/**
 	 * Every operation, in the order an answer lists them, so the same caller always gets the
@@ -39,7 +45,7 @@ class VehicleAccess {
 	 *
 	 * @var list<string>
 	 */
-	private const OPERATIONS = [self::VIEW, self::LOG, self::EDIT, self::DELETE, self::OWN, self::COSTS];
+	private const OPERATIONS = [self::VIEW, self::LOG, self::EDIT, self::DELETE, self::OWN, self::COSTS, self::TAKE_NOW];
 
 	/**
 	 * What each role of `fleet_access` covers. No role covers `own`: the car is the owner's, so
@@ -50,8 +56,8 @@ class VehicleAccess {
 	 * @var array<string, list<string>>
 	 */
 	private const ROLES = [
-		'manager' => [self::VIEW, self::LOG, self::EDIT, self::DELETE, self::COSTS],
-		'driver' => [self::VIEW, self::LOG],
+		'manager' => [self::VIEW, self::LOG, self::EDIT, self::DELETE, self::COSTS, self::TAKE_NOW],
+		'driver' => [self::VIEW, self::LOG, self::TAKE_NOW],
 		'viewer' => [self::VIEW],
 	];
 
@@ -76,6 +82,36 @@ class VehicleAccess {
 	 */
 	public function may(string $userId, string $operation, Vehicle $vehicle): bool {
 		return in_array($operation, $this->operations($userId, $vehicle), true);
+	}
+
+	/**
+	 * Everybody who holds the operation on the vehicle now: the owner, each grantee whose role
+	 * covers it, and the members of each such group. Each is asked through may() too, so the
+	 * answer is the one the gate gives them.
+	 *
+	 * @return list<string> uids, each once
+	 * @throws \OCP\DB\Exception
+	 */
+	public function holders(Vehicle $vehicle, string $operation): array {
+		$uids = [$vehicle->getUserId()];
+		$roles = self::rolesCovering($operation);
+		foreach ($this->grants->findByVehicle((int)$vehicle->getId()) as $grant) {
+			if (!in_array($grant->getRole(), $roles, true)) {
+				continue;
+			}
+			if ($grant->getGranteeType() === Access::USER) {
+				$uids[] = $grant->getGrantee();
+				continue;
+			}
+			foreach ($this->groups->get($grant->getGrantee())?->getUsers() ?? [] as $member) {
+				$uids[] = $member->getUID();
+			}
+		}
+
+		return array_values(array_filter(
+			array_unique($uids),
+			fn (string $uid): bool => $this->may($uid, $operation, $vehicle),
+		));
 	}
 
 	/**
@@ -106,6 +142,14 @@ class VehicleAccess {
 	/** Whether the user answers the bookings of a vehicle that asks for approval. */
 	public function mayApprove(string $userId, Vehicle $vehicle): bool {
 		return $this->oversees($userId, $vehicle);
+	}
+
+	/**
+	 * Whether the user's Take it now, back by midnight, skips approval. Read off the gate's
+	 * answer, as mayChange() is.
+	 */
+	public function mayTakeNow(string $userId, Vehicle $vehicle): bool {
+		return !self::erased($userId) && in_array(self::TAKE_NOW, $vehicle->getMay(), true);
 	}
 
 	/** Whether the user sees every driver's figures on the Statistics screen, not only their own. */
@@ -149,12 +193,12 @@ class VehicleAccess {
 			return self::OPERATIONS;
 		}
 
-		$roles = array_map(
-			static fn (Access $grant): string => $grant->getRole(),
+		$grants = array_map(
+			static fn (Access $grant): array => [$grant->getRole(), $grant->takesNow()],
 			$this->grants->findGrants((int)$vehicle->getId(), $userId, $this->groupIdsOf($userId)),
 		);
 
-		return self::shared(self::covered($roles), $vehicle);
+		return self::shared(self::covered($grants), $vehicle);
 	}
 
 	/**
@@ -214,13 +258,19 @@ class VehicleAccess {
 
 	/**
 	 * What a set of rows adds up to. Only ever the union: the strongest row wins and no row
-	 * narrows another.
+	 * narrows another. A row that blocks Take it now takes it off its own role only, and only
+	 * where that role answers no bookings; one that answers them approves its own take-now anyway.
 	 *
-	 * @param list<string> $roles
+	 * @param list<array{string, bool}> $grants each row's role, and whether it allows Take it now
 	 * @return list<string>
 	 */
-	private static function covered(array $roles): array {
-		$held = array_merge([], ...array_map(static fn (string $role): array => self::ROLES[$role] ?? [], $roles));
+	private static function covered(array $grants): array {
+		$held = array_merge([], ...array_map(static function (array $grant): array {
+			[$role, $takesNow] = $grant;
+			$covers = self::ROLES[$role] ?? [];
+
+			return $takesNow || in_array(self::EDIT, $covers, true) ? $covers : array_diff($covers, [self::TAKE_NOW]);
+		}, $grants));
 
 		return array_values(array_intersect(self::OPERATIONS, $held));
 	}

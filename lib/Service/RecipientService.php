@@ -145,31 +145,48 @@ class RecipientService {
 	/**
 	 * Puts one account or one group on the booking list, by add()'s rule: whom the owner may share
 	 * with, or an account that sees the vehicle. Being on it grants nothing, and only those who see
-	 * the vehicle are told. Adding one already on it changes nothing.
+	 * the vehicle are told. A new row hears the events given, else the vehicle's. Adding one
+	 * already on it sets the events given, and without any changes nothing; the rule is not asked
+	 * again, so a row the owner could no longer add keeps its events in reach, as removeBooking()
+	 * keeps it in reach.
 	 *
+	 * @param mixed $events a set of Vehicle::NOTICES, or null
 	 * @return list<NextFleetBookingRecipient> the list as it now stands
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user does not own this vehicle
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
-	 * @throws \InvalidArgumentException if the instance has no such account or group, or none the owner may share with
+	 * @throws \InvalidArgumentException if the instance has no such account or group, or none the owner may share with, or an event is unknown
 	 * @throws \OCP\DB\Exception
 	 */
-	public function addBooking(string $userId, string $vehicleUuid, mixed $recipient, mixed $type): array {
+	public function addBooking(string $userId, string $vehicleUuid, mixed $recipient, mixed $type, mixed $events = null): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::OWN, $vehicleUuid);
 		$type = self::recipientType($type);
-		$name = is_string($recipient) ? $this->names->spelled($type, $recipient) : null;
-		if ($name === null || !$this->admits($userId, $vehicle, $name, $type)) {
+		$events = $events === null ? null : array_values(array_intersect(Vehicle::NOTICES, Field::set('events', $events, Vehicle::NOTICES)));
+		if (!is_string($recipient)) {
 			throw new \InvalidArgumentException('recipient is not an account or group on this instance');
 		}
 
-		$this->atomicRetry(function () use ($userId, $vehicle, $name, $type): void {
+		$this->atomicRetry(function () use ($userId, $vehicle, $recipient, $type, $events): void {
 			$this->vehicles->hold((int)$vehicle->getId());
-			foreach ($this->bookingRecipients->findByVehicle((int)$vehicle->getId()) as $one) {
-				if ($one->type() === $type && $one->name() === $name) {
+			$rows = array_values(array_filter(
+				$this->bookingRecipients->findByVehicle((int)$vehicle->getId()),
+				static fn (BookingRecipient $one): bool => $one->type() === $type,
+			));
+			$listed = $this->listedAs(array_map(static fn (BookingRecipient $one): string => $one->name(), $rows), $type, $recipient);
+			foreach ($rows as $one) {
+				if ($one->name() === $listed) {
+					if ($events !== null) {
+						$one->setEvents($events);
+						// Read under the hold, so nothing can have raced it.
+						$this->bookingRecipients->updateChecked($one, $one->getUpdatedAt());
+					}
+
 					return;
 				}
 			}
-			// Asked again under the hold, for the reason add() gives.
-			if ($type === Access::USER ? !$this->users->userExists($name) : !$this->groups->groupExists($name)) {
+			// The existence is asked under the hold, for the reason add() gives.
+			$name = $this->names->spelled($type, $recipient);
+			if ($name === null || !$this->admits($userId, $vehicle, $name, $type)
+				|| ($type === Access::USER ? !$this->users->userExists($name) : !$this->groups->groupExists($name))) {
 				throw new \InvalidArgumentException('recipient is not an account or group on this instance');
 			}
 
@@ -177,6 +194,8 @@ class RecipientService {
 			$row->setVehicleId((int)$vehicle->getId());
 			$row->setUserId($type === Access::USER ? $name : null);
 			$row->setGroupId($type === Access::GROUP ? $name : null);
+			// Read under the hold: the owner may have changed the vehicle's events since reach().
+			$row->setEvents($events ?? $this->vehicles->findAnyById((int)$vehicle->getId())->bookingNotices());
 			$row->setCreatedBy($userId);
 			$this->bookingRecipients->insert($row);
 		}, $this->db);
@@ -212,9 +231,9 @@ class RecipientService {
 	}
 
 	/**
-	 * The row a name sent to remove() or removeBooking() names: as the list shows it, else as
-	 * add() and addBooking() store it. As listed first, since a row an erased account left can
-	 * share its uid with a live account in another case.
+	 * The row a name sent to remove(), removeBooking() or addBooking() names: as the list shows
+	 * it, else as add() and addBooking() store it. As listed first, since a row an erased account
+	 * left can share its uid with a live account in another case.
 	 *
 	 * @param list<string> $listed
 	 * @param Access::USER|Access::GROUP $type
@@ -295,7 +314,7 @@ class RecipientService {
 	 * @throws \OCP\DB\Exception
 	 */
 	private function bookingOf(Vehicle $vehicle): array {
-		return array_map(function (BookingRecipient $recipient): array {
+		return array_map(function (BookingRecipient $recipient) use ($vehicle): array {
 			$name = $recipient->name();
 			$type = $recipient->type();
 
@@ -304,6 +323,7 @@ class RecipientService {
 				'recipient_type' => $type,
 				// As of() names one whose account is gone.
 				'display_name' => ($type === Access::GROUP ? $this->groups->getDisplayName($name) : $this->users->getDisplayName($name)) ?? $name,
+				'events' => $recipient->events($vehicle),
 			];
 		}, $this->bookingRecipients->findByVehicle((int)$vehicle->getId()));
 	}

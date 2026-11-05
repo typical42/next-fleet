@@ -15,6 +15,8 @@ use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Service\BookingNotices;
 use OCA\NextFleet\Service\BookingService;
+use OCA\NextFleet\Service\Names;
+use OCA\NextFleet\Service\UserZone;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Utility\ITimeFactory;
@@ -51,8 +53,10 @@ class DeclineUnansweredTest extends TestCase {
 			$vehicles,
 			$this->createMock(VehicleAccess::class),
 			$this->createMock(IUserManager::class),
+			$this->createMock(Names::class),
 			$notices,
 			$time,
+			$this->createMock(UserZone::class),
 			$this->createMock(IDBConnection::class),
 			$logger,
 		))->declineUnanswered();

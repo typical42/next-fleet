@@ -19,7 +19,7 @@
 #   tools/upgrade-check.sh [--db mariadb|pgsql|oracle] <tarball> [<base>]
 #
 # <tarball> is the package to check: pass the file you are about to sign, not a rebuild of it.
-# <base> is the version users have, as a git ref or a tarball. It defaults to v0.4.1, the last
+# <base> is the version users have, as a git ref or a tarball. It defaults to v0.5.0, the last
 # release; each release moves it on.
 #
 # The servers are tools/upgrade-check.compose.yml, its own project with its own volumes. They are
@@ -51,7 +51,7 @@ if [ $# -lt 1 ] || [ ! -f "$1" ]; then
 	usage
 fi
 tarball=$(realpath "$1")
-base=${2:-v0.4.1}
+base=${2:-v0.5.0}
 # --db goes first; after the tarball it would be taken for the base.
 case $base in -*) usage ;; esac
 if [ -f "$base" ]; then
@@ -254,10 +254,28 @@ tables() {
 	esac
 }
 
+# The column list $2 of table $1, rewritten to read the base's rows as a migration of the package
+# changes them on purpose. A rewrite applies only when the package runs that migration and the
+# base has not. Version000011 lets a vehicle that never asked for approval follow its owner:
+# false becomes null.
+meant() {
+	list=$2
+	if [ "$1" = oc_fleet_vehicles ] && grep -q '^000011' "$work/new.migrations" &&
+		! grep -q '^000011' "$work/base.migrations"; then
+		case $db in
+			pgsql) off=false ;;
+			*) off=0 ;;
+		esac
+		list=$(echo "$list" | sed "s/\"booking_approval\"/nullif(\"booking_approval\", $off)/")
+	fi
+	echo "$list"
+}
+
 # One line per table: its name, its row count and a checksum over every row's content in the
 # columns it had before the upgrade. A line that differs after the upgrade is a row lost or
-# changed. A future migration that means to change rows will fail here; read the difference
-# before trusting it.
+# changed. The snapshot before the upgrade passes a third argument, so that it reads the rows
+# through meant(). A migration that means to change rows fails here until meant() names the
+# change; read the difference first.
 #
 # No pipes and no command substitution in a list: sh has no pipefail, and a failed query would
 # leave an empty snapshot that nothing can be missing from.
@@ -268,6 +286,9 @@ rows() {
 	for table in $(cat "$work/$1.names"); do
 		count=$(sql "$1" "select count(*) from \"$table\"")
 		listed=$(columns "$1" "$table")
+		if [ -n "${3:-}" ]; then
+			listed=$(meant "$table" "$listed")
+		fi
 		checksum=$(checksum "$1" "$table" "$listed")
 		echo "$table $count ${checksum##*[[:space:]]}" >>"$2"
 	done
@@ -413,7 +434,8 @@ loads() {
 
 # The base's seed, then enough use that no table is empty: an empty table proves nothing about its
 # rows. A seed that can give a car to a driver fills the grants and the bookings. Logbook Mode
-# switched on and a trip edited fill the audit trail, the reminder job the receipts.
+# switched on and a trip edited fill the audit trail, the reminder job the receipts. No seed lists
+# anybody for booking notices, so the owner goes on the list where the base has one.
 history() {
 	# Not in the case word, where a failed occ would not stop the script.
 	seed=$(occ "$1" help nextfleet:seed)
@@ -447,6 +469,14 @@ history() {
 	job=$(sql "$1" "select \"id\" from \"oc_jobs\" where \"class\" like '%NextFleet%ReminderJob'")
 	[ -n "$job" ] || fail "$1: the reminder job is not registered"
 	occ "$1" background-job:execute --force-execute "$job" >/dev/null
+
+	# Captured first: in the case word, a failed query would not stop the script.
+	app_tables=$(tables "$1")
+	case $app_tables in
+		*oc_fleet_booking_recipients*)
+			send "$1" POST "api/vehicles/$vehicle/booking-recipients" '{"recipient":"admin","recipient_type":"user"}'
+			;;
+	esac
 
 	# 0.2.0's seed grants nothing and its API cannot, so its grant goes in by hand.
 	[ "$(sql "$1" "select count(*) from \"oc_fleet_access\"")" = 0 ] || return 0
@@ -492,7 +522,7 @@ for path in $paths; do
 	alias_sequence "$server" create
 	loads "$server"
 	history "$server"
-	rows "$server" "$work/$path.before"
+	rows "$server" "$work/$path.before" meant
 	empty=$(awk '$2 == 0 { print $1 }' "$work/$path.before")
 	[ -z "$empty" ] || fail "$server: empty before the upgrade, so unproven: $(echo "$empty" | tr '\n' ' ')"
 	plate=$(sql "$server" "select \"plate\" from \"oc_fleet_vehicles\" where \"deleted_at\" is null

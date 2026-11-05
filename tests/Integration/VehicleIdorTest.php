@@ -554,6 +554,8 @@ class VehicleIdorTest extends TestCase {
 			'booking#approve' => $this->booking(self::STRANGER, $params)->approve($uuid, self::NO_SUCH_ENTRY),
 			'booking#ask' => $this->booking(self::STRANGER, $params)->ask($uuid, self::NO_SUCH_ENTRY),
 			'booking#decline' => $this->booking(self::STRANGER, $params)->decline($uuid, self::NO_SUCH_ENTRY),
+			'booking#seen' => $this->booking(self::STRANGER, $params)->seen($uuid, self::NO_SUCH_ENTRY),
+			'booking#bookers' => $this->booking(self::STRANGER, $params)->bookers($uuid),
 			'timeline#index' => $this->timeline(self::STRANGER, $params)->index($uuid),
 			'timeline#gaps' => $this->timeline(self::STRANGER, $params)->gaps($uuid),
 			'timeline#show' => $this->timeline(self::STRANGER, $params)->show($uuid, 'trip', self::NO_SUCH_ENTRY),
@@ -963,6 +965,7 @@ class VehicleIdorTest extends TestCase {
 			'booking#approve' => $this->booking(self::OWNER, $params)->approve($other, $row),
 			'booking#ask' => $this->booking(self::OWNER, $params)->ask($other, $row),
 			'booking#decline' => $this->booking(self::OWNER, $params)->decline($other, $row),
+			'booking#seen' => $this->booking(self::OWNER, $params)->seen($other, $row),
 			'timeline#show' => $this->timeline(self::OWNER, [])->show($other, 'trip', $row),
 			default => $this->fail($route . ' has no arm in the cross-vehicle matrix'),
 		});
@@ -980,7 +983,7 @@ class VehicleIdorTest extends TestCase {
 
 	/** @return iterable<string, list<mixed>> */
 	public static function crossVehicleMatrix(): iterable {
-		$routes = ['booking#update', 'booking#delete', 'booking#check_out', 'booking#check_in', 'booking#approve', 'booking#ask', 'booking#decline', 'timeline#show'];
+		$routes = ['booking#update', 'booking#delete', 'booking#check_out', 'booking#check_in', 'booking#approve', 'booking#ask', 'booking#decline', 'booking#seen', 'timeline#show'];
 		foreach (array_keys(self::ENTRY_BODIES) as $kind) {
 			foreach (['update', 'delete', 'restore'] as $action) {
 				$routes[] = "$kind#$action";
@@ -1050,6 +1053,8 @@ class VehicleIdorTest extends TestCase {
 			'booking#approve' => $door->approve($uuid, $booking['uuid']),
 			'booking#ask' => $door->ask($uuid, $booking['uuid']),
 			'booking#decline' => $door->decline($uuid, $booking['uuid']),
+			// Whom to book for: a booking an approver makes for somebody is answered at once.
+			'booking#bookers' => $door->bookers($uuid),
 			default => $this->fail($route . ' has no arm in the answer matrix'),
 		});
 
@@ -1062,7 +1067,7 @@ class VehicleIdorTest extends TestCase {
 	/** @return iterable<string, list<mixed>> */
 	public static function answerMatrix(): iterable {
 		$cases = [];
-		foreach (['booking#approve', 'booking#ask', 'booking#decline'] as $route) {
+		foreach (['booking#approve', 'booking#ask', 'booking#decline', 'booking#bookers'] as $route) {
 			foreach (array_keys(self::HOLDERS) as $role) {
 				$cases["$route by the $role"] = [$route, $role, in_array($role, ['owner', 'manager'], true) ? Http::STATUS_OK : Http::STATUS_FORBIDDEN];
 			}
@@ -1274,9 +1279,9 @@ class VehicleIdorTest extends TestCase {
 		$uuid = $this->vehicle->getUuid();
 		$this->grantEveryRole();
 		$expected = [
-			'owner' => ['view', 'log', 'edit', 'delete', 'own', 'costs', 'book'],
-			'manager' => ['view', 'log', 'edit', 'delete', 'costs', 'book'],
-			'driver' => ['view', 'log', 'costs', 'book'],
+			'owner' => ['view', 'log', 'edit', 'delete', 'own', 'costs', 'take_now', 'book'],
+			'manager' => ['view', 'log', 'edit', 'delete', 'costs', 'take_now', 'book'],
+			'driver' => ['view', 'log', 'costs', 'take_now', 'book'],
 			'viewer' => ['view', 'costs'],
 		];
 
@@ -1304,12 +1309,12 @@ class VehicleIdorTest extends TestCase {
 		$uuid = $this->vehicle->getUuid();
 		$this->grantEveryRole();
 		$laidUp = $this->service->update(self::OWNER, $uuid, $this->vehicle->getUpdatedAt(), ['lifecycle' => 'laid_up']);
-		$this->assertSame(['view', 'log', 'edit', 'delete', 'own', 'costs'], $laidUp->jsonSerialize()['may']);
+		$this->assertSame(['view', 'log', 'edit', 'delete', 'own', 'costs', 'take_now'], $laidUp->jsonSerialize()['may']);
 
 		$controller = $this->controller(self::HOLDERS['driver'], []);
 		$shown = $controller->show($uuid)->getData();
 		$this->assertInstanceOf(Vehicle::class, $shown);
-		$this->assertSame(['view', 'log', 'costs'], $shown->jsonSerialize()['may']);
+		$this->assertSame(['view', 'log', 'costs', 'take_now'], $shown->jsonSerialize()['may']);
 	}
 
 	/**

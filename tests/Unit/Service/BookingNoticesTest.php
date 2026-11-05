@@ -8,7 +8,6 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Unit\Service;
 
-use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\Booking;
 use OCA\NextFleet\Db\BookingMapper;
 use OCA\NextFleet\Db\BookingRecipient;
@@ -80,6 +79,56 @@ class BookingNoticesTest extends TestCase {
 		$this->assertSame(['bea'], array_column($this->sent, 'user'));
 	}
 
+	/**
+	 * Each row hears its own events: the owner on the list hears all five, the group of drivers
+	 * only a car taken now.
+	 */
+	public function testEachRowHearsItsOwnEvents(): void {
+		$this->listed = [$this->user('owner', Vehicle::NOTICES), $this->group('crew', [Vehicle::NOTICE_TAKEN])];
+		$vehicle = $this->vehicle([]);
+
+		foreach (Vehicle::NOTICES as $event) {
+			$this->notices()->tell($vehicle, $event === Vehicle::NOTICE_RETURNED ? $this->returned('ann') : $this->booking('ann'), $event, 'ann');
+		}
+
+		$this->assertSame(
+			[['owner', 'booked'], ['owner', 'taken'], ['bea', 'taken'], ['cem', 'taken'], ['owner', 'returned'], ['owner', 'cancelled'], ['owner', 'changed']],
+			$this->told(),
+		);
+	}
+
+	/** Somebody on two rows hears what either row hears, each event once. */
+	public function testSomebodyOnTwoRowsHearsTheUnionOnce(): void {
+		$this->listed = [$this->user('bea', [Vehicle::NOTICE_BOOKED]), $this->group('crew', [Vehicle::NOTICE_BOOKED, Vehicle::NOTICE_TAKEN])];
+		$vehicle = $this->vehicle([]);
+
+		$this->notices()->tell($vehicle, $this->booking('ann'), Vehicle::NOTICE_BOOKED, 'ann');
+		$this->notices()->tell($vehicle, $this->booking('ann'), Vehicle::NOTICE_TAKEN, 'ann');
+
+		$this->assertSame([['bea', 'booked'], ['cem', 'booked'], ['bea', 'taken'], ['cem', 'taken']], $this->told());
+	}
+
+	/** A row that names no events hears the vehicle's. */
+	public function testARowWithoutEventsHearsTheVehicles(): void {
+		$this->listed = [$this->user('bea')];
+		$vehicle = $this->vehicle(['returned']);
+
+		$this->notices()->tell($vehicle, $this->booking('ann'), Vehicle::NOTICE_BOOKED, 'ann');
+		$this->notices()->tell($vehicle, $this->returned('ann'), Vehicle::NOTICE_RETURNED, 'ann');
+
+		$this->assertSame([['bea', 'returned']], $this->told());
+	}
+
+	/** While the list is empty, the owner hears the vehicle's events. */
+	public function testTheOwnerOfAnEmptyListHearsTheVehiclesEvents(): void {
+		$vehicle = $this->vehicle(['returned']);
+
+		$this->notices()->tell($vehicle, $this->booking('ann'), Vehicle::NOTICE_BOOKED, 'ann');
+		$this->notices()->tell($vehicle, $this->returned('ann'), Vehicle::NOTICE_RETURNED, 'ann');
+
+		$this->assertSame([['owner', 'returned']], $this->told());
+	}
+
 	/** An event the owner did not tick reaches nobody. */
 	public function testOnlyTickedEventsAreTold(): void {
 		$this->listed = [$this->user('bea')];
@@ -99,6 +148,52 @@ class BookingNoticesTest extends TestCase {
 		$this->notices()->tell($this->vehicle(['cancelled']), $this->booking('ann'), Vehicle::NOTICE_CANCELLED, 'owner');
 
 		$this->assertSame(['bea'], array_column($this->sent, 'user'));
+	}
+
+	/**
+	 * A booking made for Ann tells her once, in the notice she confirms, and the list as usual
+	 * without her and without its maker (docs/architecture.md#booking-for-a-driver).
+	 */
+	public function testTheDriverBookedForHearsOnceAndTheListWithoutThem(): void {
+		$this->listed = [$this->user('ann'), $this->user('bea'), $this->user('owner')];
+		$booking = $this->booking('ann');
+		$booking->setCreatedBy('owner');
+
+		$notices = $this->notices();
+
+		$told = $notices->tellBookedFor($this->vehicle(), $booking);
+		$notices->tell($this->vehicle(), $booking, Vehicle::NOTICE_BOOKED, 'owner', $told);
+
+		$this->assertSame([['ann', BookingNotices::BOOKED_FOR], ['bea', Vehicle::NOTICE_BOOKED]], $this->told());
+		$this->assertSame(BookingNotices::MADE_FOR, $this->sent[0]['object']);
+	}
+
+	/** A driver whose own notice failed still hears from the list. */
+	public function testADriverNotToldInPersonIsLeftToTheList(): void {
+		$this->listed = [$this->user('ann')];
+		$this->failFor = 'ann';
+		$booking = $this->booking('ann');
+		$booking->setCreatedBy('owner');
+		$notices = $this->notices(errors: 1);
+
+		$told = $notices->tellBookedFor($this->vehicle(), $booking);
+
+		$this->assertSame([], $told);
+	}
+
+	/** Ann's cancel of a booking made for her tells its maker once, the rest of the list as usual. */
+	public function testTheMakerHearsOfTheDriversCancelOnce(): void {
+		$this->listed = [$this->user('owner', [Vehicle::NOTICE_CANCELLED]), $this->user('bea', [Vehicle::NOTICE_CANCELLED])];
+		$booking = $this->booking('ann');
+		$booking->setCreatedBy('owner');
+		$booking->setState(Booking::CANCELLED);
+
+		$notices = $this->notices();
+
+		$told = $notices->tellCancelledByBooker($this->vehicle(), $booking);
+		$notices->tellSettled($this->vehicle(), $booking, true, 'ann', $told);
+
+		$this->assertSame([['owner', BookingNotices::CANCELLED_BY_BOOKER], ['bea', Vehicle::NOTICE_CANCELLED]], $this->told());
 	}
 
 	/** Sent after the booking stands: one listener nobody can tell leaves the rest told. */
@@ -209,6 +304,7 @@ class BookingNoticesTest extends TestCase {
 
 			return in_array($uid, $this->seeing, true);
 		});
+		$access->method('holders')->willReturnCallback(fn (Vehicle $vehicle, string $operation): array => $operation === VehicleAccess::EDIT ? $this->approving : []);
 		$bookings = $this->createMock(BookingMapper::class);
 		$bookings->method('findWaiting')->willReturnCallback(function (): array {
 			$this->waitingRead++;
@@ -230,7 +326,7 @@ class BookingNoticesTest extends TestCase {
 		$logger = $this->createMock(LoggerInterface::class);
 		$logger->expects($this->exactly($errors))->method('error');
 
-		return new BookingNotices($bookings, $this->createMock(AccessMapper::class), $recipients, new Names($this->createMock(IUserManager::class), $groups), $access, $notifications, $clock, $logger);
+		return new BookingNotices($bookings, $recipients, new Names($this->createMock(IUserManager::class), $groups), $access, $notifications, $clock, $logger);
 	}
 
 	/** A notification that records itself in `sent` once it names its subject, and in `drafts` for markProcessed(). */
@@ -294,12 +390,19 @@ class BookingNoticesTest extends TestCase {
 		return $booking;
 	}
 
-	private function user(string $uid): BookingRecipient {
-		return BookingRecipient::fromRow(['vehicle_id' => '4', 'user_id' => $uid, 'group_id' => null]);
+	/** @return list<array{string, string}> who heard of what, in the order sent */
+	private function told(): array {
+		return array_map(static fn (array $one): array => [$one['user'], $one['subject']], $this->sent);
 	}
 
-	private function group(string $gid): BookingRecipient {
-		return BookingRecipient::fromRow(['vehicle_id' => '4', 'user_id' => null, 'group_id' => $gid]);
+	/** @param list<string>|null $events */
+	private function user(string $uid, ?array $events = null): BookingRecipient {
+		return BookingRecipient::fromRow(['vehicle_id' => '4', 'user_id' => $uid, 'group_id' => null, 'events' => $events === null ? null : json_encode($events)]);
+	}
+
+	/** @param list<string>|null $events */
+	private function group(string $gid, ?array $events = null): BookingRecipient {
+		return BookingRecipient::fromRow(['vehicle_id' => '4', 'user_id' => null, 'group_id' => $gid, 'events' => $events === null ? null : json_encode($events)]);
 	}
 
 	private function account(string $uid): IUser {

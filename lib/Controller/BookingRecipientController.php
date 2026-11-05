@@ -43,7 +43,7 @@ class BookingRecipientController extends Controller {
 		$params = $this->request->getParams();
 
 		return $this->answer(fn (): DataResponse => new DataResponse(
-			$this->service->addBooking($this->userId(), $uuid, $params['recipient'] ?? null, $params['recipient_type'] ?? null),
+			$this->service->addBooking($this->userId(), $uuid, $params['recipient'] ?? null, $params['recipient_type'] ?? null, $params['events'] ?? null),
 		));
 	}
 

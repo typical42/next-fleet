@@ -293,6 +293,28 @@ function mine(booking) {
 }
 
 /**
+ * Who made a booking that an approver made for its booker, as that booker reads it; whether its
+ * booker has seen it yet, as an approver reads it while the car is still to be taken. Nothing
+ * waits on it either way (docs/architecture.md#booking-for-a-driver).
+ *
+ * @param {import('../services/api.js').Booking} booking - as listed
+ * @return {string} the words, or empty for a booking its booker made
+ */
+function madeFor(booking) {
+	if (booking.created_by === booking.user_id) {
+		return ''
+	}
+	if (mine(booking)) {
+		return t('nextfleet', 'Booked for you by {name}', { name: booking.created_by_name })
+	}
+	if (booking.state === 'booked' && booking.seen_at === null && may(props.vehicle, 'edit')) {
+		return t('nextfleet', 'Not seen yet by {name}', { name: booking.user_name })
+	}
+
+	return ''
+}
+
+/**
  * @param {import('../services/api.js').Booking} booking - as listed
  * @return {string} where it stands, in words
  */
@@ -405,6 +427,7 @@ async function sendAnswer(booking, answer) {
 							<span>{{ booking.user_name }}</span>
 							<span v-if="booking.purpose" class="bookings__purpose">{{ booking.purpose }}</span>
 							<span class="bookings__state">{{ stateWord(booking) }}</span>
+							<span v-if="madeFor(booking)" class="bookings__state">{{ madeFor(booking) }}</span>
 							<span v-if="booking.approval_comment" class="bookings__purpose">{{ t('nextfleet', 'Comment: {comment}', { comment: booking.approval_comment }) }}</span>
 							<span v-for="flag in booking.flags ?? []" :key="flag" class="bookings__flag">{{ FLAG_WORDS[flag] ?? flag }}</span>
 							<span v-if="booking.trip_voided" class="bookings__state">{{ t('nextfleet', 'Trip voided') }}</span>

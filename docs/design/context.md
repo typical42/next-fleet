@@ -28,21 +28,26 @@ flowchart LR
         costs(["See the costs, print the Mileage Claim<br/>costs"])
         log(["Log an Entry, change one they entered<br/>log"])
         book(["Book an active vehicle<br/>log"])
+        takeNow(["Take it now without Approval, back by midnight<br/>take_now"])
         edit(["Change the vehicle, its Reminders<br/>and Recipients<br/>edit"])
         any(["Change and delete anybody's Entry<br/>edit, delete"])
         import(["Import Entries from a CSV file<br/>edit"])
         answer(["Answer a Booking that waits for Approval<br/>edit"])
+        bookFor(["Book for a driver<br/>edit"])
+        seen(["Confirm a Booking made for them<br/>view, as its booker"])
         grant(["Grant, re-role and revoke access<br/>own"])
         exist(["Delete and restore the vehicle<br/>own"])
         share(["Share the costs with drivers and viewers<br/>own"])
         notices(["Choose who hears of bookings, and of what<br/>own"])
         gate(["Make bookings wait for Approval<br/>own"])
+        block(["Block one driver's Take it now<br/>own"])
     end
     Viewer --- read & print
     Viewer -.-|while the owner shares them| costs
-    Driver --- log & book
-    Manager --- edit & any & import & costs & answer
-    Owner --- grant & exist & share & notices & gate
+    Driver --- log & book & seen
+    Driver -.-|unless the owner blocked it| takeNow
+    Manager --- edit & any & import & costs & takeNow & answer & bookFor
+    Owner --- grant & exist & share & notices & gate & block
 ```
 
 ### Access
@@ -108,6 +113,7 @@ flowchart LR
 
 A booking is the booker's.
 A manager may change, cancel, check out and check in anybody's ([bookings](../architecture.md#bookings), [the Bookings section](../ui.md#the-bookings-section)).
+A manager may also book for a driver, who confirms it with *Seen* ([booking for a driver](../architecture.md#booking-for-a-driver)).
 
 ```mermaid
 flowchart LR
@@ -121,13 +127,18 @@ flowchart LR
         logTrip(["Log the Trip from the Booking"])
         photo(["Attach a handover photo"])
         cancel(["Cancel a Booking"])
+        bookFor(["Book for a driver"])
+        seen(["Confirm a Booking made for them"])
         notify(["Notify the booker"])
+        notifyMaker(["Notify the maker"])
     end
-    Driver --- book & change & checkOut & checkIn & cancel
-    Manager --- change & checkOut & checkIn & cancel
+    Driver --- book & change & checkOut & checkIn & cancel & seen
+    Manager --- change & checkOut & checkIn & cancel & bookFor
     logTrip -.->|«extend»| checkIn
     photo -.->|«extend»| checkOut & checkIn
     notify -.->|«extend» cancelled by another| cancel
+    notify -.->|«extend» made for the driver| bookFor
+    notifyMaker -.->|«extend» cancelled by the driver it was made for| cancel
 ```
 
 ### Reminders

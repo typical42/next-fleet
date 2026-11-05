@@ -119,6 +119,7 @@ class Notifier implements INotifier {
 			BookingNotices::OBJECT => $this->cancelled($l, $user, $vehicle, $notification->getObjectId()),
 			BookingNotices::EVENT => $this->bookingEvent($l, $user, $vehicle, $notification->getObjectId(), $notification->getSubject(), $p),
 			BookingNotices::APPROVAL => $this->approval($l, $user, $vehicle, $notification, $p),
+			BookingNotices::MADE_FOR => $this->madeFor($l, $user, $vehicle, $notification, $p),
 			default => $this->reminded($l, $user, $vehicle, (int)$notification->getObjectId(), $notification->getSubject(), $p),
 		};
 		$notification->setParsedSubject($subject)->setIcon($icon);
@@ -358,6 +359,59 @@ class Notifier implements INotifier {
 				: $l->t('%1$s declined your booking of %2$s from %3$s', [$by, $name, $at('starts_at')]),
 			default => throw new UnknownNotificationException(),
 		};
+	}
+
+	/**
+	 * A booking an approver made for somebody else (BookingNotices::tellBookedFor() and
+	 * tellCancelledByBooker()), with the names the booking carries now. The booker's notice holds
+	 * the button that confirms it, and stands until they do or the booking is cancelled; the
+	 * maker's stands while the booking stays cancelled. Each only while the reader sees the
+	 * vehicle, for the reason cancelled() gives.
+	 *
+	 * @param array<string, mixed> $p
+	 * @throws UnknownNotificationException for a subject this app does not send
+	 * @throws AlreadyProcessedException if the booking is gone, confirmed or no longer where it stood, or the reader lost the vehicle
+	 * @throws \OCP\DB\Exception
+	 */
+	private function madeFor(IL10N $l, string $user, Vehicle $vehicle, INotification $notification, array $p): string {
+		if (!$this->sees($user, $vehicle)) {
+			throw new AlreadyProcessedException();
+		}
+		try {
+			$booking = $this->bookings->findOnVehicle((int)$vehicle->getId(), $notification->getObjectId());
+		} catch (DoesNotExistException) {
+			throw new AlreadyProcessedException();
+		}
+		$cancelled = $booking->getState() === Booking::CANCELLED;
+		$name = VehicleWords::name($l, $vehicle);
+		$at = self::at($l, $p);
+		$nameOf = fn (string $uid): string => $this->users->getDisplayName($uid) ?? $uid;
+
+		switch ($notification->getSubject()) {
+			case BookingNotices::BOOKED_FOR:
+				if ($cancelled || $booking->getSeenAt() !== null) {
+					throw new AlreadyProcessedException();
+				}
+				// What the button confirms is the booking as it stands, moved since or not.
+				$at = self::at($l, BookingNotices::span($booking));
+				$seen = $notification->createAction();
+				$seen->setLabel('seen')
+					// TRANSLATORS: a button on a notice: the driver confirms that they saw a booking made for them.
+					->setParsedLabel($l->t('Seen'))
+					->setLink($this->urls->linkToOCSRouteAbsolute('nextfleet.ocs\booking.seen', ['uuid' => $vehicle->getUuid(), 'booking' => $booking->getUuid()]), 'POST')
+					->setPrimary(true);
+				$notification->addParsedAction($seen);
+
+				return $l->t('%1$s booked %2$s for you from %3$s to %4$s', [$nameOf($booking->getCreatedBy()), $name, $at('starts_at'), $at('ends_at')]);
+			case BookingNotices::CANCELLED_BY_BOOKER:
+				if (!$cancelled) {
+					throw new AlreadyProcessedException();
+				}
+
+				return $l->t('%1$s cancelled the booking of %2$s from %3$s that you made for them', [$nameOf($booking->getUserId()), $name, $at('starts_at')]);
+			default:
+				throw new UnknownNotificationException();
+		}
 	}
 
 	/** A notice is a line, not a letter: the booking shows the whole text. */

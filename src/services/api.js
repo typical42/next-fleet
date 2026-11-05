@@ -38,12 +38,15 @@ import { t } from '../utils/l10n.js'
  * @property {string} [reminder_mail] - how often the reminder digest covers it: `off`, `daily`,
  *   `weekly` or `monthly`
  * @property {boolean} [costs_shared] - drivers and viewers see what it costs; the owner's to change
- * @property {string[]} [booking_notices] - the booking events its notice list hears: `booked`,
- *   `taken`, `returned`, `cancelled`, `changed`; the owner's to change
- * @property {boolean} [booking_approval] - whether a driver's booking waits for an answer; the
- *   owner's to change
+ * @property {string[]} [booking_notices] - the booking events the owner hears while the notice
+ *   list is empty, and a new recipient starts with: `booked`, `taken`, `returned`, `cancelled`,
+ *   `changed`; the owner's to change
+ * @property {boolean} [booking_approval] - whether a driver's booking waits for an answer, as
+ *   `booking_approval_rule` makes it
+ * @property {'default'|'always'|'never'} [booking_approval_rule] - whether it does as the owner's
+ *   default says, always or never; the owner's to change
  * @property {string[]} [may] - what the session may do on it: `view`, `log`, `edit`, `delete`,
- *   `own`, `costs` (CONTEXT.md, Vehicle Access), and `book` - `log` on a car in service; the
+ *   `own`, `costs`, `take_now` (CONTEXT.md, Vehicle Access), and `book` - `log` on a car in service; the
  *   server's answer, never a field a client sends
  * @property {string|null} [owned_by] - the owner's display name when the session reached it through
  *   a grant; null on the session's own
@@ -457,6 +460,10 @@ import { t } from '../utils/l10n.js'
  *   where the vehicle asks for none (docs/api.md#booking-approval)
  * @property {string|null} approval_comment - the last answer's comment
  * @property {string|null} approval_by - who gave the last answer
+ * @property {string} created_by - who made it: the booker, or the approver who booked it for them
+ * @property {string} created_by_name - their display name, or the account where it has none
+ * @property {number|null} seen_at - when the booker confirmed a booking made for them; null until
+ *   then, and to anyone but the booker and the approvers
  * @property {string[]} may - what the session may do to it: `edit`, `cancel`, `check_out`, `check_in`,
  *   `log_trip`, `attach` (a handover photo, once handed over), `open_trip` where the trip it
  *   became is the session's to open, as its timeline row says, and `approve`, `ask` and `decline`
@@ -500,11 +507,14 @@ import { t } from '../utils/l10n.js'
  * The options travel with the values because a dropdown needs both.
  *
  * @typedef {object} Settings
- * @property {{ jurisdiction: string, dismissed_hints: string[], dismissed_logbook_hints: string[], reclaim_vat: boolean, kpi_period: string, grid_factor: number|null, inbox_folder: number|null }} preferences -
+ * @property {{ jurisdiction: string, dismissed_hints: string[], dismissed_logbook_hints: string[], reclaim_vat: boolean, kpi_period: string, grid_factor: number|null, inbox_folder: number|null, booking_approval?: boolean }} preferences -
  *   this user's own choices: the country new vehicles are kept under, the vehicles whose "complete
  *   this vehicle" hint they have answered, whether cost figures are net of VAT, the period the
- *   vehicle header shows, their electricity's grams of CO₂ per kWh (null for the country's), and
- *   the file id of their inbox folder (null for none; kept even once the folder is gone)
+ *   vehicle header shows, their electricity's grams of CO₂ per kWh (null for the country's),
+ *   the file id of their inbox folder (null for none; kept even once the folder is gone), and
+ *   whether bookings wait for an answer on their vehicles that follow this default
+ * @property {boolean} [owns_shared] - whether they own a vehicle somebody else uses or used, the
+ *   vehicles that default is for
  * @property {{ key: string, name: string, logbook_export: boolean, mileage_claim: boolean, logbook_rules: boolean, grid_factor: {grams: number, year: number, source: string}|null }[]} jurisdictions -
  *   the registered countries, English, whether each prints a logbook and a mileage claim, and its grid average
  */
@@ -1066,6 +1076,7 @@ export async function removeRecipient(uuid, userId) {
  * @property {string} recipient - the account or the group
  * @property {'user'|'group'} recipient_type - which of the two
  * @property {string} display_name - its name, or the recipient where it has none any more
+ * @property {string[]} events - the booking events it hears, of the five a vehicle's `booking_notices` names
  */
 
 /**
@@ -1079,14 +1090,20 @@ export async function listBookingRecipients(uuid) {
 }
 
 /**
- * Put an account or a group on the list; the owner's alone. No token, as addRecipient() sends none.
+ * Put an account or a group on the list, or set the events of one on it; the owner's alone. No
+ * token, as addRecipient() sends none. Without events, a new one hears the vehicle's and one on
+ * the list keeps its own.
  *
  * @param {string} uuid - the vehicle
- * @param {{ recipient: string, recipient_type: 'user'|'group' }} whom - the account or the group
+ * @param {{ recipient: string, recipient_type: 'user'|'group', events?: string[] }} whom - the account or the group
  * @return {Promise<BookingRecipient[]>} the list as it now stands
  */
 export async function addBookingRecipient(uuid, whom) {
-	return request('POST', `/api/vehicles/${uuid}/booking-recipients`, { recipient: whom.recipient, recipient_type: whom.recipient_type })
+	return request('POST', `/api/vehicles/${uuid}/booking-recipients`, {
+		recipient: whom.recipient,
+		recipient_type: whom.recipient_type,
+		...(whom.events === undefined ? {} : { events: whom.events }),
+	})
 }
 
 /**
@@ -1164,6 +1181,7 @@ export async function searchUsers(term) {
  * @property {'user'|'group'} grantee_type - which of the two
  * @property {string} display_name - its name, or the grantee where it has none any more
  * @property {'viewer'|'driver'|'manager'} role - what it may do
+ * @property {boolean} take_now - whether a driver's Take it now, back by midnight, skips approval
  */
 
 /**
@@ -1190,10 +1208,11 @@ export async function addGrant(uuid, whom, role) {
  * @param {string} uuid - the vehicle
  * @param {string} grant - the grant's uuid
  * @param {string} role - its new role
+ * @param {boolean} [takeNow] - whether its Take it now skips approval; kept as it is unless given
  * @return {Promise<Grant[]>} the list as it now stands
  */
-export async function changeGrant(uuid, grant, role) {
-	return request('PUT', `/api/vehicles/${uuid}/grants/${grant}`, { role })
+export async function changeGrant(uuid, grant, role, takeNow) {
+	return request('PUT', `/api/vehicles/${uuid}/grants/${grant}`, takeNow === undefined ? { role } : { role, take_now: takeNow })
 }
 
 /**
@@ -1337,6 +1356,15 @@ export async function closeGap(uuid, gap) {
 		from_at: gap.from_at,
 		to_at: gap.to_at,
 	})
+}
+
+/**
+ * Where the app's own settings are: on the personal settings page (lib/Settings/).
+ *
+ * @return {string} the page's address
+ */
+export function settingsUrl() {
+	return generateUrl('/settings/user/additional')
 }
 
 /**
@@ -1503,10 +1531,22 @@ export async function listBookings(uuid, { from } = {}) {
 }
 
 /**
- * Book the vehicle for the session. No token: nothing was read that it could lose a race against.
+ * Whom the owner or a manager may book the vehicle for: everybody who may book it, the session
+ * included, by name. Anyone else is refused.
  *
  * @param {string} uuid - the vehicle
- * @param {object} fields - the span, each end with its offset, and the purpose
+ * @return {Promise<Recipient[]>} the accounts, by display name
+ */
+export async function listBookers(uuid) {
+	return request('GET', `/api/vehicles/${uuid}/bookers`)
+}
+
+/**
+ * Book the vehicle for the session, or, as the owner or a manager, for `user_id`. No token: nothing
+ * was read that it could lose a race against.
+ *
+ * @param {string} uuid - the vehicle
+ * @param {object} fields - the span, each end with its offset, the purpose, and whom it is for
  * @return {Promise<Booking>} the booking as the server wrote it
  * @throws {BookingConflictError} when another live booking holds part of the span
  */

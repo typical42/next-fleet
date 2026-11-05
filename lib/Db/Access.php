@@ -23,6 +23,7 @@ use OCP\DB\Types;
  * @method void setGranteeType(string $granteeType)
  * @method string getRole()
  * @method void setRole(string $role)
+ * @method void setTakeNow(?bool $takeNow)
  */
 class Access extends BaseEntity {
 	public const USER = 'user';
@@ -32,6 +33,12 @@ class Access extends BaseEntity {
 	protected string $grantee = '';
 	protected string $granteeType = '';
 	protected string $role = '';
+	/**
+	 * Whether a driver's Take it now, back by midnight, skips approval (VehicleAccess::TAKE_NOW).
+	 * Null reads as allowed, the column's default: a boolean column cannot be NOT NULL on every
+	 * database.
+	 */
+	protected ?bool $takeNow = true;
 
 	public function __construct() {
 		parent::__construct();
@@ -39,5 +46,10 @@ class Access extends BaseEntity {
 		$this->addType('grantee', Types::STRING);
 		$this->addType('granteeType', Types::STRING);
 		$this->addType('role', Types::STRING);
+		$this->addType('takeNow', Types::BOOLEAN);
+	}
+
+	public function takesNow(): bool {
+		return $this->takeNow !== false;
 	}
 }

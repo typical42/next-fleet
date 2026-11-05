@@ -26,6 +26,12 @@ class BookingTest extends TestCase {
 		$this->assertFalse(self::booking(Booking::CANCELLED, Booking::ASKED)->waits());
 	}
 
+	/** Made by somebody other than its booker: an approver booked it for them (docs/architecture.md#booking-for-a-driver). */
+	public function testABookingByAnotherHandIsMadeForItsBooker(): void {
+		$this->assertTrue(Booking::fromRow(['user_id' => 'ben', 'created_by' => 'anna'])->madeByAnother());
+		$this->assertFalse(Booking::fromRow(['user_id' => 'ben', 'created_by' => 'ben'])->madeByAnother());
+	}
+
 	private static function booking(string $state, ?string $approval): Booking {
 		return Booking::fromRow(['state' => $state, 'approval' => $approval]);
 	}

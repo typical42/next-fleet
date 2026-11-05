@@ -151,6 +151,8 @@ mail      axllent/mailpit     SMTP on :1025, web UI on :8025
 It holds the awkward cases on purpose: a counter that went backwards, a plug-in hybrid, a vehicle in hours, a truck with engine hours, an unfinished vehicle, costs in every month, reminders and two papers.
 It writes through the services, so a fleet it cannot write is a fleet the app cannot hold.
 `--grant-to <uid>` makes the Passat shared, with a trip and a booking by that account, and gives it the Volvo, whose costs drivers do not see and whose bookings need approval, with a booking by that account waiting for it.
+The Volvo then is a pool car with every booking rule set ([`nextfleet:seed`](admin/occ.md#nextfleetseed)).
+`tests/e2e/demo-fleet.spec.js` needs the seed without `--grant-to`, so reseed before E2E.
 
 **E2E:** `npm run test:e2e` runs one Playwright project per major, so a failure names the version.
 `npm run test:e2e:docker` runs the same specs in Playwright's own image, when you cannot install Chromium's packages.

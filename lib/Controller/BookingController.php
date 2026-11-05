@@ -116,6 +116,23 @@ class BookingController extends Controller {
 		return $this->answered($uuid, $booking, Booking::DECLINED);
 	}
 
+	/**
+	 * The booker confirms a booking an approver made for them. No token: it changes nothing the
+	 * booking plans.
+	 *
+	 * @param string $booking the booking's uuid
+	 */
+	#[NoAdminRequired]
+	#[UserRateLimit(limit: 60, period: 60)]
+	public function seen(string $uuid, string $booking): DataResponse {
+		return $this->answer(fn (): DataResponse => new DataResponse($this->service->seen($this->userId(), $uuid, $booking)));
+	}
+
+	#[NoAdminRequired]
+	public function bookers(string $uuid): DataResponse {
+		return $this->answer(fn (): DataResponse => new DataResponse($this->service->bookers($this->userId(), $uuid)));
+	}
+
 	/** @param value-of<BookingService::ANSWERS> $answer */
 	private function answered(string $uuid, string $booking, string $answer): DataResponse {
 		return $this->checked(fn (int $token): array => $this->service->answer($this->userId(), $uuid, $booking, $token, $answer, $this->request->getParams()));

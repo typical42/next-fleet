@@ -28,6 +28,11 @@ class UpgradeCheckScriptTest extends TestCase {
 	private const DISABLED = '{"level":3,"app":"no app in context","message":"App \"Array\" cannot be installed because the following dependencies are not fulfilled: Server version 34 or lower is required.","exception":{"Exception":"Exception","Message":"App \"Array\" cannot be installed because the following dependencies are not fulfilled: Server version 34 or lower is required.","Trace":[{"function":"upgradeAppStoreApps","class":"OC\\\\Updater","args":[["*** sensitive parameters replaced ***"],{"nextfleet":"yes"}]}]}}';
 	private const REPLAY = '{"level":2,"app":"nextfleet","message":"Could not replay migrations for disabled app {app}","exception":{"Exception":"TypeError","Message":"OCA\\\\NextFleet\\\\Migration\\\\Version000001Date20260101000000::common(): Argument #1 ($table) must be of type Doctrine\\\\DBAL\\\\Schema\\\\Table, OC\\\\DB\\\\Schema\\\\Table given, called in /var/www/html/custom_apps/nextfleet/lib/Migration/Version000001Date20260101000000.php on line 35"}}';
 
+	/** The migration that lets a vehicle follow its owner's approval. */
+	private const APPROVAL_RULE = '000011Date20261104000000';
+	/** The stub's tables and columns when the vehicles carry an approval. */
+	private const WITH_APPROVAL = ['CHECK_TABLES' => 'oc_fleet_trips oc_fleet_vehicles', 'CHECK_COLUMNS' => 'booking_approval id'];
+
 	private string $dir;
 	private string $log;
 
@@ -142,15 +147,17 @@ class UpgradeCheckScriptTest extends TestCase {
 							if [ "$1" = sqlplus ]; then
 								d=$(cat "$state/current")
 								sql=$(cat)
+								# sqlplus reads its query on stdin, which the line above does not log.
+								printf '%s\n' "$sql" >>"$CHECK_LOG"
 							else
 								d=$5
 								for sql; do :; done
 							fi
 							case $sql in
 								*oc_migrations*) cat "$state/$d.ran" ;;
-								*information_schema.tables* | *user_tables*) echo oc_fleet_trips ;;
+								*information_schema.tables* | *user_tables*) printf '%s\n' ${CHECK_TABLES:-oc_fleet_trips} ;;
 								*column_type* | *data_type* | *information_schema.statistics* | *pg_indexes* | *user_indexes* | *user_sequences* | *user_triggers*) echo shape ;;
-								*information_schema.columns* | *user_tab_columns*) echo id ;;
+								*information_schema.columns* | *user_tab_columns*) printf '%s\n' ${CHECK_COLUMNS:-id} ;;
 								*md5* | *'checksum('*) echo 0cc175b9 ;;
 								*'count(*)'*) echo 1 ;;
 								*'select v."uuid"'*) echo v1 ;;
@@ -336,6 +343,70 @@ class UpgradeCheckScriptTest extends TestCase {
 		$this->assertSame($servers, $passed[1]);
 	}
 
+	/**
+	 * A base with booking notices seeds nobody onto the list, and an empty table proves nothing, so
+	 * every path puts the owner on it before the rows are counted.
+	 */
+	public function testABaseWithBookingNoticesListsTheOwnerBeforeTheCount(): void {
+		[$status, $output] = $this->check('35', '', ['CHECK_TABLES' => 'oc_fleet_booking_recipients oc_fleet_trips']);
+
+		$this->assertSame(0, $status, $output);
+		$lines = file($this->log, FILE_IGNORE_NEW_LINES);
+		$this->assertIsArray($lines);
+		$posts = [];
+		$counts = [];
+		foreach ($lines as $i => $line) {
+			// The stub's echo breaks the line at curl's -w '\n', so the URL is the next one.
+			if (preg_match('/ exec -T (\w+) curl .*-X POST -d \{"recipient":"admin","recipient_type":"user"\} /', $line, $match)
+				&& str_ends_with($lines[$i + 1] ?? '', '/api/vehicles/v1/booking-recipients')) {
+				$posts[$match[1]] = $i;
+			}
+			if (str_contains($line, 'select count(*) from "oc_fleet_booking_recipients"')) {
+				$counts[] = $i;
+			}
+		}
+		$this->assertSame(['app31', 'app34', 'from34'], array_keys($posts));
+		$this->assertLessThan(min($counts), min($posts));
+	}
+
+	public function testABaseWithoutBookingNoticesIsAskedForNone(): void {
+		[$status, $output] = $this->check('35', '');
+
+		$this->assertSame(0, $status, $output);
+		$this->assertStringNotContainsString('booking-recipients', (string)file_get_contents($this->log));
+	}
+
+	/**
+	 * The approval-rule migration turns a vehicle's false into null on purpose. Each path expects
+	 * that of the base's rows, and of nothing else: the rows after the upgrade are read as they are.
+	 *
+	 * @dataProvider offByDatabase
+	 */
+	public function testTheApprovalRuleMigrationIsExpectedToTurnFalseIntoNull(string $db, string $off, int $paths): void {
+		[$status, $output] = $this->check('35', '', self::WITH_APPROVAL, $db, [self::APPROVAL_RULE]);
+
+		$this->assertSame(0, $status, $output);
+		$log = (string)file_get_contents($this->log);
+		$vehicles = '[^\n]* from "oc_fleet_vehicles"/';
+		$this->assertSame($paths, preg_match_all('/\(nullif\("booking_approval", ' . $off . '\), "id"' . $vehicles, $log), $log);
+		$this->assertSame($paths, preg_match_all('/\("booking_approval", "id"' . $vehicles, $log), $log);
+		$this->assertSame(0, preg_match_all('/nullif[^\n]* from "oc_fleet_trips"/', $log));
+	}
+
+	/** @return iterable<string, array{string, string, int}> the database, its false, its upgrade paths */
+	public static function offByDatabase(): iterable {
+		yield 'mariadb' => ['mariadb', '0', 3];
+		yield 'pgsql' => ['pgsql', 'false', 3];
+		yield 'oracle' => ['oracle', '0', 1];
+	}
+
+	public function testABaseThatRanTheApprovalRuleIsReadAsItIs(): void {
+		[$status, $output] = $this->check('35', '', self::WITH_APPROVAL, 'mariadb', [self::APPROVAL_RULE], [self::APPROVAL_RULE]);
+
+		$this->assertSame(0, $status, $output);
+		$this->assertStringNotContainsString('nullif', (string)file_get_contents($this->log));
+	}
+
 	/** @return iterable<string, array{string, list<string>}> */
 	public static function pathsByDatabase(): iterable {
 		$all = ['app31', 'app34', 'app35', 'app31', 'app34', 'to35'];
@@ -348,11 +419,13 @@ class UpgradeCheckScriptTest extends TestCase {
 	 * Runs the check of a 0.4.1 package over a 0.4.0 base that allows NC up to $baseMax.
 	 *
 	 * @param array<string, string> $env
+	 * @param list<string> $newMigrations run by the package on top of its usual three
+	 * @param list<string> $baseMigrations run by the base on top of its usual two
 	 * @return array{int, string} the exit status and stdout with stderr
 	 */
-	private function check(string $baseMax, string $upgradeLog, array $env = [], string $db = 'mariadb'): array {
-		$base = $this->package('0.4.0', $baseMax, ['000001Date20260101000000', '000002Date20260909000000']);
-		$new = $this->package('0.4.1', '35', ['000001Date20260101000000', '000002Date20260909000000', '000003Date20260919000000']);
+	private function check(string $baseMax, string $upgradeLog, array $env = [], string $db = 'mariadb', array $newMigrations = [], array $baseMigrations = []): array {
+		$base = $this->package('0.4.0', $baseMax, ['000001Date20260101000000', '000002Date20260909000000', ...$baseMigrations]);
+		$new = $this->package('0.4.1', '35', ['000001Date20260101000000', '000002Date20260909000000', '000003Date20260919000000', ...$newMigrations]);
 		file_put_contents($this->dir . '/upgrade.log', $upgradeLog === '' ? '' : $upgradeLog . "\n");
 
 		$command = 'sh ' . escapeshellarg($this->dir . '/repo/tools/upgrade-check.sh') . ' --db ' . escapeshellarg($db)

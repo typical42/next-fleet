@@ -196,7 +196,8 @@ test('a driver\'s booking waits for the owner\'s answer, only then is the car ta
 	await button(page, 'Edit vehicle').click()
 	const sheet = page.getByRole('dialog', { name: 'Edit vehicle' })
 	await opened(sheet)
-	await toggle(sheet, 'Bookings need approval').click()
+	await sheet.getByRole('combobox', { name: 'Bookings need approval' }).click()
+	await page.getByRole('option', { name: 'Always', exact: true }).click()
 	await sheet.getByRole('button', { name: 'Save' }).click()
 	await expect(sheet).toBeHidden()
 
@@ -247,7 +248,8 @@ test('a driver\'s take-now kept past midnight says it becomes a request, and sta
 	await button(page, 'Edit vehicle').click()
 	const sheet = page.getByRole('dialog', { name: 'Edit vehicle' })
 	await opened(sheet)
-	await toggle(sheet, 'Bookings need approval').click()
+	await sheet.getByRole('combobox', { name: 'Bookings need approval' }).click()
+	await page.getByRole('option', { name: 'Always', exact: true }).click()
 	await sheet.getByRole('button', { name: 'Save' }).click()
 	await expect(sheet).toBeHidden()
 
@@ -272,6 +274,33 @@ test('a driver\'s take-now kept past midnight says it becomes a request, and sta
 	await taking.getByRole('button').filter({ hasText: 'Close' }).click()
 	await expect(taking).toBeHidden()
 	await expect(screen.locator('.bookings__booking').getByText('Waiting for approval')).toBeVisible()
+})
+
+test('the owner books for a driver, who confirms it from Nextcloud\'s notifications', async ({ page, browser }, testInfo) => {
+	const { screen, vehicle } = await holding(page, browser, testInfo.project.name, 'driver')
+	const [{ grantee: driver }] = await api(page, { method: 'GET', path: `/api/vehicles/${vehicle.uuid}/grants` })
+
+	await page.goto(`${appPage}?vehicle=${vehicle.uuid}`)
+	await button(page, 'Book').click()
+	const sheet = page.getByRole('dialog', { name: 'Book vehicle' })
+	await opened(sheet)
+	await sheet.getByRole('combobox', { name: 'For' }).click()
+	// A long name is cut in two spans to ellipsise its middle (NcEllipsisedOption), so it is matched as text.
+	await page.getByRole('option').filter({ hasText: driver }).click()
+	await sheet.getByRole('button', { name: 'Book', exact: true }).click()
+	await expect(sheet).toBeHidden()
+	const theirs = page.locator('.bookings__booking')
+	await expect(theirs.getByText(`Not seen yet by ${driver}`)).toBeVisible()
+
+	await screen.reload()
+	await expect(screen.locator('.bookings__booking').getByText(/^Booked for you by /)).toBeVisible()
+	await screen.getByRole('button', { name: 'Notifications' }).click()
+	await screen.getByRole('button', { name: 'Seen', exact: true }).click()
+	await expect(screen.getByRole('button', { name: 'Seen', exact: true })).toHaveCount(0)
+
+	await page.reload()
+	await expect(theirs.getByText('Booked', { exact: true })).toBeVisible()
+	await expect(theirs.getByText(/Not seen yet/)).toHaveCount(0)
 })
 
 test('a viewer is offered nothing that writes', async ({ page, browser }, testInfo) => {

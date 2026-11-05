@@ -31,6 +31,7 @@ use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\MoneyRows;
 use OCA\NextFleet\Service\NotificationService;
 use OCA\NextFleet\Service\OdometerService;
+use OCA\NextFleet\Service\RecipientService;
 use OCA\NextFleet\Service\ReminderService;
 use OCA\NextFleet\Service\SyncEpoch;
 use OCA\NextFleet\Service\TripService;
@@ -54,6 +55,8 @@ use Symfony\Component\Console\Tester\CommandTester;
 class SeedCommandTest extends TestCase {
 	private const OWNER = 'alice';
 	private const DRIVER = 'bob';
+	private const SECOND = 'cara';
+	private const ACCOUNTS = [self::OWNER, self::DRIVER, self::SECOND];
 
 	/** The vehicles the mapper was handed, in the order the command wrote them. @var list<Vehicle> */
 	private array $written = [];
@@ -95,10 +98,10 @@ class SeedCommandTest extends TestCase {
 		$this->users = $this->createMock(IUserManager::class);
 		// Whatever the case, as the database backend finds a uid.
 		$this->users->method('userExists')->willReturnCallback(
-			static fn (string $userId): bool => in_array(strtolower($userId), [self::OWNER, self::DRIVER], true),
+			static fn (string $userId): bool => in_array(strtolower($userId), self::ACCOUNTS, true),
 		);
 		$this->users->method('get')->willReturnCallback(function (string $name): ?IUser {
-			$uid = in_array(strtolower($name), [self::OWNER, self::DRIVER], true) ? strtolower($name) : null;
+			$uid = in_array(strtolower($name), self::ACCOUNTS, true) ? strtolower($name) : null;
 			if ($uid === null) {
 				return null;
 			}
@@ -198,7 +201,7 @@ class SeedCommandTest extends TestCase {
 	}
 
 	/** @param string $setting the jurisdiction the seeding account has chosen for itself */
-	private function tester(string $setting = Jurisdictions::DEFAULT): CommandTester {
+	private function tester(string $setting = Jurisdictions::DEFAULT, ?RecipientService $recipients = null): CommandTester {
 		$config = $this->createMock(IConfig::class);
 		$config->method('getUserValue')->willReturn($setting);
 
@@ -244,6 +247,7 @@ class SeedCommandTest extends TestCase {
 			$this->trips,
 			$this->grants,
 			$this->bookings,
+			$recipients ?? $this->createMock(RecipientService::class),
 			$this->createMock(DocumentService::class),
 			// SeedTest reads the trips and the papers back for real.
 			$this->createMock(SeedPapers::class),
@@ -264,6 +268,7 @@ class SeedCommandTest extends TestCase {
 			$this->trips,
 			$this->grants,
 			$this->bookings,
+			$this->createMock(RecipientService::class),
 			$this->createMock(DocumentService::class),
 			$this->createMock(SeedPapers::class),
 			$this->createMock(ITimeFactory::class),
@@ -303,16 +308,17 @@ class SeedCommandTest extends TestCase {
 		$this->grants->method('grant')->willReturnCallback(
 			function (string $userId, string $uuid, array $fields) use (&$granted): array {
 				$this->assertSame(self::OWNER, $userId);
-				$this->assertSame(['grantee' => self::DRIVER, 'grantee_type' => 'user', 'role' => 'driver'], $fields);
-				$granted[] = $this->plateOf($uuid);
+				$this->assertSame(['grantee' => self::DRIVER, 'grantee_type' => 'user', 'role' => 'driver'], array_diff_key($fields, ['take_now' => true]));
+				$granted[] = [$this->plateOf($uuid), $fields['take_now']];
 
 				return [];
 			},
 		);
 
-		$this->assertSame(0, $tester->execute(['user' => self::OWNER, '--grant-to' => self::DRIVER]), $tester->getDisplay());
-		// And the Volvo, whose costs the owner keeps from drivers, so the switch has a car to show on.
-		$this->assertSame(['NF-DE 100', 'NF-PH 200'], $granted);
+		$this->assertSame(0, $tester->execute(['user' => self::OWNER, '--grant-to' => [self::DRIVER]]), $tester->getDisplay());
+		// And the Volvo, whose costs the owner keeps from drivers, so the switch has a car to show
+		// on - and where this driver asks for each Take it now.
+		$this->assertSame([['NF-DE 100', true], ['NF-PH 200', false]], $granted);
 		$this->assertFalse($this->fleet()['NF-PH 200']->sharesCosts());
 		$this->assertTrue($this->fleet()['NF-DE 100']->sharesCosts());
 
@@ -328,27 +334,117 @@ class SeedCommandTest extends TestCase {
 	 * And a booking of theirs, so the Bookings section and the overview have a pool to show: the
 	 * Passat tomorrow from 09:00 to 12:00 in Berlin. The clock reads 01:00 on 2026-01-01 there
 	 * (CET, +60 minutes), so tomorrow 09:00 is 08:00 UTC on the 2nd. And the Volvo from 14:00 to
-	 * 17:00, which waits for the owner's answer.
+	 * 17:00, which waits for the owner's answer. The owner booked the Volvo for them from 18:00 to
+	 * 20:00, so the account is never booked twice at once.
 	 */
 	public function testTheAccountItIsAskedToGrantBooksThePassatTomorrowMorningAndAsksForTheVolvo(): void {
 		$tester = $this->tester();
 		$booked = [];
-		$this->bookings->expects($this->exactly(2))->method('book')->willReturnCallback(
+		$this->bookings->expects($this->exactly(3))->method('book')->willReturnCallback(
 			function (string $userId, string $uuid, array $fields) use (&$booked): array {
-				$this->assertSame(self::DRIVER, $userId);
-				$booked[] = [$this->plateOf($uuid), $fields['starts_at'], $fields['starts_at_off'], $fields['ends_at'], $fields['ends_at_off']];
+				$booked[] = [$userId, $fields['user_id'] ?? null, $this->plateOf($uuid), $fields['starts_at'], $fields['starts_at_off'], $fields['ends_at'], $fields['ends_at_off']];
 
 				return [];
 			},
 		);
 
-		$this->assertSame(0, $tester->execute(['user' => self::OWNER, '--grant-to' => self::DRIVER]), $tester->getDisplay());
+		$this->assertSame(0, $tester->execute(['user' => self::OWNER, '--grant-to' => [self::DRIVER]]), $tester->getDisplay());
 		$this->assertSame([
-			['NF-DE 100', 1767340800, 60, 1767351600, 60],
-			['NF-PH 200', 1767358800, 60, 1767369600, 60],
+			[self::DRIVER, null, 'NF-DE 100', 1767340800, 60, 1767351600, 60],
+			[self::DRIVER, null, 'NF-PH 200', 1767358800, 60, 1767369600, 60],
+			[self::OWNER, self::DRIVER, 'NF-PH 200', 1767373200, 60, 1767380400, 60],
 		], $booked);
-		$this->assertTrue($this->fleet()['NF-PH 200']->needsApproval());
-		$this->assertFalse($this->fleet()['NF-DE 100']->needsApproval());
+	}
+
+	/**
+	 * The Volvo is the pool car: it follows the owner's default, which the seed turns on before the
+	 * first booking, so the request waits. The Passat says Never.
+	 */
+	public function testThePoolCarFollowsTheOwnersDefaultAndThePassatNeverAsks(): void {
+		$tester = $this->tester();
+
+		$this->assertSame(0, $tester->execute(['user' => self::OWNER, '--grant-to' => [self::DRIVER]]), $tester->getDisplay());
+		$this->assertSame(Vehicle::APPROVAL_DEFAULT, $this->fleet()['NF-PH 200']->approvalRule());
+		$this->assertSame(Vehicle::APPROVAL_NEVER, $this->fleet()['NF-DE 100']->approvalRule());
+	}
+
+	/**
+	 * The default it turns on is the account's, so the admin is told that it reaches a real vehicle
+	 * beside the demo ones.
+	 */
+	public function testTheOutputSaysTheDefaultIsOnForAllTheAccountsVehicles(): void {
+		$tester = $this->tester();
+
+		$this->assertSame(0, $tester->execute(['user' => self::OWNER, '--grant-to' => [self::DRIVER]]), $tester->getDisplay());
+		$this->assertStringContainsString(
+			'"Bookings need approval" is now on for all of ' . self::OWNER . '\'s vehicles that follow the default, not only the demo ones.',
+			$tester->getDisplay(),
+		);
+	}
+
+	/**
+	 * A second account shares only the pool car and may take it at once; the owner books it for
+	 * them, the last one named.
+	 */
+	public function testASecondAccountSharesThePoolCarAndIsBookedFor(): void {
+		$tester = $this->tester();
+		$granted = [];
+		$this->grants->method('grant')->willReturnCallback(
+			function (string $userId, string $uuid, array $fields) use (&$granted): array {
+				$granted[] = [$fields['grantee'], $this->plateOf($uuid), $fields['take_now']];
+
+				return [];
+			},
+		);
+		$bookedFor = [];
+		$this->bookings->method('book')->willReturnCallback(
+			function (string $userId, string $uuid, array $fields) use (&$bookedFor): array {
+				if (isset($fields['user_id'])) {
+					$bookedFor[] = [$userId, $fields['user_id'], $this->plateOf($uuid)];
+				}
+
+				return [];
+			},
+		);
+
+		$this->assertSame(0, $tester->execute(['user' => self::OWNER, '--grant-to' => [self::DRIVER, self::SECOND]]), $tester->getDisplay());
+		$this->assertSame([
+			[self::DRIVER, 'NF-DE 100', true],
+			[self::DRIVER, 'NF-PH 200', false],
+			[self::SECOND, 'NF-PH 200', true],
+		], $granted);
+		$this->assertSame([[self::OWNER, self::SECOND, 'NF-PH 200']], $bookedFor);
+	}
+
+	/** On the pool car's notice list, the owner hears of everything and each driver only of a take. */
+	public function testThePoolCarsNoticeListHearsPerRow(): void {
+		$recipients = $this->createMock(RecipientService::class);
+		$heard = [];
+		$recipients->method('addBooking')->willReturnCallback(
+			function (string $userId, string $uuid, mixed $recipient, mixed $type, mixed $events) use (&$heard): array {
+				$heard[] = [$this->plateOf($uuid), $recipient, $type, $events];
+
+				return [];
+			},
+		);
+		$tester = $this->tester(recipients: $recipients);
+
+		$this->assertSame(0, $tester->execute(['user' => self::OWNER, '--grant-to' => [self::DRIVER, self::SECOND]]), $tester->getDisplay());
+		$this->assertSame([
+			['NF-PH 200', self::OWNER, 'user', Vehicle::NOTICES],
+			['NF-PH 200', self::DRIVER, 'user', [Vehicle::NOTICE_TAKEN]],
+			['NF-PH 200', self::SECOND, 'user', [Vehicle::NOTICE_TAKEN]],
+		], $heard);
+	}
+
+	/** One to drive the Passat and one to share the pool car: a third has nothing to show. */
+	public function testAThirdAccountIsRefusedBeforeAnythingIsWritten(): void {
+		$this->mapper->expects($this->never())->method('insert');
+
+		$tester = $this->tester();
+
+		$this->assertSame(1, $tester->execute(['user' => self::OWNER, '--grant-to' => [self::DRIVER, self::SECOND, 'carl']]));
+		$this->assertStringContainsString('at most 2', $tester->getDisplay());
 	}
 
 	/**
@@ -361,8 +457,21 @@ class SeedCommandTest extends TestCase {
 
 		$tester = $this->tester();
 
-		$this->assertSame(1, $tester->execute(['user' => self::OWNER, '--grant-to' => $account]));
+		$this->assertSame(1, $tester->execute(['user' => self::OWNER, '--grant-to' => [$account]]));
 		$this->assertStringContainsString($account, $tester->getDisplay());
+	}
+
+	/**
+	 * The same account twice would get the pool car twice: the second grant only re-roles the
+	 * first, and the pool would have one driver where the run said two.
+	 */
+	public function testTheSameAccountTwiceIsRefusedBeforeAnythingIsWritten(): void {
+		$this->mapper->expects($this->never())->method('insert');
+
+		$tester = $this->tester();
+
+		$this->assertSame(1, $tester->execute(['user' => self::OWNER, '--grant-to' => [self::DRIVER, 'Bob']]));
+		$this->assertStringContainsString('Bob', $tester->getDisplay());
 	}
 
 	/**
@@ -375,7 +484,7 @@ class SeedCommandTest extends TestCase {
 		$this->grants->method('grant')->willThrowException(new \InvalidArgumentException('grantee is no user you may grant to'));
 		$this->bookings->expects($this->never())->method('book');
 
-		$this->assertSame(1, $tester->execute(['user' => self::OWNER, '--grant-to' => self::DRIVER]));
+		$this->assertSame(1, $tester->execute(['user' => self::OWNER, '--grant-to' => [self::DRIVER]]));
 
 		$this->assertNotEmpty($this->written);
 		$this->assertSame([self::OWNER], array_values(array_unique(array_column($this->driven, 'by'))));

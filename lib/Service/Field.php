@@ -115,6 +115,26 @@ final class Field {
 		return $value;
 	}
 
+	/**
+	 * Words from the vocabulary, each once, in the order sent.
+	 *
+	 * @param list<string> $vocabulary
+	 * @return list<string>
+	 * @throws \InvalidArgumentException
+	 */
+	public static function set(string $column, mixed $value, array $vocabulary): array {
+		if (!is_array($value)) {
+			throw new \InvalidArgumentException($column . ' is a set of ' . implode(', ', $vocabulary));
+		}
+
+		$words = [];
+		foreach ($value as $word) {
+			$words[] = self::word($column, $word, $vocabulary);
+		}
+
+		return array_values(array_unique($words));
+	}
+
 	/** @throws \InvalidArgumentException */
 	public static function count(string $column, mixed $value, int $max): int {
 		$number = filter_var($value, FILTER_VALIDATE_INT);

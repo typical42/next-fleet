@@ -101,6 +101,7 @@ flowchart LR
     Reminder["ReminderService"]
     Recipient["RecipientService"]
     Grant["GrantService"]
+    Preferences["PreferencesService"]
     Odometer["OdometerService"]
     Vehicle["VehicleService"]
     Access["VehicleAccess"]
@@ -111,6 +112,7 @@ flowchart LR
     Trip --> Booking & Gaps & Periods
     Maintenance --> Reminder
     Trip & Energy & Maintenance & Expense & ImportSvc & Booking & Document & Reminder & Recipient & Grant & Odometer --> Vehicle
+    Preferences -->|the owner's default for bookings| Vehicle
     Vehicle --> Access
     Booking & Document & Recipient & Grant --> Access
 ```

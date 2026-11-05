@@ -31,6 +31,9 @@ export const usePreferencesStore = defineStore('preferences', () => {
 	/** Whether cost figures are net of VAT. The server's default until it answers. */
 	const reclaimVat = ref(false)
 
+	/** Whether bookings wait for an answer on the vehicles that follow this owner's default. */
+	const bookingApproval = ref(false)
+
 	/** The period the vehicle header shows, one of `PERIODS` in src/utils/period.js. */
 	const period = ref('last-12')
 
@@ -57,6 +60,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
 		ruled.value = settings.jurisdictions.filter((one) => one.logbook_rules).map((one) => one.key)
 		inboxFolder.value = settings.preferences.inbox_folder
 		reclaimVat.value = settings.preferences.reclaim_vat
+		bookingApproval.value = settings.preferences.booking_approval === true
 		period.value = picked ?? settings.preferences.kpi_period
 		loaded.value = true
 	}
@@ -165,6 +169,7 @@ export const usePreferencesStore = defineStore('preferences', () => {
 	}
 
 	return {
+		bookingApproval: computed(() => bookingApproval.value),
 		choosePeriod,
 		dismiss,
 		dismissLogbook,

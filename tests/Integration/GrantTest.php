@@ -140,6 +140,7 @@ class GrantTest extends TestCase {
 			'grantee_type' => 'user',
 			'display_name' => 'Anna Adler',
 			'role' => 'driver',
+			'take_now' => true,
 		]], $this->withoutUuids($list));
 		$this->assertSame($list, $this->grants->list(self::OWNER, $vehicle->getUuid()));
 	}
@@ -194,6 +195,7 @@ class GrantTest extends TestCase {
 			'grantee_type' => 'group',
 			'display_name' => 'The Crew',
 			'role' => 'viewer',
+			'take_now' => true,
 		]], $this->withoutUuids($list));
 		$this->assertSame(['view', 'costs'], $this->vehicles->find(self::BEN, $vehicle->getUuid())->getMay());
 	}
@@ -366,7 +368,7 @@ class GrantTest extends TestCase {
 		$list = $this->grants->change(self::OWNER, $vehicle->getUuid(), $grant['uuid'], ['role' => 'driver']);
 
 		$this->assertSame([[$grant['uuid'], 'driver']], array_map(static fn (array $one): array => [$one['uuid'], $one['role']], $list));
-		$this->assertSame(['view', 'log', 'costs'], $this->vehicles->find(self::ANNA, $vehicle->getUuid())->getMay());
+		$this->assertSame(['view', 'log', 'costs', 'take_now'], $this->vehicles->find(self::ANNA, $vehicle->getUuid())->getMay());
 	}
 
 	/** A grant is reached through the vehicle the route names, as an Entry is. */
@@ -951,7 +953,7 @@ class GrantTest extends TestCase {
 					ISecureRandom $random,
 					private int $breaking,
 				) {
-					parent::__construct($db, $time, $random);
+					parent::__construct($db, $time, $random, \OCP\Server::get(\OCP\IConfig::class));
 				}
 
 				public function hold(int $vehicleId): void {

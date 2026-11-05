@@ -4,6 +4,7 @@
 -->
 <script setup>
 import NcButton from '@nextcloud/vue/components/NcButton'
+import NcFormBoxSwitch from '@nextcloud/vue/components/NcFormBoxSwitch'
 import NcNoteCard from '@nextcloud/vue/components/NcNoteCard'
 import NcSelect from '@nextcloud/vue/components/NcSelect'
 import NcSelectUsers from '@nextcloud/vue/components/NcSelectUsers'
@@ -20,12 +21,20 @@ const props = defineProps({
 	vehicle: { type: Object, required: true },
 	/** Whether the sheet around it is mid-save. */
 	disabled: { type: Boolean, default: false },
+	/**
+	 * Whether the vehicle's bookings wait for an answer, as the sheet's choice now says: Take it
+	 * now is a driver's to block only then.
+	 */
+	approval: { type: Boolean, default: false },
 })
 
 // `granted`: somebody else has access from now on, which the vehicle screen shows Bookings by.
 const emit = defineEmits(['granted', 'revoked'])
 
-/** Only the owner reads or writes access, so for anyone else the section is not there at all. */
+/**
+ * Only the owner reads or writes access, so for anyone else the section is not there at all. Its
+ * heading is the edit sheet's (VehicleSheet.vue).
+ */
 const owns = computed(() => may(props.vehicle, 'own'))
 
 /**
@@ -39,6 +48,8 @@ const { found, search } = latestSearch(searchGrantees)
 const picked = ref(null)
 const writing = ref(false)
 const failure = ref('')
+/** Why the list is not there; it stands under the sheet's heading, which would otherwise head nothing. */
+const unread = ref('')
 /**
  * The grant whose removal is asked about, or null. Asked once: a removed person needs the owner to
  * find them and grant again.
@@ -72,8 +83,9 @@ onMounted(async () => {
 	}
 	try {
 		grants.value = await listGrants(props.vehicle.uuid)
-	} catch {
+	} catch (error) {
 		grants.value = null
+		unread.value = t('nextfleet', 'The list could not be read: {reason}', { reason: error.message })
 	}
 })
 
@@ -127,6 +139,14 @@ function recast(grant, chosen) {
 }
 
 /**
+ * @param {import('../services/api.js').Grant} grant - the row
+ * @param {boolean} allowed - whether its Take it now skips approval
+ */
+function allow(grant, allowed) {
+	write(() => changeGrant(props.vehicle.uuid, grant.uuid, grant.role, allowed))
+}
+
+/**
  * Opens or closes the question on one row, and moves focus into it or back to the row's Remove,
  * as LeaveVehicle does: the buttons are swapped out from under the keyboard otherwise.
  *
@@ -150,8 +170,7 @@ async function revoke(grant) {
 </script>
 
 <template>
-	<section v-if="owns && grants !== null" ref="root" class="grants">
-		<h3>{{ t('nextfleet', 'Access') }}</h3>
+	<div v-if="owns && grants !== null" ref="root" class="grants">
 		<NcNoteCard v-if="failure" type="error" :text="failure" />
 		<ul v-if="grants.length > 0" class="grants__list">
 			<li v-for="grant in grants"
@@ -170,6 +189,14 @@ async function revoke(grant) {
 					:clearable="false"
 					label="label"
 					@update:model-value="recast(grant, $event)" />
+				<!-- Managers approve their own bookings, and viewers book nothing; hidden, the value stays. -->
+				<NcFormBoxSwitch v-if="approval && grant.role === 'driver'"
+					class="grants__take-now"
+					:model-value="grant.take_now !== false"
+					:label="t('nextfleet', '{name} may take it now without approval', { name: grant.display_name })"
+					:description="t('nextfleet', 'May take the car at once, without approval, if it is back by midnight.')"
+					:disabled="disabled || writing"
+					@update:model-value="allow(grant, $event)" />
 				<div v-if="asking === grant.uuid" class="grants__ask">
 					<p class="grants__question">
 						{{ t('nextfleet', '{name} loses access to this vehicle.', { name: grant.display_name }) }}
@@ -214,7 +241,8 @@ async function revoke(grant) {
 				{{ t('nextfleet', 'Give access') }}
 			</NcButton>
 		</div>
-	</section>
+	</div>
+	<NcNoteCard v-else-if="unread" type="error" :text="unread" />
 </template>
 
 <style scoped>
@@ -261,8 +289,9 @@ async function revoke(grant) {
 	flex: 1 1 8em;
 }
 
-/* The question takes the row's full width under the name and role, where Remove stood. */
-.grants__ask {
+/* The question and the switch each take the row's full width under the name and role. */
+.grants__ask,
+.grants__take-now {
 	flex: 1 1 100%;
 }
 

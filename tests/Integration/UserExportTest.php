@@ -194,19 +194,23 @@ class UserExportTest extends TestCase {
 
 	/**
 	 * A booking the account only answered is the booker's: whole while the account may still see
-	 * the vehicle, else only the answer (Art. 15(4) GDPR).
+	 * the vehicle, else only the answer and the span it answered (Art. 15(4) GDPR).
 	 */
-	public function testABookingTheAccountOnlyAnsweredKeepsOnlyTheAnswerOnceTheGrantIsGone(): void {
+	public function testABookingTheAccountOnlyAnsweredKeepsOnlyTheAnswerAndItsSpanOnceTheGrantIsGone(): void {
 		[$vehicle, $booking, $grant] = $this->askedBack();
 		\OCP\Server::get(GrantService::class)->revoke(self::OWNER, $vehicle->getUuid(), $grant['uuid']);
 
-		$this->assertSame([[
+		$this->assertSame([self::sorted([
 			'uuid' => $booking['uuid'],
 			'created_at' => $booking['created_at'],
+			'starts_at' => $booking['starts_at'],
+			'starts_at_off' => 120,
+			'ends_at' => $booking['ends_at'],
+			'ends_at_off' => 120,
 			'approval' => Booking::ASKED,
 			'approval_comment' => 'Which site?',
 			'approval_by' => self::MANAGER,
-		]], $this->export(self::MANAGER)['nextfleet/fleet_bookings.json']);
+		])], array_map(self::sorted(...), $this->export(self::MANAGER)['nextfleet/fleet_bookings.json']));
 	}
 
 	public function testABookingTheAccountAnsweredIsWholeWhileItSeesTheVehicle(): void {
@@ -215,6 +219,108 @@ class UserExportTest extends TestCase {
 		[$row] = $this->export(self::MANAGER)['nextfleet/fleet_bookings.json'];
 
 		$this->assertSame([$booking['uuid'], 'Site visit', self::DRIVER], [$row['uuid'], $row['purpose'], $row['user_id']]);
+	}
+
+	/**
+	 * A booking the account made for somebody else is the driver's: their purpose, counter and
+	 * notes. Once the account no longer sees the vehicle, it keeps that it made and approved it,
+	 * and for when.
+	 */
+	public function testABookingTheAccountMadeForADriverKeepsOnlyThatOnceTheGrantIsGone(): void {
+		[$vehicle, $booking, $grant] = $this->madeForTheDriver();
+		\OCP\Server::get(BookingService::class)->checkOut(self::DRIVER, $vehicle->getUuid(), (string)$booking['uuid'], ['odo' => 12000, 'notes' => 'Scratch on the left door', 'at_off' => 120]);
+		\OCP\Server::get(GrantService::class)->revoke(self::OWNER, $vehicle->getUuid(), $grant['uuid']);
+
+		$this->assertSame([self::sorted([
+			'uuid' => $booking['uuid'],
+			'created_at' => $booking['created_at'],
+			'created_by' => self::MANAGER,
+			'starts_at' => $booking['starts_at'],
+			'starts_at_off' => 120,
+			'ends_at' => $booking['ends_at'],
+			'ends_at_off' => 120,
+			'approval' => Booking::APPROVED,
+			'approval_comment' => null,
+			'approval_by' => self::MANAGER,
+		])], array_map(self::sorted(...), $this->export(self::MANAGER)['nextfleet/fleet_bookings.json']));
+	}
+
+	/** The driver moves the booking, so it asks again, and the owner answers: that answer is the owner's. */
+	public function testABookingTheAccountMadeKeepsNoAnswerSomebodyElseGave(): void {
+		[$vehicle, $booking, $grant] = $this->madeForTheDriver();
+		$bookings = \OCP\Server::get(BookingService::class);
+		$moved = $bookings->change(self::DRIVER, $vehicle->getUuid(), (string)$booking['uuid'], (int)$booking['updated_at'], ['starts_at' => $booking['starts_at'], 'starts_at_off' => 120, 'ends_at' => (int)$booking['ends_at'] + 3600, 'ends_at_off' => 120]);
+		$bookings->answer(self::OWNER, $vehicle->getUuid(), (string)$booking['uuid'], (int)$moved['updated_at'], Booking::ASKED, ['comment' => 'Why longer?']);
+		\OCP\Server::get(GrantService::class)->revoke(self::OWNER, $vehicle->getUuid(), $grant['uuid']);
+
+		[$row] = $this->export(self::MANAGER)['nextfleet/fleet_bookings.json'];
+
+		$this->assertSame(['created_at', 'created_by', 'ends_at', 'ends_at_off', 'starts_at', 'starts_at_off', 'uuid'], array_keys(self::sorted($row)));
+	}
+
+	public function testABookingTheAccountMadeForADriverIsWholeWhileItSeesTheVehicle(): void {
+		[, $booking] = $this->madeForTheDriver();
+
+		[$row] = $this->export(self::MANAGER)['nextfleet/fleet_bookings.json'];
+
+		$this->assertSame([$booking['uuid'], self::DRIVER, 'Site visit'], [$row['uuid'], $row['user_id'], $row['purpose']]);
+	}
+
+	/**
+	 * Whole, but without what the app shows only the booker and the approvers: somebody else's
+	 * question, which may be about the booker, and when the booker read the notice.
+	 */
+	public function testABookingTheAccountMadeForADriverHidesTheApproversPartOnceTheAccountNoLongerApproves(): void {
+		[$vehicle, $booking, $grant] = $this->madeForTheDriver();
+		$bookings = \OCP\Server::get(BookingService::class);
+		$seen = $bookings->seen(self::DRIVER, $vehicle->getUuid(), (string)$booking['uuid']);
+		$moved = $bookings->change(self::DRIVER, $vehicle->getUuid(), (string)$booking['uuid'], (int)$seen['updated_at'], ['starts_at' => $booking['starts_at'], 'starts_at_off' => 120, 'ends_at' => (int)$booking['ends_at'] + 3600, 'ends_at_off' => 120, 'purpose' => 'Site visit']);
+		$bookings->answer(self::OWNER, $vehicle->getUuid(), (string)$booking['uuid'], (int)$moved['updated_at'], Booking::ASKED, ['comment' => 'Your licence check is overdue. Why longer?']);
+		\OCP\Server::get(GrantService::class)->change(self::OWNER, $vehicle->getUuid(), $grant['uuid'], ['role' => 'driver']);
+
+		[$row] = $this->export(self::MANAGER)['nextfleet/fleet_bookings.json'];
+
+		$this->assertSame(['Site visit', self::OWNER, null, null], [$row['purpose'], $row['approval_by'], $row['approval_comment'], $row['seen_at']]);
+	}
+
+	/** What the account asked is its own, whether or not it still answers. */
+	public function testABookingTheAccountAnsweredKeepsItsQuestionOnceTheAccountNoLongerApproves(): void {
+		[$vehicle, , $grant] = $this->askedBack();
+		\OCP\Server::get(GrantService::class)->change(self::OWNER, $vehicle->getUuid(), $grant['uuid'], ['role' => 'driver']);
+
+		[$row] = $this->export(self::MANAGER)['nextfleet/fleet_bookings.json'];
+
+		$this->assertSame(['Site visit', 'Which site?'], [$row['purpose'], $row['approval_comment']]);
+	}
+
+	/**
+	 * The manager books the owner's car, which asks for approval, for the driver; making it
+	 * approves it.
+	 *
+	 * @return array{Vehicle, array<string, mixed>, array<string, mixed>} the vehicle, the booking, the manager's grant
+	 */
+	private function madeForTheDriver(): array {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'booking_approval' => true]);
+		$this->vehicleIds[] = (int)$vehicle->getId();
+		$grants = \OCP\Server::get(GrantService::class);
+		$grants->grant(self::OWNER, $vehicle->getUuid(), ['grantee' => self::DRIVER, 'grantee_type' => 'user', 'role' => 'driver']);
+		$listed = $grants->grant(self::OWNER, $vehicle->getUuid(), ['grantee' => self::MANAGER, 'grantee_type' => 'user', 'role' => 'manager']);
+		[$grant] = array_values(array_filter($listed, static fn (array $grant): bool => $grant['grantee'] === self::MANAGER));
+		$bookings = \OCP\Server::get(BookingService::class);
+		$start = time() + 86400;
+		$booked = $bookings->book(self::MANAGER, $vehicle->getUuid(), ['user_id' => self::DRIVER, 'starts_at' => $start, 'starts_at_off' => 120, 'ends_at' => $start + 3600, 'ends_at_off' => 120, 'purpose' => 'Site visit']);
+
+		return [$vehicle, $booked, $grant];
+	}
+
+	/**
+	 * @param array<string, mixed> $row
+	 * @return array<string, mixed> the row by column name, so a comparison does not hang on column order
+	 */
+	private static function sorted(array $row): array {
+		ksort($row);
+
+		return $row;
 	}
 
 	/** A vehicle the account made and handed on shows its prices only while the account may see costs. */

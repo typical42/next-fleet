@@ -97,10 +97,9 @@ class VehicleService {
 		'color' => ['setColor', 'text', 32],
 		'notes' => ['setNotes', 'text', Field::TEXT],
 		'reminder_mail' => ['setReminderMail', 'word', self::MAIL_CADENCES],
-		// These three are the owner's alone to change (update()).
+		// These two, and approval (approval()), are the owner's alone to change (update()).
 		'costs_shared' => ['setCostsShared', 'flag', null],
 		'booking_notices' => ['setBookingNotices', 'set', Vehicle::NOTICES],
-		'booking_approval' => ['setBookingApproval', 'flag', null],
 	];
 
 	/** How often the reminder digest goes out for this vehicle (docs/architecture.md#reminder-engine). */
@@ -112,7 +111,7 @@ class VehicleService {
 	 * the row already has rather than being refused: the sheet never blocks on validation
 	 * (docs/ui.md). The booking events take `[]` as a choice of their own (apply()).
 	 */
-	private const REQUIRED = ['vehicle_type', 'odo_unit', 'jurisdiction', 'lifecycle', 'reminder_mail', 'costs_shared', 'booking_notices', 'booking_approval'];
+	private const REQUIRED = ['vehicle_type', 'odo_unit', 'jurisdiction', 'lifecycle', 'reminder_mail', 'costs_shared', 'booking_notices'];
 
 	/**
 	 * What the create sheet does not ask for (docs/ui.md) and no country decides: neither a car
@@ -212,6 +211,8 @@ class VehicleService {
 		// currency is an answer - the vehicle states its own (docs/contributing.md).
 		$vehicle->setOdoUnit($profile->odoUnit());
 		$vehicle->setCurrency($profile->currency());
+		// What a `booking_approval` in the request is measured against (approval()).
+		$vehicle->setOwnerApproval($this->mapper->ownerApproval($userId));
 		$this->apply($vehicle, $fields);
 		// The create sheet asks for the engine only; without energies *Energy* has nothing to
 		// offer. An edit derives nothing: there the owner chose, emptying included.
@@ -291,7 +292,7 @@ class VehicleService {
 		// Judged on the change, not on the field: a manager's sheet sends the switch back as it was.
 		$flipped = $was->sharesCosts() !== $vehicle->sharesCosts();
 		$ticked = self::sorted($was->bookingNotices()) !== self::sorted($vehicle->bookingNotices());
-		$gated = $was->needsApproval() !== $vehicle->needsApproval();
+		$gated = $was->approvalRule() !== $vehicle->approvalRule();
 		if (($flipped || $ticked || $gated) && !in_array(VehicleAccess::OWN, $vehicle->getMay(), true)) {
 			// Read before the owner flipped it, the sheet only sends it back: stale, so it reads again.
 			if ($was->getUpdatedAt() !== $expectedUpdatedAt) {
@@ -301,7 +302,7 @@ class VehicleService {
 		}
 
 		$approved = [];
-		$written = $this->atomic(function () use ($userId, $vehicle, $expectedUpdatedAt, $was, $gated, &$approved): Vehicle {
+		$written = $this->atomic(function () use ($userId, $vehicle, $expectedUpdatedAt, $was, &$approved): Vehicle {
 			// docs/architecture.md#data-model. Only a code is frozen: amounts under none, or under a
 			// sign from before the check, are labelled by naming one, which the import asks for.
 			// Under the hold every money write takes, so one racing this edit is seen.
@@ -315,19 +316,19 @@ class VehicleService {
 			$written = $this->mapper->updateChecked($vehicle, $expectedUpdatedAt);
 			$this->trail($userId, $written, $was);
 			// With nobody left to ask, whatever waited is the owner's yes. The write above holds
-			// the vehicle's row, and a booking reads the switch under that hold
-			// (BookingService::asksApproval()), so no request slips in behind.
-			if ($gated && !$written->needsApproval()) {
+			// the vehicle's row, and a booking reads approval under that hold
+			// (BookingService::asksApproval()), so no request slips in behind. Judged on what
+			// waits, not on $was: the default this request read may be older than the hold.
+			if ($written->approvalRule() === Vehicle::APPROVAL_DEFAULT) {
+				$this->mapper->refreshOwnerApproval($written);
+			}
+			if (!$written->needsApproval()) {
 				$approved = $this->approveWaiting($userId, $written);
 			}
 
 			return $written;
 		}, $this->db);
-		// After the commit, the reason NotificationService::sweep() gives.
-		foreach ($approved as [$booking, $heard]) {
-			$this->bookingNotices->tellAnswered($written, $booking, $userId);
-			$this->bookingNotices->tellSettled($written, $booking, $heard, $userId);
-		}
+		$this->tellApproved($userId, $written, $approved);
 		// Rows already synced carry or lack amounts by the old switch, and none of them changed.
 		if ($flipped) {
 			$this->epoch->reset();
@@ -336,6 +337,93 @@ class VehicleService {
 		$this->pool($userId, [$written]);
 
 		return $written;
+	}
+
+	/**
+	 * Writes the owner's default for the bookings of every vehicle of theirs that follows it
+	 * (Vehicle::APPROVAL_DEFAULT). Turned off, what waits on those vehicles is approved, as update()
+	 * does for one. The default is written under the holds of all the owner's vehicles, where a
+	 * booking reads it (BookingService::asksApproval()), taken by id, so two writers cannot wait on
+	 * each other. The trashed ones are held too: restore() reads the default under its vehicle's
+	 * hold, so a vehicle coming back meanwhile is either seen live here or sees the new default.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	public function approveByDefault(string $userId, bool $on): void {
+		/** @var list<array{Vehicle, list<array{Booking, bool}>}> $approved */
+		$approved = $this->atomic(function () use ($userId, $on): array {
+			$owned = $this->mapper->findAnyOwnedBy($userId);
+			foreach ($owned as $vehicle) {
+				$this->mapper->hold((int)$vehicle->getId());
+			}
+			// Read again under the holds, for a choice nobody moves meanwhile.
+			$following = array_values(array_filter(
+				$this->liveOwnedBy($userId),
+				static fn (Vehicle $vehicle): bool => $vehicle->approvalRule() === Vehicle::APPROVAL_DEFAULT,
+			));
+			$changed = $this->mapper->storedOwnerApproval($userId) !== $on;
+			// IConfig skips a write that matches what this request read before the holds, though
+			// another may have changed it since. The delete drops that read, so the write is made,
+			// and IConfig answers the stored value for the rest of the request (PreferencesService).
+			// Without a vehicle nothing is held: two deletes at once would leave both to insert the
+			// key, and no vehicle reads it anyway.
+			if ($owned !== []) {
+				$this->config->deleteUserValue($userId, Application::APP_ID, Vehicle::OWNER_APPROVAL);
+			}
+			$this->config->setUserValue($userId, Application::APP_ID, Vehicle::OWNER_APPROVAL, $on ? '1' : '0');
+			$approved = [];
+			foreach ($following as $vehicle) {
+				$vehicle->setOwnerApproval($on);
+				// Each now answers differently: its token moves, so sync sends it and a client
+				// that read the old answer saves into a 412 rather than pinning it.
+				if ($changed) {
+					$this->mapper->updateChecked($vehicle, $vehicle->getUpdatedAt());
+				}
+				if (!$on) {
+					$approved[] = [$vehicle, $this->approveWaiting($userId, $vehicle)];
+				}
+			}
+
+			return $approved;
+		}, $this->db);
+		foreach ($approved as [$vehicle, $bookings]) {
+			$this->tellApproved($userId, $vehicle, $bookings);
+		}
+	}
+
+	/**
+	 * Whether the user owns a live vehicle that anybody else has or had access to: the vehicles
+	 * the owner's default for bookings is offered for (docs/ui.md).
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	public function ownsShared(string $userId): bool {
+		$ids = array_map(static fn (Vehicle $vehicle): int => (int)$vehicle->getId(), $this->liveOwnedBy($userId));
+
+		return $ids !== [] && $this->grants->everGrantedAmong($ids) !== [];
+	}
+
+	/**
+	 * @return list<Vehicle> the user's vehicles not in the trash, by id
+	 * @throws \OCP\DB\Exception
+	 */
+	private function liveOwnedBy(string $userId): array {
+		return array_values(array_filter(
+			$this->mapper->findAnyOwnedBy($userId),
+			static fn (Vehicle $vehicle): bool => $vehicle->getDeletedAt() === null,
+		));
+	}
+
+	/**
+	 * After the commit, the reason NotificationService::sweep() gives.
+	 *
+	 * @param list<array{Booking, bool}> $approved what approveWaiting() answered
+	 */
+	private function tellApproved(string $userId, Vehicle $vehicle, array $approved): void {
+		foreach ($approved as [$booking, $heard]) {
+			$this->bookingNotices->tellAnswered($vehicle, $booking, $userId);
+			$this->bookingNotices->tellSettled($vehicle, $booking, $heard, $userId);
+		}
 	}
 
 	/**
@@ -462,16 +550,24 @@ class VehicleService {
 	 */
 	public function restore(string $userId, string $uuid, int $expectedUpdatedAt): Vehicle {
 		$vehicleId = $this->permit($userId, VehicleAccess::OWN, $this->mapper->findAnyByUuid($uuid))->getId();
-		$restored = $this->atomic(function () use ($userId, $vehicleId, $expectedUpdatedAt): Vehicle {
+		$approved = [];
+		$restored = $this->atomic(function () use ($userId, $vehicleId, $expectedUpdatedAt, &$approved): Vehicle {
 			// An erasure renames the owner and leaves `updated_at` alone, so the token cannot tell.
 			// Read again under the hold: an erasure that committed meanwhile is seen and refused.
 			$this->mapper->hold($vehicleId);
-
-			return $this->mapper->restoreChecked(
+			$restored = $this->mapper->restoreChecked(
 				$this->permit($userId, VehicleAccess::OWN, $this->mapper->findAnyById($vehicleId)),
 				$expectedUpdatedAt,
 			);
+			// From the database, under the hold, for the reason approveByDefault() gives.
+			$this->mapper->refreshOwnerApproval($restored);
+			if (!$restored->needsApproval()) {
+				$approved = $this->approveWaiting($userId, $restored);
+			}
+
+			return $restored;
 		}, $this->db);
+		$this->tellApproved($userId, $restored, $approved);
 		$this->bookingNotices->tellRestored($restored);
 		$this->pool($userId, [$restored]);
 
@@ -650,6 +746,7 @@ class VehicleService {
 
 			$vehicle->$setter($value);
 		}
+		$this->approval($vehicle, $fields);
 
 		// Hours beside hours would be one chain counted twice. Dropped rather than refused, as the
 		// sheet never blocks on validation. Its Readings stay (docs/architecture.md).
@@ -665,6 +762,28 @@ class VehicleService {
 		if ($body !== null && [$vehicle->getEuCategory(), $body] !== $registration
 			&& !Registration::fits($vehicle->getEuCategory(), $body)) {
 			throw new \InvalidArgumentException('body_type does not fit eu_category');
+		}
+	}
+
+	/**
+	 * Whether bookings wait for an answer: `booking_approval_rule` chooses, and outranks the
+	 * effective `booking_approval`. That bool sets always or never, but only where it changes the
+	 * answer: a sheet sends the whole vehicle back (docs/ui.md), and one that read "no" off a
+	 * vehicle following its owner would pin it to never. A null in either keeps what the row has.
+	 *
+	 * @param array<string, mixed> $fields
+	 * @throws \InvalidArgumentException
+	 */
+	private function approval(Vehicle $vehicle, array $fields): void {
+		$rule = $this->read('booking_approval_rule', 'word', Vehicle::APPROVAL_RULES, $fields['booking_approval_rule'] ?? null);
+		if (is_string($rule)) {
+			$vehicle->setApprovalRule($rule);
+
+			return;
+		}
+		$asked = $this->read('booking_approval', 'flag', null, $fields['booking_approval'] ?? null);
+		if (is_bool($asked) && $asked !== $vehicle->needsApproval()) {
+			$vehicle->setBookingApproval($asked);
 		}
 	}
 
@@ -688,7 +807,7 @@ class VehicleService {
 		return match ($kind) {
 			'text' => Field::text($column, $value, $bound),
 			'word' => Field::word($column, $value, is_array($limit) ? $limit : []),
-			'set' => $this->set($column, $value, is_array($limit) ? $limit : []),
+			'set' => Field::set($column, $value, is_array($limit) ? $limit : []),
 			'number' => $this->number($column, $value, false, $bound),
 			'count' => $this->number($column, $value, true, $bound),
 			'flag' => Field::flag($column, $value),
@@ -714,24 +833,6 @@ class VehicleService {
 		}
 
 		return $code;
-	}
-
-	/**
-	 * @param list<string> $vocabulary
-	 * @return list<string>
-	 * @throws \InvalidArgumentException
-	 */
-	private function set(string $column, mixed $value, array $vocabulary): array {
-		if (!is_array($value)) {
-			throw new \InvalidArgumentException($column . ' is a set of ' . implode(', ', $vocabulary));
-		}
-
-		$words = [];
-		foreach ($value as $word) {
-			$words[] = Field::word($column, $word, $vocabulary);
-		}
-
-		return array_values(array_unique($words));
 	}
 
 	/** @throws \InvalidArgumentException */

@@ -28,12 +28,16 @@ The necessary fields depend on the category of the trip:
 Logbook mode is off by default.
 Only the country **Germany** has these rules.
 
+The audit trail records only the changes made in NextFleet.
+The administrator of your Nextcloud can change the database directly.
+That change leaves no record, so a tax auditor can reject the logbook ([A German tax audit can reject the logbook](../legal.md#a-german-tax-audit-can-reject-the-logbook)).
+
 ## Turn it on or off
 
 For a German vehicle, the **Overview** page asks the owner and the managers once: **Keep a logbook for the tax office with this vehicle?**
 Click **Switch Logbook mode on**.
 
-You can also use the **Logbook mode** switch in **Edit vehicle**, then click **Save**.
+You can also use the **Logbook mode** switch in **Edit vehicle**, under **Vehicle**, then click **Save**.
 To switch it off, NextFleet asks you to confirm.
 The records of the audited period stay as they are.
 A trip that started while the mode was on keeps its audit trail.

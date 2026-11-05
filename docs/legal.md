@@ -48,9 +48,48 @@ So every commit needs a `Signed-off-by` (DCO), and rates are cited by URL, not c
 A wrong rate on a tax document is worse than none.
 For example, no source we found places a tractor under § 9 EStG, so it has no mileage rate.
 
+## A German tax audit can reject the logbook
+
+This applies to a vehicle in Germany whose logbook sets the tax on its private use.
+
+**The law wants each later change to show.**
+An electronic logbook must make a later change impossible, or it must record the change so that the change shows.
+The direct basis is R 8.1 (9) no. 2 sentence 6 LStR ([LStH 2026](https://lsth.bundesfinanzministerium.de/lsth/2026/A-Einkommensteuergesetz/II-Einkommen-2-24b/4-Ueberschuss-d-Einnahmen-ueber-die-Werbungsk-8-9a/Paragraf-8/r-8-1-9.html)).
+The BFH states the same rule in its decision of 12 January 2024 ([VI B 37/23](https://www.bundesfinanzhof.de/de/entscheidung/entscheidungen-online/detail/STRE202450011/)).
+That decision confirms its judgment of 16 November 2005 (VI R 64/04, BStBl II 2006, 410).
+[§ 146 (4) AO](https://www.gesetze-im-internet.de/ao_1977/__146.html) and the GoBD state the general rule for electronic tax records.
+The GoBD is the BMF letter of 28 November 2019, BStBl I 2019, 1269, Rz. 108 and 111 ([text](https://www.lfst.bayern.de/fileadmin/RESSOURCEN/INFORMATIONEN/Steuerinfos/Weitere_Themen/Aussenpruefung/2019-11-28-GoBD-1.pdf)).
+Its amendments of 11 March 2024 and 14 July 2025 do not change these Rz. ([latest amendment](https://www.bundesfinanzministerium.de/Content/DE/Downloads/BMF_Schreiben/Weitere_Steuerthemen/Abgabenordnung/2025-07-14-GoBD-2-aenderung.html)).
+
+**The change must show in the file itself.**
+The BFH accepts a file that a program makes only if a later change is technically impossible, or is documented and shows in the file itself.
+A change that only an admin can find with a separate query is not sufficient.
+
+**The database admin can change trips without a trace.**
+NextFleet keeps its data in the database of your own Nextcloud.
+The admin of that Nextcloud can read and write its tables directly.
+The [audit trail](architecture.md#the-audit-trail) sees only the changes that go through NextFleet.
+A change made directly in the database leaves no record.
+
+**An auditor can reject the logbook.**
+Then the tax office applies the 1 % rule to the private use of the vehicle, also for the past years that the audit covers.
+It does not estimate the private share from other records ([H 8.1 (9-10) LStH 2026](https://lsth.bundesfinanzministerium.de/lsth/2026/A-Einkommensteuergesetz/II-Einkommen-2-24b/4-Ueberschuss-d-Einnahmen-ueber-die-Werbungsk-8-9a/Paragraf-8/h-8-1-9-10.html)).
+
+**German law has no certificate for logbook apps.**
+A test seal that a vendor shows is not a legal requirement.
+NextFleet has no such seal.
+
+**Some steps make the risk smaller.**
+They do not remove it.
+
+- The Nextcloud admin is a person other than the taxpayer.
+- Only that admin can get access to the database.
+- The database has backups.
+- At the end of each period, you export or print the logbook and keep it.
+
 ## Data protection
 
-The bigger exposure is the GDPR, not copyright.
+For the project, the GDPR is a bigger exposure than copyright.
 Trips hold destinations, purposes and who drove.
 With a pooled car, an employer processes employee data.
 
@@ -72,7 +111,14 @@ With a pooled car, an employer processes employee data.
   It does not read prose.
 - **Bookings and handover notes are personal data.**
   Erasure treats them like trips.
-  A cancel notice names nobody, because a Nextcloud notification is not a row the app can rename.
+  A cancel notice to the booker names nobody, because a Nextcloud notification is not a row the app can rename.
+  The notices of a booking made for a driver read both names from the booking when shown, so an erasure reaches them.
+- **A booking made for a driver names both.**
+  It records who made it and for whom, and erasure pseudonymises both.
+  It also records when the driver confirmed it, and nothing else about the driver.
+- **A licence check keeps no copy of the licence.**
+  No licence check exists yet.
+  When it comes, it keeps the date, who checked, the classes and the expiry ([ADR 0012](adr/0012-nextfleet-also-serves-a-small-fleet.md)).
 - **Logs outlive an erasure.**
   Nextcloud's log can hold uids and call arguments.
   We recommend `zend.exception_ignore_args=On`.
@@ -81,6 +127,7 @@ With a pooled car, an employer processes employee data.
   The app records; it asks nobody.
 - **Statistics sum each driver's trips, distance and business share** ([API](api.md#statistics)).
   That is a performance figure about a person, so it falls under the works council's say above.
+  NextFleet ranks and scores no driver against another.
   The sums are the owner's and managers'; a driver or viewer gets only their own.
   This hides no trip: the next point lets every role read the logbook the sums come from.
   An erased driver stays in them under their pseudonym.
