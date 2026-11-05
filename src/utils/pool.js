@@ -135,6 +135,7 @@ export function refusalWords(message) {
 		'notes is longer than 10000 characters': () => t('nextfleet', 'The note is longer than {max} characters.', { max: formatCount(10000) }),
 		'level is 100 at most': () => t('nextfleet', 'The tank or battery is a percentage, 0 to 100.'),
 		'purpose is longer than 255 characters': () => t('nextfleet', 'The purpose is longer than 255 characters.'),
+		'user_id names nobody who may book this vehicle': () => t('nextfleet', 'This person may no longer book this vehicle.'),
 	}
 
 	return words[message]?.() ?? null

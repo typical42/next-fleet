@@ -136,7 +136,18 @@ class FleetMigrator implements IMigrator {
 		$row = self::row($entity);
 		// Made or answered for somebody else, it holds the booker's purpose, counter and notes.
 		if ($entity instanceof Booking && $row['user_id'] !== $uid) {
-			return $this->may($uid, VehicleAccess::VIEW, $entity->getVehicleId()) ? $row : self::answer($uid, $row);
+			if (!$this->may($uid, VehicleAccess::VIEW, $entity->getVehicleId())) {
+				return self::answer($uid, $row);
+			}
+			// The booker's and their approvers', as BookingService::wired() has it; an answer stays its writer's.
+			if (!$this->may($uid, VehicleAccess::EDIT, $entity->getVehicleId())) {
+				$row['seen_at'] = null;
+				if ($row['approval_by'] !== $uid) {
+					$row['approval_comment'] = null;
+				}
+			}
+
+			return $row;
 		}
 		$vehicle = $entity instanceof Vehicle ? $entity : null;
 		if (in_array($table, self::AUTHORED, true) || ($row['created_by'] ?? null) !== $uid || $this->may($uid, VehicleAccess::VIEW, $this->vehicleOf($entity), $vehicle)) {

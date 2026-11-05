@@ -267,6 +267,33 @@ class UserExportTest extends TestCase {
 	}
 
 	/**
+	 * Whole, but without what the app shows only the booker and the approvers: somebody else's
+	 * question, which may be about the booker, and when the booker read the notice.
+	 */
+	public function testABookingTheAccountMadeForADriverHidesTheApproversPartOnceTheAccountNoLongerApproves(): void {
+		[$vehicle, $booking, $grant] = $this->madeForTheDriver();
+		$bookings = \OCP\Server::get(BookingService::class);
+		$seen = $bookings->seen(self::DRIVER, $vehicle->getUuid(), (string)$booking['uuid']);
+		$moved = $bookings->change(self::DRIVER, $vehicle->getUuid(), (string)$booking['uuid'], (int)$seen['updated_at'], ['starts_at' => $booking['starts_at'], 'starts_at_off' => 120, 'ends_at' => (int)$booking['ends_at'] + 3600, 'ends_at_off' => 120, 'purpose' => 'Site visit']);
+		$bookings->answer(self::OWNER, $vehicle->getUuid(), (string)$booking['uuid'], (int)$moved['updated_at'], Booking::ASKED, ['comment' => 'Your licence check is overdue. Why longer?']);
+		\OCP\Server::get(GrantService::class)->change(self::OWNER, $vehicle->getUuid(), $grant['uuid'], ['role' => 'driver']);
+
+		[$row] = $this->export(self::MANAGER)['nextfleet/fleet_bookings.json'];
+
+		$this->assertSame(['Site visit', self::OWNER, null, null], [$row['purpose'], $row['approval_by'], $row['approval_comment'], $row['seen_at']]);
+	}
+
+	/** What the account asked is its own, whether or not it still answers. */
+	public function testABookingTheAccountAnsweredKeepsItsQuestionOnceTheAccountNoLongerApproves(): void {
+		[$vehicle, , $grant] = $this->askedBack();
+		\OCP\Server::get(GrantService::class)->change(self::OWNER, $vehicle->getUuid(), $grant['uuid'], ['role' => 'driver']);
+
+		[$row] = $this->export(self::MANAGER)['nextfleet/fleet_bookings.json'];
+
+		$this->assertSame(['Site visit', 'Which site?'], [$row['purpose'], $row['approval_comment']]);
+	}
+
+	/**
 	 * The manager books the owner's car, which asks for approval, for the driver; making it
 	 * approves it.
 	 *

@@ -23,6 +23,12 @@ describe('refusalWords', () => {
 		expect(refusalWords('comment is longer than 10000 characters'))
 			.toBe('The comment is longer than 10,000 characters.')
 	})
+
+	/** A manager's For list is as old as the sheet; the owner may have taken the person's access since. */
+	it('words the refusal of a person who may no longer book', () => {
+		expect(refusalWords('user_id names nobody who may book this vehicle'))
+			.toBe('This person may no longer book this vehicle.')
+	})
 })
 
 describe('nextBookingWords', () => {

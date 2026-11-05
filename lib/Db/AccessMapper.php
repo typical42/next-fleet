@@ -213,7 +213,7 @@ class AccessMapper extends BaseMapper {
 		$result = $qb->executeQuery();
 		$reachable = [];
 		while (($row = $result->fetch()) !== false) {
-			// A raw row: false arrives as '0' or false by database, a row from before the column as null.
+			// A raw row: false arrives as '0' or false by database; null reads as allowed.
 			$takeNow = $row['take_now'] ?? null;
 			$reachable[(int)$row['vehicle_id']][] = [(string)$row['role'], $takeNow === null || (bool)$takeNow];
 		}

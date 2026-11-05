@@ -193,7 +193,7 @@ async function revoke(grant) {
 				<NcFormBoxSwitch v-if="approval && grant.role === 'driver'"
 					class="grants__take-now"
 					:model-value="grant.take_now !== false"
-					:label="t('nextfleet', 'Take it now without approval')"
+					:label="t('nextfleet', '{name} may take it now without approval', { name: grant.display_name })"
 					:description="t('nextfleet', 'May take the car at once, without approval, if it is back by midnight.')"
 					:disabled="disabled || writing"
 					@update:model-value="allow(grant, $event)" />

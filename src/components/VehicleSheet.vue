@@ -185,11 +185,14 @@ const bookingNotices = ref(props.vehicle?.booking_notices ?? [])
 // The owner's alone (docs/api.md#booking-approval). The choice, never the bool: sent back as read,
 // that would pin a vehicle that follows the owner's default.
 const approvalRule = ref(props.vehicle?.booking_approval_rule ?? 'default')
-// What "as for all my vehicles" makes of it now: a vehicle that follows says it itself, the app's
-// settings say it for one that does not.
-const ownerApproval = computed(() => props.vehicle?.booking_approval_rule === 'default'
+// The owner's default as the sheet read it on opening; null until then. The app's copy and the
+// vehicle's are as old as the page, and Settings opens in another tab.
+const freshApproval = ref(/** @type {boolean|null} */ (null))
+// What "as for all my vehicles" makes of it now: the fresh read once there is one; before it, a
+// vehicle that follows says it itself and the app's settings say it for one that does not.
+const ownerApproval = computed(() => freshApproval.value ?? (props.vehicle?.booking_approval_rule === 'default'
 	? props.vehicle?.booking_approval === true
-	: preferences.bookingApproval)
+	: preferences.bookingApproval))
 const approvalRules = computed(() => [
 	{ id: 'default', label: ownerApproval.value ? t('nextfleet', 'As for all my vehicles (now: on)') : t('nextfleet', 'As for all my vehicles (now: off)') },
 	// TRANSLATORS: an answer to "Bookings need approval": they always do.
@@ -354,9 +357,9 @@ const note = computed(() => {
 })
 
 /**
- * The countries an edit picks from, read from the settings route. The vehicle's own key is added: a
- * country a later release dropped is still the one it is kept under, and what the dropdown says is
- * what the next save writes.
+ * The countries an edit picks from and the owner's default, read from the settings route. The
+ * vehicle's own key is added: a country a later release dropped is still the one it is kept under,
+ * and what the dropdown says is what the next save writes.
  */
 onMounted(async () => {
 	if (!editing.value) {
@@ -365,7 +368,11 @@ onMounted(async () => {
 
 	readInspection()
 	try {
-		countries.value = (await getPreferences()).jurisdictions
+		const settings = await getPreferences()
+		countries.value = settings.jurisdictions
+		if (typeof settings.preferences.booking_approval === 'boolean') {
+			freshApproval.value = settings.preferences.booking_approval
+		}
 	} catch {
 		// A convenience; the vehicle's own country is added below.
 	}

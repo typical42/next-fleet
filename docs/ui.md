@@ -199,7 +199,8 @@ The code is no credential ([security](security.md#things-that-are-visible-in-the
 3. *Access*: the grant list ([below](#the-access-section)).
 4. *Bookings*: *Bookings need approval*, and the booking notices with their events.
    Approval is a dropdown, not a switch: *As for all my vehicles (now: on)* or *(now: off)*, *Always*, *Never*.
-   "Now" is the vehicle's own answer while it follows the owner, else the app's preferences say it.
+   "Now" is the owner's default as the sheet reads it on opening, so a change in the settings tab shows the next time the sheet opens.
+   Until that read answers, the vehicle says it while it follows the owner, else the app's preferences say it.
    Beneath it, a link to the settings, where *Bookings need approval* under the heading *Bookings* sets the owner's default.
    That heading shows only to an owner of a shared vehicle, as this section does.
    The link opens a new tab, so the sheet keeps its unsaved edits.
@@ -226,7 +227,7 @@ The third section of the edit sheet, for the owner alone.
 It lists each grant with a role picker and *Remove*.
 A search finds accounts and groups through core's autocomplete, which applies the instance's rules on who may find whom.
 The role picker offers driver first: a car is lent to be driven.
-While the sheet's approval choice applies, a driver row also has the switch *Take it now without approval*.
+While the sheet's approval choice applies, a driver row also has the switch *{name} may take it now without approval*.
 Managers approve their own bookings and viewers book nothing, so their rows have none; a hidden value stays.
 Each change saves at once.
 *Remove* asks once, because only the owner can grant again.

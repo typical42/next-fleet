@@ -559,8 +559,9 @@ A link like the logbook: no token, rate-limited, logged by ids, `view` access.
 - **A booking is the booker's.**
   It is the account's own only where `user_id` names it.
   One it answered (`approval_by`) or made for somebody else (`created_by`) holds the booker's purpose, counter and notes.
-  Such a booking is exported whole while the account sees the vehicle.
-  Else it is reduced to its id, when it was made, its span as it stands, and what the account wrote: that it made it, its answer (`FleetMigrator::ANSWER`).
+  Such a booking is exported whole while the account holds `edit`.
+  With `view` alone it lacks what the app shows only the booker and the approvers: `seen_at`, and `approval_comment` unless the account wrote the answer.
+  Without `view` it is reduced to its id, when it was made, its span as it stands, and what the account wrote: that it made it, its answer (`FleetMigrator::ANSWER`).
   An answer somebody else gave later stays out.
 - **A vehicle row carries its prices only while the account may see costs** ([costs](api.md#costs)).
   Else `purchase_price` and `residual_est` are null.

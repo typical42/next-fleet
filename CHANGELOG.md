@@ -21,7 +21,7 @@
 - When approval stops, by the vehicle or by the setting for all, the bookings that wait are
   approved. A vehicle given to a new owner keeps its approval.
 - The owner can make one driver ask for approval for each **Take it now**, also when the car is
-  back by midnight: switch off **Take it now without approval** on the driver's row under
+  back by midnight: switch off **… may take it now without approval** on the driver's row under
   **Access**. The switch shows while the vehicle asks for approval. Every driver keeps **Take it
   now** as before.
 - Each person or group on the booking notice list hears its own events: the owner can hear of
@@ -45,7 +45,8 @@
     `owns_shared`, whether the switch shows.
   - A grant's `take_now` and a booking recipient's `events`, on read and on write.
   - `user_id` on a new booking, and a booking's `seen_at` and `created_by_name`.
-  - `take_now` in `may`, when the caller's **Take it now** skips approval.
+  - `take_now` in `may`, always for the owner and the managers, and for a driver while one of
+    their grants allows it.
 - A vehicle's `booking_approval` stays the approval that applies. Writing a value that differs
   from it sets **Always** or **Never**
   ([API](https://github.com/typical42/next-fleet/blob/main/docs/api.md#booking-approval)).

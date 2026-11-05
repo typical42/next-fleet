@@ -127,6 +127,9 @@ async function told(screen, plate) {
 test('a newcomer sets up a pool car for two drivers, and each driver meets its rules', async ({ page, browser }, testInfo) => {
 	// Three new accounts, whose first sign-in took 30 s each on an idle stack.
 	test.setTimeout(420_000)
+	// Before any date is taken from the clock: Ben's booking is for tomorrow and each Take it now is back by
+	// 23:59 today, so the whole run, at most the timeout, must stay on one day.
+	test.skip(await minutesToMidnight(page) < 10, 'the browser clock is within 10 minutes of midnight')
 	const run = `${people}${testInfo.project.name}-${Date.now()}`
 	const plate = `${plates}${testInfo.project.name}`
 	const crew = `${run}-drivers`
@@ -181,19 +184,23 @@ test('a newcomer sets up a pool car for two drivers, and each driver meets its r
 
 	await expect(sheet).toBeVisible()
 	await sheet.getByRole('button', { name: 'Cancel' }).click()
-	// The app reads the settings once, at its start.
+	// No reload: the sheet reads the default again each time it opens.
+	await owner.getByRole('button', { name: 'Edit vehicle' }).click()
+	await opened(sheet)
+	await expect(sheet.getByText('As for all my vehicles (now: on)')).toBeVisible()
+	// The new default moved the vehicle's token, so the vehicle the app holds would save into a 412.
+	await sheet.getByRole('button', { name: 'Cancel' }).click()
 	await owner.reload()
 	await open(owner, plate)
 	await owner.getByRole('button', { name: 'Edit vehicle' }).click()
 	await opened(sheet)
-	await expect(sheet.getByText('As for all my vehicles (now: on)')).toBeVisible()
 
 	// Anna asks for every use of the car. The switch saves at once.
 	const annasRow = sheet.getByRole('listitem').filter({ hasText: 'Anna Poolcar' })
 	await expect(annasRow.getByText('May take the car at once, without approval, if it is back by midnight.')).toBeVisible()
-	await toggle(annasRow, 'Take it now without approval').click()
-	await expect(annasRow.getByRole('switch', { name: 'Take it now without approval' })).not.toBeChecked()
-	await expect(sheet.getByRole('listitem').filter({ hasText: 'Ben Poolcar' }).getByRole('switch', { name: 'Take it now without approval' })).toBeChecked()
+	await toggle(annasRow, 'Anna Poolcar may take it now without approval').click()
+	await expect(annasRow.getByRole('switch', { name: 'Anna Poolcar may take it now without approval' })).not.toBeChecked()
+	await expect(sheet.getByRole('switch', { name: 'Ben Poolcar may take it now without approval' })).toBeChecked()
 
 	// The notices: the owner hears all five, the drivers only that somebody takes the car now.
 	await expect(sheet.getByText('With nobody on the list, the notices go to you.')).toBeVisible()
@@ -248,7 +255,6 @@ test('a newcomer sets up a pool car for two drivers, and each driver meets its r
 	expect((await told(anna, plate)).filter((subject) => subject.includes(' booked '))).toEqual([])
 
 	// Anna's Take it now asks, even back by midnight; the owner says no.
-	test.skip(await minutesToMidnight(anna) < 10, 'Take it now is back by 23:59 today, and the browser clock is within 10 minutes of midnight')
 	await reopen(anna, plate)
 	await anna.getByRole('button', { name: 'Take it now', exact: true }).click()
 	const annaTakes = anna.getByRole('dialog', { name: 'Take the car' })

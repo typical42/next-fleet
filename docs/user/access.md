@@ -195,7 +195,8 @@ You can stop one driver from taking the car without approval.
 Do this when you want to approve each use of the car by that driver, also a short one.
 
 1. In **Edit vehicle**, go to **Access**.
-2. On the row of that driver, switch off **Take it now without approval**.
+2. On the row of that driver, switch off **… may take it now without approval**.
+   The switch starts with the name of the driver.
    The change saves at once.
 
 Each **Take it now** by that driver is then a request that waits for approval.

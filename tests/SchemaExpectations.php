@@ -213,7 +213,8 @@ trait SchemaExpectations {
 			// Whether drivers and viewers see the costs. Defaulted on, so the vehicles already
 			// there show what they always showed.
 			'costs_shared' => 'boolean, null, default true',
-			// The booking events the notice list hears; null reads as booked and taken.
+			// The events the owner hears while the list is empty, and what a new recipient starts
+			// with; null reads as booked and taken.
 			'booking_notices' => 'json, null',
 			// Whether a booking ahead waits for an answer: always, never, or null for as the
 			// owner's default says, which starts off.
@@ -404,7 +405,7 @@ trait SchemaExpectations {
 			'grantee' => 'string(64), not null',
 			'grantee_type' => 'string(8), not null',
 			'role' => 'string(16), not null',
-			// Whether a driver's Take it now skips approval; null for a row from before it, allowed.
+			// Whether a driver's Take it now skips approval; null reads as allowed.
 			'take_now' => 'boolean, null, default true',
 		]);
 	}

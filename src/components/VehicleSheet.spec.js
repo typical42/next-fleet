@@ -504,6 +504,27 @@ describe('the vehicle sheet, editing', () => {
 		expect(dropdown(pinned, APPROVAL).props('options')[0].label).toBe('As for all my vehicles (now: off)')
 	})
 
+	/** The default may have changed in Settings in another tab since the app read it: the sheet reads it again. */
+	it('says what "as for all my vehicles" means by the settings it reads on opening', async () => {
+		const settings = await getPreferences()
+		vi.mocked(getPreferences).mockResolvedValue({ ...settings, preferences: { ...settings.preferences, booking_approval: true } })
+
+		const pinned = await sheet({ ...VEHICLE, booking_approval: false, booking_approval_rule: 'never' })
+		expect(dropdown(pinned, APPROVAL).props('options')[0].label).toBe('As for all my vehicles (now: on)')
+		await dropdown(pinned, APPROVAL).vm.$emit('update:modelValue', { id: 'default', label: 'As for all my vehicles (now: on)' })
+		expect(/** @type {any} */ (pinned.findComponent(VehicleGrants)).props('approval')).toBe(true)
+
+		const follows = await sheet({ ...VEHICLE, booking_approval: false, booking_approval_rule: 'default' })
+		expect(dropdown(follows, APPROVAL).props('options')[0].label).toBe('As for all my vehicles (now: on)')
+		expect(/** @type {any} */ (follows.findComponent(VehicleGrants)).props('approval')).toBe(true)
+
+		// Switched off, the same: the vehicle that still says on is older than the read.
+		vi.mocked(getPreferences).mockResolvedValue({ ...settings, preferences: { ...settings.preferences, booking_approval: false } })
+		const stale = await sheet({ ...VEHICLE, booking_approval: true, booking_approval_rule: 'default' })
+		expect(dropdown(stale, APPROVAL).props('options')[0].label).toBe('As for all my vehicles (now: off)')
+		expect(/** @type {any} */ (stale.findComponent(VehicleGrants)).props('approval')).toBe(false)
+	})
+
 	/** The sheet stays open with its edits; the link is set apart from its sentence as the sheet's other links are. */
 	it('opens the settings in a new tab', async () => {
 		const wrapper = await sheet({ ...VEHICLE, booking_approval: true, booking_approval_rule: 'default' })

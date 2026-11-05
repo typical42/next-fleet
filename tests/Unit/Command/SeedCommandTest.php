@@ -369,6 +369,20 @@ class SeedCommandTest extends TestCase {
 	}
 
 	/**
+	 * The default it turns on is the account's, so the admin is told that it reaches a real vehicle
+	 * beside the demo ones.
+	 */
+	public function testTheOutputSaysTheDefaultIsOnForAllTheAccountsVehicles(): void {
+		$tester = $this->tester();
+
+		$this->assertSame(0, $tester->execute(['user' => self::OWNER, '--grant-to' => [self::DRIVER]]), $tester->getDisplay());
+		$this->assertStringContainsString(
+			'"Bookings need approval" is now on for all of ' . self::OWNER . '\'s vehicles that follow the default, not only the demo ones.',
+			$tester->getDisplay(),
+		);
+	}
+
+	/**
 	 * A second account shares only the pool car and may take it at once; the owner books it for
 	 * them, the last one named.
 	 */

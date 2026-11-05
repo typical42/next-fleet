@@ -166,6 +166,6 @@ Usage: `occ nextfleet:seed <user> [--grant-to <uid>] [--grant-to <uid>]`
 
 | Option | Description |
 |---|---|
-| `--grant-to` | Give this account driver access to two vehicles: one with a trip and a booking of its own, and a pool car whose costs drivers do not see, with a booking of its own waiting for approval. Give it a second time to add a second driver to the pool car. The pool car shows each booking rule: approval for all vehicles, a driver who needs approval also for **Take it now**, notices per person, and a booking for a driver. |
+| `--grant-to` | Give this account driver access to two vehicles: one with a trip and a booking of its own, and a pool car whose costs drivers do not see, with a booking of its own waiting for approval. Give it a second time to add a second driver to the pool car. The pool car shows each booking rule: approval for all vehicles, a driver who needs approval also for **Take it now**, notices per person, and a booking for a driver. This option turns on **Bookings need approval** in the settings of `<user>`, so all vehicles of `<user>` that follow that setting need approval, not only the demo ones. |
 
 Next: [Troubleshooting](troubleshooting.md)

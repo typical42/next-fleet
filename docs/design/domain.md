@@ -184,6 +184,7 @@ classDiagram
         mayCost(userId, vehicle, createdBy)
         mayApprove(userId, vehicle)
         mayTakeNow(userId, vehicle)
+        holders(vehicle, operation)
         mayCompareDrivers(userId, vehicle)
         reachable(userId)
     }

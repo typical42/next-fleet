@@ -193,14 +193,17 @@ describe('the Access section', () => {
 		expect(select(wrapper, 'Role of Anna O\'Brien').props('modelValue').id).toBe('manager')
 	})
 
-	/** Only a driver's Take it now asks anybody: managers approve their own, viewers book nothing. */
+	/**
+	 * Only a driver's Take it now asks anybody: managers approve their own, viewers book nothing. The
+	 * switch names its driver, as the row's other controls do, so a screen reader tells the rows apart.
+	 */
 	it('offers the Take it now switch on driver rows while approval applies', async () => {
 		vi.mocked(listGrants).mockResolvedValue([ANNA, CREW, { ...CREW, uuid: 'g-3', role: 'manager' }])
 		const wrapper = await section(OWNED, true)
 
 		expect(switches(wrapper)).toHaveLength(1)
 		expect(switches(wrapper)[0].props()).toMatchObject({
-			label: 'Take it now without approval',
+			label: 'Anna O\'Brien may take it now without approval',
 			description: 'May take the car at once, without approval, if it is back by midnight.',
 			modelValue: true,
 		})

@@ -630,6 +630,7 @@ class SeedCommand extends Command {
 			. self::GRANTED['costs_kept'] . ', a pool car whose costs are kept from drivers, with a booking of theirs waiting for approval.');
 		$output->writeln('The pool car ' . self::GRANTED['costs_kept'] . ' asks for approval as ' . $userId . '\'s default says; '
 			. implode(' and ', $drivers) . ' drive it, ' . $first . ' asks for each Take it now, and ' . $userId . ' booked it for ' . $last . '.');
+		$output->writeln('"Bookings need approval" is now on for all of ' . $userId . '\'s vehicles that follow the default, not only the demo ones.');
 
 		return self::SUCCESS;
 	}

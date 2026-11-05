@@ -111,7 +111,8 @@ With a pooled car, an employer processes employee data.
   It does not read prose.
 - **Bookings and handover notes are personal data.**
   Erasure treats them like trips.
-  A cancel notice names nobody, because a Nextcloud notification is not a row the app can rename.
+  A cancel notice to the booker names nobody, because a Nextcloud notification is not a row the app can rename.
+  The notices of a booking made for a driver read both names from the booking when shown, so an erasure reaches them.
 - **A booking made for a driver names both.**
   It records who made it and for whom, and erasure pseudonymises both.
   It also records when the driver confirmed it, and nothing else about the driver.
