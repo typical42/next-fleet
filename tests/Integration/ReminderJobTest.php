@@ -10,8 +10,11 @@ namespace OCA\NextFleet\Tests\Integration;
 
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\BackgroundJob\ReminderJob;
+use OCA\NextFleet\Db\MaintenanceMapper;
 use OCA\NextFleet\Db\Reminder;
 use OCA\NextFleet\Db\ReminderMapper;
+use OCA\NextFleet\Db\ReminderReceipt;
+use OCA\NextFleet\Db\ReminderReceiptMapper;
 use OCA\NextFleet\Db\ReminderRecipient;
 use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\VehicleMapper;
@@ -19,7 +22,9 @@ use OCA\NextFleet\Service\GrantService;
 use OCA\NextFleet\Service\MailService;
 use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\NotificationService;
+use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\RecipientService;
+use OCA\NextFleet\Service\ReminderEngine;
 use OCA\NextFleet\Service\ReminderService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\App\IAppManager;
@@ -376,6 +381,29 @@ class ReminderJobTest extends TestCase {
 		$this->assertSame(['B-XY 123: Insurance ist heute fällig'], array_column($this->notifications(self::OWNER), 'subject'));
 	}
 
+	/**
+	 * The km warning stands for a reminder due by date or km. Correcting the closing record's day
+	 * moves only the due date, but the notifier drops a notice for any due that moved: the km
+	 * warning rings again.
+	 */
+	public function testACorrectedDayLetsTheKmWarningRingAgain(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$oil = $this->reminders->create(self::OWNER, $vehicle->getUuid(), ['template_key' => 'oil_change', 'due_date' => '2027-03-01', 'due_odo' => 60000]);
+		$work = ['done_at_off' => 0, 'title' => 'Oil change', 'cost' => 18990, 'odo' => 58500, 'closes' => $oil['uuid']];
+		$maintenance = \OCP\Server::get(MaintenanceService::class);
+		$record = $maintenance->record(self::OWNER, $vehicle->getUuid(), $work + ['done_at' => self::on('2027-02-10')]);
+		\OCP\Server::get(OdometerService::class)->record(self::OWNER, $vehicle->getUuid(), ['read_at' => self::on('2027-11-01'), 'read_at_off' => 0, 'value' => 72600]);
+		$this->runAt('2027-11-02');
+		$told = array_column($this->notifications(self::OWNER), 'subject');
+		$this->assertCount(1, $told);
+
+		$maintenance->update(self::OWNER, $vehicle->getUuid(), $record['uuid'], $record['updated_at'], $work + ['done_at' => self::on('2027-02-12')]);
+		$this->runAt('2027-11-02 01:00');
+
+		$this->assertSame('2028-02-12', $this->byUuid($vehicle->getId(), $oil['uuid'])->getDueDate()?->format('Y-m-d'));
+		$this->assertSame($told, array_column($this->notifications(self::OWNER), 'subject'));
+	}
+
 	/** Unticking the point that rang tells the one before it again, as the job does on the day. */
 	public function testUntickingTheDayThatRangLeavesDueOnStanding(): void {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
@@ -466,6 +494,154 @@ class ReminderJobTest extends TestCase {
 	}
 
 	/**
+	 * The work was logged two years too early, so "due today" rang at once; the record was deleted
+	 * and entered again with the right year. The occurrence it closes to is the one that rang, at
+	 * another due, so that due rings on its day.
+	 */
+	public function testAnOccurrenceClosedAgainAtAnotherDueRingsOnItsDay(): void {
+		[$vehicle, $hu] = $this->huAuLoggedTwoYearsEarlyAndDeleted();
+
+		\OCP\Server::get(MaintenanceService::class)->record(self::OWNER, $vehicle->getUuid(), $this->huAuWork('2026-11-20', $hu['uuid']));
+		$this->runAt('2028-11-20');
+
+		$this->assertSame(['B-XY 123: Hauptuntersuchung (HU/AU) ist heute fällig'], array_column($this->notifications(self::OWNER), 'subject'));
+		$this->assertSame([2, '2028-11-20'], $this->occurrenceAndDay($vehicle->getId()));
+	}
+
+	/** The same with "Skip this time" instead of the new record: the skipped-to due rings. */
+	public function testAnOccurrenceSkippedToAgainAtAnotherDueRingsOnItsDay(): void {
+		[$vehicle, $hu] = $this->huAuLoggedTwoYearsEarlyAndDeleted();
+		$reminder = $this->reminders->list(self::OWNER, $vehicle->getUuid())[0];
+
+		$this->reminders->dismiss(self::OWNER, $vehicle->getUuid(), $hu['uuid'], $reminder['updated_at']);
+		$this->runAt('2028-12-15');
+
+		$this->assertSame(['B-XY 123: Hauptuntersuchung (HU/AU) ist heute fällig'], array_column($this->notifications(self::OWNER), 'subject'));
+		$this->assertSame([2, '2028-12-15'], $this->occurrenceAndDay($vehicle->getId()));
+	}
+
+	/** The undo of a delete closes at the due that rang: it does not ring twice. */
+	public function testTheUndoOfADeleteDoesNotRingTheSameDueTwice(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$hu = $this->reminders->create(self::OWNER, $vehicle->getUuid(), ['template_key' => 'hu_au', 'due_date' => '2026-12-15']);
+		$maintenance = \OCP\Server::get(MaintenanceService::class);
+		$record = $maintenance->record(self::OWNER, $vehicle->getUuid(), $this->huAuWork('2026-11-20', $hu['uuid']));
+		$this->runAt('2028-11-20');
+		$this->assertCount(1, $this->notifications(self::OWNER));
+
+		$deleted = $maintenance->delete(self::OWNER, $vehicle->getUuid(), $record['uuid'], $record['updated_at']);
+		$maintenance->restore(self::OWNER, $vehicle->getUuid(), $record['uuid'], $deleted['updated_at']);
+		$this->runAt('2028-11-20 01:00');
+
+		$this->assertSame([2, '2028-11-20'], $this->occurrenceAndDay($vehicle->getId()));
+		$this->assertSame([], $this->notifications(self::OWNER));
+	}
+
+	/** Unticking the reminder and ticking it again on the same day is the same due: no second ring. */
+	public function testUntickingAndTickingAgainDoesNotRingTheSameDueTwice(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$hu = $this->reminders->create(self::OWNER, $vehicle->getUuid(), ['template_key' => 'hu_au', 'due_date' => '2026-12-15']);
+		$maintenance = \OCP\Server::get(MaintenanceService::class);
+		$record = $maintenance->record(self::OWNER, $vehicle->getUuid(), $this->huAuWork('2026-11-20', $hu['uuid']));
+		$this->runAt('2028-11-20');
+		$this->assertCount(1, $this->notifications(self::OWNER));
+
+		$unticked = $maintenance->update(self::OWNER, $vehicle->getUuid(), $record['uuid'], $record['updated_at'], $this->huAuWork('2026-11-20', null));
+		$this->assertSame([1, '2026-12-15'], $this->occurrenceAndDay($vehicle->getId()));
+		$maintenance->update(self::OWNER, $vehicle->getUuid(), $record['uuid'], $unticked['updated_at'], $this->huAuWork('2026-11-20', $hu['uuid']));
+		$this->runAt('2028-11-20 01:00');
+
+		$this->assertSame([2, '2028-11-20'], $this->occurrenceAndDay($vehicle->getId()));
+		$this->assertSame([], $this->notifications(self::OWNER));
+	}
+
+	/**
+	 * Two closes, the upper one rang; both records are deleted, which takes the reminder back two
+	 * occurrences, and a third record closes it once. The occurrence it closes to is the one that
+	 * rang, at another due, so that due rings when it comes.
+	 */
+	public function testAnOccurrenceAStackWentBackOverRingsAtItsNewDue(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$oil = $this->reminders->create(self::OWNER, $vehicle->getUuid(), ['template_key' => 'oil_change', 'due_date' => '2027-03-01', 'due_odo' => 60000]);
+		$maintenance = \OCP\Server::get(MaintenanceService::class);
+		$first = $maintenance->record(self::OWNER, $vehicle->getUuid(), $this->oilWork('2027-02-10', 58500, $oil['uuid']));
+		$this->runAt('2028-01-10');
+		$this->assertCount(1, $this->notifications(self::OWNER));
+		$second = $maintenance->record(self::OWNER, $vehicle->getUuid(), $this->oilWork('2028-02-05', 73000, $oil['uuid']));
+		$this->assertSame(3, $this->stored($vehicle->getId())->getOccurrence());
+
+		foreach ([$first, $second] as $record) {
+			$maintenance->delete(self::OWNER, $vehicle->getUuid(), $record['uuid'], \OCP\Server::get(MaintenanceMapper::class)->findAnyByUuid($record['uuid'])->getUpdatedAt());
+		}
+		$this->assertSame([1, '2027-03-01'], $this->occurrenceAndDay($vehicle->getId()));
+		$maintenance->record(self::OWNER, $vehicle->getUuid(), $this->oilWork('2028-03-01', 74000, $oil['uuid']));
+		$this->runAt('2029-02-01');
+
+		$this->assertSame([2, '2029-03-01'], $this->occurrenceAndDay($vehicle->getId()));
+		$told = array_column($this->notifications(self::OWNER), 'subject');
+		$this->assertCount(1, $told);
+		$this->assertStringContainsString('01.03.2029', $told[0]);
+	}
+
+	/** A receipt written before receipts kept their due still counts: the upgrade sends no burst. */
+	public function testAReceiptWithoutADueStillCounts(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$this->reminders->create(self::OWNER, $vehicle->getUuid(), ['template_key' => 'hu_au', 'due_date' => '2031-05-31']);
+		$receipt = new ReminderReceipt();
+		$receipt->setReminderId((int)$this->stored($vehicle->getId())->getId());
+		$receipt->setOccurrence(1);
+		$receipt->setPoint(ReminderEngine::MONTH_BEFORE);
+		$receipt->setChannel(ReminderReceipt::APP);
+		$receipt->setUserId(self::OWNER);
+		$receipt->setSentAt(self::on('2031-05-01'));
+		$receipt->setCreatedBy(self::OWNER);
+		\OCP\Server::get(ReminderReceiptMapper::class)->insert($receipt);
+
+		$this->runAt('2031-05-03');
+
+		$this->assertSame([], $this->notifications(self::OWNER));
+	}
+
+	/**
+	 * A HU/AU due 2026-12-15, every 24 months. On 2026-11-20 the work is logged for 2024-11-20, so
+	 * the reminder is due that day and rings; the record is then deleted, which puts the reminder
+	 * back to 2026-12-15.
+	 *
+	 * @return array{\OCA\NextFleet\Db\Vehicle, array<string, mixed>} the vehicle and the reminder
+	 */
+	private function huAuLoggedTwoYearsEarlyAndDeleted(): array {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123']);
+		$hu = $this->reminders->create(self::OWNER, $vehicle->getUuid(), ['template_key' => 'hu_au', 'due_date' => '2026-12-15']);
+		$maintenance = \OCP\Server::get(MaintenanceService::class);
+		$wrong = $maintenance->record(self::OWNER, $vehicle->getUuid(), $this->huAuWork('2024-11-20', $hu['uuid']));
+		$this->runAt('2026-11-20');
+		$this->assertSame(['B-XY 123: Hauptuntersuchung (HU/AU) ist heute fällig'], array_column($this->notifications(self::OWNER), 'subject'));
+		$this->assertSame([2, '2026-11-20'], $this->occurrenceAndDay($vehicle->getId()));
+
+		$maintenance->delete(self::OWNER, $vehicle->getUuid(), $wrong['uuid'], $wrong['updated_at']);
+		$this->assertSame([1, '2026-12-15'], $this->occurrenceAndDay($vehicle->getId()));
+
+		return [$vehicle, $hu];
+	}
+
+	/** @return array<string, mixed> */
+	private function huAuWork(string $day, ?string $closes): array {
+		return ['done_at' => self::on($day), 'done_at_off' => 0, 'title' => 'HU/AU', 'cost' => 14900, 'closes' => $closes];
+	}
+
+	/** @return array<string, mixed> */
+	private function oilWork(string $day, int $odo, string $closes): array {
+		return ['done_at' => self::on($day), 'done_at_off' => 0, 'title' => 'Oil change', 'cost' => 18990, 'odo' => $odo, 'closes' => $closes];
+	}
+
+	/** @return array{int, ?string} the reminder's occurrence and due date, read back from the database */
+	private function occurrenceAndDay(int $vehicleId): array {
+		$reminder = $this->stored($vehicleId);
+
+		return [$reminder->getOccurrence(), $reminder->getDueDate()?->format('Y-m-d')];
+	}
+
+	/**
 	 * The job, on a clock set to that moment in UTC. Every run asserts the digest was reached.
 	 *
 	 * @param ?\Closure(): void $race run once, after the sweep's commit and before its first send
@@ -543,6 +719,11 @@ class ReminderJobTest extends TestCase {
 		);
 		// The digest is ReminderMailTest's; a real one here would mail the whole instance.
 		(new ReminderJob($clock, $service, $mail))->start(\OCP\Server::get(IJobList::class));
+	}
+
+	/** Mid-morning on that day. */
+	private static function on(string $day): int {
+		return (new \DateTimeImmutable($day . ' 10:00', new \DateTimeZone('UTC')))->getTimestamp();
 	}
 
 	private function stored(int $vehicleId): Reminder {

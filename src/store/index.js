@@ -6,7 +6,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
-import { createReminder, createVehicle, deleteEntry, deleteVehicle, detachDocument, getVehicle, leaveVehicle, listVehicles, recordEnergy, recordExpense, recordMaintenance, recordReading, recordTrip, restoreDocument, restoreEntry, restoreVehicle, runImport, undoImport, updateEntry, updateVehicle } from '../services/api.js'
+import { createReminder, createVehicle, deleteEntry, deleteVehicle, detachDocument, getVehicle, leaveVehicle, listVehicles, OfflineError, recordEnergy, recordExpense, recordMaintenance, recordReading, recordTrip, restoreDocument, restoreEntry, restoreVehicle, runImport, UnansweredError, undoImport, updateEntry, updateVehicle } from '../services/api.js'
 import { useInboxStore } from './inbox.js'
 
 /** @typedef {import('../services/api.js').Vehicle} Vehicle */
@@ -36,7 +36,7 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	/**
 	 * The way back for an Entry: the last delete's answer and its vehicle. State, as `deleted` is.
 	 *
-	 * @type {import('vue').Ref<{vehicle: string, type: import('../services/api.js').Written, entry: {uuid: string, updated_at: number}}|null>}
+	 * @type {import('vue').Ref<{vehicle: string, type: import('../services/api.js').Written, entry: {uuid: string, updated_at: number, closes?: string|null}}|null>}
 	 */
 	const struck = ref(null)
 
@@ -58,9 +58,10 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 
 	/**
 	 * The entry sheet's last save, for the toast's "Saved.". An edit carries the way back: its new
-	 * token and the fields it replaced. A new Entry carries neither; the timeline deletes it.
+	 * token and the fields it replaced. A new Entry carries its answer and no fields, so it offers
+	 * nothing back; the timeline deletes it.
 	 *
-	 * @type {import('vue').Ref<{vehicle: string, type: import('../services/api.js').Written, entry: {uuid: string, updated_at: number}|null, before: object|null}|null>}
+	 * @type {import('vue').Ref<{vehicle: string, type: import('../services/api.js').Written, entry: {uuid: string, updated_at: number, closes?: string|null}|null, before: object|null}|null>}
 	 */
 	const saved = ref(null)
 
@@ -249,6 +250,7 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 		if (deleted.value !== null) {
 			upsert(await restoreVehicle(deleted.value))
 			deleted.value = null
+			restored.value++
 			return
 		}
 
@@ -313,24 +315,40 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	/**
 	 * Say the entry sheet's save went through, and for an edit hold the way back, one offer at a time
 	 * with the others. A new Entry offers nothing, so it gives way to an offer still standing: its
-	 * word leaves on a clock, and would take that way back with it.
+	 * word leaves on a clock, and would take that way back with it. Not to the delete or the edit of
+	 * a record that closed, or now closes, the reminder a new record closes: the undo offered must be
+	 * the latest change to that reminder, and that delete or edit no longer is.
 	 *
 	 * @param {string} uuid - the vehicle
 	 * @param {import('../services/api.js').Written} type - which kind was saved
-	 * @param {{uuid: string, updated_at: number}|null} [entry] - what an edit answered with
+	 * @param {{uuid: string, updated_at: number, closes?: string|null}|null} [entry] - what the write answered with
 	 * @param {object|null} [before] - the whole Entry as the edit found it, as its update takes it
 	 */
 	function wrote(uuid, type, entry = null, before = null) {
 		const standing = deleted.value !== null || struck.value !== null || imported.value !== null || detached.value !== null
 			|| (saved.value !== null && saved.value.before !== null)
-		if (before === null && standing) {
+		if (before === null && standing && !reclosed(uuid, type === 'maintenance' ? entry?.closes ?? null : null)) {
 			return
 		}
-		deleted.value = null
-		struck.value = null
-		imported.value = null
-		detached.value = null
+		forget()
 		saved.value = { vehicle: uuid, type, entry, before }
+	}
+
+	/**
+	 * Whether the delete or the edit offered back is of a record that closed, or now closes, the
+	 * reminder a write on this vehicle closes.
+	 *
+	 * @param {string} uuid - the vehicle written on
+	 * @param {string|null} closes - the reminder the write closes
+	 * @return {boolean} true when that offer is no longer the latest change to the reminder
+	 */
+	function reclosed(uuid, closes) {
+		const savedHere = saved.value?.type === 'maintenance' && saved.value.vehicle === uuid ? saved.value : null
+
+		return closes !== null && (
+			(struck.value?.type === 'maintenance' && struck.value.vehicle === uuid && struck.value.entry.closes === closes)
+			|| (savedHere !== null && savedHere.before !== null
+				&& (/** @type {{closes?: string|null}} */ (savedHere.before).closes === closes || savedHere.entry?.closes === closes)))
 	}
 
 	/**
@@ -339,12 +357,15 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	 *
 	 * @param {string} uuid - the vehicle it hangs off
 	 * @param {import('../services/api.js').Written} type - which kind it is
-	 * @param {{uuid: string, updated_at: number}} entry - the Entry as it was read
+	 * @param {{uuid: string, updated_at: number, closes?: string|null}} entry - the Entry as it was read
 	 * @param {object} fields - the whole Entry, as the sheet holds it
 	 * @return {Promise<object>} the Entry as the server now holds it
 	 */
 	async function revise(uuid, type, entry, fields) {
-		return moving(uuid, type, () => updateEntry(uuid, type, entry, fields))
+		// Landed, a record's edit changes both the reminder it closed and the one it closes now.
+		const closes = [entry.closes, /** @type {{closes?: string|null}} */ (fields).closes]
+
+		return moving(uuid, type, () => updateEntry(uuid, type, entry, fields), closes)
 	}
 
 	/**
@@ -355,11 +376,12 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	 * @param {string} uuid - the vehicle
 	 * @param {import('../services/api.js').Written} type - which kind is written
 	 * @param {() => Promise<T>} write - the write to make
+	 * @param {(string|null|undefined)[]} [closes] - the reminders a Maintenance Record's write changes, as serviced() takes them
 	 * @return {Promise<T>} what the write answered with
 	 */
-	async function moving(uuid, type, write) {
+	async function moving(uuid, type, write, closes = []) {
 		if (type === 'maintenance') {
-			return serviced(uuid, write)
+			return serviced(uuid, write, closes)
 		}
 
 		return type === 'expense' || type === 'reminder' ? write() : counted(uuid, write)
@@ -407,20 +429,32 @@ export const useVehiclesStore = defineStore('vehicles', () => {
 	 * @return {Promise<object>} the record as the server wrote it
 	 */
 	async function maintain(uuid, entry) {
-		return serviced(uuid, () => recordMaintenance(uuid, entry))
+		const { closes } = /** @type {{closes?: string|null}} */ (entry)
+
+		return serviced(uuid, () => recordMaintenance(uuid, entry), [closes])
 	}
 
 	/**
 	 * A write to a Maintenance Record: counted() for its counters, and a word to whoever lists
-	 * reminders, since the reminder it closes moves with it.
+	 * reminders, since the reminder it closes moves with it. A write whose answer is lost may have
+	 * landed, so it lets go of the way back wrote() would drop; the cost is one undo.
 	 *
 	 * @template T
 	 * @param {string} uuid - the vehicle the work was done on
 	 * @param {() => Promise<T>} write - the write to make
+	 * @param {(string|null|undefined)[]} [closes] - the reminders the write changes: the one the record closes, and for an edit the one it closed
 	 * @return {Promise<T>} what the write answered with
 	 */
-	async function serviced(uuid, write) {
-		const written = await counted(uuid, write)
+	async function serviced(uuid, write, closes = []) {
+		let written
+		try {
+			written = await counted(uuid, write)
+		} catch (error) {
+			if ((error instanceof OfflineError || error instanceof UnansweredError) && closes.some((one) => reclosed(uuid, one ?? null))) {
+				forget()
+			}
+			throw error
+		}
 		reminded.value++
 
 		return written

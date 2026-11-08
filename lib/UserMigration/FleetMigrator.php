@@ -15,6 +15,7 @@ use OCA\NextFleet\Db\Audit;
 use OCA\NextFleet\Db\BaseEntity;
 use OCA\NextFleet\Db\Booking;
 use OCA\NextFleet\Db\BookingRecipient;
+use OCA\NextFleet\Db\Maintenance;
 use OCA\NextFleet\Db\Reminder;
 use OCA\NextFleet\Db\ReminderRecipient;
 use OCA\NextFleet\Db\TripMapper;
@@ -125,7 +126,8 @@ class FleetMigrator implements IMigrator {
 	 * writer shows that state as it is now, which may be somebody else's: a vehicle handed to a
 	 * new owner, a reminder edited after the account lost its grant. Art. 15(4) GDPR: the copy
 	 * must not reach into other people's data, so such a row stays whole only while the account
-	 * may still see the vehicle.
+	 * may still see the vehicle. So do the columns of a maintenance record that hold its reminder's
+	 * state (Maintenance::KEPT): other people's records write them too.
 	 *
 	 * Bookings and prices: docs/architecture.md#personal-data-export.
 	 *
@@ -148,6 +150,9 @@ class FleetMigrator implements IMigrator {
 			}
 
 			return $row;
+		}
+		if ($entity instanceof Maintenance && !$this->may($uid, VehicleAccess::VIEW, $entity->getVehicleId())) {
+			$row = array_merge($row, array_fill_keys(array_map($entity->propertyToColumn(...), Maintenance::KEPT), null));
 		}
 		$vehicle = $entity instanceof Vehicle ? $entity : null;
 		if (in_array($table, self::AUTHORED, true) || ($row['created_by'] ?? null) !== $uid || $this->may($uid, VehicleAccess::VIEW, $this->vehicleOf($entity), $vehicle)) {

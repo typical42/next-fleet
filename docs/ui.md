@@ -178,6 +178,9 @@ Rules for all five:
   Under Logbook mode a trip offers *Void trip* instead of *Delete*.
 - **The undo outlives what it undoes.**
   The toast hangs in the app shell and carries no timer: a way back that disappears on a timer is a time limit on the only way back.
+  A new entry leaves a standing undo alone.
+  A new maintenance record drops the undo of a deleted or edited record that closed the same reminder, before or after the edit: that change is no longer the reminder's latest.
+  So does a create or an edit that closes, or closed, that reminder and whose answer is lost (offline, a server fault, a page that is not the server's): it may have landed.
 
 ### The QR shortcut
 

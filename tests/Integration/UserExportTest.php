@@ -13,6 +13,7 @@ use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\AccountTables;
 use OCA\NextFleet\Db\Audit;
 use OCA\NextFleet\Db\Booking;
+use OCA\NextFleet\Db\MaintenanceMapper;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
@@ -20,7 +21,9 @@ use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Service\BookingService;
 use OCA\NextFleet\Service\ExpenseService;
 use OCA\NextFleet\Service\GrantService;
+use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\RecipientService;
+use OCA\NextFleet\Service\ReminderService;
 use OCA\NextFleet\Service\TransferService;
 use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleAccess;
@@ -133,14 +136,7 @@ class UserExportTest extends TestCase {
 		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'first_reg' => '2020-03-01']);
 		$this->vehicleIds[] = (int)$vehicle->getId();
 		$logger = new SpyLogger();
-		$this->migrator = new FleetMigrator(
-			\OCP\Server::get(AccountTables::class),
-			\OCP\Server::get(VehicleMapper::class),
-			\OCP\Server::get(TripMapper::class),
-			\OCP\Server::get(VehicleAccess::class),
-			\OCP\Server::get(IFactory::class)->get(Application::APP_ID),
-			$logger,
-		);
+		$this->migrator = self::migrator($logger);
 
 		$files = $this->export(self::OWNER);
 
@@ -190,6 +186,46 @@ class UserExportTest extends TestCase {
 		]], $files['nextfleet/fleet_vehicles.json']);
 		$this->assertSame([$driven->getUuid()], array_column($files['nextfleet/fleet_trips.json'], 'uuid'));
 		$this->assertSame(12000, $files['nextfleet/fleet_trips.json'][0]['end_odo']);
+	}
+
+	/**
+	 * A maintenance record is the account's own doing, but what it kept for the reminder it closed
+	 * is the reminder's state, which others write once their records close it too. So that part is
+	 * the account's only while it may see the vehicle (Art. 15(4) GDPR). Each of the ten holds a
+	 * value, so a leak of any one shows.
+	 */
+	public function testAMaintenanceRecordKeepsWhatItKeptForItsReminderOnlyWhileTheAccountSeesTheVehicle(): void {
+		$vehicle = $this->vehicle(self::OWNER, 'B-XY 123');
+		$grants = \OCP\Server::get(GrantService::class);
+		$listed = $grants->grant(self::OWNER, $vehicle->getUuid(), ['grantee' => self::DRIVER, 'grantee_type' => 'user', 'role' => 'driver']);
+		[$grant] = array_values(array_filter($listed, static fn (array $grant): bool => $grant['grantee'] === self::DRIVER));
+		$oil = \OCP\Server::get(ReminderService::class)->create(self::OWNER, $vehicle->getUuid(), ['template_key' => 'oil_change', 'due_date' => '2027-03-01', 'due_odo' => 60000]);
+		$record = \OCP\Server::get(MaintenanceService::class)->record(self::DRIVER, $vehicle->getUuid(), [
+			'done_at' => 1802253600, 'done_at_off' => 0, 'title' => 'Oil change', 'odo' => 58500, 'closes' => $oil['uuid'],
+		]);
+		$kept = ['closed_due_date', 'closed_due_odo', 'closed_snoozed_until', 'closed_occurrence', 'next_snoozed_until', 'handed_to', 'kept_occurrence', 'next_due_date', 'next_due_odo', 'took_back'];
+		// The close leaves these five null; a snooze, a delete and a hand-up would set them.
+		$records = \OCP\Server::get(MaintenanceMapper::class);
+		$row = $records->findAnyByUuid($record['uuid']);
+		$row->setClosedSnoozedUntil(new \DateTime('2031-03-01'));
+		$row->setNextSnoozedUntil(new \DateTime('2032-06-01'));
+		$row->setHandedTo((int)$row->getId());
+		$row->setKeptOccurrence(2);
+		$row->setTookBack(true);
+		$records->writeKept($row);
+
+		[$whole] = $this->export(self::DRIVER)['nextfleet/fleet_maintenance.json'];
+		$grants->revoke(self::OWNER, $vehicle->getUuid(), $grant['uuid']);
+		// A new instance: one remembers what an account may, for the length of its export.
+		$this->migrator = self::migrator(new SpyLogger());
+		[$withheld] = $this->export(self::DRIVER)['nextfleet/fleet_maintenance.json'];
+
+		$this->assertSame(
+			['2027-03-01', 60000, '2031-03-01', 1, '2032-06-01', (int)$row->getId(), 2, '2028-02-10', 73500, true],
+			array_map(static fn (string $column): mixed => $whole[$column], $kept),
+		);
+		$this->assertSame(array_fill_keys($kept, null), array_intersect_key($withheld, array_flip($kept)));
+		$this->assertSame([$record['uuid'], 'Oil change', 58500], [$withheld['uuid'], $withheld['title'], $withheld['odo']]);
 	}
 
 	/**
@@ -364,6 +400,17 @@ class UserExportTest extends TestCase {
 
 		$this->assertStringContainsString('does not restore', $output->fetch());
 		$this->assertTrue($this->migrator->canImport($this->createMock(IImportSource::class)));
+	}
+
+	private static function migrator(SpyLogger $logger): FleetMigrator {
+		return new FleetMigrator(
+			\OCP\Server::get(AccountTables::class),
+			\OCP\Server::get(VehicleMapper::class),
+			\OCP\Server::get(TripMapper::class),
+			\OCP\Server::get(VehicleAccess::class),
+			\OCP\Server::get(IFactory::class)->get(Application::APP_ID),
+			$logger,
+		);
 	}
 
 	/** @return array<string, list<array<string, mixed>>> each file the export wrote, decoded */

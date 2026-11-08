@@ -61,24 +61,18 @@ final class ReminderEngine {
 
 	/**
 	 * Moves the reminder to its next occurrence, each axis counted from the base it is given: the
-	 * planned due for a dismissal, the actual completion for a maintenance record (rule 4).
+	 * planned due for a dismissal, the day and counter of the work for a maintenance record
+	 * (rule 4).
 	 *
 	 * @param ?string $fromDay a plain day, YYYY-MM-DD
 	 * @return bool false, and nothing changed, when the reminder does not recur
 	 */
 	public static function advance(Reminder $reminder, ?string $fromDay, ?int $fromOdo): bool {
-		$months = $reminder->getRecurMonths();
-		$km = $reminder->getRecurOdo();
-		if ($months === null && $km === null) {
+		if (!self::recurs($reminder)) {
 			return false;
 		}
 
-		if ($months !== null && $fromDay !== null) {
-			$reminder->setDueDate(new \DateTime(self::addMonths($fromDay, $months)));
-		}
-		if ($km !== null && $fromOdo !== null) {
-			$reminder->setDueOdo($fromOdo + $km);
-		}
+		self::setDue($reminder, ...self::nextDue($reminder, $fromDay, $fromOdo));
 		$reminder->setOccurrence($reminder->getOccurrence() + 1);
 		$reminder->setSnoozedUntil(null);
 
@@ -106,41 +100,300 @@ final class ReminderEngine {
 	}
 
 	/**
-	 * Takes back advance() from that base, when the reminder still stands where it put it: the
-	 * record that moved it on was withdrawn. The planned due is not kept, so the occurrence comes
-	 * back due at the base itself.
+	 * Whether the point is on the km axis: the warning by km and the due km. The others are on the
+	 * date. A receipt is for the due on its point's own axis (ReminderReceiptMapper::claim()).
+	 */
+	public static function byKm(string $point): bool {
+		return $point === self::ODO || $point === self::ODO_DUE;
+	}
+
+	/**
+	 * Takes back the close from that base, when the reminder stands where it left it (onTop()). Each
+	 * axis that recurs comes back to the due the record kept, or to the base for a record from
+	 * before; an axis the record kept nothing for stays. The snooze is the later of the kept one and the reminder's own, so
+	 * both wishes hold. The occurrence comes back to the one of the kept due (ClosedDue::returnsTo()),
+	 * or one less for a record from before. The number is reused as it was: a receipt of that
+	 * occurrence counts only for the due it was sent for (ReminderReceiptMapper::claim()).
 	 *
 	 * @param string $fromDay a plain day, YYYY-MM-DD
-	 * @return bool false, and nothing changed, when something else has moved the reminder since
+	 * @return bool false, and nothing changed, when the close is not on top
 	 */
-	public static function retreat(Reminder $reminder, string $fromDay, ?int $fromOdo): bool {
-		$advanced = clone $reminder;
-		if ($reminder->getOccurrence() < 2 || !self::advance($advanced, $fromDay, $fromOdo)
-			|| $advanced->getDueDate()?->format('Y-m-d') !== $reminder->getDueDate()?->format('Y-m-d')
-			|| $advanced->getDueOdo() !== $reminder->getDueOdo()) {
+	public static function retreat(Reminder $reminder, string $fromDay, ?int $fromOdo, ClosedDue $closed): bool {
+		if (!self::onTop($reminder, $fromDay, $fromOdo, $closed)) {
 			return false;
 		}
 
-		if ($reminder->getRecurMonths() !== null) {
-			$reminder->setDueDate(new \DateTime($fromDay));
-		}
-		if ($reminder->getRecurOdo() !== null && $fromOdo !== null) {
-			$reminder->setDueOdo($fromOdo);
-		}
-		$reminder->setOccurrence($reminder->getOccurrence() - 1);
+		self::setDue($reminder, ...self::putBack($reminder, $fromDay, $fromOdo, $closed));
+		// Plain days sort as strings; null sorts first, so it counts as no snooze.
+		$snoozed = max($closed->snoozedUntil, $reminder->getSnoozedUntil()?->format('Y-m-d'));
+		$reminder->setSnoozedUntil($snoozed === null ? null : new \DateTime($snoozed));
+		$reminder->setOccurrence($closed->returnsTo() ?? $reminder->getOccurrence() - 1);
 
 		return true;
 	}
 
 	/**
-	 * Whether the reminder stands where retreat() from that base left it, so an undo may advance
-	 * it again.
+	 * Closes the reminder again where the close put it, for an undo once standsAt() holds: the due
+	 * the record stored, on each axis it set that the reminder still recurs by, and the occurrence
+	 * after the one it closed. An axis it set nothing for stays as entered. The interval and the
+	 * record's counter play no part, so an interval changed since does not move the due.
+	 *
+	 * A one-off has no next due. Its close leaves the occurrence the record closed, so it goes back
+	 * there: standsAt() also finds it at an earlier one, where a retreat left it before it stopped
+	 * recurring.
+	 *
+	 * @return bool false for a one-off, which the close makes done
+	 * @throws \LogicException for a record from before, which stored no due: it closes again from
+	 *                         its own day and counter (ReminderService::closeBy())
+	 */
+	public static function reclose(Reminder $reminder, ClosedDue $closed): bool {
+		if ($closed->occurrence === null) {
+			// Not false: the caller reads false as done, and a recurring reminder would end.
+			throw new \LogicException('a record from before stored no due to close again at');
+		}
+		if (!self::recurs($reminder)) {
+			$reminder->setOccurrence($closed->occurrence);
+
+			return false;
+		}
+
+		self::setDue($reminder, ...self::stored($reminder, $closed));
+		$reminder->setOccurrence($closed->occurrence + 1);
+		$reminder->setSnoozedUntil(null);
+
+		return true;
+	}
+
+	/**
+	 * Moves the close from one base to another, when it is on top: the record's day or counter was
+	 * corrected. Each axis the close set is counted from the new base (rebase()); the occurrence and
+	 * its snooze stay, so a snooze set on it is not lost.
+	 *
+	 * @param string $fromDay a plain day, YYYY-MM-DD
+	 * @param ?string $toDay a plain day, YYYY-MM-DD; null, as a null km, leaves that axis
+	 * @return bool false, and nothing changed, when the close is not on top
+	 */
+	public static function move(Reminder $reminder, string $fromDay, ?int $fromOdo, ClosedDue $closed, ?string $toDay, ?int $toOdo): bool {
+		if (!self::onTop($reminder, $fromDay, $fromOdo, $closed)) {
+			return false;
+		}
+		self::setDue($reminder, ...self::gave($reminder, $toDay, $toOdo, self::rebase($reminder, $closed, $toDay, $toOdo)));
+
+		return true;
+	}
+
+	/**
+	 * The close as it stands once counted from another base: on each axis it set, the due advance()
+	 * from that base gives with the interval as it is now, for the person corrected the record. An
+	 * axis the reminder no longer recurs by, or given no base, keeps what the close set. A record
+	 * from before stored no due, so it stays as it is.
+	 *
+	 * @param ?string $toDay a plain day, YYYY-MM-DD
+	 */
+	public static function rebase(Reminder $reminder, ClosedDue $closed, ?string $toDay, ?int $toOdo): ClosedDue {
+		if ($closed->occurrence === null) {
+			return $closed;
+		}
+		[$day, $odo] = self::nextDue($reminder, $toDay, $toOdo);
+
+		return new ClosedDue(
+			$closed->day, $closed->odo, $closed->snoozedUntil, $closed->occurrence, $closed->keptOccurrence,
+			$closed->nextDay === null ? null : ($day ?? $closed->nextDay),
+			$closed->nextOdo === null ? null : ($odo ?? $closed->nextOdo),
+		);
+	}
+
+	/**
+	 * Whether the reminder stands where the close left it, the reminder's half of on top
+	 * (ReminderService::onTop() adds the other records): at the due that close set (gave()), and for
+	 * a record that kept its occurrence, at the occurrence that close started. A close that set
+	 * no axis the reminder still recurs by has nothing to tell, so it is not on top. Nor is one
+	 * under an occurrence that is over: it was dismissed, or done while the reminder did not recur,
+	 * after the close. A record from before has no occurrence, so of two closes from the same base
+	 * its close counts as on top.
 	 *
 	 * @param string $fromDay a plain day, YYYY-MM-DD
 	 */
-	public static function standsAt(Reminder $reminder, string $fromDay, ?int $fromOdo): bool {
-		return ($reminder->getRecurMonths() === null || $reminder->getDueDate()?->format('Y-m-d') === $fromDay)
-			&& ($reminder->getRecurOdo() === null || $fromOdo === null || $reminder->getDueOdo() === $fromOdo);
+	public static function onTop(Reminder $reminder, string $fromDay, ?int $fromOdo, ClosedDue $closed): bool {
+		if (!self::recurs($reminder) || self::over($reminder) || $reminder->getOccurrence() < 2
+			|| ($closed->occurrence !== null && $reminder->getOccurrence() !== $closed->occurrence + 1)) {
+			return false;
+		}
+
+		return ($closed->occurrence === null || self::tells($reminder, $closed)) && self::holds($reminder, ...self::gave($reminder, $fromDay, $fromOdo, $closed));
+	}
+
+	/**
+	 * Whether the close set a due on an axis the reminder recurs by, so the reminder's due tells
+	 * whether it still stands where the close left it.
+	 */
+	public static function tells(Reminder $reminder, ClosedDue $closed): bool {
+		return self::stored($reminder, $closed) !== [null, null];
+	}
+
+	/**
+	 * The close once the reminder recurs by an axis the record kept a due on but its close set none
+	 * on, as it was a one-off then: that axis is counted from the record's day or counter, as a new
+	 * close counts it (advance()). Every other value stays, so a due the close set is not counted
+	 * again with an interval changed since. A record from before stored no due, so it stays as it is.
+	 *
+	 * @param string $fromDay a plain day, YYYY-MM-DD
+	 */
+	public static function recurred(Reminder $reminder, string $fromDay, ?int $fromOdo, ClosedDue $closed): ClosedDue {
+		if ($closed->occurrence === null) {
+			return $closed;
+		}
+		[$day, $odo] = self::nextDue($reminder, $fromDay, $fromOdo);
+
+		return new ClosedDue(
+			$closed->day, $closed->odo, $closed->snoozedUntil, $closed->occurrence, $closed->keptOccurrence,
+			$closed->nextDay ?? ($closed->day === null ? null : $day),
+			$closed->nextOdo ?? ($closed->odo === null ? null : $odo),
+		);
+	}
+
+	/**
+	 * Whether the record that closed the next occurrence kept the due this close set, and returns to
+	 * the occurrence this close started. Then it is the record above this one, and taking this close
+	 * back hands what this record kept to it. A dismissal or a hand edit in between gives another
+	 * due or occurrence. An axis is compared only where both records hold a value: a record above
+	 * that kept none had none to keep, as the reminder lacked that axis when it closed, whatever the
+	 * reminder holds now. At least one axis must be compared, also one the reminder no longer
+	 * recurs by: both records were written while it did. A record from before stored nothing, so no
+	 * record follows it. Nor does a one-off's close, which set no due: taking it back reopens its own
+	 * occurrence and never returns to this one.
+	 *
+	 * @param ClosedDue $closed what this record kept
+	 * @param ClosedDue $above what the other record kept
+	 */
+	public static function follows(ClosedDue $closed, ClosedDue $above): bool {
+		if ($closed->occurrence === null || $above->returnsTo() !== $closed->occurrence + 1
+			|| ($above->nextDay === null && $above->nextOdo === null)) {
+			return false;
+		}
+
+		return (($closed->nextDay !== null && $above->day !== null) || ($closed->nextOdo !== null && $above->odo !== null))
+			&& ($closed->nextDay === null || $above->day === null || $above->day === $closed->nextDay)
+			&& ($closed->nextOdo === null || $above->odo === null || $above->odo === $closed->nextOdo);
+	}
+
+	/**
+	 * What the record above keeps once the close below it comes back, or is counted from another
+	 * base (rebase()): the due that close set, on each axis it set, also one the reminder no longer
+	 * recurs by, where the record above held that due before it was handed one. An axis the record
+	 * above kept nothing for, as the reminder had none when it closed, stays without. Every other
+	 * value stays as that record kept it, the occurrence of its due too.
+	 *
+	 * @param ClosedDue $closed what the lower record kept
+	 * @param ClosedDue $above what the record above kept
+	 */
+	public static function keptAbove(ClosedDue $closed, ClosedDue $above): ClosedDue {
+		return new ClosedDue(
+			$above->day === null ? null : $closed->nextDay ?? $above->day,
+			$above->odo === null ? null : $closed->nextOdo ?? $above->odo,
+			$above->snoozedUntil, $above->occurrence, $above->keptOccurrence, $above->nextDay, $above->nextOdo,
+		);
+	}
+
+	/**
+	 * The due the close set, on each axis the reminder recurs by: the one the record stored, or for
+	 * a record from before, which stored none, the one advance() gives from its base with the
+	 * interval as it is now.
+	 *
+	 * @param ?string $fromDay a plain day, YYYY-MM-DD
+	 * @return array{?string, ?int} a plain day, YYYY-MM-DD, and a km; null where it set none
+	 */
+	private static function gave(Reminder $reminder, ?string $fromDay, ?int $fromOdo, ClosedDue $closed): array {
+		return $closed->occurrence === null ? self::nextDue($reminder, $fromDay, $fromOdo) : self::stored($reminder, $closed);
+	}
+
+	/**
+	 * The due the record stored for its close, on each axis the reminder recurs by. Null where the
+	 * close set none: the reminder did not recur by that axis then, or no longer does.
+	 *
+	 * @return array{?string, ?int} a plain day, YYYY-MM-DD, and a km
+	 */
+	private static function stored(Reminder $reminder, ClosedDue $closed): array {
+		return [$reminder->getRecurMonths() !== null ? $closed->nextDay : null, $reminder->getRecurOdo() !== null ? $closed->nextOdo : null];
+	}
+
+	/**
+	 * The due advance() from that base gives, on each axis the reminder recurs by. Null on an
+	 * axis it does not recur by, or has no base for.
+	 *
+	 * @param ?string $fromDay a plain day, YYYY-MM-DD
+	 * @return array{?string, ?int} a plain day, YYYY-MM-DD, and a km
+	 */
+	public static function nextDue(Reminder $reminder, ?string $fromDay, ?int $fromOdo): array {
+		$months = $reminder->getRecurMonths();
+		$km = $reminder->getRecurOdo();
+
+		return [
+			$months !== null && $fromDay !== null ? self::addMonths($fromDay, $months) : null,
+			$km !== null && $fromOdo !== null ? $fromOdo + $km : null,
+		];
+	}
+
+	/**
+	 * Whether the reminder stands where retreat() with the same arguments left it, so an undo may
+	 * close it again: at the due and, for a record that kept its occurrence, the occurrence retreat()
+	 * put back. A one-off's close does not move the occurrence, nor does taking it back, so one that
+	 * does not recur also stands at the occurrence the record closed.
+	 *
+	 * @param string $fromDay a plain day, YYYY-MM-DD
+	 */
+	public static function standsAt(Reminder $reminder, string $fromDay, ?int $fromOdo, ClosedDue $closed): bool {
+		$occurrence = $reminder->getOccurrence();
+
+		return ($closed->occurrence === null || $occurrence === $closed->returnsTo() || (!self::recurs($reminder) && $occurrence === $closed->occurrence))
+			&& self::holds($reminder, ...self::putBack($reminder, $fromDay, $fromOdo, $closed));
+	}
+
+	/**
+	 * The due retreat() puts back on each axis the reminder recurs by, so standsAt() checks the
+	 * very same one: the kept due, or the base for a record from before. Null leaves the axis as
+	 * the reminder holds it: one the record kept nothing for, as the reminder did not have it.
+	 *
+	 * @return array{?string, ?int} a plain day, YYYY-MM-DD, and a km
+	 */
+	private static function putBack(Reminder $reminder, string $fromDay, ?int $fromOdo, ClosedDue $closed): array {
+		[$day, $odo] = $closed->occurrence === null ? [$fromDay, $fromOdo] : [$closed->day, $closed->odo];
+
+		return [$reminder->getRecurMonths() !== null ? $day : null, $reminder->getRecurOdo() !== null ? $odo : null];
+	}
+
+	/**
+	 * Whether the reminder is due there on each axis given; an axis given null is not checked.
+	 *
+	 * @param ?string $day a plain day, YYYY-MM-DD
+	 */
+	private static function holds(Reminder $reminder, ?string $day, ?int $odo): bool {
+		return ($day === null || $reminder->getDueDate()?->format('Y-m-d') === $day)
+			&& ($odo === null || $reminder->getDueOdo() === $odo);
+	}
+
+	/** Whether its occurrence is over, done or dismissed, so there is nothing left to silence, skip or close. */
+	public static function over(Reminder $reminder): bool {
+		return in_array($reminder->getState(), [Reminder::DONE, Reminder::DISMISSED], true);
+	}
+
+	/** Whether the reminder comes back after a close; a one-off is done by it. */
+	public static function recurs(Reminder $reminder): bool {
+		return $reminder->getRecurMonths() !== null || $reminder->getRecurOdo() !== null;
+	}
+
+	/**
+	 * An axis given null stays as it is.
+	 *
+	 * @param ?string $day a plain day, YYYY-MM-DD
+	 */
+	private static function setDue(Reminder $reminder, ?string $day, ?int $odo): void {
+		if ($day !== null) {
+			$reminder->setDueDate(new \DateTime($day));
+		}
+		if ($odo !== null) {
+			$reminder->setDueOdo($odo);
+		}
 	}
 
 	/**

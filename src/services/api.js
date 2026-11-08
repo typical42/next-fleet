@@ -643,6 +643,12 @@ export class LockedError extends Error {}
 export class OfflineError extends Error {}
 
 /**
+ * The server failed, or something between answered in its place. Either can come after the write
+ * landed, so neither proves the write was refused (docs/api.md#retried-creates).
+ */
+export class UnansweredError extends Error {}
+
+/**
  * A request the server refused for a reason it names (`currency_in_use`, `end_below_start`,
  * `ends_in_future`, `not_in_question`, `no_energy`), which the screen puts into words; the message is the
  * server's, English, for a log.
@@ -949,7 +955,7 @@ export async function updateEntry(uuid, type, entry, fields) {
  * @param {string} uuid - the vehicle it hangs off
  * @param {Written} type - which kind it is
  * @param {{uuid: string, updated_at: number}} entry - the Entry as it was read
- * @return {Promise<{uuid: string, updated_at: number}>} the Entry as the delete left it
+ * @return {Promise<{uuid: string, updated_at: number, closes?: string|null}>} the Entry as the delete left it
  * @throws {ConflictError} when it moved on since it was read
  */
 export async function deleteEntry(uuid, type, entry) {
@@ -1743,6 +1749,9 @@ function refusal(response, answer) {
 	}
 	if (response.status === 400 && typeof answer?.reason === 'string') {
 		return new RefusedError(answer.message, answer.reason)
+	}
+	if (response.status >= 500 || answer === null) {
+		return new UnansweredError(answer?.message ?? `The server answered ${response.status}`)
 	}
 
 	return new Error(answer?.message ?? `The server answered ${response.status}`)

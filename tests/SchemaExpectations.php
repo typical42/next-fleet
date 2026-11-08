@@ -305,6 +305,17 @@ trait SchemaExpectations {
 			'notes' => 'text, null',
 			// The reminder this record closed, if it closed one.
 			'reminder_id' => 'bigint, null',
+			// What the record kept for its close (Maintenance::KEPT); its docblocks say what each holds.
+			'closed_due_date' => 'date, null',
+			'closed_due_odo' => 'bigint, null',
+			'closed_snoozed_until' => 'date, null',
+			'closed_occurrence' => 'integer, null',
+			'next_snoozed_until' => 'date, null',
+			'handed_to' => 'bigint, null',
+			'kept_occurrence' => 'integer, null',
+			'next_due_date' => 'date, null',
+			'next_due_odo' => 'bigint, null',
+			'took_back' => 'boolean, null',
 		]);
 	}
 
@@ -354,6 +365,9 @@ trait SchemaExpectations {
 			'channel' => 'string(8), not null',
 			'user_id' => 'string(64), not null',
 			'sent_at' => 'bigint, not null',
+			// The due it was sent for; both null on a receipt written before they were kept.
+			'due_date' => 'date, null',
+			'due_odo' => 'bigint, null',
 		]);
 	}
 
@@ -593,8 +607,9 @@ trait SchemaExpectations {
 				// A nullable boolean has to say what its absence means, or an entity that never
 				// touched it writes null and reading the row back is a TypeError. Unless null is
 				// an answer of its own, which its entity property reads: a vehicle's approval
-				// that follows its owner (Vehicle::needsApproval()).
-				if ($name . '.' . $column->getName() === 'fleet_vehicles.booking_approval') {
+				// that follows its owner (Vehicle::needsApproval()), and a record's delete mark
+				// (Maintenance::$tookBack).
+				if (in_array($name . '.' . $column->getName(), ['fleet_vehicles.booking_approval', 'fleet_maintenance.took_back'], true)) {
 					continue;
 				}
 				$this->assertNotNull(

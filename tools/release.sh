@@ -12,7 +12,7 @@ set -eu
 
 # The versions users upgrade from, as tools/upgrade-check.sh takes them: the last release's tag.
 # Each release moves it on. Oracle checks the first only.
-BASES="v0.5.0"
+BASES="v0.6.0"
 
 usage() {
 	echo "usage: $0 prepare <YYYY-MM-DD>" >&2

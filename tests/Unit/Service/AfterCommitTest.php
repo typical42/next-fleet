@@ -70,6 +70,12 @@ class AfterCommitTest extends TestCase {
 		$this->assertSame(['begin', 'rollback', 'begin', 'commit'], $this->events);
 	}
 
+	public function testItSaysWhetherARunIsUnderWay(): void {
+		$this->assertFalse($this->after->running());
+		$this->assertTrue($this->after->run(fn (): bool => $this->after->running()));
+		$this->assertFalse($this->after->running());
+	}
+
 	/** A run inside another is part of it: one transaction, and its work waits for the outer commit. */
 	public function testAnInnerRunWaitsForTheOuterCommit(): void {
 		$this->after->run(function (): void {

@@ -34,16 +34,23 @@ stateDiagram-v2
     state "done<br/>Reminder::DONE" as done
     state "dismissed<br/>Reminder::DISMISSED" as dismissed
     [*] --> open : create
-    open --> open : dismiss or closeBy, it recurs, occurrence + 1
-    open --> open : reopenBy, it recurs, occurrence - 1
+    open --> open : dismiss, closeBy or restoreBy, it recurs, next occurrence
+    open --> open : takeBack on top, it recurs, occurrence of the kept due
+    open --> open : moveBy, it recurs, occurrence stays
     open --> dismissed : dismiss, it does not recur
-    open --> done : closeBy, it does not recur
-    done --> open : reopenBy, the record withdrawn
+    open --> done : closeBy or restoreBy, it does not recur
+    done --> open : takeBack of the close that did it, it does not recur
 ```
 
 `closeBy` is a maintenance record that names the reminder.
-`reopenBy` takes it back when the record is deleted or changed.
-A recurring reminder taken back steps back one occurrence (`ReminderEngine::retreat`).
+`restoreBy` is the undo of its delete: it starts the occurrence after the one the record closed, at the due that close set (`ReminderEngine::reclose`).
+It counts the due from the record's own day and counter for a record from before, and on an axis the reminder now recurs by where a one-off close set none (`ReminderEngine::recurred`).
+A close that sets no due the reminder now recurs by starts nothing: the record keeps its link, and the reminder stays where it is.
+`takeBack` runs when the record is deleted or no longer names the reminder.
+Only the record on top steps a recurring reminder back, to the occurrence of the due it kept (`ReminderEngine::retreat`); a lower record hands what it kept to the record above and leaves the reminder as it is.
+A one-off opens again only for the record whose close made it done; a close made before it stopped recurring leaves it done.
+A one-off's close is never the record above: taking it back reopens its own occurrence.
+`moveBy` runs when the record's day or counter changes.
 Delete and restore leave `state` as it is.
 
 ## A booking

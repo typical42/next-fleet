@@ -141,7 +141,10 @@ class UpgradeCheckScriptTest extends TestCase {
 								mkdir -p "$state/$server/data"
 								echo '{"level":3,"app":"nextfleet","message":"the upgraded app failed a request"}' >>"$state/$server/data/nextcloud.log"
 							fi
-							printf '"plate":"P1" nextfleet-main\n200\n'
+							case $* in
+								*/maintenance) printf '{}\n201\n' ;;
+								*) printf '"plate":"P1" nextfleet-main\n200\n' ;;
+							esac
 							;;
 						'mariadb -uroot' | 'psql -U' | 'sqlplus -s')
 							if [ "$1" = sqlplus ]; then
@@ -367,6 +370,43 @@ class UpgradeCheckScriptTest extends TestCase {
 		}
 		$this->assertSame(['app31', 'app34', 'from34'], array_keys($posts));
 		$this->assertLessThan(min($counts), min($posts));
+	}
+
+	/**
+	 * Every path adds a record that closes a reminder before the rows are counted and the app
+	 * upgraded, so the upgrade must keep a record's link to its reminder.
+	 */
+	public function testEveryPathClosesAReminderWithARecordBeforeTheUpgrade(): void {
+		[$status, $output] = $this->check('35', '');
+
+		$this->assertSame(0, $status, $output);
+		$lines = file($this->log, FILE_IGNORE_NEW_LINES);
+		$this->assertIsArray($lines);
+		// Each path's database, and the server that upgrades it: from34 upgrades as to35.
+		$paths = ['app31' => ['nextcloud31', 'app31'], 'app34' => ['nextcloud', 'app34'], 'from34' => ['nextcloud34to35', 'to35']];
+		$posts = [];
+		$counts = [];
+		$upgrades = [];
+		foreach ($lines as $i => $line) {
+			if (preg_match('/ exec -T (\w+) curl .*-X POST -d \{"done_at":\d+,"done_at_off":0,"title":"[^"]+","closes":"t1"\} /', $line, $match)
+				&& str_ends_with($lines[$i + 1] ?? '', '/api/vehicles/v1/maintenance')) {
+				$posts[$match[1]] = $i;
+			}
+			foreach ($paths as $path => [$schema, $server]) {
+				// The stub's one table: the snapshot of the rows counts it first.
+				if (str_contains($line, " $schema -e ") && str_contains($line, 'select count(*) from "oc_fleet_trips"')) {
+					$counts[$path] ??= $i;
+				}
+				if (str_ends_with($line, " -u www-data $server php occ upgrade")) {
+					$upgrades[$path] ??= $i;
+				}
+			}
+		}
+		$this->assertSame(array_keys($paths), array_keys($posts));
+		foreach (array_keys($paths) as $path) {
+			$this->assertLessThan($counts[$path] ?? -1, $posts[$path], "$path counts the rows before the record");
+			$this->assertLessThan($upgrades[$path] ?? -1, $posts[$path], "$path upgrades before the record");
+		}
 	}
 
 	public function testABaseWithoutBookingNoticesIsAskedForNone(): void {

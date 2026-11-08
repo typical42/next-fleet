@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.6.1 — 2026-11-08
+
+### Fixed
+
+- When you delete a maintenance record that closes a reminder, the reminder returns to its due date, counter reading and snooze from before the record.
+  This is also true when you change the record so that it no longer closes the reminder.
+  It is also true when you changed how often the reminder repeats after the record.
+  When you change the **Date** or the **Counter reading** of the record, the reminder keeps its snooze.
+  **Undo** of a delete restores all of it.
+  When you delete a record from before this version, the reminder is due on the date and counter reading of the record, as before.
+- When a reminder no longer repeats and a newer record closes it, a delete of an older record does not open the reminder again.
+- When you delete a maintenance record and enter it again with another date, you get the notifications and mails for the new due date.
+  This is also true when this version sent them for the old due date.
+- When you change the due date or the counter reading of a reminder, a notification that disappeared comes back if it applies to the new due date.
+- After you delete or change a maintenance record that closes a reminder, a new record that closes the same reminder removes the **Undo**.
+  This also occurs when you save a record that closes or closed the same reminder, and the save fails because there is no connection or no correct reply from the server.
+
 ## 0.6.0 — 2026-11-05
 
 ### Vehicles

@@ -163,10 +163,6 @@ the index.
 - **Mail depends on server SMTP.** Not every instance has it. Notifications must stand alone, and
   do: each channel has its own receipts, so a refused mail leaves the notification sent
   ([reminder engine](docs/architecture.md#reminder-engine), rule 7).
-- **Reminder undo is lossy.** The schema does not keep a planned due, so withdrawing the maintenance
-  record that closed a reminder reopens it due at the record's own day and km
-  ([reminder engine](docs/architecture.md#reminder-engine)). Keeping it would take a column, and the
-  first release adds no more: its last migration adds indexes only.
 - **App store compatibility churn.** Nextcloud majors break APIs twice a year; five supported
   majors is a deliberate cost, paid at M0 and again at every release.
 - **Entry friction kills logbooks.** If adding a trip takes more than a few seconds, the data rots.

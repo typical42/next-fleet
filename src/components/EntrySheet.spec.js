@@ -388,7 +388,8 @@ describe('the entry sheet', () => {
 
 		expect(wrapper.emitted('saved')?.length).toBe(1)
 		// "Saved.", with no way back: the new row is on the timeline to delete (UndoToast.vue).
-		expect(useVehiclesStore().saved).toEqual({ vehicle: 'v-1', type: 'trip', entry: null, before: null })
+		// The answer goes along, so a new record that closes a reminder can tell which (store.wrote()).
+		expect(useVehiclesStore().saved).toEqual({ vehicle: 'v-1', type: 'trip', entry: { uuid: 't-1', reconciled: false }, before: null })
 	})
 
 	it('records a plain counter reading under the odometer', async () => {

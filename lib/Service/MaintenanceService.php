@@ -114,6 +114,8 @@ class MaintenanceService {
 		$this->apply($vehicle, $record, $fields);
 		$closes = $this->reminders->closable((int)$vehicle->getId(), $fields['closes'] ?? null, null);
 		$record->setReminderId($closes?->getId());
+		// Known before the insert, so closeBy() below sets nothing the row does not hold already.
+		ReminderService::keep($record, $closes);
 		$written = $this->records->insert($record);
 		$this->follow($vehicle, $userId, $written, true);
 		if ($closes !== null) {
@@ -148,16 +150,28 @@ class MaintenanceService {
 			$this->apply($vehicle, $record, $fields);
 			$closes = $this->reminders->closable((int)$vehicle->getId(), $fields['closes'] ?? null, $current);
 			$record->setReminderId($closes?->getId());
+			// By id, not instance: a reminder read afresh would pass for another, and keep(null) below
+			// would drop what the record kept.
+			$sameReminder = $closes?->getId() === $current?->getId();
+			if (!$sameReminder) {
+				// What the old reminder kept is not the new one's; closeBy() below keeps the new one's, if any.
+				ReminderService::keep($record, null);
+			}
 			$edited = $this->records->updateChecked($record, $expectedUpdatedAt);
 			$this->follow($vehicle, $userId, $edited);
 
-			$moved = [$before->getDoneAt(), $before->getDoneAtOff(), $before->getOdo()] !== [$edited->getDoneAt(), $edited->getDoneAtOff(), $edited->getOdo()];
-			if ($current !== $closes || $moved) {
-				// Taken back and closed again from where the record now says the work was done.
-				// A reminder that has moved on since is no longer this record's to move.
-				$reopened = $current !== null && $this->reminders->reopenBy($current, $before);
-				if ($closes !== null && ($closes !== $current || $reopened)) {
+			if ($sameReminder) {
+				if ($closes !== null) {
+					$this->reminders->moveBy($closes, $before, $edited);
+				}
+			} else {
+				if ($current !== null) {
+					$this->reminders->takeBack($current, $before, deleted: false);
+				}
+				if ($closes !== null) {
+					// Written once more: closeBy() keeps on it what the close replaces.
 					$this->reminders->closeBy($closes, $edited);
+					$edited = $this->records->updateChecked($edited, $edited->getUpdatedAt());
 				}
 			}
 
@@ -199,41 +213,86 @@ class MaintenanceService {
 		$this->follow($vehicle, $userId, $deleted);
 		$closes = $this->closed($deleted);
 		if ($closes !== null) {
-			$this->reminders->reopenBy($closes, $deleted);
+			$this->reminders->takeBack($closes, $deleted, deleted: true);
 		}
 
 		return self::wire($deleted, $closes);
 	}
 
 	/**
-	 * Undo, on the token the delete answered with (TripService::restore()).
+	 * Undo, on the token the delete answered with (TripService::restore()). Later deletes on the
+	 * reminder the record closed are replayed (ReminderService::replay()), so two people, or two
+	 * tabs, each undoing their own delete get back what was there. If one of them can no longer be
+	 * replayed, or the record would then no longer close the reminder, the transaction rolls back
+	 * and the record is restored alone in a new one.
 	 *
 	 * @return NextFleetMaintenance the row as it now stands, in its wire form
 	 * @throws \OCA\NextFleet\Exception\AccessDeniedException if the user may not delete this record
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the record has changed since, or was never deleted
 	 * @throws \OCP\DB\Exception
+	 * @throws \LogicException inside another AfterCommit run, which would keep the refused replay's writes
 	 */
 	public function restore(string $userId, string $vehicleUuid, string $recordUuid, int $expectedUpdatedAt): array {
+		if ($this->after->running()) {
+			throw new \LogicException('restore() needs a transaction of its own');
+		}
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
-
-		return $this->after->run(function () use ($userId, $vehicle, $recordUuid, $expectedUpdatedAt): array {
+		$run = fn (bool $replay): array => $this->after->run(function () use ($userId, $vehicle, $recordUuid, $expectedUpdatedAt, $replay): array {
 			$this->vehicles->hold((int)$vehicle->getId());
 			$record = $this->records->findAnyOnVehicle((int)$vehicle->getId(), $recordUuid);
 			$this->fleet->change($userId, VehicleAccess::DELETE, $vehicle, $record->getCreatedBy());
-			$back = $this->records->restoreChecked($record, $expectedUpdatedAt);
-			$this->follow($vehicle, $userId, $back);
-			$closes = $this->closed($back);
-			if ($closes !== null && !$this->reminders->recloseBy($closes, $back)) {
-				// Something else moved the reminder on meanwhile. A link kept here would take that
-				// back the next time this record is withdrawn.
-				$closes = null;
-				$back->setReminderId(null);
-				$back = $this->records->updateChecked($back, $back->getUpdatedAt());
+			$closes = $this->closed($record);
+			// A later delete's take-back leaves a deleted reminder as it is, so deleting it again could
+			// not take back what replaying its undo closed.
+			$later = $replay && $closes !== null && $closes->getDeletedAt() === null && $record->getDeletedAt() !== null
+				? $this->records->findDeletedAfter($record)
+				: [];
+			if ($closes === null || $later === []) {
+				return $this->undelete($vehicle, $userId, $record, $expectedUpdatedAt);
 			}
 
-			return self::wire($back, $closes);
+			return $this->reminders->replay($closes, $later, fn (): array => $this->undelete($vehicle, $userId, $record, $expectedUpdatedAt, replaying: true));
 		});
+
+		try {
+			return $run(true);
+		} catch (ReplayRefused) {
+			return $run(false);
+		}
+	}
+
+	/**
+	 * What restore() writes for the record itself.
+	 *
+	 * @param bool $replaying whether the later deletes were undone first (ReminderService::replay())
+	 * @return NextFleetMaintenance
+	 * @throws ReplayRefused if, replaying, the record would no longer close the reminder: restored
+	 *                       alone it may still close it
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException if the record has changed since, or was never deleted
+	 * @throws \OCP\DB\Exception
+	 */
+	private function undelete(Vehicle $vehicle, string $userId, Maintenance $record, int $expectedUpdatedAt, bool $replaying = false): array {
+		$back = $this->records->restoreChecked($record, $expectedUpdatedAt);
+		$this->follow($vehicle, $userId, $back);
+		$closes = $this->closed($back);
+		if ($back->getReminderId() !== null) {
+			if ($closes === null || !$this->reminders->restoreBy($closes, $back)) {
+				if ($replaying) {
+					throw new ReplayRefused('record ' . (int)$back->getId() . ' would no longer close its reminder');
+				}
+				// The record can no longer close the reminder (restoreBy() names each case), or the
+				// reminder is gone for good. Kept, the link would take back the later changes the next
+				// time this record's close is taken back.
+				$closes = null;
+				$back->setReminderId(null);
+				ReminderService::keep($back, null);
+			}
+			// Either way the record changed: it lost the link, or what it kept for its close.
+			$back = $this->records->updateChecked($back, $back->getUpdatedAt());
+		}
+
+		return self::wire($back, $closes);
 	}
 
 	/**
