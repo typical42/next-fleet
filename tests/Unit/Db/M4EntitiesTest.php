@@ -76,13 +76,22 @@ class M4EntitiesTest extends TestCase {
 	public function testAReceiptReadsItsIntegersAsIntegers(): void {
 		$receipt = ReminderReceipt::fromRow([
 			'reminder_id' => '7', 'occurrence' => '2', 'point' => 'overdue', 'channel' => ReminderReceipt::MAIL,
-			'user_id' => 'alice', 'sent_at' => '1758240000',
+			'user_id' => 'alice', 'sent_at' => '1758240000', 'due_date' => '2027-03-01', 'due_odo' => '60000',
 		]);
 
 		$this->assertSame(7, $receipt->getReminderId());
 		$this->assertSame(2, $receipt->getOccurrence());
 		$this->assertSame('mail', $receipt->getChannel());
 		$this->assertSame(1758240000, $receipt->getSentAt());
+		$this->assertSame('2027-03-01', $receipt->getDueDate()?->format('Y-m-d'));
+		$this->assertSame(60000, $receipt->getDueOdo());
+	}
+
+	public function testAReceiptFromBeforeKeptNoDue(): void {
+		$receipt = ReminderReceipt::fromRow(['reminder_id' => '7', 'due_date' => null, 'due_odo' => null]);
+
+		$this->assertNull($receipt->getDueDate());
+		$this->assertNull($receipt->getDueOdo());
 	}
 
 	public function testARecipientIsAUserOnAVehicle(): void {
@@ -114,5 +123,39 @@ class M4EntitiesTest extends TestCase {
 		$this->assertNull((new Maintenance())->getReminderId());
 		// The wire form names the reminder by uuid once a service knows it; the id stays inside.
 		$this->assertArrayNotHasKey('reminder_id', $closing->jsonSerialize());
+	}
+
+	public function testAMaintenanceRecordKeepsWhatTheReminderHeldBeforeItClosedIt(): void {
+		$closing = Maintenance::fromRow([
+			'closed_due_date' => '2027-03-01', 'closed_due_odo' => '60000', 'closed_snoozed_until' => '2027-02-20',
+			'closed_occurrence' => '3', 'next_snoozed_until' => '2031-04-02', 'handed_to' => '12', 'kept_occurrence' => '1',
+			'next_due_date' => '2028-02-10', 'next_due_odo' => '73500', 'took_back' => '0',
+		]);
+
+		$this->assertSame('2027-03-01', $closing->getClosedDueDate()?->format('Y-m-d'));
+		$this->assertSame(60000, $closing->getClosedDueOdo());
+		$this->assertSame('2027-02-20', $closing->getClosedSnoozedUntil()?->format('Y-m-d'));
+		$this->assertSame(3, $closing->getClosedOccurrence());
+		$this->assertSame('2031-04-02', $closing->getNextSnoozedUntil()?->format('Y-m-d'));
+		$this->assertSame(12, $closing->getHandedTo());
+		$this->assertSame(1, $closing->getKeptOccurrence());
+		$this->assertSame('2028-02-10', $closing->getNextDueDate()?->format('Y-m-d'));
+		$this->assertSame(73500, $closing->getNextDueOdo());
+		$this->assertFalse($closing->getTookBack());
+		$this->assertNull((new Maintenance())->getClosedDueDate());
+		$this->assertNull((new Maintenance())->getClosedDueOdo());
+		$this->assertNull((new Maintenance())->getClosedSnoozedUntil());
+		$this->assertNull((new Maintenance())->getClosedOccurrence());
+		$this->assertNull((new Maintenance())->getNextSnoozedUntil());
+		$this->assertNull((new Maintenance())->getHandedTo());
+		$this->assertNull((new Maintenance())->getKeptOccurrence());
+		$this->assertNull((new Maintenance())->getNextDueDate());
+		$this->assertNull((new Maintenance())->getNextDueOdo());
+		$this->assertNull((new Maintenance())->getTookBack());
+		// The reminder's state, not the record's, so off the wire as the reminder's id is.
+		$this->assertSame([], array_intersect(
+			['closed_due_date', 'closed_due_odo', 'closed_snoozed_until', 'closed_occurrence', 'next_snoozed_until', 'handed_to', 'kept_occurrence', 'next_due_date', 'next_due_odo', 'took_back'],
+			array_keys($closing->jsonSerialize()),
+		));
 	}
 }

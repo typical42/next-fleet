@@ -100,7 +100,8 @@ classDiagram
 
 A reminder comes from a `ReminderTemplate` or has its own title.
 `ReminderEngine` is static: it reads a reminder and the counter and answers the state and the newest warning point, and moves an occurrence on or back ([the reminder engine](../architecture.md#reminder-engine), [lifecycles](lifecycles.md#a-reminder)).
-A `ReminderReceipt` records each point sent.
+A `ClosedDue` is what a maintenance record kept of the reminder it closed, and the due its close set; the engine reads it to take that close back, to move it, or to tell whether the record above follows it.
+A `ReminderReceipt` records each point sent, and the due it was sent for.
 The recipients belong to the vehicle, not to a reminder.
 
 ```mermaid
@@ -124,6 +125,8 @@ classDiagram
         channel
         user_id
         sent_at
+        due_date
+        due_odo
     }
     class ReminderRecipient {
         user_id
@@ -147,8 +150,34 @@ classDiagram
     class ReminderEngine {
         evaluate(reminder, today, odo)$
         advance(reminder, fromDay, fromOdo)$
-        retreat(reminder, fromDay, fromOdo)$
+        moved(was, is)$
+        byKm(point)$
+        nextDue(reminder, fromDay, fromOdo)$
+        onTop(reminder, fromDay, fromOdo, closed)$
+        retreat(reminder, fromDay, fromOdo, closed)$
+        standsAt(reminder, fromDay, fromOdo, closed)$
+        reclose(reminder, closed)$
+        move(reminder, fromDay, fromOdo, closed, toDay, toOdo)$
+        rebase(reminder, closed, toDay, toOdo)$
+        tells(reminder, closed)$
+        recurred(reminder, fromDay, fromOdo, closed)$
+        follows(closed, above)$
+        keptAbove(closed, above)$
+        recurs(reminder)$
+        over(reminder)$
         estimate(reminder, chain, now)$
+    }
+    class ClosedDue {
+        day
+        odo
+        snoozedUntil
+        occurrence
+        keptOccurrence
+        nextDay
+        nextOdo
+        returnsTo()
+        handedFrom(below)
+        took(below)
     }
     Vehicle "1" --> "*" Reminder
     Vehicle "1" --> "*" ReminderRecipient : tells
@@ -157,7 +186,8 @@ classDiagram
     Reminder ..> ReminderTemplate : template_key
     IServiceTemplates --> "*" ReminderTemplate
     IInspectionScheme --> ReminderTemplate
-    ReminderEngine ..> Reminder : reads, advances, retreats
+    ReminderEngine ..> Reminder : reads, advances, retreats, closes again, moves
+    ReminderEngine ..> ClosedDue : what a record kept
 ```
 
 ## Access and sharing

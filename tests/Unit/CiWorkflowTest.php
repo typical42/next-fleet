@@ -510,7 +510,7 @@ class CiWorkflowTest extends TestCase {
 		$this->assertSame(self::WEEKLY, $job['if'] ?? null);
 		$this->assertSame(['mariadb', 'pgsql'], $job['strategy']['matrix']['db'] ?? null);
 		// The last release, the version users upgrade from.
-		$this->assertSame(['v0.5.0'], $job['strategy']['matrix']['base'] ?? null);
+		$this->assertSame(['v0.6.0'], $job['strategy']['matrix']['base'] ?? null);
 
 		$checkout = $job['steps'][0] ?? [];
 		$this->assertStringStartsWith('actions/checkout@', (string)($checkout['uses'] ?? ''));

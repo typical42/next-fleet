@@ -26,6 +26,10 @@ use OCP\DB\Types;
  * @method void setUserId(string $userId)
  * @method int getSentAt()
  * @method void setSentAt(int $sentAt)
+ * @method ?\DateTime getDueDate()
+ * @method void setDueDate(\DateTime|string|null $dueDate)
+ * @method ?int getDueOdo()
+ * @method void setDueOdo(?int $dueOdo)
  */
 class ReminderReceipt extends BaseEntity {
 	public const APP = 'app';
@@ -42,6 +46,9 @@ class ReminderReceipt extends BaseEntity {
 	protected string $channel = '';
 	protected string $userId = '';
 	protected int $sentAt = 0;
+	/** The reminder's due when the point was sent; null on a receipt from before they were kept. */
+	protected ?\DateTime $dueDate = null;
+	protected ?int $dueOdo = null;
 
 	public function __construct() {
 		parent::__construct();
@@ -51,5 +58,7 @@ class ReminderReceipt extends BaseEntity {
 		$this->addType('channel', Types::STRING);
 		$this->addType('userId', Types::STRING);
 		$this->addType('sentAt', Types::BIGINT);
+		$this->addType('dueDate', Types::DATE);
+		$this->addType('dueOdo', Types::BIGINT);
 	}
 }

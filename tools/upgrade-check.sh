@@ -19,7 +19,7 @@
 #   tools/upgrade-check.sh [--db mariadb|pgsql|oracle] <tarball> [<base>]
 #
 # <tarball> is the package to check: pass the file you are about to sign, not a rebuild of it.
-# <base> is the version users have, as a git ref or a tarball. It defaults to v0.5.0, the last
+# <base> is the version users have, as a git ref or a tarball. It defaults to v0.6.0, the last
 # release; each release moves it on.
 #
 # The servers are tools/upgrade-check.compose.yml, its own project with its own volumes. They are
@@ -51,7 +51,7 @@ if [ $# -lt 1 ] || [ ! -f "$1" ]; then
 	usage
 fi
 tarball=$(realpath "$1")
-base=${2:-v0.5.0}
+base=${2:-v0.6.0}
 # --db goes first; after the tarball it would be taken for the base.
 case $base in -*) usage ;; esac
 if [ -f "$base" ]; then
@@ -403,12 +403,12 @@ get() {
 		"http://localhost/index.php/apps/nextfleet/$2"
 }
 
-# A write as admin, as the sheets send it; anything but 200 fails the check.
+# A write as admin, as the sheets send it; any status but $5 (200 if not given) fails the check.
 send() {
 	answer=$($compose exec -T "$1" curl -s -u admin:admin -H 'OCS-APIRequest: true' \
 		-H 'Content-Type: application/json' -X "$2" -d "$4" -w '\n%{http_code}' \
 		"http://localhost/index.php/apps/nextfleet/$3")
-	[ "$(echo "$answer" | tail -n1)" = 200 ] || fail "$1: $2 $3 answered $answer"
+	[ "$(echo "$answer" | tail -n1)" = "${5:-200}" ] || fail "$1: $2 $3 answered $answer"
 }
 
 # The page and the overview's own request, as admin. Basic auth needs no session, and the
@@ -434,8 +434,9 @@ loads() {
 
 # The base's seed, then enough use that no table is empty: an empty table proves nothing about its
 # rows. A seed that can give a car to a driver fills the grants and the bookings. Logbook Mode
-# switched on and a trip edited fill the audit trail, the reminder job the receipts. No seed lists
-# anybody for booking notices, so the owner goes on the list where the base has one.
+# switched on and a trip edited fill the audit trail, the reminder job the receipts. A record that
+# closes a reminder fills its link to the reminder. No seed lists anybody for booking notices, so
+# the owner goes on the list where the base has one.
 history() {
 	# Not in the case word, where a failed occ would not stop the script.
 	seed=$(occ "$1" help nextfleet:seed)
@@ -465,6 +466,15 @@ history() {
 	body=$(sql "$1" "select $json($pairs'purpose'$pair concat(coalesce(\"purpose\", ''), ' (edited)'))
 		from \"oc_fleet_trips\" where \"uuid\" = '$trip'")
 	send "$1" PUT "api/vehicles/$vehicle/trips/$trip" "$body"
+
+	# A seed writes its records before its reminders, so none closes one.
+	reminder=$(sql "$1" "select \"uuid\" from \"oc_fleet_reminders\" where \"recur_months\" is not null
+		order by \"id\" fetch first 1 rows only")
+	[ -n "$reminder" ] || fail "$1: the $old seed wrote no recurring reminder"
+	reminded=$(sql "$1" "select v.\"uuid\" from \"oc_fleet_vehicles\" v
+		join \"oc_fleet_reminders\" r on r.\"vehicle_id\" = v.\"id\" where r.\"uuid\" = '$reminder'")
+	send "$1" POST "api/vehicles/$reminded/maintenance" \
+		"{\"done_at\":$(date +%s),\"done_at_off\":0,\"title\":\"Upgrade check\",\"closes\":\"$reminder\"}" 201
 
 	job=$(sql "$1" "select \"id\" from \"oc_jobs\" where \"class\" like '%NextFleet%ReminderJob'")
 	[ -n "$job" ] || fail "$1: the reminder job is not registered"

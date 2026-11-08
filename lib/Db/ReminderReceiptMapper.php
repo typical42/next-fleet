@@ -8,6 +8,7 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Db;
 
+use OCA\NextFleet\Service\ReminderEngine;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\DB\QueryBuilder\IQueryBuilder;
 use OCP\IDBConnection;
@@ -26,8 +27,11 @@ class ReminderReceiptMapper extends BaseMapper {
 	}
 
 	/**
-	 * Writes the receipt unless there is one: whether this point of this occurrence is still to be
-	 * sent to that user on that channel. The caller holds the vehicle, so two overlapping runs
+	 * Writes the receipt unless there is one for the reminder's due: whether this point of this
+	 * occurrence is still to be sent to that user on that channel. The due compared is the one on
+	 * the point's own axis (ReminderEngine::byKm()); a receipt from before kept none and counts. A
+	 * receipt for another due is from before a take-back went back over this occurrence: it gives
+	 * way, as rearm() lets a moved point go. The caller holds the vehicle, so two overlapping runs
 	 * cannot both find none; the unique index is the backstop.
 	 *
 	 * @return ?ReminderReceipt the new receipt, so the message is the caller's to send, and to
@@ -35,15 +39,19 @@ class ReminderReceiptMapper extends BaseMapper {
 	 * @throws \OCP\DB\Exception
 	 */
 	public function claim(Reminder $reminder, string $point, string $channel, string $userId, int $sentAt): ?ReminderReceipt {
-		$qb = $this->ofOccurrence('id', $reminder);
-		$qb->andWhere($qb->expr()->eq('point', $qb->createNamedParameter($point)))
-			->andWhere($qb->expr()->eq('channel', $qb->createNamedParameter($channel)))
-			->andWhere($qb->expr()->eq('user_id', $qb->createNamedParameter($userId)));
-		$result = $qb->executeQuery();
-		$found = $result->fetchOne() !== false;
-		$result->closeCursor();
-		if ($found) {
-			return null;
+		$found = $this->findOne($reminder, $point, $channel, $userId);
+		if ($found !== null) {
+			if (self::sentFor($found, $reminder, $point)) {
+				return null;
+			}
+			if ($channel === ReminderReceipt::MAIL) {
+				// The mail still counts for the day (lastSent()); an older one of the point gives way to it.
+				$older = $this->findOne($reminder, ReminderReceipt::MOVED . $point, $channel, $userId);
+				$this->forget($older === null ? [] : [$older]);
+				$this->retire($found);
+			} else {
+				$this->forget([$found]);
+			}
 		}
 
 		$receipt = new ReminderReceipt();
@@ -53,10 +61,32 @@ class ReminderReceiptMapper extends BaseMapper {
 		$receipt->setChannel($channel);
 		$receipt->setUserId($userId);
 		$receipt->setSentAt($sentAt);
+		$receipt->setDueDate($reminder->getDueDate()?->format('Y-m-d'));
+		$receipt->setDueOdo($reminder->getDueOdo());
 		// The recipient, so an erasure of the account finds what was sent to it.
 		$receipt->setCreatedBy($userId);
 
 		return $this->insert($receipt);
+	}
+
+	/** Whether the receipt was sent for the due the reminder holds on the point's axis, or kept none. */
+	private static function sentFor(ReminderReceipt $receipt, Reminder $reminder, string $point): bool {
+		if (ReminderEngine::byKm($point)) {
+			return $receipt->getDueOdo() === null || $receipt->getDueOdo() === $reminder->getDueOdo();
+		}
+		$sent = $receipt->getDueDate()?->format('Y-m-d');
+
+		return $sent === null || $sent === $reminder->getDueDate()?->format('Y-m-d');
+	}
+
+	/** @throws \OCP\DB\Exception */
+	private function findOne(Reminder $reminder, string $point, string $channel, string $userId): ?ReminderReceipt {
+		$qb = $this->ofOccurrence('*', $reminder);
+		$qb->andWhere($qb->expr()->eq('point', $qb->createNamedParameter($point)))
+			->andWhere($qb->expr()->eq('channel', $qb->createNamedParameter($channel)))
+			->andWhere($qb->expr()->eq('user_id', $qb->createNamedParameter($userId)));
+
+		return $this->findEntities($qb)[0] ?? null;
 	}
 
 	/**

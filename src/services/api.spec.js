@@ -4,7 +4,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { addBookingRecipient, addGrant, addRecipient, attachDocument, BookingConflictError, cancelBooking, ChangedError, changeBooking, changeGrant, checkIn, checkOut, closeGap, createBooking, ImportRefusedError, listBookers, listBookings, ConflictError, previewImport, runImport, undoImport, createReminder, createVehicle, csvUrl, deleteEntry, deleteVehicle, detachDocument, dismissReminder, documentUrl, energyPrefill, expensePrefill, fetchDocument, getPreferences, getVehicle, leaveVehicle, LockedError, maintenancePrefill, readHeld, recordEnergy, recordExpense, recordMaintenance, tripPrefill, restoreDocument, listDocuments, listFleetReminders, listGrants, listRecipients, listReminders, listVehicles, logbookUrl, mileageClaimUrl, NotFoundError, OfflineError, readEntry, readGaps, readInbox, readKpis, readStatistics, readTimeline, recordReading, recordTrip, RefusedError, reminderTemplates, removeBookingRecipient, removeRecipient, resetReading, restoreEntry, revokeGrant, searchGrantees, searchUsers, restoreVehicle, savePreferences, snoozeReminder, stickerUrl, thumbnailUrl, updateEntry, updateVehicle } from './api.js'
+import { addBookingRecipient, addGrant, addRecipient, attachDocument, BookingConflictError, cancelBooking, ChangedError, changeBooking, changeGrant, checkIn, checkOut, closeGap, createBooking, ImportRefusedError, listBookers, listBookings, ConflictError, previewImport, runImport, undoImport, createReminder, createVehicle, csvUrl, deleteEntry, deleteVehicle, detachDocument, dismissReminder, documentUrl, energyPrefill, expensePrefill, fetchDocument, getPreferences, getVehicle, leaveVehicle, LockedError, maintenancePrefill, readHeld, recordEnergy, recordExpense, recordMaintenance, tripPrefill, restoreDocument, listDocuments, listFleetReminders, listGrants, listRecipients, listReminders, listVehicles, logbookUrl, mileageClaimUrl, NotFoundError, OfflineError, readEntry, readGaps, readInbox, readKpis, readStatistics, readTimeline, recordReading, recordTrip, RefusedError, reminderTemplates, removeBookingRecipient, removeRecipient, resetReading, restoreEntry, revokeGrant, searchGrantees, searchUsers, restoreVehicle, savePreferences, snoozeReminder, stickerUrl, thumbnailUrl, UnansweredError, updateEntry, updateVehicle } from './api.js'
 
 vi.mock('@nextcloud/router', () => ({
 	generateUrl: (/** @type {string} */ path) => `/index.php${path}`,
@@ -67,6 +67,33 @@ describe('a request that never reached the server', () => {
 		vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new RangeError('a bug')))
 
 		await expect(listVehicles()).rejects.toThrow('a bug')
+	})
+})
+
+describe('a request whose answer is lost', () => {
+	/** A failed server or a gateway's page may come after the write landed, so neither proves a refusal. */
+	it.each([
+		['a server that failed', 500, { message: 'Internal Server Error' }, 'Internal Server Error'],
+		['a gateway\'s page', 502, null, 'The server answered 502'],
+		['a page that is not the server\'s answer', 400, null, 'The server answered 400'],
+	])('cannot tell whether the write landed after %s', async (_, status, body, message) => {
+		vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+			ok: false,
+			status,
+			json: body === null ? async () => { throw new SyntaxError('Unexpected token <') } : async () => body,
+		}))
+
+		const asked = recordMaintenance(vehicle.uuid, { title: 'Oil change' })
+
+		await expect(asked).rejects.toBeInstanceOf(UnansweredError)
+		await expect(asked).rejects.toThrow(message)
+	})
+
+	/** A refusal the server words itself is an answer: the write did not land. */
+	it('knows a worded refusal is an answer', async () => {
+		answers(403, { message: 'Not yours' })
+
+		await expect(recordMaintenance(vehicle.uuid, { title: 'Oil change' })).rejects.not.toBeInstanceOf(UnansweredError)
 	})
 })
 

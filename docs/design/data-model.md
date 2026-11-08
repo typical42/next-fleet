@@ -122,6 +122,16 @@ erDiagram
         integer vat_rate
         text notes
         bigint reminder_id FK
+        date closed_due_date
+        bigint closed_due_odo
+        date closed_snoozed_until
+        integer closed_occurrence
+        date next_snoozed_until
+        bigint handed_to FK
+        integer kept_occurrence
+        date next_due_date
+        bigint next_due_odo
+        boolean took_back
     }
     fleet_expenses {
         bigint vehicle_id FK
@@ -154,7 +164,9 @@ erDiagram
 ## Reminders
 
 A maintenance record may close a reminder.
+A deleted record that handed what it kept to the record above names that record.
 A receipt is one send: unique per occurrence, point, channel and recipient, so a point sends once.
+It keeps the due it was sent for, so the same occurrence reached again at another due sends again.
 Recipients belong to the vehicle.
 
 ```mermaid
@@ -162,6 +174,7 @@ erDiagram
     fleet_vehicles ||--o{ fleet_reminders : "has"
     fleet_vehicles ||--o{ fleet_reminder_recipients : "reminders go to"
     fleet_maintenance }o--o| fleet_reminders : "closes"
+    fleet_maintenance }o--o| fleet_maintenance : "handed to"
     fleet_reminders ||--o{ fleet_reminder_receipts : "sent as"
 
     fleet_reminders {
@@ -188,6 +201,8 @@ erDiagram
         string(8) channel
         string(64) user_id
         bigint sent_at
+        date due_date
+        bigint due_odo
     }
     fleet_reminder_recipients {
         bigint vehicle_id FK

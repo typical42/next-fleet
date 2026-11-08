@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Service;
 
 use OCA\NextFleet\Db\Maintenance;
+use OCA\NextFleet\Db\MaintenanceMapper;
 use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Db\OdoReadingMapper;
 use OCA\NextFleet\Db\Reminder;
@@ -42,6 +43,14 @@ class ReminderService {
 	 */
 	private const URGENCY = [Reminder::OVERDUE => 0, Reminder::DUE => 1, Reminder::WARNED => 2, Reminder::PLANNED => 3, Reminder::SNOOZED => 4];
 
+	/**
+	 * While replay() runs, by record id: what each record above kept before the replay first wrote
+	 * it. Null otherwise. The notices wait for the net change, or a value put back would ring twice.
+	 *
+	 * @var array<int, ClosedDue>|null
+	 */
+	private ?array $replaying = null;
+
 	public function __construct(
 		private ReminderMapper $reminders,
 		private VehicleService $fleet,
@@ -53,6 +62,7 @@ class ReminderService {
 		private IDBConnection $db,
 		private NotificationService $notifications,
 		private AfterCommit $after,
+		private MaintenanceMapper $records,
 	) {
 	}
 
@@ -455,64 +465,578 @@ class ReminderService {
 	 * the record's own day and counter (rule 4); one that does not is done. For a caller inside an
 	 * AfterCommit run: the withdrawal waits for its commit.
 	 *
+	 * The record keeps what the close replaces (keep()); the caller writes it.
+	 *
+	 * @param ?string $snoozed the snooze of the occurrence the close starts, a plain day: none for
+	 *                         a new close, the one it had for the undo of a record from before
 	 * @throws \InvalidArgumentException if it recurs by km and the record states no counter
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException
 	 * @throws \OCP\DB\Exception
 	 */
-	public function closeBy(Reminder $reminder, Maintenance $record): void {
-		if ($reminder->getRecurOdo() !== null && $record->getOdo() === null) {
-			// The next due km would be the old one, and the next occurrence due at once.
+	public function closeBy(Reminder $reminder, Maintenance $record, ?string $snoozed = null): void {
+		if (!self::counts($reminder, $record)) {
 			throw new \InvalidArgumentException('odo is the counter this reminder recurs from');
 		}
-		if (ReminderEngine::advance($reminder, self::dayOf($record), $record->getOdo())) {
+		self::keep($record, $reminder);
+		$this->writeClosed($reminder, ReminderEngine::advance($reminder, self::dayOf($record), $record->getOdo()), $snoozed);
+	}
+
+	/**
+	 * Writes the reminder a close moved on, with the snooze of the occurrence it starts, or done
+	 * when it does not recur. Only an undo closes a deleted reminder.
+	 *
+	 * @param ?string $snoozed a plain day
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException
+	 * @throws \OCP\DB\Exception
+	 */
+	private function writeClosed(Reminder $reminder, bool $recurs, ?string $snoozed): void {
+		if ($recurs) {
+			$reminder->setSnoozedUntil($snoozed === null ? null : new \DateTime($snoozed));
 			$this->reevaluate($reminder);
 		} else {
 			$reminder->setState(Reminder::DONE);
 		}
+		$this->writeMoved($reminder);
+	}
+
+	/**
+	 * Writes a reminder a close or its take-back moved, and withdraws its notice after the commit.
+	 * While replay() runs, the token stays and the notice waits for the net change. A deleted
+	 * reminder keeps its token too (ReminderMapper::writeWhileDeleted()), and its delete withdrew
+	 * every notice, so there is none to withdraw.
+	 *
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException
+	 * @throws \OCP\DB\Exception
+	 */
+	private function writeMoved(Reminder $reminder): void {
+		if ($reminder->getDeletedAt() !== null) {
+			$this->reminders->writeWhileDeleted($reminder);
+
+			return;
+		}
+		if ($this->replaying !== null) {
+			$this->reminders->writeOnTheWay($reminder);
+
+			return;
+		}
 		$this->reminders->updateChecked($reminder, $reminder->getUpdatedAt());
 		$this->after->defer(fn () => $this->notifications->withdraw($reminder));
 	}
 
 	/**
-	 * Takes back what closeBy() did with this record, when nothing has moved the reminder since.
-	 * A deleted reminder is left as it was deleted. The withdrawal waits, as closeBy()'s does.
+	 * Takes back what closeBy() did with this record, unless something moved the reminder since or
+	 * another record's close is on top. The withdrawal waits, as closeBy()'s does.
 	 *
+	 * A deleted record keeps what its close replaced, so a deleted reminder is left as it was
+	 * deleted. An edit to close another or none keeps nothing of it on the record, so the deleted
+	 * reminder takes the close back (writeMoved()), and its undo brings back the planned due.
+	 *
+	 * @param bool $deleted whether the record is deleted, rather than edited
 	 * @return bool whether it was taken back
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException
 	 * @throws \OCP\DB\Exception
 	 */
-	public function reopenBy(Reminder $reminder, Maintenance $record): bool {
-		if ($reminder->getDeletedAt() !== null) {
+	private function reopenBy(Reminder $reminder, Maintenance $record, bool $deleted): bool {
+		if (($deleted && $reminder->getDeletedAt() !== null) || !$this->onTop($reminder, $record)) {
 			return false;
 		}
-		$recurs = $reminder->getRecurMonths() !== null || $reminder->getRecurOdo() !== null;
-		if ($recurs ? !ReminderEngine::retreat($reminder, self::dayOf($record), $record->getOdo()) : $reminder->getState() !== Reminder::DONE) {
-			return false;
+		if (ReminderEngine::recurs($reminder) && !ReminderEngine::retreat($reminder, self::dayOf($record), $record->getOdo(), self::kept($record))) {
+			throw new \LogicException('retreat() found the close off top where onTop() found it on top');
 		}
 		$this->reevaluate($reminder);
-		$this->reminders->updateChecked($reminder, $reminder->getUpdatedAt());
 		// The occurrence it sent for is gone, and the job sees no state change to take it back.
-		$this->after->defer(fn () => $this->notifications->withdraw($reminder));
+		$this->writeMoved($reminder);
 
 		return true;
 	}
 
 	/**
-	 * Undo of a withdrawal: closes the reminder with the record again, when it stands where
-	 * reopenBy() left it. One another record closed meanwhile stays closed by that one.
+	 * Takes the record's close back (docs/architecture.md#reminder-engine). When its close is on top
+	 * (onTop()), the reminder comes back as reopenBy() puts it; a deleted one stays as it was deleted
+	 * when the record is deleted too. Under the close of the record above,
+	 * that record takes over what this one kept, and the reminder stays as it is. Otherwise nothing
+	 * changes.
 	 *
-	 * @return bool whether it was closed again
+	 * A deleted record keeps its values, the snooze of the occurrence its close started, the
+	 * record it handed its values to, and whether anything was taken back, so an undo can give each
+	 * back. Both records are written with MaintenanceMapper::writeKept().
+	 *
+	 * @param bool $deleted whether the record is deleted, rather than edited to close another or none
 	 * @throws \OCA\NextFleet\Exception\StaleUpdateException
 	 * @throws \OCP\DB\Exception
 	 */
-	public function recloseBy(Reminder $reminder, Maintenance $record): bool {
-		if ($reminder->getDeletedAt() !== null || in_array($reminder->getState(), [Reminder::DONE, Reminder::DISMISSED], true)
-			|| !ReminderEngine::standsAt($reminder, self::dayOf($record), $record->getOdo())) {
-			return false;
+	public function takeBack(Reminder $reminder, Maintenance $record, bool $deleted): void {
+		$snoozed = $reminder->getSnoozedUntil()?->format('Y-m-d');
+		[$handedTo, $tookBack] = [null, true];
+		if (!$this->reopenBy($reminder, $record, $deleted)) {
+			$above = $this->above($reminder, $record);
+			if ($above === null) {
+				[$snoozed, $tookBack] = [null, false];
+			} else {
+				$snoozed = $above->getClosedSnoozedUntil()?->format('Y-m-d');
+				$handedTo = $above->getId();
+				$this->writeKeptAbove($reminder, $above, self::kept($above)->handedFrom(self::kept($record)));
+			}
 		}
-		$this->closeBy($reminder, $record);
+		if ($deleted) {
+			$record->setNextSnoozedUntil($snoozed);
+			$record->setHandedTo($handedTo);
+			$record->setTookBack($tookBack);
+			$this->records->writeKept($record);
+		}
+	}
 
-		return true;
+	/**
+	 * Moves the record's close to where an edit now says the work was done
+	 * (docs/architecture.md#reminder-engine). Only a day or counter the reminder recurs by moves
+	 * it. When the close is on top, the reminder is counted from the new base and keeps its
+	 * occurrence and snooze; the points that moved ring again, as after a hand edit. A reminder
+	 * whose due does not change (the base moved on an axis the close set none for, or to a day
+	 * that gives the same due) is not written. Under the close of the record above, that record
+	 * keeps the due the new base gives. Either way the record stores the due its close now sets
+	 * (ReminderEngine::rebase()). Otherwise nothing changes.
+	 * A deleted reminder moves too, its token kept (ReminderMapper::writeWhileDeleted()), so
+	 * deleting the record after the reminder's undo still finds its close on top; its moved points
+	 * ring again after that undo.
+	 *
+	 * @param Maintenance $was the record as it was before the edit
+	 * @param Maintenance $is the record as edited
+	 * @throws \InvalidArgumentException if the close is in effect and set a km, or is from before,
+	 *                                   the reminder recurs by km and the record no longer states a
+	 *                                   counter
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException
+	 * @throws \OCP\DB\Exception
+	 */
+	public function moveBy(Reminder $reminder, Maintenance $was, Maintenance $is): void {
+		$byDay = $reminder->getRecurMonths() !== null && self::dayOf($was) !== self::dayOf($is);
+		$byOdo = $reminder->getRecurOdo() !== null && $was->getOdo() !== $is->getOdo();
+		if (!$byDay && !$byOdo) {
+			return;
+		}
+		[$day, $odo, $kept] = [self::dayOf($was), $was->getOdo(), self::kept($was)];
+		$onTop = $this->onTop($reminder, $was);
+		$above = $onTop ? null : $this->above($reminder, $was);
+		if (!$onTop && $above === null) {
+			// Nothing to move, so the counter is not needed either.
+			return;
+		}
+		// Only a km the close set is counted from the counter; one it set none for stays as entered.
+		$setsKm = $kept->occurrence === null || $kept->nextOdo !== null || $kept->odo !== null;
+		if ($byOdo && $setsKm && !self::counts($reminder, $is)) {
+			throw new \InvalidArgumentException('odo is the counter this reminder recurs from');
+		}
+		// Only an axis whose base moved is counted again: the interval may have changed since the close.
+		[$toDay, $toOdo] = [$byDay ? self::dayOf($is) : null, $byOdo ? $is->getOdo() : null];
+		$moved = ReminderEngine::rebase($reminder, $kept, $toDay, $toOdo);
+		$changed = [$moved->nextDay, $moved->nextOdo] !== [$kept->nextDay, $kept->nextOdo];
+		if ($changed) {
+			$is->setNextDueDate($moved->nextDay);
+			$is->setNextDueOdo($moved->nextOdo);
+			$this->records->writeKept($is);
+		}
+		if ($above !== null) {
+			if ($changed) {
+				$this->writeKeptAbove($reminder, $above, ReminderEngine::keptAbove($moved, self::kept($above)));
+			}
+
+			return;
+		}
+		$before = clone $reminder;
+		// The record already holds the due rebase() gave; a reminder left where it was would strand
+		// the close off top, so the throw rolls both back.
+		if (!ReminderEngine::move($reminder, $day, $odo, $kept, $toDay, $toOdo)) {
+			throw new \LogicException('move() found the close off top where onTop() found it on top');
+		}
+		if (ReminderEngine::moved($before, $reminder) === []) {
+			// A write would move the token, and a sheet open on the reminder would fail for nothing.
+			return;
+		}
+		$this->reevaluate($reminder);
+		if ($reminder->getDeletedAt() !== null) {
+			// Its delete withdrew every notice, but what was sent stays for its undo.
+			$this->notifications->rearm($before, $reminder, standing: false);
+			$this->reminders->writeWhileDeleted($reminder);
+
+			return;
+		}
+		$this->reminders->updateChecked($reminder, $reminder->getUpdatedAt());
+		$this->rearm($before, $reminder);
+	}
+
+	/**
+	 * Lets the points that moved within the occurrence ring again (NotificationService::rearm()),
+	 * and withdraws, after the commit, the notice of each user it was for.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	private function rearm(Reminder $was, Reminder $is): void {
+		foreach ($this->notifications->rearm($was, $is) as $recipient) {
+			$this->after->defer(fn () => $this->notifications->withdraw($is, $recipient));
+		}
+	}
+
+	/**
+	 * Sets what the record above keeps and writes it, its token untouched
+	 * (MaintenanceMapper::writeKept()): the kept due, km, snooze and kept occurrence. Its own
+	 * occurrence and the due its close set stay.
+	 * When its due moves within the same occurrence, the points that moved ring again once the
+	 * reminder returns there, as after a hand edit (NotificationService::rearm()). That occurrence
+	 * was closed, which withdrew its notice, so there is none to withdraw now.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	private function writeKeptAbove(Reminder $reminder, Maintenance $above, ClosedDue $kept): void {
+		$was = self::kept($above);
+		$above->setClosedDueDate($kept->day);
+		$above->setClosedDueOdo($kept->odo);
+		$above->setClosedSnoozedUntil($kept->snoozedUntil);
+		$above->setKeptOccurrence($kept->keptOccurrence);
+		$this->records->writeKept($above);
+		if ($this->replaying !== null) {
+			$this->replaying[(int)$above->getId()] ??= $was;
+
+			return;
+		}
+		$this->rearmKept($reminder, $was, $kept);
+	}
+
+	/**
+	 * Lets the points ring again that moved when a record above's kept due moved within the same
+	 * occurrence (writeKeptAbove()).
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	private function rearmKept(Reminder $reminder, ClosedDue $was, ClosedDue $kept): void {
+		$occurrence = $kept->returnsTo();
+		if ($occurrence !== null && $occurrence === $was->returnsTo()) {
+			$this->notifications->rearm(self::at($reminder, $occurrence, $was), self::at($reminder, $occurrence, $kept), standing: false);
+		}
+	}
+
+	/** The reminder as it stood at that occurrence, due where the record kept it. */
+	private static function at(Reminder $reminder, int $occurrence, ClosedDue $kept): Reminder {
+		$at = clone $reminder;
+		$at->setOccurrence($occurrence);
+		$at->setDueDate($kept->day === null ? null : new \DateTime($kept->day));
+		$at->setDueOdo($kept->odo);
+
+		return $at;
+	}
+
+	/**
+	 * The live record that closed the occurrence this record's close started, if it kept the due
+	 * that close gave. A record from before kept no occurrence, so it has none.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	private function above(Reminder $reminder, Maintenance $record): ?Maintenance {
+		$above = $this->closingAbove($reminder, $record);
+
+		return $above !== null && ReminderEngine::follows(self::kept($record), self::kept($above)) ? $above : null;
+	}
+
+	/**
+	 * Whether another live record's close is the one on top, whatever ReminderEngine::onTop() finds:
+	 * it closed the occurrence before the reminder's current one, or, for a one-off, which a close
+	 * does not move on, the current one. A record from before kept no occurrence, so the engine
+	 * alone takes its close for one from the same day and km. On a recurring reminder, a close
+	 * that set no axis it recurs by has nothing to tell, so it is never on top
+	 * (ReminderEngine::onTop()): it claims nothing, as when an undo kept its link without closing.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	private function claimedByAnother(Reminder $reminder, Maintenance $record): bool {
+		$recurs = ReminderEngine::recurs($reminder);
+		$others = $this->records->findClosingOthers($record->getVehicleId(), (int)$reminder->getId(), (int)$record->getId(), $reminder->getOccurrence() - ($recurs ? 1 : 0));
+		foreach ($others as $other) {
+			if (!$recurs || ReminderEngine::tells($reminder, self::kept($other))) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	/**
+	 * The live record that closed the lowest occurrence above the one this record closed, whatever
+	 * it kept; it can lie further up than the next one. A record from before kept no occurrence, so
+	 * none lies above it.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	private function closingAbove(Reminder $reminder, Maintenance $record): ?Maintenance {
+		$occurrence = $record->getClosedOccurrence();
+
+		return $occurrence === null ? null : $this->records->findClosingAbove($record->getVehicleId(), (int)$reminder->getId(), $occurrence);
+	}
+
+	/**
+	 * Undo of a record's delete (docs/architecture.md#reminder-engine), by the first case that holds:
+	 * - the record it handed its values to still holds them: that record gets back what it kept
+	 *   before, with the occurrence of that due;
+	 * - its close is still in effect, on top or under the record above: nothing to do;
+	 * - its delete took nothing back: nothing to do;
+	 * - the reminder stands where taking the close back left it: the record closes it again, the
+	 *   reminder deleted or not, at the due its close set (ReminderEngine::reclose()) and the
+	 *   occurrence it started before; a one-off's close, made to recur since, sets the due its day
+	 *   and counter give (ReminderEngine::recurred()); a close that sets no axis the reminder recurs
+	 *   by keeps the link and leaves the reminder where it is; a record from before closes it from
+	 *   its own day and counter (closeBy()).
+	 * Otherwise the record no longer closes it; the architecture section names each such case.
+	 *
+	 * Sets the record's kept values, and clears the next occurrence's snooze, the record it handed
+	 * to and what its delete took back; the caller writes it.
+	 *
+	 * @return bool whether the record still closes the reminder
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException
+	 * @throws \OCP\DB\Exception
+	 */
+	public function restoreBy(Reminder $reminder, Maintenance $record): bool {
+		$nextSnooze = $record->getNextSnoozedUntil()?->format('Y-m-d');
+		$handedTo = $this->handedTo($reminder, $record);
+		$tookBack = $record->getTookBack();
+		$record->setNextSnoozedUntil(null);
+		$record->setHandedTo(null);
+		$record->setTookBack(null);
+		[$day, $odo, $kept] = [self::dayOf($record), $record->getOdo(), self::kept($record)];
+
+		if ($handedTo !== null && $kept->occurrence !== null && self::kept($handedTo)->took($kept)) {
+			$back = ReminderEngine::keptAbove($kept, self::kept($handedTo));
+			// The due this close gives is the one of the occurrence it started.
+			$started = self::keptOccurrence($kept->occurrence + 1, $back->occurrence);
+			$this->writeKeptAbove($reminder, $handedTo, new ClosedDue($back->day, $back->odo, $nextSnooze, $back->occurrence, $started, nextDay: $back->nextDay, nextOdo: $back->nextOdo));
+
+			return true;
+		}
+		if ($this->inEffect($reminder, $record)) {
+			return true;
+		}
+		// A delete that took nothing back left the reminder as it was, so its undo has nothing to put
+		// back. A close on top since, a one-off's too, stays that record's (claimedByAnother()).
+		if ($tookBack === false) {
+			return true;
+		}
+		// A record from before closes again from its own day and counter, so it needs the counter the
+		// reminder now recurs by; without it the reminder already holds what the record kept, so
+		// dropping the link loses nothing.
+		if (!ReminderEngine::over($reminder)
+			&& ($kept->occurrence !== null || self::counts($reminder, $record)) && ReminderEngine::standsAt($reminder, $day, $odo, $kept)) {
+			if ($kept->occurrence !== null && ReminderEngine::recurs($reminder)) {
+				// A one-off's close counts its km from the counter as a new close would, so it needs
+				// one, as a record from before does (above).
+				if ($kept->odo !== null && $kept->nextOdo === null && !self::counts($reminder, $record)) {
+					return false;
+				}
+				// A one-off made to recur since: the record now stores the due a new close would set.
+				$kept = ReminderEngine::recurred($reminder, $day, $odo, $kept);
+				$record->setNextDueDate($kept->nextDay);
+				$record->setNextDueOdo($kept->nextOdo);
+				if (!ReminderEngine::tells($reminder, $kept)) {
+					// Closed again, the reminder would move on with no due moved. Kept, the link
+					// loses nothing, and the next occurrence's snooze comes back by the later day.
+					$this->snoozeAtLeast($reminder, $nextSnooze);
+
+					return true;
+				}
+			}
+			// Taking the close back left the later of the two snoozes. Any other was set while the
+			// record was deleted, and is the one this close replaces now.
+			$snoozed = $reminder->getSnoozedUntil()?->format('Y-m-d');
+			$snoozed = $snoozed === max($kept->snoozedUntil, $nextSnooze) ? $kept->snoozedUntil : $snoozed;
+			if ($kept->occurrence === null) {
+				$this->closeBy($reminder, $record, $nextSnooze);
+			} else {
+				// standsAt() found the reminder at what the record kept, so the record keeps it as it is.
+				$this->writeClosed($reminder, ReminderEngine::reclose($reminder, $kept), $nextSnooze);
+			}
+			$record->setClosedSnoozedUntil($snoozed);
+
+			return true;
+		}
+
+		return false;
+	}
+
+	/**
+	 * Snoozes the reminder until that day, if it is later than its own snooze, and writes it.
+	 *
+	 * @param ?string $day a plain day
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException
+	 * @throws \OCP\DB\Exception
+	 */
+	private function snoozeAtLeast(Reminder $reminder, ?string $day): void {
+		$snoozed = $reminder->getSnoozedUntil()?->format('Y-m-d');
+		// The later of two, as ReminderEngine::retreat() takes it.
+		if (max($snoozed, $day) === $snoozed) {
+			return;
+		}
+		$reminder->setSnoozedUntil(new \DateTime((string)$day));
+		$this->reevaluate($reminder);
+		$this->writeMoved($reminder);
+	}
+
+	/**
+	 * Undo of a record's delete with the later deletes on its reminder replayed
+	 * (docs/architecture.md#reminder-engine). Each later record is undone, newest first, as
+	 * restoreBy() undoes it; `$restore` then restores the record; each later record is deleted
+	 * again, oldest first, as takeBack() deletes it. That leaves what those deletes give had the
+	 * record's own delete never been made, except for a later record from before: it is closed
+	 * again from its own day and counter, so from then on it keeps what the reminder held at that
+	 * point. The later records keep their `deleted_at` and their token, so each one's own undo
+	 * still matches.
+	 *
+	 * The reminder and the notices follow the net change alone. The reminder's token moves once,
+	 * and only if it ended elsewhere or in another state. Its notice is withdrawn once, or the points that moved within
+	 * its occurrence ring again; so do those of each live record above whose kept due moved.
+	 *
+	 * @template T
+	 * @param Reminder $reminder live: a later delete's take-back leaves a deleted one as it is
+	 * @param list<Maintenance> $later newest first (MaintenanceMapper::findDeletedAfter())
+	 * @param \Closure(): T $restore restores the record
+	 * @return T what `$restore` returns
+	 * @throws ReplayRefused if a later record would no longer close the reminder, or `$restore`
+	 *                       throws it; the caller rolls back what was written
+	 * @throws \OCA\NextFleet\Exception\StaleUpdateException
+	 * @throws \OCP\DB\Exception
+	 */
+	public function replay(Reminder $reminder, array $later, \Closure $restore): mixed {
+		$before = clone $reminder;
+		$deletedAt = [];
+		$this->replaying = [];
+		try {
+			foreach ($later as $one) {
+				$deletedAt[(int)$one->getId()] = $one->getDeletedAt();
+				$one->setDeletedAt(null);
+				$this->records->writeDeletedAt($one);
+				if (!$this->restoreBy($this->reread($reminder), $one)) {
+					throw new ReplayRefused('record ' . (int)$one->getId() . ' would no longer close its reminder');
+				}
+				$this->records->writeKept($one);
+			}
+			$result = $restore();
+			foreach (array_reverse($later) as $one) {
+				// Read again: the restore or another replayed undo may have written what it keeps.
+				$one = $this->records->findAnyById((int)$one->getId());
+				$one->setDeletedAt($deletedAt[(int)$one->getId()]);
+				$this->records->writeDeletedAt($one);
+				$this->takeBack($this->reread($reminder), $one, deleted: true);
+			}
+			$moved = $this->replaying;
+		} finally {
+			$this->replaying = null;
+		}
+
+		$after = $this->reread($reminder);
+		if (self::course($before) !== self::course($after)) {
+			$after = $this->reminders->updateChecked($after, $after->getUpdatedAt());
+		}
+		if (self::noticeOf($before) !== self::noticeOf($after)) {
+			$this->after->defer(fn () => $this->notifications->withdraw($after));
+		} else {
+			$this->rearm($before, $after);
+		}
+		foreach ($moved as $id => $was) {
+			$above = $this->records->findAnyById($id);
+			if ($above->getDeletedAt() === null) {
+				$this->rearmKept($after, $was, self::kept($above));
+			}
+		}
+
+		return $result;
+	}
+
+	/**
+	 * What a close or its take-back moves (ReminderMapper::writeOnTheWay()), read from the mapper's
+	 * list, so a column it writes without the token cannot be missed here.
+	 *
+	 * @return list<mixed>
+	 */
+	private static function course(Reminder $reminder): array {
+		return array_map(static function (string $property) use ($reminder): mixed {
+			$value = $reminder->{'get' . ucfirst($property)}();
+
+			return $value instanceof \DateTimeInterface ? $value->format('Y-m-d') : $value;
+		}, ReminderMapper::COURSE);
+	}
+
+	/**
+	 * What closeBy() and reopenBy() withdraw the notice for when it changes: the occurrence, its
+	 * snooze, and whether it is over. A state evaluated again on the way is not a change.
+	 *
+	 * @return array{int, ?string, bool}
+	 */
+	private static function noticeOf(Reminder $reminder): array {
+		return [$reminder->getOccurrence(), $reminder->getSnoozedUntil()?->format('Y-m-d'), ReminderEngine::over($reminder)];
+	}
+
+	/**
+	 * The reminder as the database holds it now, deleted or not.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	private function reread(Reminder $reminder): Reminder {
+		$id = (int)$reminder->getId();
+
+		return $this->reminders->findAnyByIds($reminder->getVehicleId(), [$id])[$id];
+	}
+
+	/**
+	 * Whether the record's close is still the one in effect: on top, or under the record above. A
+	 * one-off has no record above.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	private function inEffect(Reminder $reminder, Maintenance $record): bool {
+		return $this->onTop($reminder, $record) || (ReminderEngine::recurs($reminder) && $this->above($reminder, $record) !== null);
+	}
+
+	/**
+	 * Whether the record's close is the one on top: the reminder stands where it left it
+	 * (ReminderEngine::onTop()), or, for a one-off, which has no due to tell two closes apart, the
+	 * record made it done (doneBy()); and no other live record closed it as it stands
+	 * (claimedByAnother()).
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	private function onTop(Reminder $reminder, Maintenance $record): bool {
+		$stands = ReminderEngine::recurs($reminder)
+			? ReminderEngine::onTop($reminder, self::dayOf($record), $record->getOdo(), self::kept($record))
+			: self::doneBy($reminder, $record);
+
+		return $stands && !$this->claimedByAnother($reminder, $record);
+	}
+
+	/**
+	 * Whether a reminder that does not recur is done by this record's close. A one-off's close does
+	 * not move the occurrence, so the record that made it done closed the current one; a record that
+	 * closed an older one closed it while it still recurred. A record from before kept no
+	 * occurrence, so it is taken at its word.
+	 */
+	private static function doneBy(Reminder $reminder, Maintenance $record): bool {
+		$occurrence = $record->getClosedOccurrence();
+
+		return $reminder->getState() === Reminder::DONE && ($occurrence === null || $occurrence === $reminder->getOccurrence());
+	}
+
+	/**
+	 * The live record on the same reminder that this record handed its values to when its close
+	 * was taken back, if there is one.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	private function handedTo(Reminder $reminder, Maintenance $record): ?Maintenance {
+		$id = $record->getHandedTo();
+		if ($id === null) {
+			return null;
+		}
+		try {
+			$taker = $this->records->findAnyById($id);
+		} catch (\OCP\AppFramework\Db\DoesNotExistException|\OCP\AppFramework\Db\MultipleObjectsReturnedException) {
+			return null;
+		}
+
+		return $taker->getDeletedAt() === null && $taker->getVehicleId() === $record->getVehicleId()
+			&& $taker->getReminderId() === $reminder->getId() ? $taker : null;
 	}
 
 	/**
@@ -527,14 +1051,67 @@ class ReminderService {
 		$reminder->setState(ReminderEngine::evaluate($reminder, $this->today(), $odo)['state']);
 	}
 
+	/**
+	 * Sets on the record the due, snooze and occurrence the reminder holds now, which its close
+	 * replaces and taking the close back puts back, and the due the close sets from the record's
+	 * day and counter; none for a record that closes no reminder. The next occurrence's snooze is
+	 * only kept once the close is taken back. The caller writes it.
+	 *
+	 * Here the null rule holds or breaks (ClosedDue): a due is kept on each axis the reminder has,
+	 * and one is set on each axis it recurs by.
+	 */
+	public static function keep(Maintenance $record, ?Reminder $reminder): void {
+		// Counted here, not after the close, so a record is inserted with it.
+		[$nextDay, $nextOdo] = $reminder === null ? [null, null] : ReminderEngine::nextDue($reminder, self::dayOf($record), $record->getOdo());
+		$record->setNextDueDate($nextDay);
+		$record->setNextDueOdo($nextOdo);
+		// As plain days: the setter makes each a DateTime of the record's own.
+		$record->setClosedDueDate($reminder?->getDueDate()?->format('Y-m-d'));
+		$record->setClosedDueOdo($reminder?->getDueOdo());
+		$record->setClosedSnoozedUntil($reminder?->getSnoozedUntil()?->format('Y-m-d'));
+		$record->setClosedOccurrence($reminder?->getOccurrence());
+		$record->setNextSnoozedUntil(null);
+		$record->setHandedTo(null);
+		$record->setKeptOccurrence(null);
+		$record->setTookBack(null);
+	}
+
+	/**
+	 * The `kept_occurrence` to store for a kept due of that occurrence on a record that closed
+	 * `$closedOccurrence`: null when it is the record's own, as ClosedDue::returnsTo() reads it.
+	 */
+	private static function keptOccurrence(int $occurrence, ?int $closedOccurrence): ?int {
+		return $occurrence === $closedOccurrence ? null : $occurrence;
+	}
+
+	/** What keep() set on the record, as the engine reads it. */
+	private static function kept(Maintenance $record): ClosedDue {
+		return new ClosedDue(
+			$record->getClosedDueDate()?->format('Y-m-d'),
+			$record->getClosedDueOdo(),
+			$record->getClosedSnoozedUntil()?->format('Y-m-d'),
+			$record->getClosedOccurrence(),
+			$record->getKeptOccurrence(),
+			$record->getNextDueDate()?->format('Y-m-d'),
+			$record->getNextDueOdo(),
+		);
+	}
+
+	/**
+	 * Whether the record states the counter the reminder recurs by, if it recurs by one. Without it
+	 * the next due km would be the old one, and the next occurrence due at once.
+	 */
+	private static function counts(Reminder $reminder, Maintenance $record): bool {
+		return $reminder->getRecurOdo() === null || $record->getOdo() !== null;
+	}
+
 	/** The plain day the work was done on, where it was done (docs/architecture.md#time). */
 	private static function dayOf(Maintenance $record): string {
 		return gmdate('Y-m-d', $record->getDoneAt() + $record->getDoneAtOff() * 60);
 	}
 
 	/**
-	 * A reminder whose occurrence is still running: done and dismissed are over, so there is
-	 * nothing left to silence or skip.
+	 * A reminder whose occurrence is still running (ReminderEngine::over()).
 	 *
 	 * @throws \OCP\AppFramework\Db\DoesNotExistException
 	 * @throws \InvalidArgumentException
@@ -542,7 +1119,7 @@ class ReminderService {
 	 */
 	private function open(int $vehicleId, string $reminderUuid): Reminder {
 		$reminder = $this->reminders->findOnVehicle($vehicleId, $reminderUuid);
-		if (in_array($reminder->getState(), [Reminder::DONE, Reminder::DISMISSED], true)) {
+		if (ReminderEngine::over($reminder)) {
 			throw new \InvalidArgumentException('this occurrence is over');
 		}
 
@@ -636,7 +1213,8 @@ class ReminderService {
 			throw new \InvalidArgumentException('due_odo, lead_odo and recur_odo are for a reminder by odometer');
 		}
 		if ($byDate && $byOdo && ($recurMonths === null) !== ($recurOdo === null)) {
-			// The next occurrence would keep the old due on the other axis, and be due at once.
+			// The next occurrence would keep the old due on the other axis, and be due at once. And a
+			// record closing it would keep a due where its close sets none (the null rule, ClosedDue).
 			throw new \InvalidArgumentException('a reminder by either recurs by both or by neither');
 		}
 		if ($recurMonths === 0 || $recurOdo === 0) {

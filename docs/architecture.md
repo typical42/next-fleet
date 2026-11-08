@@ -81,6 +81,7 @@ Names stay under 27 characters, because Nextcloud adds `oc_`.
   This is why notification receipts are a table.
 - **Booleans are nullable with a default.**
   Nextcloud's schema check refuses a `NOT NULL` boolean, and NC 31 enforces it.
+  A boolean where null is an answer of its own has no default: `booking_approval`, `took_back`.
 - **Typed text is 4n long on Oracle.**
   Oracle's `VARCHAR2(n)` counts bytes, and UTF-8 needs up to four per character.
   The bounds stay in characters.
@@ -307,6 +308,13 @@ Two browser tabs are the case today, and sync stands on the same rule.
   Otherwise a client that syncs by `updated_at` never sees a restore.
   The delete's token is spent.
   A restore that matches nothing is a 412.
+- **Writing what a record keeps for its close moves no token** (`MaintenanceMapper::writeKept()`).
+  The kept columns are off the wire, so a moved token would refuse a change nobody can see.
+- **Neither does a close that moves a deleted reminder** (`ReminderMapper::writeWhileDeleted()`).
+  The reminder's undo must still match the token its delete answered with.
+- **An undo that replays later deletes moves none of their tokens** (`MaintenanceMapper::writeDeletedAt()`, `writeKept()`), so each replayed record's own undo still matches.
+  The reminder keeps its token on the way (`ReminderMapper::writeOnTheWay()`).
+  It moves once, at the end, if the reminder ends at another due, occurrence, snooze or state.
 - **Recomputed columns check no token.**
   `odo_value` and a Reading's `flagged` follow from the readings.
   Two entries saved together would otherwise tell the second it lost a race it was never in.
@@ -556,6 +564,7 @@ A link like the logbook: no token, rate-limited, logged by ids, `view` access.
   Shared state, such as a vehicle handed to a new owner, would show somebody else's data.
   Such a row is reduced to its id, its writer and when it was written (Art. 15(4) GDPR).
   What the account wrote itself is exported whole (`FleetMigrator::AUTHORED`).
+  A maintenance record's reminder state is not what it wrote, since other records write it too: those columns are null (`Maintenance::KEPT`).
 - **A booking is the booker's.**
   It is the account's own only where `user_id` names it.
   One it answered (`approval_by`) or made for somebody else (`created_by`) holds the booker's purpose, counter and notes.
@@ -577,8 +586,8 @@ One rule set for the templates (HU/AU, oil change, brake fluid, tyre swap) and f
 2. A date reminder warns at its ticked points: a month before, at the start of the due month, on the due date.
    An odometer reminder warns at `due_odo − lead_odo`.
 3. On trigger: an in-app notification and an entry in the mail digest.
-4. **Completing it is a maintenance record that names it** (`reminder_id`).
-   A recurring reminder then moves to its next occurrence, due from the **actual** completion, not the planned one.
+4. **Closing it is a maintenance record that names it** (`reminder_id`).
+   A recurring reminder then moves to its next occurrence, due from the **actual** work, not the planned due.
 5. **Prediction needs data to be honest.**
    The pace comes from the last 90 days and needs 30 days and two Readings.
    Below that, the UI says "not enough data yet".
@@ -606,9 +615,29 @@ A date reminder refuses km fields and the other way round: the engine would neve
 The owner and the managers write reminders.
 Drivers and viewers read them.
 
-**A maintenance record closes a reminder** through `closes`.
-Editing or deleting the record takes the occurrence back, unless something else moved the reminder since (`ReminderEngine::retreat()`).
-The planned due is not stored, so it cannot come back.
+**A maintenance record closes a reminder** through `closes`, and the records that close one reminder form a stack, oldest close at the bottom.
+Each record keeps the due, snooze and occurrence its close replaced and the due its close set (`next_due_*`).
+A record from before these were kept counts that due from its own day and counter with today's interval.
+Its undo, or a replay, closes it again that way, so from then on it keeps what the reminder held at that point.
+Deleting the record, or changing it so it no longer closes the reminder, takes its close back.
+On top, where the reminder stands at the due the close set, not dismissed or done since, and no other record's close came after it, the reminder gets back what the record kept, axis by axis, with the later of two snoozes (`ReminderEngine::retreat()`).
+A one-off is on top while this close keeps it done, and opens again.
+Under the record above, which closed the next occurrence from that due and not as a one-off, the record hands what it kept up with its occurrence, on each axis that record kept one (`ClosedDue::handedFrom()`, `kept_occurrence`), and that record's token does not move.
+After a dismissal or a hand edit of the due, nothing changes.
+An edit of the record's day or counter moves its close with today's interval (`ReminderEngine::move()`): the reminder keeps its occurrence and snooze, or the record above keeps the due the new day or counter gives.
+Undo of a delete gives back what the delete changed (`handed_to`, `next_snoozed_until`), and closes the reminder again at the due the close set (`ReminderEngine::reclose()`).
+A one-off made to recur since gets the due a new close would set (`ReminderEngine::recurred()`).
+If the close set no due the reminder now recurs by, the undo keeps the link and leaves the reminder where it is, with the later of the two snoozes.
+After a delete that changed nothing (`took_back` false), it keeps the link.
+It drops the link only in these cases:
+
+- Since the delete, a close or a dismissal changed the reminder, an edit moved a due the record kept, or something changed the record the close was handed up to.
+- A record from before, or a one-off's close made to recur by km since, lacks the counter the reminder now recurs by.
+- The delete changed nothing, and the app did not yet store `took_back` when it was made.
+- The reminder is gone for good.
+
+Later deletes on a live reminder do not count, as the undo undoes them newest first and deletes them again oldest first (`ReminderService::replay()`); under a deleted reminder they do, and so does one made before `took_back` was stored.
+If one of them, or the record itself, would drop its link, the record is restored alone.
 
 **Who is told.**
 Each vehicle has a list of recipients, the owner first.
@@ -623,9 +652,14 @@ Taking someone off withdraws their notices after the commit.
 
 - One query finds the vehicles with a live reminder.
   Each is held and read again, one transaction each.
-- The newest point goes to each recipient once.
+- The newest point goes to each recipient once per occurrence and due.
   The receipt is claimed first, and only a new receipt sends.
   So a missed day skips the points between, and a second run sends nothing.
+- A receipt keeps the due it was sent for, and counts only for the due on its point's own axis: the km for the km points, the date for the rest.
+  A take-back can return the reminder below an occurrence that rang, and a later close or skip can reach that occurrence again at another due.
+  That due rings: the old receipt gives way.
+  An undo closes at the due that rang, so it does not ring twice.
+  A receipt from before the due was kept counts for any due.
 - Sending waits for the commit, so a rollback cannot leave a notice without its receipt.
   A failed vehicle or send is logged and the round goes on.
   A failed send deletes its receipt, so the next run tries again.
@@ -634,7 +668,8 @@ Taking someone off withdraws their notices after the commit.
   Snoozing, dismissing, deleting or closing a reminder withdraws its notice.
 - A laid-up vehicle is evaluated but sends nothing.
   A disposed one is not evaluated.
-- An edit that moves a point lets it ring again (`NotificationService::rearm()`).
+- An edit that moves a point lets it ring again (`NotificationService::rearm()`), on a deleted reminder too, and also where it moves the due a record above kept.
+  When either due of a live reminder moves, each notice standing for it rings again too, whatever its point: the notifier drops it, as it no longer stands.
 
 **The digest.**
 After the notifications, `MailService` sends each recipient at most one mail a day, from 07:00 in their zone, for the vehicles whose `reminder_mail` falls that day and that have news.

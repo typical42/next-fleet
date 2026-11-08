@@ -7,13 +7,14 @@ import { flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createVehicle, deleteEntry, deleteVehicle, detachDocument, getVehicle, leaveVehicle, listVehicles, readInbox, recordMaintenance, recordReading, recordTrip, restoreDocument, restoreEntry, restoreVehicle, runImport, undoImport, updateEntry, updateVehicle } from '../services/api.js'
+import { ConflictError, createVehicle, deleteEntry, deleteVehicle, detachDocument, getVehicle, leaveVehicle, listVehicles, OfflineError, readInbox, recordMaintenance, recordReading, recordTrip, RefusedError, restoreDocument, restoreEntry, restoreVehicle, runImport, UnansweredError, undoImport, updateEntry, updateVehicle } from '../services/api.js'
 import { useInboxStore } from './inbox.js'
 import { useVehiclesStore } from './index.js'
 
 // The network is the api client's own seam (api.spec.js); what is under test here is what the
 // store does with the two answers it can get.
-vi.mock('../services/api.js', () => ({
+vi.mock('../services/api.js', async (original) => ({
+	...await original(),
 	createVehicle: vi.fn(),
 	deleteEntry: vi.fn(),
 	deleteVehicle: vi.fn(),
@@ -308,6 +309,19 @@ describe('vehicles store', () => {
 			expect(store.deleted).toBeNull()
 		})
 
+		/** The overview stays mounted under a vehicle's undo, and reads the fleet's reminders on `restored`. */
+		it('says a vehicle came back, as after any undo', async () => {
+			const store = useVehiclesStore()
+			store.upsert(vehicle({ uuid: 'a' }))
+			vi.mocked(deleteVehicle).mockResolvedValue(vehicle({ uuid: 'a', updated_at: 1750000002 }))
+			vi.mocked(restoreVehicle).mockResolvedValue(vehicle({ uuid: 'a', updated_at: 1750000003 }))
+			await store.remove(vehicle({ uuid: 'a' }))
+
+			await store.restore()
+
+			expect(store.restored).toBe(1)
+		})
+
 		/** Still deleted, so no row comes back; the offer stays for a second attempt. */
 		it('lets a refused undo through and puts nothing back', async () => {
 			const store = useVehiclesStore()
@@ -354,6 +368,69 @@ describe('vehicles store', () => {
 
 			await store.revise('a', 'energy', entry, {})
 			expect(store.reminded).toBe(4)
+		})
+
+		/**
+		 * The write may have landed and closed the reminder again, and then the delete's undo is no
+		 * longer the latest change to it, as when the answer arrives (wrote()). No "Saved." either:
+		 * nobody knows it was.
+		 */
+		it.each([
+			['no connection', new OfflineError('No connection')],
+			['a failed server', new UnansweredError('The server answered 502')],
+		])('lets go of the undo of a deleted record when a new one closing the same reminder meets %s', async (_, lost) => {
+			const store = useVehiclesStore()
+			vi.mocked(getVehicle).mockResolvedValue(vehicle({}))
+			vi.mocked(deleteEntry).mockResolvedValue({ uuid: 'm-1', updated_at: 2, closes: 'r-1' })
+			vi.mocked(recordMaintenance).mockRejectedValue(lost)
+			await store.strike('a', 'maintenance', { uuid: 'm-1', updated_at: 1 })
+
+			await expect(store.maintain('a', { title: 'Oil change', closes: 'r-1' })).rejects.toBe(lost)
+
+			expect(store.struck).toBeNull()
+			expect(store.saved).toBeNull()
+		})
+
+		it('lets go of the undo of a deleted record when an edit closing the same reminder loses its answer', async () => {
+			const store = useVehiclesStore()
+			vi.mocked(getVehicle).mockResolvedValue(vehicle({}))
+			vi.mocked(deleteEntry).mockResolvedValue({ uuid: 'm-1', updated_at: 2, closes: 'r-1' })
+			vi.mocked(updateEntry).mockRejectedValue(new OfflineError('No connection'))
+			await store.strike('a', 'maintenance', { uuid: 'm-1', updated_at: 1 })
+
+			await expect(store.revise('a', 'maintenance', { uuid: 'm-2', updated_at: 1 }, { title: 'Oil change', closes: 'r-1' })).rejects.toThrow('No connection')
+
+			expect(store.struck).toBeNull()
+		})
+
+		/** Landed, the edit took its close of that reminder back, which changes the reminder too. */
+		it('lets go of the undo of a deleted record when an edit moving off the same reminder loses its answer', async () => {
+			const store = useVehiclesStore()
+			vi.mocked(getVehicle).mockResolvedValue(vehicle({}))
+			vi.mocked(deleteEntry).mockResolvedValue({ uuid: 'm-1', updated_at: 2, closes: 'r-1' })
+			vi.mocked(updateEntry).mockRejectedValue(new OfflineError('No connection'))
+			await store.strike('a', 'maintenance', { uuid: 'm-1', updated_at: 1 })
+
+			await expect(store.revise('a', 'maintenance', { uuid: 'm-2', updated_at: 1, closes: 'r-1' }, { title: 'Oil change' })).rejects.toThrow('No connection')
+
+			expect(store.struck).toBeNull()
+		})
+
+		/** A refusal is an answer: nothing landed, so the undo is still the latest change. */
+		it.each([
+			['a refusal', new RefusedError('in English', 'ends_in_future'), 'r-1'],
+			['a conflict', new ConflictError('Changed since you read it'), 'r-1'],
+			['a lost answer for another reminder', new OfflineError('No connection'), 'r-2'],
+		])('keeps the undo of a deleted record after %s', async (_, failure, closes) => {
+			const store = useVehiclesStore()
+			vi.mocked(getVehicle).mockResolvedValue(vehicle({}))
+			vi.mocked(deleteEntry).mockResolvedValue({ uuid: 'm-1', updated_at: 2, closes: 'r-1' })
+			vi.mocked(recordMaintenance).mockRejectedValue(failure)
+			await store.strike('a', 'maintenance', { uuid: 'm-1', updated_at: 1 })
+
+			await expect(store.maintain('a', { title: 'Oil change', closes })).rejects.toBe(failure)
+
+			expect(store.struck?.entry.uuid).toBe('m-1')
 		})
 	})
 

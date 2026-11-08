@@ -138,15 +138,7 @@ abstract class BaseMapper extends QBMapper {
 		$properties = $entity->getUpdatedFields();
 		unset($properties['id'], $properties['uuid'], $properties['createdAt'], $properties['createdBy'], $properties['updatedAt']);
 
-		$qb = $this->db->getQueryBuilder();
-		$qb->update($this->tableName);
-		foreach (array_keys($properties) as $property) {
-			$getter = 'get' . ucfirst($property);
-			$qb->set(
-				$entity->propertyToColumn($property),
-				$qb->createNamedParameter($entity->$getter(), $this->getParameterTypeForProperty($entity, $property)),
-			);
-		}
+		$qb = $this->updating($entity, array_keys($properties));
 		// Written unconditionally: the statement is the check, and one with nothing to set is
 		// not a statement at all.
 		$qb->set('updated_at', $qb->createNamedParameter($now, IQueryBuilder::PARAM_INT));
@@ -166,6 +158,40 @@ abstract class BaseMapper extends QBMapper {
 		$entity->resetUpdatedFields();
 
 		return $entity;
+	}
+
+	/**
+	 * An update of these properties alone, by id, with `updated_at` left where it is. Only for a
+	 * mapper method that says why the token may stay; the caller adds any condition and runs it.
+	 *
+	 * @param T $entity
+	 * @param non-empty-list<string> $properties
+	 */
+	protected function writeOnly(BaseEntity $entity, array $properties): IQueryBuilder {
+		$qb = $this->updating($entity, $properties);
+		$qb->where($qb->expr()->eq('id', $qb->createNamedParameter($entity->getId(), IQueryBuilder::PARAM_INT)));
+
+		return $qb;
+	}
+
+	/**
+	 * An update that sets these properties to the entity's values, each bound as its type.
+	 *
+	 * @param T $entity
+	 * @param list<string> $properties
+	 */
+	private function updating(BaseEntity $entity, array $properties): IQueryBuilder {
+		$qb = $this->db->getQueryBuilder();
+		$qb->update($this->tableName);
+		foreach ($properties as $property) {
+			$getter = 'get' . ucfirst($property);
+			$qb->set(
+				$entity->propertyToColumn($property),
+				$qb->createNamedParameter($entity->$getter(), $this->getParameterTypeForProperty($entity, $property)),
+			);
+		}
+
+		return $qb;
 	}
 
 	/**

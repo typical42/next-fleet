@@ -99,6 +99,10 @@ To delete it, click **Delete**.
 Both show a message with **Undo**.
 With Logbook mode on, a trip has **Void trip** instead of **Delete**.
 
+> [!NOTE]
+> After you change or delete a maintenance record that closes a reminder, a new record that closes the same reminder removes the **Undo**.
+> This also occurs when you save a record that closes or closed the same reminder, and the save fails because there is no connection or no correct reply from the server.
+
 A driver changes only their own entries.
 The owner and the managers change all entries.
 

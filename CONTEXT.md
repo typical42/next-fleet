@@ -160,6 +160,12 @@ _Avoid_: Preset, rule
 One round of a recurring Reminder. Closing or dismissing it moves the same Reminder to the next;
 deleting the Reminder ends them all.
 
+**Close**:
+What a Maintenance Record does to the Occurrence of the Reminder it names. Deleting the Record, or
+changing it so it closes another Reminder or none, takes the Close back. When another Record closed
+the next Occurrence from the due this Close set, it hands what it kept up to that Record instead.
+_Avoid_: Complete, withdraw (that is a notice), handover or hand-over (that is a Booking's)
+
 **Warning Point**:
 A moment a date Reminder tells its Recipients: a month before, at the start of the month it is due,
 on the due date. Overdue always tells; an odometer Reminder has one point, `due_odo − lead_odo`.

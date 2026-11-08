@@ -141,6 +141,83 @@ describe('the toast after a save', () => {
 		expect(button(wrapper, 'Undo')).toBeDefined()
 	})
 
+	/**
+	 * The new record closes the reminder the deleted one closed, so that delete is no longer the
+	 * latest change to the reminder, and its undo would find the reminder moved on.
+	 */
+	it('drops the undo of a deleted record when a new one closes the same reminder', async () => {
+		vi.useFakeTimers()
+		const store = useVehiclesStore()
+		store.upsert(VEHICLE)
+		// The delete answers with the reminder the record closed.
+		vi.mocked(deleteEntry).mockResolvedValue({ uuid: 'm-1', updated_at: 1700000200, closes: 'r-1' })
+		await store.strike('v-1', 'maintenance', { uuid: 'm-1', updated_at: 1700000100 })
+		store.wrote('v-1', 'maintenance', { uuid: 'm-2', updated_at: 1700000300, closes: 'r-1' })
+		const wrapper = shallowMount(UndoToast, { global: { renderStubDefaultSlot: true } })
+		await flushPromises()
+
+		expect(store.struck).toBeNull()
+		expect(wrapper.text()).toContain('Saved.')
+		expect(button(wrapper, 'Undo')).toBeUndefined()
+	})
+
+	it('leaves the undo of a deleted record when a new one closes another reminder or none', async () => {
+		const store = useVehiclesStore()
+		store.upsert(VEHICLE)
+		// The delete answers with the reminder the record closed.
+		vi.mocked(deleteEntry).mockResolvedValue({ uuid: 'm-1', updated_at: 1700000200, closes: 'r-1' })
+		await store.strike('v-1', 'maintenance', { uuid: 'm-1', updated_at: 1700000100 })
+		store.wrote('v-1', 'maintenance', { uuid: 'm-2', updated_at: 1700000300, closes: 'r-2' })
+		store.wrote('v-1', 'maintenance', { uuid: 'm-3', updated_at: 1700000300, closes: null })
+
+		expect(store.struck).toEqual({ vehicle: 'v-1', type: 'maintenance', entry: expect.objectContaining({ uuid: 'm-1' }) })
+	})
+
+	it('leaves the undo of a deleted record that closed nothing when a new one closes nothing', async () => {
+		const store = useVehiclesStore()
+		store.upsert(VEHICLE)
+		vi.mocked(deleteEntry).mockResolvedValue({ uuid: 'm-1', updated_at: 1700000200, closes: null })
+		await store.strike('v-1', 'maintenance', { uuid: 'm-1', updated_at: 1700000100 })
+		store.wrote('v-1', 'maintenance', { uuid: 'm-2', updated_at: 1700000300, closes: null })
+
+		expect(store.struck).toEqual({ vehicle: 'v-1', type: 'maintenance', entry: expect.objectContaining({ uuid: 'm-1' }) })
+	})
+
+	/**
+	 * The same for an edit of a record: its undo would close again, or take back, a reminder the
+	 * new record has since closed.
+	 */
+	it.each([
+		['found it closing', { closes: 'r-1' }, { closes: null }],
+		['left it closing', { closes: null }, { closes: 'r-1' }],
+	])('drops the undo of an edit that %s the reminder a new record closes', (_, before, answer) => {
+		const store = useVehiclesStore()
+		store.wrote('v-1', 'maintenance', { uuid: 'm-1', updated_at: 1700000200, ...answer }, { uuid: 'm-1', title: 'Oil change', ...before })
+		store.wrote('v-1', 'maintenance', { uuid: 'm-2', updated_at: 1700000300, closes: 'r-1' })
+
+		expect(store.saved).toEqual({ vehicle: 'v-1', type: 'maintenance', entry: { uuid: 'm-2', updated_at: 1700000300, closes: 'r-1' }, before: null })
+	})
+
+	it('leaves the undo of an edit when a new record closes another reminder, one on another vehicle, or none', () => {
+		const store = useVehiclesStore()
+		const edit = { vehicle: 'v-1', type: 'maintenance', entry: { uuid: 'm-1', updated_at: 1700000200, closes: 'r-1' }, before: { uuid: 'm-1', closes: 'r-1', title: 'Oil' } }
+		store.wrote(edit.vehicle, 'maintenance', edit.entry, edit.before)
+		store.wrote('v-1', 'maintenance', { uuid: 'm-2', updated_at: 1700000300, closes: 'r-2' })
+		store.wrote('v-2', 'maintenance', { uuid: 'm-3', updated_at: 1700000300, closes: 'r-1' })
+		store.wrote('v-1', 'maintenance', { uuid: 'm-4', updated_at: 1700000300, closes: null })
+
+		expect(store.saved).toEqual(edit)
+	})
+
+	/** A new record's "Saved." holds no way back, so there is nothing for the second one to drop. */
+	it('replaces the "Saved." of a new record with that of a second one that closes a reminder', () => {
+		const store = useVehiclesStore()
+		store.wrote('v-1', 'maintenance', { uuid: 'm-1', updated_at: 1700000200, closes: null })
+		store.wrote('v-1', 'maintenance', { uuid: 'm-2', updated_at: 1700000300, closes: 'r-1' })
+
+		expect(store.saved).toEqual({ vehicle: 'v-1', type: 'maintenance', entry: { uuid: 'm-2', updated_at: 1700000300, closes: 'r-1' }, before: null })
+	})
+
 	/** The edit's offer stays: a way back that leaves on a clock is a time limit on it. */
 	it('keeps the offer for an edit until it is answered', async () => {
 		vi.useFakeTimers()

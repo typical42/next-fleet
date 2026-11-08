@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import CompleteHint from '../components/CompleteHint.vue'
 import { listFleetReminders } from '../services/api.js'
+import { useVehiclesStore } from '../store/index.js'
 import OverviewView from './OverviewView.vue'
 
 vi.mock('../services/api.js', async (original) => ({
@@ -118,6 +119,38 @@ describe('the overview', () => {
 		expect(wrapper.find('.overview__disposed').exists()).toBe(true)
 		expect(wrapper.find('.overview__list').exists()).toBe(false)
 		expect(wrapper.findComponent({ name: 'NcEmptyContent' }).exists()).toBe(true)
+	})
+
+	/** The toast offers an undo on every screen, and a maintenance write moves reminders too. */
+	it('reads the reminders again after an undo and after a reminder moved', async () => {
+		vi.mocked(listFleetReminders).mockClear()
+		shallowMount(OverviewView, { props: { vehicles: [VEHICLE] } })
+		await flushPromises()
+		expect(listFleetReminders).toHaveBeenCalledTimes(1)
+
+		useVehiclesStore().restored++
+		await flushPromises()
+		expect(listFleetReminders).toHaveBeenCalledTimes(2)
+
+		useVehiclesStore().reminded++
+		await flushPromises()
+		expect(listFleetReminders).toHaveBeenCalledTimes(3)
+	})
+
+	it('drops an answer that comes back after a newer one', async () => {
+		/** @type {(value: any) => void} */
+		let late = () => {}
+		vi.mocked(listFleetReminders)
+			.mockReturnValueOnce(new Promise((resolve) => { late = resolve }))
+			.mockResolvedValueOnce([])
+		const wrapper = rows([VEHICLE])
+		useVehiclesStore().restored++
+		await flushPromises()
+
+		late([{ uuid: 'r-1', vehicle: 'v-1', template_key: null, title: 'Insurance renewal', mode: 'date', due_date: '2026-09-01', due_odo: null, state: 'overdue', estimate: null }])
+		await flushPromises()
+
+		expect(wrapper.find('.overview__list').text()).not.toContain('Insurance renewal')
 	})
 
 	/** An empty fleet is taught, not hinted at: there is no vehicle to complete yet. */

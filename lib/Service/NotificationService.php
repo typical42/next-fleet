@@ -103,10 +103,12 @@ class NotificationService {
 	 * (docs/architecture.md#reminder-engine). For the caller holding the vehicle; the withdrawals
 	 * are the caller's to make after the commit.
 	 *
-	 * @return list<string> the users whose standing notice is for a moved point
+	 * @param bool $standing false for a deleted reminder, or an occurrence it has moved on from: its
+	 *                       notice was withdrawn there, so the notifier has none to drop
+	 * @return list<string> the users whose standing notice is gone or for a moved point
 	 * @throws \OCP\DB\Exception
 	 */
-	public function rearm(Reminder $was, Reminder $is): array {
+	public function rearm(Reminder $was, Reminder $is, bool $standing = true): array {
 		$moved = ReminderEngine::moved($was, $is);
 		if ($moved === []) {
 			return [];
@@ -119,8 +121,11 @@ class NotificationService {
 				$newest[$receipt->getUserId()] = $receipt->getPoint();
 			}
 		}
+		// The notifier drops a notice once either due differs from the one it was sent for
+		// (Notifier::reminded()), whichever point it shows, so that point must be able to ring again.
+		$dropped = $standing && ($was->getDueDate()?->format('Y-m-d') !== $is->getDueDate()?->format('Y-m-d') || $was->getDueOdo() !== $is->getDueOdo());
 		// A numeric uid comes back from the keys as an int.
-		$told = array_map(strval(...), array_keys(array_filter($newest, static fn (string $point): bool => in_array($point, $moved, true))));
+		$told = array_map(strval(...), array_keys(array_filter($newest, static fn (string $point): bool => $dropped || in_array($point, $moved, true))));
 
 		$forget = [];
 		$retire = [];

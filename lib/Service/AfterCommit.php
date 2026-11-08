@@ -73,6 +73,11 @@ class AfterCommit {
 		return $result;
 	}
 
+	/** Whether a run is under way, so work started now would be part of it. */
+	public function running(): bool {
+		return $this->depth > 0;
+	}
+
 	/**
 	 * Runs this once the current run has committed, or at once outside any transaction.
 	 *

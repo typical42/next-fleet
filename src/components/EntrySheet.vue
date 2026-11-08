@@ -343,7 +343,7 @@ function save() {
 		}
 
 		const created = await CREATES[kind.value](props.vehicle.uuid, { ...fields, client_uuid: clientUuid })
-		store.wrote(props.vehicle.uuid, kind.value)
+		store.wrote(props.vehicle.uuid, kind.value, created)
 		return created
 	}, 'save')
 }

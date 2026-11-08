@@ -12,10 +12,12 @@ use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\BackgroundJob\ReminderJob;
 use OCA\NextFleet\Db\OdoReadingMapper;
 use OCA\NextFleet\Db\ReminderMapper;
+use OCA\NextFleet\Db\ReminderReceipt;
 use OCA\NextFleet\Db\ReminderReceiptMapper;
 use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Service\MailService;
+use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\NotificationService;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\RecipientService;
@@ -93,7 +95,7 @@ class ReminderMailTest extends TestCase {
 	private function forget(): void {
 		$db = \OCP\Server::get(IDBConnection::class);
 		$people = array_keys(self::LANGUAGES);
-		foreach (['fleet_vehicles' => 'user_id', 'fleet_odo_readings' => 'created_by', 'fleet_reminders' => 'created_by', 'fleet_reminder_recipients' => 'user_id', 'fleet_reminder_receipts' => 'user_id'] as $table => $column) {
+		foreach (['fleet_vehicles' => 'user_id', 'fleet_odo_readings' => 'created_by', 'fleet_reminders' => 'created_by', 'fleet_reminder_recipients' => 'user_id', 'fleet_reminder_receipts' => 'user_id', 'fleet_maintenance' => 'created_by'] as $table => $column) {
 			$qb = $db->getQueryBuilder();
 			$qb->delete($table)->where($qb->expr()->in($column, $qb->createNamedParameter($people, $qb::PARAM_STR_ARRAY)));
 			$qb->executeStatement();
@@ -220,6 +222,88 @@ class ReminderMailTest extends TestCase {
 		$mails = $this->mails(self::OWNER);
 		$this->assertCount(2, $mails);
 		$this->assertStringContainsString('Hauptuntersuchung (HU/AU) ist am 20.05.2031 fällig', $mails[0]['Text']);
+	}
+
+	/**
+	 * The work was logged two years too early, so "due today" was mailed at once; the record was
+	 * deleted and entered again with the right year. The occurrence it closes to is the one that
+	 * was mailed, at another due, so that due is mailed on its day.
+	 */
+	public function testAnOccurrenceClosedAgainAtAnotherDueIsMailedOnItsDay(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'reminder_mail' => 'daily']);
+		$hu = $this->reminders->create(self::OWNER, $vehicle->getUuid(), ['template_key' => 'hu_au', 'due_date' => '2026-12-15']);
+		$maintenance = \OCP\Server::get(MaintenanceService::class);
+		$work = static fn (string $day): array => ['done_at' => (new \DateTimeImmutable($day . ' 10:00', new \DateTimeZone('UTC')))->getTimestamp(), 'done_at_off' => 0, 'title' => 'HU/AU', 'cost' => 14900, 'closes' => $hu['uuid']];
+		$wrong = $maintenance->record(self::OWNER, $vehicle->getUuid(), $work('2024-11-20'));
+		$this->runAt('2026-11-20 07:00');
+		$this->assertCount(1, $this->mails(self::OWNER));
+
+		$maintenance->delete(self::OWNER, $vehicle->getUuid(), $wrong['uuid'], $wrong['updated_at']);
+		$maintenance->record(self::OWNER, $vehicle->getUuid(), $work('2026-11-20'));
+		$this->runAt('2028-11-20 07:00');
+
+		$mails = $this->mails(self::OWNER);
+		$this->assertCount(2, $mails);
+		$this->assertStringContainsString('Hauptuntersuchung (HU/AU) ist heute fällig', $mails[0]['Text']);
+	}
+
+	/**
+	 * A mail for another due of the point gives way and still counts for the day; an older one that
+	 * gave way before goes, or the unique index would refuse the second.
+	 */
+	public function testAMailForAnotherDueGivesWayToTheNewOne(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'reminder_mail' => 'daily']);
+		$this->reminders->create(self::OWNER, $vehicle->getUuid(), ['template_key' => 'hu_au', 'due_date' => '2026-12-15']);
+		$reminder = \OCP\Server::get(ReminderMapper::class)->findByVehicle((int)$vehicle->getId())[0];
+		$receipts = \OCP\Server::get(ReminderReceiptMapper::class);
+
+		foreach (['2026-12-15', '2028-11-20', '2028-12-15'] as $i => $due) {
+			$reminder->setDueDate(new \DateTime($due));
+			$this->assertNotNull($receipts->claim($reminder, 'due_date', ReminderReceipt::MAIL, self::OWNER, 1000 + $i));
+		}
+		$this->assertNull($receipts->claim($reminder, 'due_date', ReminderReceipt::MAIL, self::OWNER, 2000));
+
+		$this->assertSame(
+			[['~due_date', '2028-11-20', 1001], ['due_date', '2028-12-15', 1002]],
+			array_map(static fn (ReminderReceipt $receipt): array => [$receipt->getPoint(), $receipt->getDueDate()?->format('Y-m-d'), $receipt->getSentAt()], $receipts->findByOccurrence($reminder)),
+		);
+	}
+
+	/** A mail receipt written before receipts kept their due still counts: the upgrade mails no burst. */
+	public function testAMailReceiptWithoutADueStillCounts(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'reminder_mail' => 'daily']);
+		$this->reminders->create(self::OWNER, $vehicle->getUuid(), ['template_key' => 'hu_au', 'due_date' => '2031-05-31']);
+		$receipt = new ReminderReceipt();
+		$receipt->setReminderId((int)\OCP\Server::get(ReminderMapper::class)->findByVehicle((int)$vehicle->getId())[0]->getId());
+		$receipt->setOccurrence(1);
+		$receipt->setPoint('month_before');
+		$receipt->setChannel(ReminderReceipt::MAIL);
+		$receipt->setUserId(self::OWNER);
+		// A day before, so the digest still runs today.
+		$receipt->setSentAt((new \DateTimeImmutable('2031-05-02 07:00', new \DateTimeZone('UTC')))->getTimestamp());
+		$receipt->setCreatedBy(self::OWNER);
+		\OCP\Server::get(ReminderReceiptMapper::class)->insert($receipt);
+
+		$this->runAt('2031-05-03 07:00');
+
+		$this->assertSame([], $this->mails(self::OWNER));
+	}
+
+	/** A km warning was mailed; a corrected day moves only the due date, so it is not mailed again. */
+	public function testACorrectedDayDoesNotMailTheKmWarningAgain(): void {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'B-XY 123', 'reminder_mail' => 'daily']);
+		$oil = $this->reminders->create(self::OWNER, $vehicle->getUuid(), ['template_key' => 'oil_change', 'due_date' => '2027-03-01', 'due_odo' => 60000]);
+		$maintenance = \OCP\Server::get(MaintenanceService::class);
+		$work = static fn (string $day): array => ['done_at' => (new \DateTimeImmutable($day . ' 10:00', new \DateTimeZone('UTC')))->getTimestamp(), 'done_at_off' => 0, 'title' => 'Oil change', 'cost' => 18990, 'odo' => 58500, 'closes' => $oil['uuid']];
+		$record = $maintenance->record(self::OWNER, $vehicle->getUuid(), $work('2027-02-10'));
+		\OCP\Server::get(OdometerService::class)->record(self::OWNER, $vehicle->getUuid(), ['read_at' => (new \DateTimeImmutable('2027-11-01 10:00', new \DateTimeZone('UTC')))->getTimestamp(), 'read_at_off' => 0, 'value' => 72600]);
+		$this->runAt('2027-11-02 07:00');
+		$this->assertCount(1, $this->mails(self::OWNER));
+
+		$maintenance->update(self::OWNER, $vehicle->getUuid(), $record['uuid'], $record['updated_at'], $work('2027-02-12'));
+		$this->runAt('2027-11-03 07:00');
+
+		$this->assertCount(1, $this->mails(self::OWNER));
 	}
 
 	/** Off, laid up or disposed: nothing by mail. */

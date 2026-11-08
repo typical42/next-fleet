@@ -7,10 +7,11 @@ import NcButton from '@nextcloud/vue/components/NcButton'
 import NcEmptyContent from '@nextcloud/vue/components/NcEmptyContent'
 import NcListItem from '@nextcloud/vue/components/NcListItem'
 import { useHotKey } from '@nextcloud/vue/composables/useHotKey'
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 import CompleteHint from '../components/CompleteHint.vue'
 import { listFleetReminders } from '../services/api.js'
+import { useVehiclesStore } from '../store/index.js'
 import { formatOdometer, nameOf, subtitleOf } from '../utils/format.js'
 import { holderWords } from '../utils/pool.js'
 import { dueWords, fleetByUrgency, light, reminderTitle, stateWord } from '../utils/reminders.js'
@@ -29,24 +30,43 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['new', 'select'])
+const store = useVehiclesStore()
 
 /** @type {import('vue').Ref<Array<import('../services/api.js').Reminder & {vehicle: string}>>} */
 const reminders = ref([])
 const failure = ref('')
 
-// Overdue is read off the clock when the list is worked out, so once per visit like the reminders.
+// Overdue is read off the clock when the list is worked out, so each time the reminders are read.
 const ordered = computed(() => fleetByUrgency(props.vehicles, reminders.value)
 	.map((row) => ({ ...row, holder: holderWords(row.vehicle) })))
 
-// Read once per visit: a reminder moves on the vehicle's own screen, and coming back here mounts
-// the overview again.
-onMounted(async () => {
+// Read on each visit: a reminder moves on the vehicle's own screen, and coming back here mounts
+// the overview again. Read again after an undo or a maintenance write: the toast offers its undo
+// on this screen too.
+onMounted(reload)
+watch([() => store.restored, () => store.reminded], reload)
+
+/**
+ * Counts the reads, so an answer that comes back after a newer one is dropped (DueBanner.vue does
+ * the same).
+ */
+let asked = 0
+
+/** Reads every vehicle's reminders again. Only the newest answer is shown. */
+async function reload() {
+	const mine = ++asked
 	try {
-		reminders.value = await listFleetReminders()
+		const answer = await listFleetReminders()
+		if (mine === asked) {
+			reminders.value = answer
+			failure.value = ''
+		}
 	} catch (error) {
-		failure.value = error.message
+		if (mine === asked) {
+			failure.value = error.message
+		}
 	}
-})
+}
 
 // `n` starts the screen's primary action (docs/ui.md#details-that-decide-whether-it-feels-easy).
 // The shell mounts one screen at a time, so the key belongs here. useHotKey skips a keystroke
