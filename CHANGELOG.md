@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.6.2 — 2026-11-24
+
+### Fixed
+
+- On a phone, the lists in **New entry** and in the other sheets open over the sheet, and you can choose an item.
+  On some Nextcloud servers, a list opened behind the sheet.
+- A tap on a short list, for example **Category**, opens the list and not the keyboard.
+  You cannot type into a short list: choose an item from it.
+- When the keyboard is open, a list stays in the part of the screen that you can see.
+
 ## 0.6.1 — 2026-11-08
 
 ### Fixed

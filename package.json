@@ -1,6 +1,6 @@
 {
   "name": "nextfleet",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "private": true,
   "license": "AGPL-3.0-or-later",
   "type": "module",
@@ -36,6 +36,7 @@
     }
   },
   "dependencies": {
+    "@floating-ui/dom": "^1.8.0",
     "@mdi/js": "^7.4.47",
     "@nextcloud/auth": "^2.6.0",
     "@nextcloud/dialogs": "^7.5.0",

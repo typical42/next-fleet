@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-import { expect, test } from '@playwright/test'
+import { devices, expect, test } from '@playwright/test'
 
 import { add, api, appPage, audit, choice, login, open, opened, removeVehicles, row, settingsPage, tile } from './app.js'
 
@@ -381,6 +381,57 @@ test.describe('at 320 x 640, in the dark', { tag: '@nc35' }, () => {
 		const section = page.locator('#nextfleet-settings')
 		await expect(section).toContainText('Germany')
 		await audit(page, 'the personal settings', ['#nextfleet-settings'])
+	})
+})
+
+// Every major: whether a list shows over the sheet depends on the server's stylesheets.
+test.describe('on a phone', () => {
+	// A describe cannot switch browsers, and the device names the one it already is.
+	const { defaultBrowserType, ...phone } = devices['Pixel 7']
+	test.use(phone)
+
+	/**
+	 * Opens the entry sheet on an expense, the type whose category list the report showed hidden.
+	 * The list's z-index is set back to vue-select's own 1000, as on a server whose stylesheets do
+	 * not lift it; Nextcloud 35's server.css does, and would hide the fault.
+	 *
+	 * @param {import('@playwright/test').Page} page - the overview
+	 * @param {string} plate - the vehicle to open it on
+	 * @return {Promise<import('@playwright/test').Locator>} the sheet
+	 */
+	async function expense(page, plate) {
+		await add(page, plate, Number(starting))
+		await page.goto(appPage)
+		await open(page, plate)
+		await page.addStyleTag({ content: '.vs__dropdown-menu { --vs-dropdown-z-index: 1000 !important; }' })
+		const sheet = page.getByRole('dialog', { name: 'New entry' })
+		await page.getByRole('button', { name: 'New entry' }).click()
+		await opened(sheet)
+		await choice(sheet, 'Expense').click()
+		return sheet
+	}
+
+	test('a short list opens over the sheet without the keyboard', async ({ page }) => {
+		const sheet = await expense(page, `${plates}phone`)
+		const category = sheet.getByRole('combobox', { name: 'Category' })
+		// A read-only field takes the tap without opening the keyboard.
+		await expect(category).toHaveAttribute('readonly')
+		await category.tap()
+		// A tap is refused when the sheet covers the option.
+		await option(page, 'Toll').tap()
+		await expect(sheet.locator('.vs__selected')).toHaveText('Toll')
+	})
+
+	test('a list stays on the screen the keyboard leaves', async ({ page }) => {
+		const sheet = await expense(page, `${plates}keyboard`)
+		// The height an open keyboard leaves: too little below the field, so the list opens above it.
+		await page.setViewportSize({ width: 412, height: 420 })
+		await sheet.getByRole('combobox', { name: 'Category' }).tap()
+		const list = page.getByRole('listbox')
+		await expect(list).toBeVisible()
+		const box = await list.boundingBox()
+		expect(box?.y).toBeGreaterThanOrEqual(0)
+		expect((box?.y ?? 0) + (box?.height ?? 0)).toBeLessThanOrEqual(420)
 	})
 })
 

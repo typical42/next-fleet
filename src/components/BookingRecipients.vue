@@ -12,6 +12,7 @@ import { computed, onMounted, ref } from 'vue'
 import { addBookingRecipient, listBookingRecipients, removeBookingRecipient, searchGrantees } from '../services/api.js'
 import { t } from '../utils/l10n.js'
 import { latestSearch } from '../utils/search.js'
+import { placeDropdown } from '../utils/dropdown.js'
 
 const props = defineProps({
 	/** The vehicle's uuid. */
@@ -182,6 +183,7 @@ async function pick(selection) {
 				:disabled="disabled || writing"
 				:loading="writing"
 				multiple
+				:calculate-position="placeDropdown"
 				@search="search"
 				@update:model-value="pick" />
 			<p v-if="recipients.length === 0" class="notices__hint">

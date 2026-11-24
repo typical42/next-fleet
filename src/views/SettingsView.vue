@@ -15,6 +15,7 @@ import { getPreferences, readInbox, savePreferences } from '../services/api.js'
 import { jurisdictionWord, parseWhole } from '../utils/format.js'
 import { t } from '../utils/l10n.js'
 import { pickNode } from '../utils/picker.js'
+import { placeDropdown } from '../utils/dropdown.js'
 
 /** The registered countries, as the server named them. @type {import('vue').Ref<{ key: string, name: string }[]>} */
 const offered = ref([])
@@ -273,6 +274,8 @@ async function saveInbox(folder) {
 			:disabled="busy"
 			:clearable="false"
 			label="label"
+			:searchable="false"
+			:calculate-position="placeDropdown"
 			@update:model-value="choose" />
 
 		<NcCheckboxRadioSwitch :model-value="reclaimVat"

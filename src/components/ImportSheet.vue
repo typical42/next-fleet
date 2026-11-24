@@ -17,6 +17,7 @@ import { energyWord, EXPENSE_CATEGORIES, expenseWord, formatCount, MAINTENANCE_T
 import { FORMATS, formatWord, placedWord, reasonWord, refusalWord, unitsAsked } from '../utils/imports.js'
 import { t } from '../utils/l10n.js'
 import { pickNode } from '../utils/picker.js'
+import { placeDropdown } from '../utils/dropdown.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -296,18 +297,24 @@ function requestClose() {
 					:options="formats"
 					:input-label="t('nextfleet', 'Format')"
 					:clearable="false"
+					:searchable="false"
+					:calculate-position="placeDropdown"
 					label="label" />
 				<NcSelect v-if="asks.includes('distance')"
 					v-model="distance"
 					:options="distances"
 					:input-label="t('nextfleet', 'Distance in the file')"
 					:clearable="false"
+					:searchable="false"
+					:calculate-position="placeDropdown"
 					label="label" />
 				<NcSelect v-if="asks.includes('volume')"
 					v-model="volume"
 					:options="volumes"
 					:input-label="t('nextfleet', 'Volume in the file')"
 					:clearable="false"
+					:searchable="false"
+					:calculate-position="placeDropdown"
 					label="label" />
 			</template>
 
@@ -340,6 +347,8 @@ function requestClose() {
 						:clearable="false"
 						:disabled="busy"
 						label="label"
+						:searchable="false"
+						:calculate-position="placeDropdown"
 						@update:model-value="dateOrder = $event?.id ?? null" />
 					<NcSelect v-if="asksEnergy"
 						:model-value="energies.find((one) => one.id === energy) ?? null"
@@ -348,6 +357,8 @@ function requestClose() {
 						:clearable="false"
 						:disabled="busy"
 						label="label"
+						:searchable="false"
+						:calculate-position="placeDropdown"
 						@update:model-value="energy = $event?.id ?? null" />
 					<NcSelect v-for="text in preview.categories"
 						:key="text"
@@ -358,6 +369,8 @@ function requestClose() {
 						:clearable="defaults[text] === undefined"
 						:disabled="busy"
 						label="label"
+						:searchable="false"
+						:calculate-position="placeDropdown"
 						@update:model-value="mean(text, $event)" />
 					<NcFormBoxSwitch v-if="preview.counts.duplicate > 0 || includeDuplicates"
 						v-model="includeDuplicates"

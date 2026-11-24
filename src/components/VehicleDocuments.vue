@@ -19,6 +19,7 @@ import { ownerSearch, readOwners } from '../utils/owners.js'
 import { savePaper } from '../utils/papers.js'
 import { pickNode } from '../utils/picker.js'
 import { t } from '../utils/l10n.js'
+import { placeDropdown } from '../utils/dropdown.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -286,6 +287,8 @@ async function attach() {
 				:input-label="t('nextfleet', 'What it is')"
 				:clearable="false"
 				label="label"
+				:searchable="false"
+				:calculate-position="placeDropdown"
 				@update:model-value="kind = $event?.id ?? null" />
 			<!-- Not filterable: the newest rows show until something is typed, then the whole
 			     history is searched (src/utils/owners.js). Without `edit` a row is required and
@@ -301,6 +304,8 @@ async function attach() {
 				:input-label="t('nextfleet', 'Belongs to')"
 				:placeholder="keepsVehicles ? t('nextfleet', 'The vehicle itself') : t('nextfleet', 'Choose an entry or a booking')"
 				label="label"
+				searchable
+				:calculate-position="placeDropdown"
 				@search="lookFor" />
 
 			<template #actions>

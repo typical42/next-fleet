@@ -22,6 +22,7 @@ import { CATEGORIES, EXPENSE_CATEGORIES, MAINTENANCE_TYPES, categoryWord, decima
 import { closedByDefault, openByUrgency, reminderTitle, workOf } from '../utils/reminders.js'
 import { t } from '../utils/l10n.js'
 import { newUuid } from '../utils/uuid.js'
+import { placeDropdown } from '../utils/dropdown.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -1014,6 +1015,8 @@ function requestClose() {
 					:input-label="t('nextfleet', 'Category')"
 					:disabled="saving"
 					:clearable="false"
+					:searchable="false"
+					:calculate-position="placeDropdown"
 					label="label" />
 				<NcTextField v-model="purpose"
 					:label="t('nextfleet', 'Purpose')"
@@ -1050,6 +1053,8 @@ function requestClose() {
 					:input-label="t('nextfleet', 'Energy')"
 					:disabled="saving"
 					:clearable="false"
+					:searchable="false"
+					:calculate-position="placeDropdown"
 					label="label" />
 				<NcDateTimePickerNative v-model="costAt"
 					type="datetime-local"
@@ -1139,6 +1144,8 @@ function requestClose() {
 					:options="workTypes"
 					:input-label="t('nextfleet', 'Type')"
 					:disabled="saving"
+					:searchable="false"
+					:calculate-position="placeDropdown"
 					label="label" />
 				<NcDateTimePickerNative v-model="costAt"
 					type="datetime-local"
@@ -1196,6 +1203,8 @@ function requestClose() {
 					:options="spentOns"
 					:input-label="t('nextfleet', 'Category')"
 					:disabled="saving"
+					:searchable="false"
+					:calculate-position="placeDropdown"
 					label="label" />
 				<NcDateTimePickerNative v-model="costAt"
 					type="datetime-local"
