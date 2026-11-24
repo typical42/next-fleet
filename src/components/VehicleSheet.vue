@@ -27,6 +27,7 @@ import { OFF_ROAD, REGISTRATION_HELP, addOnOptions, bodyOptions, categoryOptions
 import { INSPECTION, inspectionOf, rewrite } from '../utils/reminders.js'
 import { t } from '../utils/l10n.js'
 import { newUuid } from '../utils/uuid.js'
+import { placeDropdown } from '../utils/dropdown.js'
 
 const props = defineProps({
 	/**
@@ -746,6 +747,8 @@ function chosen(options, id) {
 					:options="engines"
 					:input-label="t('nextfleet', 'Engine')"
 					:disabled="saving || !!created"
+					:searchable="false"
+					:calculate-position="placeDropdown"
 					label="label" />
 				<!-- Type and unit sit with the counter on a create, because the number means nothing
 				     without them. Both come prefilled, so they cost no field (docs/ui.md). -->
@@ -755,6 +758,8 @@ function chosen(options, id) {
 					:disabled="saving || !!created"
 					:clearable="false"
 					label="label"
+					:searchable="false"
+					:calculate-position="placeDropdown"
 					@update:model-value="chooseType" />
 				<!-- The registration codes are data beside the type, which drives the rules; choosing one
 				     may pre-fill the type. Edited only: nobody has the certificate at hand on a create. -->
@@ -767,6 +772,8 @@ function chosen(options, id) {
 						:filter="filterOptions"
 						:selectable="(option) => !option.header"
 						label="label"
+						searchable
+						:calculate-position="placeDropdown"
 						@update:model-value="chooseCategory">
 						<template #option="option">
 							<strong v-if="option.header">{{ option.label }}</strong>
@@ -789,6 +796,8 @@ function chosen(options, id) {
 						:disabled="saving || bodies.length === 0"
 						:filter="filterOptions"
 						:selectable="(option) => !option.header"
+						searchable
+						:calculate-position="placeDropdown"
 						label="label">
 						<template #option="option">
 							<strong v-if="option.header">{{ option.label }}</strong>
@@ -801,6 +810,8 @@ function chosen(options, id) {
 						:input-label="t('nextfleet', 'Body add-on')"
 						:disabled="saving"
 						:filter="filterOptions"
+						searchable
+						:calculate-position="placeDropdown"
 						label="label">
 						<template #option="option">
 							<NcEllipsisedOption :name="option.label" />
@@ -816,6 +827,8 @@ function chosen(options, id) {
 					:input-label="t('nextfleet', 'Counter unit')"
 					:disabled="saving || !!created"
 					:clearable="false"
+					:searchable="false"
+					:calculate-position="placeDropdown"
 					label="label" />
 				<NcTextField v-if="!editing"
 					v-model="counter"
@@ -836,6 +849,8 @@ function chosen(options, id) {
 						:input-label="t('nextfleet', 'Energy types')"
 						:disabled="saving"
 						:multiple="true"
+						:searchable="false"
+						:calculate-position="placeDropdown"
 						label="label" />
 					<NcTextField v-model="vin"
 						:label="t('nextfleet', 'VIN')"
@@ -853,6 +868,8 @@ function chosen(options, id) {
 						:input-label="t('nextfleet', 'Inspection interval')"
 						:disabled="saving"
 						:clearable="false"
+						:searchable="false"
+						:calculate-position="placeDropdown"
 						label="label" />
 					<div v-else-if="inspection !== null && inspected === null" class="sheet__wide">
 						<InspectionSticker v-if="adding"
@@ -889,6 +906,8 @@ function chosen(options, id) {
 						:disabled="saving"
 						:clearable="false"
 						label="label"
+						:searchable="false"
+						:calculate-position="placeDropdown"
 						@update:model-value="jurisdiction = $event?.id ?? jurisdiction" />
 					<!-- The switch the vehicle's logbook rules hang off (docs/architecture.md#logbook-mode),
 					     beside the country whose ruleset it invokes. -->
@@ -914,6 +933,8 @@ function chosen(options, id) {
 						:input-label="t('nextfleet', 'Lifecycle')"
 						:disabled="saving"
 						:clearable="false"
+						:searchable="false"
+						:calculate-position="placeDropdown"
 						label="label" />
 					<NcDateTimePickerNative v-if="disposing"
 						v-model="disposedAt"
@@ -980,6 +1001,8 @@ function chosen(options, id) {
 						:disabled="saving"
 						:clearable="false"
 						label="label"
+						:searchable="false"
+						:calculate-position="placeDropdown"
 						@update:model-value="(one) => approvalRule = one?.id ?? approvalRule" />
 					<p class="sheet__wide sheet__hint">
 						{{ t('nextfleet', 'A booking by a driver waits until you or a manager approve it. Bookings by you and the managers are approved at once.') }}

@@ -14,6 +14,7 @@ import { useVehiclesStore } from '../store/index.js'
 import { formatDay, parseWhole } from '../utils/format.js'
 import { INSPECTION, firstInspection, monthEnd } from '../utils/reminders.js'
 import { t } from '../utils/l10n.js'
+import { placeDropdown } from '../utils/dropdown.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -81,6 +82,8 @@ async function save() {
 				:input-label="t('nextfleet', 'Month')"
 				:disabled="saving"
 				:clearable="false"
+				:searchable="false"
+				:calculate-position="placeDropdown"
 				label="label" />
 			<NcTextField v-model="year"
 				class="sticker__year"

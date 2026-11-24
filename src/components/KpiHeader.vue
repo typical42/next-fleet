@@ -15,6 +15,7 @@ import { tilesOf } from '../utils/kpis.js'
 import { PERIODS, periodOf, periodWord } from '../utils/period.js'
 import KpiTile from './KpiTile.vue'
 import { t } from '../utils/l10n.js'
+import { placeDropdown } from '../utils/dropdown.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -114,6 +115,8 @@ defineExpose({ reload })
 				:options="periods"
 				:input-label="t('nextfleet', 'Period')"
 				:clearable="false"
+				:searchable="false"
+				:calculate-position="placeDropdown"
 				label="label" />
 			<NcDateTimePickerNative v-if="period.id === 'month'"
 				:model-value="month"

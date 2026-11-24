@@ -14,6 +14,7 @@ import { getPreferences, logbookUrl, mileageClaimUrl } from '../services/api.js'
 import { may } from '../utils/access.js'
 import { nameOf } from '../utils/format.js'
 import { t } from '../utils/l10n.js'
+import { placeDropdown } from '../utils/dropdown.js'
 
 const props = defineProps({
 	/**
@@ -100,6 +101,8 @@ onMounted(async () => {
 					:input-label="t('nextfleet', 'Vehicle')"
 					:clearable="false"
 					label="label"
+					searchable
+					:calculate-position="placeDropdown"
 					@update:model-value="chosen = $event?.id ?? chosen" />
 				<NcTextField v-model="year"
 					:label="t('nextfleet', 'Year')"

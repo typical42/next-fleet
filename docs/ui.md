@@ -359,6 +359,10 @@ Access through a group cannot be left: the screen names the group instead.
 - **Keyboard:** `n` starts the screen's primary action.
   `Esc` closes the sheet, except in a date field, where it belongs to the browser's picker.
   A vehicle is found through Nextcloud's unified search ([integration](architecture.md#nextcloud-integration)).
+- **A short list is not a search field.**
+  A tap on it opens the list, not the phone's keyboard, which would hide half the sheet and invite a word the list does not take.
+  Only a list that grows with the fleet or its people, or a long code list people search by word, takes typed text.
+  Every list opens over the sheet and inside the screen the keyboard leaves (`src/utils/dropdown.js`).
 - **Dark mode and 320 px width are acceptance criteria.**
   The timeline is rows, not cards, so it survives both.
 

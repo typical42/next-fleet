@@ -25,6 +25,7 @@ import { t } from '../utils/l10n.js'
 import { blank, daysOf, RANGES, rangeWord } from '../utils/statistics.js'
 import { averagesTableOf, bentOf, rateTableOf, segmentsTableOf, vehiclesTableOf } from '../utils/trends.js'
 import { driversTableOf, TRIP_BANDS, tripBarsOf, tripTableOf, tripTitlesOf } from '../utils/trips.js'
+import { placeDropdown } from '../utils/dropdown.js'
 
 const props = defineProps({
 	/**
@@ -258,11 +259,15 @@ async function reload() {
 				:options="choices"
 				:input-label="t('nextfleet', 'Vehicle')"
 				:clearable="false"
+				searchable
+				:calculate-position="placeDropdown"
 				label="label" />
 			<NcSelect v-model="range"
 				:options="ranges"
 				:input-label="t('nextfleet', 'Range')"
 				:clearable="false"
+				:searchable="false"
+				:calculate-position="placeDropdown"
 				label="label" />
 			<div v-if="range.id === 'year'" class="statistics__year">
 				<NcButton variant="tertiary" :aria-label="t('nextfleet', 'Previous year')" @click="year--">

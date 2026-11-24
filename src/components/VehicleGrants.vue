@@ -15,6 +15,7 @@ import { may } from '../utils/access.js'
 import { ROLES, roleWord } from '../utils/format.js'
 import { t } from '../utils/l10n.js'
 import { latestSearch } from '../utils/search.js'
+import { placeDropdown } from '../utils/dropdown.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -188,6 +189,8 @@ async function revoke(grant) {
 					:disabled="disabled || writing"
 					:clearable="false"
 					label="label"
+					:searchable="false"
+					:calculate-position="placeDropdown"
 					@update:model-value="recast(grant, $event)" />
 				<!-- Managers approve their own bookings, and viewers book nothing; hidden, the value stays. -->
 				<NcFormBoxSwitch v-if="approval && grant.role === 'driver'"
@@ -229,6 +232,7 @@ async function revoke(grant) {
 				:options="options"
 				:input-label="t('nextfleet', 'Give access to')"
 				:disabled="disabled || writing"
+				:calculate-position="placeDropdown"
 				@search="search" />
 			<NcSelect v-model="role"
 				class="grants__role"
@@ -236,6 +240,8 @@ async function revoke(grant) {
 				:input-label="t('nextfleet', 'Role')"
 				:disabled="disabled || writing"
 				:clearable="false"
+				:searchable="false"
+				:calculate-position="placeDropdown"
 				label="label" />
 			<NcButton :disabled="disabled || writing || picked === null" @click="give">
 				{{ t('nextfleet', 'Give access') }}

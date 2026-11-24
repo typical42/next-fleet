@@ -14,6 +14,7 @@ import { may } from '../utils/access.js'
 import { DOCUMENT_KINDS, documentKindWord, nameOf } from '../utils/format.js'
 import { ownerSearch, readOwners } from '../utils/owners.js'
 import { t } from '../utils/l10n.js'
+import { placeDropdown } from '../utils/dropdown.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Waiting>} */
@@ -165,12 +166,16 @@ function dismiss() {
 				:options="offered"
 				:input-label="t('nextfleet', 'Vehicle')"
 				:clearable="false"
+				searchable
+				:calculate-position="placeDropdown"
 				label="label" />
 			<NcSelect :model-value="kinds.find((one) => one.id === kind) ?? null"
 				:options="kinds"
 				:input-label="t('nextfleet', 'What it is')"
 				:clearable="false"
 				label="label"
+				:searchable="false"
+				:calculate-position="placeDropdown"
 				@update:model-value="kind = $event?.id ?? kind" />
 			<template v-if="readFailure">
 				<NcNoteCard type="error" :text="readFailure" />
@@ -193,6 +198,8 @@ function dismiss() {
 					:placeholder="keepsVehicle ? t('nextfleet', 'The vehicle itself') : t('nextfleet', 'Choose an entry or a booking')"
 					:clearable="keepsVehicle"
 					label="label"
+					searchable
+					:calculate-position="placeDropdown"
 					@search="lookFor" />
 			</template>
 			<p class="inbox-sheet__lead">

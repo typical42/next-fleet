@@ -17,6 +17,7 @@ import { may } from '../utils/access.js'
 import { formatSpan, formatWhen } from '../utils/format.js'
 import { t } from '../utils/l10n.js'
 import { refusalWords, spanFault, waiting } from '../utils/pool.js'
+import { placeDropdown } from '../utils/dropdown.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -256,6 +257,8 @@ function requestClose() {
 				:input-label="forLabel"
 				:disabled="saving"
 				:clearable="false"
+				searchable
+				:calculate-position="placeDropdown"
 				label="label" />
 
 			<NcDateTimePickerNative v-model="start"

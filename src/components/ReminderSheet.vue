@@ -17,6 +17,7 @@ import { useVehiclesStore } from '../store/index.js'
 import { formatCount, formatDay, parseDay, parseWhole } from '../utils/format.js'
 import { addDays, addMonths, templateWord } from '../utils/reminders.js'
 import { t } from '../utils/l10n.js'
+import { placeDropdown } from '../utils/dropdown.js'
 
 const props = defineProps({
 	/** @type {import('vue').PropType<import('../services/api.js').Vehicle>} */
@@ -323,6 +324,8 @@ function text(value) {
 				:placeholder="t('nextfleet', 'Own title')"
 				:disabled="saving"
 				label="label"
+				:searchable="false"
+				:calculate-position="placeDropdown"
 				@update:model-value="chooseTemplate" />
 			<NcTextField v-if="ownTitle"
 				v-model="title"
@@ -334,6 +337,8 @@ function text(value) {
 				:input-label="t('nextfleet', 'Due by')"
 				:disabled="saving"
 				:clearable="false"
+				:searchable="false"
+				:calculate-position="placeDropdown"
 				label="label" />
 			<template v-if="byDate">
 				<NcDateTimePickerNative v-model="dueDate"
