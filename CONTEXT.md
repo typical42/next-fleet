@@ -314,9 +314,21 @@ When the server received the record. Set from `ITimeFactory`, never accepted fro
 between the two is what timeliness means.
 
 **Partner**:
-The business contact a Trip visited. Free text with autocomplete from the vehicle's history — not an
-entity.
+The business contact a Trip visited. A record in its Owner's list, shared by all their Vehicles. The
+Trip keeps the text as entered, which the logbook prints, and a link to the record
+([ADR 0013](docs/adr/0013-a-partner-is-a-record-the-trip-keeps-its-text.md)).
 _Avoid_: Client, customer, contact
+
+**Cost Centre**:
+Where a firm books a Trip or a Cost: an optional code and a name, in its Owner's list. Each Vehicle
+has a default that new Entries take. A Trip counts its distance to it; Costs are never split over
+Cost Centres by distance.
+_Avoid_: Department, account, Kostenstelle (in code)
+
+**Budget**:
+The amount an Owner plans for one Vehicle in one calendar year, net or gross. Compared with the
+year's energy, maintenance and expenses; the loss of value does not count.
+_Avoid_: Limit, cap
 
 **Mileage Claim**:
 The business Trips one person entered on one vehicle in one year, each valued at its

@@ -16,6 +16,7 @@ A decision that no longer applies is removed, and the one that replaced it says 
 | [0010](0010-the-vehicle-type-drives-rules-the-eu-codes-are-data.md) | The vehicle type drives rules, the EU codes are data |
 | [0011](0011-a-small-firm-may-opt-into-approval-and-hidden-costs.md) | A small firm may opt into approval and hidden costs |
 | [0012](0012-nextfleet-also-serves-a-small-fleet.md) | NextFleet also serves a small fleet |
+| [0013](0013-a-partner-is-a-record-the-trip-keeps-its-text.md) | A partner is a record; the trip keeps its text |
 
 This is the end of the developer path.
 Back to the [developer guide](../developer/README.md).
