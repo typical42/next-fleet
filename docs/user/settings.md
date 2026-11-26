@@ -11,6 +11,8 @@ Each setting saves at once; the grid factor when you leave the field.
 | **Grid factor for charging, g CO₂/kWh** | The CO₂ of your electricity. Keep it empty for the average of the country. |
 | **Inbox folder** | The folder of the [receipt inbox](documents.md#use-the-receipt-inbox). |
 | **Bookings need approval** (under **Bookings**) | A driver's booking waits until you or a manager approve it. It applies to each of your vehicles that is set to **As for all my vehicles**. You see it only after you gave access to another user or a group. See [Approve bookings](access.md#approve-bookings). |
+| **Use cost centres and budgets** (under **Cost centres and budgets**) | Shows the cost centres and the budgets on your vehicles, also when only you use them. When you gave access to another user or a group, they are on and the switch does not show. |
+| The cost-centre list (under **Cost centres and budgets**) | Add, rename, archive and delete your cost centres. It shows when cost centres are on. See [Cost centres](partners.md#cost-centres). |
 
 ## Connect a phone app or a script
 

@@ -62,7 +62,7 @@ Usage: `occ nextfleet:reminders [<uid>] [--send] [--output <format>]`
 
 | Option | Description |
 |---|---|
-| `--send` | Run the hourly reminder job now, for all accounts. |
+| `--send` | Run the hourly reminder job now, for all accounts: the reminders, the budget warnings, then the mail digests. |
 
 If the hourly job runs at the same time as `--send`, an account can get the news in two mails.
 A failed mail goes to the Nextcloud log.
@@ -92,6 +92,8 @@ It finds:
 - Rows that point to a vehicle that does not exist.
 - A cached counter or a reading flag that disagrees with the readings (`cache`, `flag`).
 - Readings that disagree with their entry.
+- A trip with a partner name that links no partner record (`partner`).
+  A trip whose partner record the owner deleted keeps a link to the deleted record, so it is no finding.
 - Two live grants for the same account or group on one vehicle.
 - A grant to an account or group that does not exist (`grantee`).
 - An owner that no account has, with no deletion pending (`owner`).
@@ -137,6 +139,14 @@ Gives a live vehicle to another owner.
 The grants stay.
 The old owner keeps **Viewer**, if the account still exists.
 Bookings need approval stays as it was: the vehicle is set to **Always** or **Never**.
+The partners on the vehicle's trips go into the new owner's partner list.
+A partner of the same name there is used; any other is copied with its address and note.
+A partner the old owner deleted is not copied.
+The old owner's partner list stays as it is.
+The trips keep their partner text.
+The cost centres on the vehicle's entries and its default cost centre go into the new owner's list too.
+A cost centre with the same code there is used, else one with the same name; any other is copied.
+The old owner's list stays as it is.
 
 Usage: `occ nextfleet:transfer <vehicle> <owner>`
 

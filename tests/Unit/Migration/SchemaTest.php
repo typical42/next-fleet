@@ -11,6 +11,7 @@ namespace OCA\NextFleet\Tests\Unit\Migration;
 use Doctrine\DBAL\Platforms\AbstractPlatform;
 use Doctrine\DBAL\Platforms\MariaDBPlatform;
 use Doctrine\DBAL\Schema\Table;
+use OCA\NextFleet\Db\PartnerBackfill;
 use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Migration\Version000009Date20261011000000;
 use OCA\NextFleet\Tests\Fixture\SchemaWrapper;
@@ -53,7 +54,7 @@ class SchemaTest extends TestCase {
 	}
 
 	private function runSteps(SchemaWrapper $schema): void {
-		$steps = Steps::inOrder($this->database(), $this->createMock(ReminderRecipientMapper::class));
+		$steps = Steps::inOrder($this->database(), $this->createMock(ReminderRecipientMapper::class), $this->createMock(PartnerBackfill::class));
 		foreach ($steps as $step) {
 			$asked = false;
 			$returned = $step->changeSchema(

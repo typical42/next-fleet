@@ -308,9 +308,45 @@ Check-in works on any lifecycle.
 A cancel by anybody but the booker notifies the booker.
 A cancel by the driver of a booking made for them notifies its maker.
 
+## A partner merge
+
+The owner merges one partner record into another.
+Each trip keeps its text and moves only its link, on the trail where a logbook is kept, and the Fahrtenbuch shows no new line ([concurrency](../architecture.md#concurrency), [the Fahrtenbuch export](../architecture.md#the-fahrtenbuch-export)).
+A delete runs the same way, with the record's own tombstone as the target.
+
+```mermaid
+sequenceDiagram
+    actor Owner
+    participant Ctl as PartnerController
+    participant Svc as PartnerService
+    participant Trips as TripService
+    participant db as database
+    Owner->>Ctl: POST /api/partners/{record}/merge, into, updated_at
+    Ctl->>Svc: merge(user, uuid, updated_at, into)
+    critical atomicRetry
+        Svc->>db: PartnerMapper::findByUuid, the caller's list only
+        break updated_at is not the record's
+            Svc-->>Ctl: StaleUpdateException
+        end
+        Svc->>db: VehicleMapper::hold each owned vehicle and each that links the record, in id order
+        Svc->>db: PartnerMapper::findByUuid(into), the caller's list only
+        Svc->>db: TripMapper::findAnyLinking(record), voided trips too
+        loop each trip
+            Svc->>Trips: relink(user, vehicle, trip, into)
+            Trips->>db: TripMapper::relink, partner_id and a new updated_at
+            opt the trip is in a logbook somebody keeps
+                Trips->>db: AuditMapper::insert edited, partner_uuid old and new, late false
+            end
+        end
+        Svc->>db: PartnerMapper::softDelete, name ERASED, no address, no note
+    end
+    Svc-->>Ctl: the record merged into
+    Ctl-->>Owner: 200
+```
+
 ## The reminder round
 
-`ReminderJob` runs hourly: first `NotificationService`, then `MailService` ([the reminder engine](../architecture.md#reminder-engine)).
+`ReminderJob` runs hourly: first `NotificationService`, then `BudgetWarnings`, then `MailService` ([the reminder engine](../architecture.md#reminder-engine)).
 
 ### The notifications
 
@@ -363,6 +399,46 @@ sequenceDiagram
 ```
 
 A failed vehicle or send is logged, and the round goes on.
+
+### The budget warning
+
+Only a budget of the year it is now in the owner's zone is held, one transaction each.
+`warned` is the share told last; a raise lowers it, so a share is told again.
+
+```mermaid
+sequenceDiagram
+    participant Job as ReminderJob
+    participant Warnings as BudgetWarnings
+    participant Cost as CostService
+    participant Access as VehicleAccess
+    participant Manager as IManager
+    participant Mail as MailService
+    participant db as database
+    Job->>Warnings: sweep()
+    Warnings->>db: BudgetMapper::findArmed(this year ±1, below 100)
+    loop each budget
+        Warnings->>db: VehicleMapper::findAnyById, no lock
+        break deleted, disposed, or not the owner's current year
+            Note over Warnings: next budget
+        end
+        critical atomic
+            Warnings->>db: VehicleMapper::hold, findAnyById, BudgetMapper::findOnVehicle
+            Warnings->>Cost: total(vehicle, 1 Jan to 1 Jan in the owner's zone, net)
+            Cost-->>Warnings: spent
+            opt share(amount, spent) above warned
+                Warnings->>db: BudgetMapper::warn(share), updated_at stays
+                Warnings->>Access: holders(vehicle, EDIT)
+                Note over Warnings: queues a notice per holder, and a mail unless reminder_mail is off
+            end
+        end
+        loop each queued send, after the commit
+            Warnings->>Manager: markProcessed the budget's notice, notify the share
+            Warnings->>Mail: budget(user, vehicle, year, share)
+        end
+    end
+```
+
+A failed budget or send is logged, and the round goes on; a failed send is not tried again.
 
 ### The digest
 

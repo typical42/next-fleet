@@ -8,21 +8,23 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\BackgroundJob;
 
+use OCA\NextFleet\Service\BudgetWarnings;
 use OCA\NextFleet\Service\MailService;
 use OCA\NextFleet\Service\NotificationService;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\BackgroundJob\TimedJob;
 
 /**
- * Hourly: every reminder evaluated, its state persisted, its recipients told, and the day's mail
- * digests sent (docs/architecture.md#reminder-engine). `occ nextfleet:reminders --send` runs the
- * same round on demand.
+ * Hourly: every reminder evaluated, its state persisted, its recipients told, the budgets checked
+ * (BudgetWarnings), and the day's mail digests sent (docs/architecture.md#reminder-engine).
+ * `occ nextfleet:reminders --send` runs the same round on demand.
  */
 class ReminderJob extends TimedJob {
 	public function __construct(
 		ITimeFactory $time,
 		private NotificationService $notifications,
 		private MailService $mail,
+		private BudgetWarnings $budgets,
 	) {
 		parent::__construct($time);
 		$this->setInterval(3600);
@@ -34,6 +36,7 @@ class ReminderJob extends TimedJob {
 	 */
 	protected function run($argument): void {
 		$this->notifications->sweep();
+		$this->budgets->sweep();
 		// After the sweep, so the states are persisted; on its own, so a refusing mail server
 		// cannot silence the notifications.
 		$this->mail->digest();

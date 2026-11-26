@@ -13,6 +13,8 @@ use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccountTables;
 use OCA\NextFleet\Db\BaseMapper;
 use OCA\NextFleet\Db\BookingRecipientMapper;
+use OCA\NextFleet\Db\CostCentreMapper;
+use OCA\NextFleet\Db\PartnerMapper;
 use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
@@ -43,6 +45,8 @@ class ErasureService {
 		private ISecureRandom $random,
 		private ReminderRecipientMapper $recipients,
 		private BookingRecipientMapper $bookingRecipients,
+		private PartnerMapper $partners,
+		private CostCentreMapper $costCentres,
 		private VehicleMapper $vehicles,
 		AccountTables $tables,
 		private SyncEpoch $epoch,
@@ -107,6 +111,10 @@ class ErasureService {
 			}
 			$this->recipients->deleteAccount($uid);
 			$this->bookingRecipients->deleteEverywhere(Access::USER, $uid);
+			// Under the holds of every vehicle it owned, so no trip adds a name meanwhile
+			// (VehicleMapper::holdOwner()).
+			$this->partners->eraseListOf($uid);
+			$this->costCentres->eraseListOf($uid);
 			$renamed = 0;
 			foreach ($named as $table) {
 				$renamed += $table->pseudonymise($uid, $pseudonym);

@@ -62,7 +62,9 @@ use OCP\DB\Types;
  *
  * @psalm-import-type NextFleetMaintenanceEntry from \OCA\NextFleet\ResponseDefinitions
  */
-class Maintenance extends BaseEntity implements \JsonSerializable {
+class Maintenance extends BaseEntity implements \JsonSerializable, CostCentred {
+	use NamesCostCentre;
+
 	/**
 	 * The properties that hold the state of the reminder this record closed rather than what the
 	 * record says: the other records that close it write them too.
@@ -159,6 +161,7 @@ class Maintenance extends BaseEntity implements \JsonSerializable {
 		$this->addType('nextDueDate', Types::DATE);
 		$this->addType('nextDueOdo', Types::BIGINT);
 		$this->addType('tookBack', Types::BOOLEAN);
+		$this->addType('costCentreId', Types::BIGINT);
 	}
 
 	/** The record as Energy::withoutCost() hands a fill-up out. */
@@ -183,6 +186,7 @@ class Maintenance extends BaseEntity implements \JsonSerializable {
 			'cost' => $this->cost,
 			'vat_rate' => $this->vatRate,
 			'notes' => $this->notes,
+			'cost_centre_uuid' => $this->getCostCentreUuid(),
 			'created_at' => $this->createdAt,
 			'updated_at' => $this->updatedAt,
 			'deleted_at' => $this->deletedAt,

@@ -49,6 +49,9 @@ After the second full tank, NextFleet shows the consumption.
 | Counter | The odometer in kilometres, or the hour meter in engine hours. |
 | Timeline | All entries of a vehicle, newest first. |
 | Owner | The user who added the vehicle. |
+| Partner | The business partner that a trip names. Each owner has one list of partners for all of their vehicles. |
+| Cost centre | A part of the business that gets the costs and the distance of an entry, for example a project. Each owner has one list for all of their vehicles. |
+| Budget | The amount that the owner plans to spend on one vehicle in one calendar year. |
 | Access | The right of another user or group to see or use a vehicle. |
 | Booking | A plan to use a vehicle from a start to an end. |
 | Approval | The answer of the owner or a manager to a booking by a driver. |
@@ -60,10 +63,11 @@ After the second full tank, NextFleet shows the consumption.
 2. [Entries and the timeline](entries.md): record what happens to the vehicle.
 3. [Logbook for the tax office](logbook.md): Logbook mode, the logbook and the mileage claim.
 4. [Figures and statistics](statistics.md): the figures, the Statistics page, CO₂ and CSV export.
-5. [Reminders](reminders.md): get told before a service or an inspection.
-6. [Access and bookings](access.md): share a vehicle, set up a pool car, book it, take it and return it.
-7. [Documents and the receipt inbox](documents.md): attach files from your Files.
-8. [Import](import.md): bring your history from LubeLogger or Spritmonitor.
-9. [Settings](settings.md): your defaults, and app passwords.
+5. [Partners, cost centres and budgets](partners.md): your partner list, your cost centres and the budget of each vehicle, and why the lists belong to the owner.
+6. [Reminders](reminders.md): get told before a service or an inspection.
+7. [Access and bookings](access.md): share a vehicle, set up a pool car, book it, take it and return it.
+8. [Documents and the receipt inbox](documents.md): attach files from your Files.
+9. [Import](import.md): bring your history from LubeLogger or Spritmonitor.
+10. [Settings](settings.md): your defaults, and app passwords.
 
 Next: [Vehicles](vehicles.md)

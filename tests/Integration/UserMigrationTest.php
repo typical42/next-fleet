@@ -14,6 +14,7 @@ use OCA\NextFleet\Db\ReminderReceiptMapper;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Service\BookingService;
+use OCA\NextFleet\Service\CostCentreService;
 use OCA\NextFleet\Service\DocumentService;
 use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\ExpenseService;
@@ -96,11 +97,17 @@ class UserMigrationTest extends TestCase {
 		}
 		if (self::$vehicleIds !== []) {
 			foreach (self::fleetTables() as $table) {
-				if (in_array($table, ['fleet_vehicles', 'fleet_audit', 'fleet_reminder_receipts'], true)) {
+				if (in_array($table, ['fleet_vehicles', 'fleet_audit', 'fleet_reminder_receipts', 'fleet_partners', 'fleet_cost_centres'], true)) {
 					continue;
 				}
 				$qb = $db->getQueryBuilder();
 				$qb->delete($table)->where($qb->expr()->in('vehicle_id', $qb->createNamedParameter(self::$vehicleIds, $qb::PARAM_INT_ARRAY)));
+				$qb->executeStatement();
+			}
+			// A partner and a cost centre are in their owner's list.
+			foreach (['fleet_partners', 'fleet_cost_centres'] as $table) {
+				$qb = $db->getQueryBuilder();
+				$qb->delete($table)->where($qb->expr()->in('user_id', $qb->createNamedParameter(self::ACCOUNTS, $qb::PARAM_STR_ARRAY)));
 				$qb->executeStatement();
 			}
 			// The trips' audit rows hang on the trip, not on the vehicle.
@@ -131,9 +138,10 @@ class UserMigrationTest extends TestCase {
 			'nextfleet/fleet_vehicles.json' => 1,
 			// The grant to them, and theirs to the owner.
 			'nextfleet/fleet_access.json' => 2,
-			// The trip's end, the reading, the fill-up's.
-			'nextfleet/fleet_odo_readings.json' => 3,
-			'nextfleet/fleet_trips.json' => 1,
+			// Each trip's end, the reading, the fill-up's.
+			'nextfleet/fleet_odo_readings.json' => 4,
+			// On the shared car and on their own.
+			'nextfleet/fleet_trips.json' => 2,
 			'nextfleet/fleet_energy.json' => 1,
 			'nextfleet/fleet_maintenance.json' => 1,
 			// The deleted one too.
@@ -148,6 +156,12 @@ class UserMigrationTest extends TestCase {
 			'nextfleet/fleet_bookings.json' => 1,
 			// On the shared car's booking list.
 			'nextfleet/fleet_booking_recipients.json' => 1,
+			// Their own list: the name they typed on the shared car is in its owner's.
+			'nextfleet/fleet_partners.json' => 1,
+			// Their own list; the owner's, which their trip names, is the owner's.
+			'nextfleet/fleet_cost_centres.json' => 1,
+			// The plan for their own car.
+			'nextfleet/fleet_budgets.json' => 1,
 		], array_map('count', $files));
 		foreach ($files as $name => $rows) {
 			foreach ($rows as $row) {
@@ -164,6 +178,20 @@ class UserMigrationTest extends TestCase {
 			['display_name' => 'Pool van', 'eu_category' => 'N1', 'body_type' => 'BA03'],
 			array_intersect_key($row, array_flip(['display_name', 'eu_category', 'body_type'])),
 		);
+	}
+
+	/** The account's own partner list is theirs in full, though no vehicle holds it. */
+	public function testThePartnerListComesWhole(): void {
+		$row = $this->nextfleetFiles((string)self::$archive)['nextfleet/fleet_partners.json'][0];
+
+		$this->assertSame(['user_id' => self::DRIVER, 'name' => 'Weber'], array_intersect_key($row, array_flip(['user_id', 'name'])));
+	}
+
+	/** And so is their own cost-centre list. */
+	public function testTheCostCentreListComesWhole(): void {
+		$row = $this->nextfleetFiles((string)self::$archive)['nextfleet/fleet_cost_centres.json'][0];
+
+		$this->assertSame(['user_id' => self::DRIVER, 'code' => '4711', 'name' => 'Eigenes'], array_intersect_key($row, array_flip(['user_id', 'code', 'name'])));
 	}
 
 	/**
@@ -195,7 +223,7 @@ class UserMigrationTest extends TestCase {
 		\OCP\Server::get(RecipientService::class)->addBooking(self::OWNER, $uuid, self::DRIVER, 'user');
 		self::trip(self::OWNER, $shared, 1750000000, 12000);
 		// Under the mode, so the trip leaves an audit row by the driver.
-		self::trip(self::DRIVER, $shared, 1750010000, 12040);
+		self::trip(self::DRIVER, $shared, 1750010000, 12040, 'Müller');
 		\OCP\Server::get(OdometerService::class)->record(self::DRIVER, $uuid, ['read_at' => 1750050000, 'read_at_off' => 120, 'value' => 12080]);
 		\OCP\Server::get(EnergyService::class)->record(self::DRIVER, $uuid, ['filled_at' => 1750100000, 'filled_at_off' => 120, 'energy' => 'diesel', 'amount' => 42000, 'odo' => 12100]);
 		\OCP\Server::get(MaintenanceService::class)->record(self::DRIVER, $uuid, ['done_at' => 1750200000, 'done_at_off' => 120, 'title' => 'Oil change']);
@@ -215,6 +243,18 @@ class UserMigrationTest extends TestCase {
 
 		$own = self::vehicle(self::DRIVER, ['plate' => 'B-DR 1', 'display_name' => 'Pool van', 'eu_category' => 'N1', 'body_type' => 'BA03']);
 		$grants->grant(self::DRIVER, $own->getUuid(), ['grantee' => self::OWNER, 'grantee_type' => 'user', 'role' => 'viewer']);
+		self::trip(self::DRIVER, $own, 1750000000, 3000, 'Weber');
+		\OCP\Server::get(CostCentreService::class)->create(self::DRIVER, ['code' => '4711', 'name' => 'Eigenes']);
+		// And a budget on it.
+		$budget = new \OCA\NextFleet\Db\Budget();
+		$budget->setVehicleId((int)$own->getId());
+		$budget->setCreatedBy(self::DRIVER);
+		$budget->setYear(2031);
+		$budget->setAmount(500000);
+		$budget->setNet(false);
+		$budget->setWarned(0);
+		\OCP\Server::get(\OCA\NextFleet\Db\BudgetMapper::class)->insert($budget);
+		\OCP\Server::get(CostCentreService::class)->create(self::OWNER, ['name' => 'Vertrieb']);
 
 		$theirs = self::vehicle(self::STRANGER, ['plate' => 'B-ST 1', 'logbook_mode' => true]);
 		self::trip(self::STRANGER, $theirs, 1750000000, 5000);
@@ -301,8 +341,9 @@ class UserMigrationTest extends TestCase {
 		return $vehicle;
 	}
 
-	private static function trip(string $author, Vehicle $vehicle, int $startedAt, int $endOdo): void {
+	private static function trip(string $author, Vehicle $vehicle, int $startedAt, int $endOdo, ?string $partner = null): void {
 		\OCP\Server::get(TripService::class)->record($author, $vehicle->getUuid(), [
+			'partner' => $partner,
 			'started_at' => $startedAt,
 			'started_at_off' => 120,
 			'ended_at' => $startedAt + 3600,

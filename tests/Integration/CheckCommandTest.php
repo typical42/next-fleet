@@ -89,7 +89,7 @@ class CheckCommandTest extends TestCase {
 	 */
 	private function forget(): void {
 		$db = \OCP\Server::get(IDBConnection::class);
-		$tables = ['fleet_odo_readings', 'fleet_trips', 'fleet_energy', 'fleet_maintenance', 'fleet_expenses', 'fleet_access', 'fleet_reminder_recipients', 'fleet_audit'];
+		$tables = ['fleet_odo_readings', 'fleet_trips', 'fleet_energy', 'fleet_maintenance', 'fleet_expenses', 'fleet_access', 'fleet_reminder_recipients', 'fleet_audit', 'fleet_partners'];
 		foreach ($tables as $table) {
 			$qb = $db->getQueryBuilder();
 			$qb->delete($table)->where($qb->expr()->in('created_by', $qb->createNamedParameter([self::OWNER, self::OLD, self::KEPT], IQueryBuilder::PARAM_STR_ARRAY)));
@@ -119,6 +119,30 @@ class CheckCommandTest extends TestCase {
 
 	public function testAnUnknownOutputIsBadInput(): void {
 		$this->assertSame(2, $this->command->execute(['--output' => 'xml']));
+	}
+
+	/**
+	 * A trip whose partner text links no record, live or voided, is one the upgrade did not reach
+	 * (ADR 0013). One the service wrote, or one that names nobody, is not.
+	 */
+	public function testAPartnerTextWithoutALinkIsAFinding(): void {
+		$vehicle = $this->vehicle();
+		$this->trip($vehicle, 1750000000, 100, 'Müller');
+		$this->trip($vehicle, 1750010000, 200);
+		$live = $this->trip($vehicle, 1750020000, 300, 'Müller');
+		$voided = $this->trip($vehicle, 1750030000, 400, 'Weber');
+		$voided = \OCP\Server::get(TripService::class)->delete(self::OWNER, $vehicle->getUuid(), $voided->getUuid(), $voided->getUpdatedAt());
+		$this->update('fleet_trips', (int)$live->getId(), ['partner_id' => null]);
+		$this->update('fleet_trips', (int)$voided->getId(), ['partner_id' => null]);
+
+		$this->assertSame(1, $this->command->execute(['--vehicle' => $vehicle->getUuid(), '--output' => 'json']));
+
+		$found = $this->found('partner');
+		$this->assertEqualsCanonicalizing([
+			['check' => 'partner', 'table' => 'fleet_trips', 'row' => $live->getUuid(), 'vehicle' => $vehicle->getUuid()],
+			['check' => 'partner', 'table' => 'fleet_trips', 'row' => $voided->getUuid(), 'vehicle' => $vehicle->getUuid()],
+		], array_map(self::where(...), $found));
+		$this->assertSame('names a partner, but links no partner record', $found[0]['reason']);
 	}
 
 	/** Both caches, each against its own chain (rule 4). */
@@ -420,8 +444,9 @@ class CheckCommandTest extends TestCase {
 		]);
 	}
 
-	private function trip(Vehicle $vehicle, int $startedAt, int $endOdo): Trip {
+	private function trip(Vehicle $vehicle, int $startedAt, int $endOdo, ?string $partner = null): Trip {
 		return \OCP\Server::get(TripService::class)->record(self::OWNER, $vehicle->getUuid(), [
+			'partner' => $partner,
 			'started_at' => $startedAt,
 			'started_at_off' => 0,
 			'ended_at' => $startedAt + 3600,

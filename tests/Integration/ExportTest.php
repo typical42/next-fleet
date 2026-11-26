@@ -10,6 +10,7 @@ namespace OCA\NextFleet\Tests\Integration;
 
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Exception\AccessDeniedException;
+use OCA\NextFleet\Service\CostCentreService;
 use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\ExpenseService;
 use OCA\NextFleet\Service\ExportService;
@@ -79,6 +80,8 @@ class ExportTest extends TestCase {
 			'fleet_maintenance' => 'created_by',
 			'fleet_expenses' => 'created_by',
 			'fleet_access' => 'created_by',
+			'fleet_cost_centres' => 'user_id',
+			'fleet_partners' => 'user_id',
 		];
 		foreach ($tables as $table => $column) {
 			$qb = $db->getQueryBuilder();
@@ -173,6 +176,8 @@ class ExportTest extends TestCase {
 			'created_at' => gmdate('Y-m-d H:i:s', $entered->getCreatedAt()),
 			// Nobody else ever reached this vehicle, so naming its owner says nothing.
 			'entered_by' => '',
+			'cost_centre_code' => '',
+			'cost_centre_name' => '',
 		], array_diff_key($rows[0], ['uuid' => null]));
 		$this->assertSame(['0', '1', '0'], array_column($rows, 'voided'));
 		$this->assertSame($voided->getUuid(), $rows[1]['uuid']);
@@ -275,6 +280,39 @@ class ExportTest extends TestCase {
 			static fn (array $row): array => [$row['spent'], $row['spent_offset_min'], $row['category'], $row['amount'], $row['currency']],
 			$expenses,
 		));
+	}
+
+	/**
+	 * Each file's header, its last two columns the cost centre the row names: code and name, so a
+	 * spreadsheet groups by either. A row that names none leaves them empty; an archived one
+	 * still names its own.
+	 */
+	public function testEachFileEndsInTheCostCentreItsRowNames(): void {
+		$centres = \OCP\Server::get(CostCentreService::class);
+		$sales = $centres->create(self::OWNER, ['code' => '4711', 'name' => 'Vertrieb']);
+		$uuid = $this->vehicle();
+		$at = gmmktime(9, 0, 0, 3, 1, 2025);
+		$named = ['cost_centre_uuid' => $sales['uuid']];
+		$this->trip($uuid, $at, ['start_odo' => 1000, 'end_odo' => 1012] + $named);
+		$this->trip($uuid, $at + 7200, ['start_odo' => 1012, 'end_odo' => 1020]);
+		$this->energy->record(self::OWNER, $uuid, ['filled_at' => $at, 'filled_at_off' => 60, 'energy' => 'diesel', 'amount' => 40000, 'total' => 6000] + $named);
+		$this->maintenance->record(self::OWNER, $uuid, ['done_at' => $at, 'done_at_off' => 60, 'title' => 'Oil change', 'cost' => 19000] + $named);
+		$this->expenses->record(self::OWNER, $uuid, ['spent_at' => $at, 'spent_at_off' => 60, 'category' => 'parking', 'amount' => 300] + $named);
+		$centres->update(self::OWNER, $sales['uuid'], $sales['updated_at'], ['code' => '4711', 'name' => 'Vertrieb', 'archived' => true]);
+
+		$headers = [
+			'trips' => ['uuid', 'started', 'started_offset_min', 'ended', 'ended_offset_min', 'start_odo', 'end_odo', 'distance', 'odo_unit', 'from', 'to', 'purpose', 'partner', 'category', 'reconciled', 'voided', 'created_at', 'entered_by', 'cost_centre_code', 'cost_centre_name'],
+			'energy' => ['uuid', 'filled', 'filled_offset_min', 'odo', 'second_odo', 'odo_unit', 'energy', 'amount', 'unit_price', 'total', 'currency', 'vat_rate', 'full_tank', 'missed_previous', 'station', 'is_dc', 'location_kind', 'entered_by', 'cost_centre_code', 'cost_centre_name'],
+			'maintenance' => ['uuid', 'done', 'done_offset_min', 'odo', 'second_odo', 'odo_unit', 'type', 'title', 'vendor', 'cost', 'currency', 'vat_rate', 'notes', 'entered_by', 'cost_centre_code', 'cost_centre_name'],
+			'expenses' => ['uuid', 'spent', 'spent_offset_min', 'category', 'amount', 'currency', 'vat_rate', 'notes', 'entered_by', 'cost_centre_code', 'cost_centre_name'],
+		];
+		foreach ($headers as $table => $header) {
+			$rows = $this->read($this->export->csv(self::OWNER, $uuid, 2025, $table)['body']);
+			$this->assertSame($header, array_keys($rows[0]), $table);
+			$this->assertSame(['4711', 'Vertrieb'], [$rows[0]['cost_centre_code'], $rows[0]['cost_centre_name']], $table);
+		}
+		$trips = $this->read($this->export->csv(self::OWNER, $uuid, 2025, 'trips')['body']);
+		$this->assertSame(['', ''], [$trips[1]['cost_centre_code'], $trips[1]['cost_centre_name']], 'none named');
 	}
 
 	/** A bulk read takes the check a single row does (docs/security.md). */

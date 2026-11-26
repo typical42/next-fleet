@@ -47,6 +47,7 @@ namespace OCA\NextFleet;
  *     retention_months: ?int,
  *     color: ?string,
  *     notes: ?string,
+ *     cost_centre_uuid: ?string,
  *     second_unit: ?string,
  *     second_value: ?int,
  *     reminder_mail: string,
@@ -66,6 +67,7 @@ namespace OCA\NextFleet;
  *     out_with: ?array{user_id: string, user_name: string, ends_at: int, ends_at_off: int},
  *     my_next_booking: ?array{uuid: string, starts_at: int, starts_at_off: int, ends_at: int, ends_at_off: int, approval: ?string},
  *     ever_granted: bool,
+ *     uses_cost_centres: bool,
  * }
  *
  * @psalm-type NextFleetReading = array{
@@ -99,13 +101,32 @@ namespace OCA\NextFleet;
  *     to_label: ?string,
  *     purpose: ?string,
  *     partner: ?string,
+ *     partner_uuid: ?string,
  *     category: string,
+ *     cost_centre_uuid: ?string,
  *     reconciled: bool,
  *     created_at: int,
  *     updated_at: int,
  *     deleted_at: ?int,
  *     created_by: string,
  * }
+ *
+ * A partner in its owner's list, `user_id`; `address` and `note` are null to anyone but the owner.
+ * A partner's trips over a period, each with its vehicle, and their distance in each unit.
+ *
+ * @psalm-type NextFleetPartner = array{uuid: string, user_id: string, name: string, address: ?string, note: ?string, created_at: int, updated_at: int}
+ * @psalm-type NextFleetPartnerGone = array{uuid: string, deleted_at: int}
+ * @psalm-type NextFleetPartnerTrips = array{partner: NextFleetPartner, trips: list<array{vehicle_uuid: string, distance: ?int, trip: NextFleetTrip}>, distance: list<array{per: string, trips: int, distance: int}>}
+ *
+ * A cost centre in its owner's list, `user_id`. An archived one is no longer offered.
+ *
+ * @psalm-type NextFleetCostCentre = array{uuid: string, user_id: string, code: ?string, name: string, archived: bool, created_at: int, updated_at: int}
+ * @psalm-type NextFleetCostCentreGone = array{uuid: string, deleted_at: int}
+ *
+ * The amount the owner plans for one vehicle in one calendar year, in cents of the vehicle's
+ * currency, net or gross as `net` says.
+ *
+ * @psalm-type NextFleetBudget = array{uuid: string, year: int, amount: int, net: bool, created_at: int, updated_at: int, deleted_at: ?int, created_by: string}
  *
  * A fill-up as a timeline row holds it; the row carries its `flags` beside it.
  *
@@ -125,6 +146,7 @@ namespace OCA\NextFleet;
  *     station: ?string,
  *     is_dc: bool,
  *     location_kind: ?string,
+ *     cost_centre_uuid: ?string,
  *     created_at: int,
  *     updated_at: int,
  *     deleted_at: ?int,
@@ -149,6 +171,7 @@ namespace OCA\NextFleet;
  *     station: ?string,
  *     is_dc: bool,
  *     location_kind: ?string,
+ *     cost_centre_uuid: ?string,
  *     created_at: int,
  *     updated_at: int,
  *     deleted_at: ?int,
@@ -170,6 +193,7 @@ namespace OCA\NextFleet;
  *     cost: ?int,
  *     vat_rate: ?int,
  *     notes: ?string,
+ *     cost_centre_uuid: ?string,
  *     created_at: int,
  *     updated_at: int,
  *     deleted_at: ?int,
@@ -190,6 +214,7 @@ namespace OCA\NextFleet;
  *     cost: ?int,
  *     vat_rate: ?int,
  *     notes: ?string,
+ *     cost_centre_uuid: ?string,
  *     created_at: int,
  *     updated_at: int,
  *     deleted_at: ?int,
@@ -205,6 +230,7 @@ namespace OCA\NextFleet;
  *     amount: int,
  *     vat_rate: ?int,
  *     notes: ?string,
+ *     cost_centre_uuid: ?string,
  *     created_at: int,
  *     updated_at: int,
  *     deleted_at: ?int,
@@ -292,7 +318,11 @@ namespace OCA\NextFleet;
  * @psalm-type NextFleetDistanceSeries = array{per: string, buckets: list<NextFleetTripDistance>, range: NextFleetTripDistance}
  * @psalm-type NextFleetDriver = array{user_id: string, name: string, trips: int, distance: int, business: int}
  * @psalm-type NextFleetDriverSeries = array{per: string, drivers: list<NextFleetDriver>}
- * @psalm-type NextFleetStatistics = array{from: int, to: int, bucket: string, buckets: list<NextFleetBucket>, vehicles: list<NextFleetCounted>, costs: list<NextFleetCostSeries>, per_distance: list<NextFleetPerDistance>, consumption: list<NextFleetConsumptionLine>, distance: list<NextFleetDistanceSeries>, by_driver: list<NextFleetDriverSeries>, co2: ?NextFleetCo2}
+ * @psalm-type NextFleetCentreCost = array{currency: string, total: int}
+ * @psalm-type NextFleetCentreDistance = array{per: string, trips: int, distance: int}
+ * @psalm-type NextFleetCostCentreSum = array{uuid: ?string, code: ?string, name: ?string, costs: list<NextFleetCentreCost>, distance: list<NextFleetCentreDistance>}
+ * @psalm-type NextFleetBudgetUse = array{year: int, amount: int, net: bool, currency: string, spent: int}
+ * @psalm-type NextFleetStatistics = array{from: int, to: int, bucket: string, buckets: list<NextFleetBucket>, vehicles: list<NextFleetCounted>, costs: list<NextFleetCostSeries>, per_distance: list<NextFleetPerDistance>, consumption: list<NextFleetConsumptionLine>, distance: list<NextFleetDistanceSeries>, by_driver: list<NextFleetDriverSeries>, by_cost_centre: list<NextFleetCostCentreSum>, co2: ?NextFleetCo2, budget: ?NextFleetBudgetUse}
  *
  * A Reminder as a write answers it. Days are plain calendar days, YYYY-MM-DD.
  *
@@ -418,7 +448,7 @@ namespace OCA\NextFleet;
  *     in_notes: ?string,
  *     trip_uuid: ?string,
  *     trip_voided: bool,
- *     trip_draft: ?array{started_at: ?int, started_at_off: ?int, ended_at: ?int, ended_at_off: ?int, start_odo: ?int, end_odo: ?int, purpose: ?string},
+ *     trip_draft: ?array{started_at: ?int, started_at_off: ?int, ended_at: ?int, ended_at_off: ?int, start_odo: ?int, end_odo: ?int, purpose: ?string, cost_centre_uuid: ?string},
  *     approval: ?string,
  *     approval_comment: ?string,
  *     approval_by: ?string,
@@ -444,7 +474,14 @@ namespace OCA\NextFleet;
  * @psalm-type NextFleetSyncedBooking = array{vehicle_uuid: string, uuid: string, updated_at: int, deleted_at: ?int, row: ?NextFleetBooking}
  * @psalm-type NextFleetSyncedGrant = array{vehicle_uuid: string, uuid: string, updated_at: int, deleted_at: ?int, row: ?NextFleetGrant}
  *
- * One page of a sync (docs/api.md#sync). `grants` holds the caller's own vehicles' only.
+ * A partner a sync hands over, named by its owner rather than a vehicle.
+ *
+ * @psalm-type NextFleetSyncedPartner = array{user_id: string, uuid: string, updated_at: int, deleted_at: ?int, row: ?NextFleetPartner}
+ * @psalm-type NextFleetSyncedBudget = array{vehicle_uuid: string, uuid: string, updated_at: int, deleted_at: ?int, row: ?NextFleetBudget}
+ * @psalm-type NextFleetSyncedCostCentre = array{user_id: string, uuid: string, updated_at: int, deleted_at: ?int, row: ?NextFleetCostCentre}
+ *
+ * One page of a sync (docs/api.md#sync). `grants` holds the caller's own vehicles' only;
+ * `partners` and `cost_centres` come on a run's first page and are empty on the others.
  *
  * @psalm-type NextFleetSync = array{
  *     vehicles: list<NextFleetVehicle>,
@@ -458,7 +495,10 @@ namespace OCA\NextFleet;
  *         documents: list<NextFleetSyncedDocument>,
  *         bookings: list<NextFleetSyncedBooking>,
  *         grants: list<NextFleetSyncedGrant>,
+ *         budgets: list<NextFleetSyncedBudget>,
  *     },
+ *     partners: list<NextFleetSyncedPartner>,
+ *     cost_centres: list<NextFleetSyncedCostCentre>,
  *     unreachable: list<string>,
  *     cursor: string,
  *     more: bool,
@@ -475,7 +515,7 @@ namespace OCA\NextFleet;
  * default `booking_approval` is for.
  *
  * @psalm-type NextFleetGridAverage = array{grams: int, year: int, source: string}
- * @psalm-type NextFleetPreferences = array{preferences: array{jurisdiction: string, dismissed_hints: list<string>, dismissed_logbook_hints: list<string>, reclaim_vat: bool, kpi_period: string, grid_factor: ?int, inbox_folder: ?int, booking_approval: bool}, owns_shared: bool, jurisdictions: list<array{key: string, name: string, logbook_export: bool, mileage_claim: bool, logbook_rules: bool, grid_factor: ?NextFleetGridAverage}>}
+ * @psalm-type NextFleetPreferences = array{preferences: array{jurisdiction: string, dismissed_hints: list<string>, dismissed_logbook_hints: list<string>, reclaim_vat: bool, kpi_period: string, grid_factor: ?int, inbox_folder: ?int, booking_approval: bool, cost_centres: bool}, owns_shared: bool, jurisdictions: list<array{key: string, name: string, logbook_export: bool, mileage_claim: bool, logbook_rules: bool, grid_factor: ?NextFleetGridAverage}>}
  *
  * What importing a file would do (docs/architecture.md#import). A proposal is one source row as the
  * entry it would become: `fields` by the entry routes' names, in their units, empty when the row is

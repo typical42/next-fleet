@@ -30,6 +30,8 @@ class UpgradeCheckScriptTest extends TestCase {
 
 	/** The migration that lets a vehicle follow its owner's approval. */
 	private const APPROVAL_RULE = '000011Date20261104000000';
+	/** The migration that makes each partner text a record and links it. */
+	private const PARTNERS = '000013Date20261125000000';
 	/** The stub's tables and columns when the vehicles carry an approval. */
 	private const WITH_APPROVAL = ['CHECK_TABLES' => 'oc_fleet_trips oc_fleet_vehicles', 'CHECK_COLUMNS' => 'booking_approval id'];
 
@@ -158,6 +160,16 @@ class UpgradeCheckScriptTest extends TestCase {
 							fi
 							case $sql in
 								*oc_migrations*) cat "$state/$d.ran" ;;
+								# $CHECK_UNLINKED is how many trips the upgraded app left unlinked,
+								# $CHECK_NO_PARTNERS empties the base of partner texts, and
+								# $CHECK_PARTNER_MOVED has the upgrade move a text or a token.
+								*oc_fleet_partners*) echo "${CHECK_UNLINKED:-0}" ;;
+								*'length(trim("partner")) > 0'*)
+									if [ -n "${CHECK_NO_PARTNERS:-}" ]; then echo 0; else echo 1; fi
+									;;
+								*'"uuid", "partner", "updated_at"'*)
+									if [ -n "${CHECK_PARTNER_MOVED:-}" ] && [ -f "$state/$d.upgraded" ]; then echo moved; else echo 0cc175b9; fi
+									;;
 								*information_schema.tables* | *user_tables*) printf '%s\n' ${CHECK_TABLES:-oc_fleet_trips} ;;
 								*column_type* | *data_type* | *information_schema.statistics* | *pg_indexes* | *user_indexes* | *user_sequences* | *user_triggers*) echo shape ;;
 								*information_schema.columns* | *user_tab_columns*) printf '%s\n' ${CHECK_COLUMNS:-id} ;;
@@ -445,6 +457,46 @@ class UpgradeCheckScriptTest extends TestCase {
 
 		$this->assertSame(0, $status, $output);
 		$this->assertStringNotContainsString('nullif', (string)file_get_contents($this->log));
+	}
+
+	/**
+	 * A package that makes partners records proves on every path that each trip's text, live or
+	 * voided, links a record, and that no text and no token moved.
+	 *
+	 * @dataProvider offByDatabase
+	 */
+	public function testThePartnerStepIsProvedOnEveryPath(string $db, string $off, int $paths): void {
+		[$status, $output] = $this->check('35', '', [], $db, [self::PARTNERS]);
+
+		$this->assertSame(0, $status, $output);
+		$log = (string)file_get_contents($this->log);
+		$this->assertSame($paths, substr_count($log, 'left join "oc_fleet_partners"'), $log);
+		$this->assertSame($paths, preg_match_all('/-X DELETE -d \{"updated_at":1\} [^\n]*\n[^\n]*\/api\/vehicles\/v1\/trips\/t1$/m', $log), $log);
+	}
+
+	/**
+	 * @dataProvider brokenPartners
+	 * @param array<string, string> $env
+	 */
+	public function testAPartnerStepThatFailsItsPromiseFailsTheCheck(array $env, string $failure): void {
+		[$status, $output] = $this->check('35', '', $env, 'mariadb', [self::PARTNERS]);
+
+		$this->assertSame(1, $status, $output);
+		$this->assertStringContainsString($failure, $output);
+	}
+
+	/** @return iterable<string, array{array<string, string>, string}> */
+	public static function brokenPartners(): iterable {
+		yield 'a text left unlinked' => [['CHECK_UNLINKED' => '2'], "FAIL: app31: 2 trips name a partner but link no record of that name in their owner's list"];
+		yield 'a text or a token moved' => [['CHECK_PARTNER_MOVED' => '1'], "FAIL: app31: the upgrade changed a trip's partner text or updated_at"];
+		yield 'no text to link' => [['CHECK_NO_PARTNERS' => '1'], 'FAIL: app31: no trip names a partner before the upgrade, so the links are unproven'];
+	}
+
+	public function testABaseThatRanThePartnerStepIsNotAskedForLinks(): void {
+		[$status, $output] = $this->check('35', '', [], 'mariadb', [self::PARTNERS], [self::PARTNERS]);
+
+		$this->assertSame(0, $status, $output);
+		$this->assertStringNotContainsString('oc_fleet_partners', (string)file_get_contents($this->log));
 	}
 
 	/** @return iterable<string, array{string, list<string>}> */

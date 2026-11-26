@@ -11,6 +11,8 @@ namespace OCA\NextFleet\Tests\Integration;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
+use OCA\NextFleet\Service\BudgetService;
+use OCA\NextFleet\Service\CostCentreService;
 use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\ExpenseService;
 use OCA\NextFleet\Service\GrantService;
@@ -42,7 +44,9 @@ class StatisticsTest extends TestCase {
 	private const LEAVER = 'nextfleet-test-stats-leaver';
 	private const ACCOUNTS = [self::OWNER, self::DRIVER];
 
-	private const TABLES = ['fleet_odo_readings', 'fleet_trips', 'fleet_energy', 'fleet_maintenance', 'fleet_expenses', 'fleet_access'];
+	private const TABLES = ['fleet_odo_readings', 'fleet_trips', 'fleet_energy', 'fleet_maintenance', 'fleet_expenses', 'fleet_access', 'fleet_budgets'];
+	/** The owner's lists, which outlive the vehicles. */
+	private const LISTS = ['fleet_partners', 'fleet_cost_centres'];
 
 	private VehicleService $vehicles;
 	private StatisticsService $statistics;
@@ -77,6 +81,11 @@ class StatisticsTest extends TestCase {
 		foreach ([...self::TABLES, 'fleet_vehicles'] as $table) {
 			$qb = $db->getQueryBuilder();
 			$qb->delete($table)->where($qb->expr()->in($table === 'fleet_vehicles' ? 'id' : 'vehicle_id', $qb->createNamedParameter($this->vehicleIds, $qb::PARAM_INT_ARRAY)));
+			$qb->executeStatement();
+		}
+		foreach (self::LISTS as $table) {
+			$qb = $db->getQueryBuilder();
+			$qb->delete($table)->where($qb->expr()->eq('user_id', $qb->createNamedParameter(self::OWNER)));
 			$qb->executeStatement();
 		}
 		$qb = $db->getQueryBuilder();
@@ -416,6 +425,54 @@ class StatisticsTest extends TestCase {
 		$this->assertSame(70, $erased['distance']);
 	}
 
+	/**
+	 * By cost centre: what the entries naming each cost centre cost, VAT off where the reader
+	 * reclaims it, and how far the trips naming it went. A driver the owner keeps the costs from
+	 * reads the distance alone.
+	 */
+	public function testEachCostCentreSumsItsCostsAndItsTrips(): void {
+		$centres = \OCP\Server::get(CostCentreService::class);
+		$sales = $centres->create(self::OWNER, ['code' => '4711', 'name' => 'Vertrieb'])['uuid'];
+		$service = $centres->create(self::OWNER, ['code' => '4712', 'name' => 'Service'])['uuid'];
+		$vehicle = $this->vehicle('EUR', shared: false);
+		\OCP\Server::get(EnergyService::class)->record(self::OWNER, $vehicle->getUuid(), ['filled_at' => 1750000000, 'filled_at_off' => 60, 'energy' => 'diesel', 'amount' => 40000, 'total' => 11900, 'vat_rate' => 1900, 'cost_centre_uuid' => $sales]);
+		\OCP\Server::get(MaintenanceService::class)->record(self::OWNER, $vehicle->getUuid(), ['done_at' => 1750000000, 'done_at_off' => 60, 'title' => 'Oil change', 'cost' => 5000, 'cost_centre_uuid' => $service]);
+		$this->expense($vehicle, 1750000000, 700, 'parking');
+		$this->trip($vehicle, self::DRIVER, 1750000000, 120, Trip::BUSINESS, $sales);
+		$this->trip($vehicle, self::DRIVER, 1750100000, 30, Trip::PRIVATE);
+		$range = ['from' => '2025-06-01', 'to' => '2025-07-01', 'tz' => 'Europe/Berlin'];
+
+		$this->assertSame([
+			['uuid' => $sales, 'code' => '4711', 'name' => 'Vertrieb', 'costs' => [['currency' => 'EUR', 'total' => 10000]], 'distance' => [['per' => 'km', 'trips' => 1, 'distance' => 120]]],
+			['uuid' => $service, 'code' => '4712', 'name' => 'Service', 'costs' => [['currency' => 'EUR', 'total' => 5000]], 'distance' => [['per' => 'km', 'trips' => 0, 'distance' => 0]]],
+			['uuid' => null, 'code' => null, 'name' => null, 'costs' => [['currency' => 'EUR', 'total' => 700]], 'distance' => [['per' => 'km', 'trips' => 1, 'distance' => 30]]],
+		], $this->statistics->of(self::OWNER, $range + ['net' => true])['by_cost_centre']);
+
+		$this->assertSame([
+			['uuid' => $sales, 'code' => '4711', 'name' => 'Vertrieb', 'costs' => [], 'distance' => [['per' => 'km', 'trips' => 1, 'distance' => 120]]],
+			['uuid' => null, 'code' => null, 'name' => null, 'costs' => [], 'distance' => [['per' => 'km', 'trips' => 1, 'distance' => 30]]],
+		], $this->statistics->of(self::DRIVER, $range)['by_cost_centre']);
+	}
+
+	/**
+	 * One vehicle over a calendar year shows its budget for that year, against the costs as the
+	 * budget counts them: gross here, whatever the reader's VAT switch. Any other range, all
+	 * vehicles, or a reader the costs are kept from, shows none.
+	 */
+	public function testOneVehicleOverACalendarYearShowsItsBudget(): void {
+		$vehicle = $this->vehicle('EUR', shared: false);
+		$this->fill($vehicle, 1750000000, 11900);
+		\OCP\Server::get(BudgetService::class)->create(self::OWNER, $vehicle->getUuid(), ['year' => 2025, 'amount' => 100000, 'net' => false]);
+		$year = ['vehicle' => $vehicle->getUuid(), 'from' => '2025-01-01', 'to' => '2026-01-01', 'tz' => 'Europe/Berlin'];
+
+		$this->assertSame(['year' => 2025, 'amount' => 100000, 'net' => false, 'currency' => 'EUR', 'spent' => 11900], $this->statistics->of(self::OWNER, $year + ['net' => true])['budget']);
+
+		$this->assertNull($this->statistics->of(self::OWNER, array_merge($year, ['to' => '2025-07-01']))['budget'], 'half a year');
+		$this->assertNull($this->statistics->of(self::OWNER, ['from' => '2024-01-01', 'to' => '2025-01-01'] + $year)['budget'], 'a year without one');
+		$this->assertNull($this->statistics->of(self::OWNER, ['vehicle' => ''] + $year)['budget'], 'all vehicles');
+		$this->assertNull($this->statistics->of(self::DRIVER, $year)['budget'], 'costs kept');
+	}
+
 	/** All of it starts at the first trip too: distance needs no price. */
 	public function testAllOfItStartsAtTheFirstTrip(): void {
 		$vehicle = $this->vehicle('EUR');
@@ -572,13 +629,14 @@ class StatisticsTest extends TestCase {
 	 * left it. Without a distance only the end is read, which says how far the counter stands and
 	 * not how far the trip went.
 	 */
-	private function trip(Vehicle $vehicle, string $userId, int $at, ?int $distance, string $category): Trip {
+	private function trip(Vehicle $vehicle, string $userId, int $at, ?int $distance, string $category, ?string $costCentre = null): Trip {
 		$start = $this->odo;
 		$this->odo += $distance ?? 0;
 
 		return \OCP\Server::get(TripService::class)->record($userId, $vehicle->getUuid(), [
 			'started_at' => $at, 'started_at_off' => 60, 'ended_at' => $at + 3600, 'ended_at_off' => 60,
 			'start_odo' => $distance === null ? null : $start, 'end_odo' => $this->odo, 'category' => $category, 'partner' => 'ACME',
+			'cost_centre_uuid' => $costCentre,
 		]);
 	}
 

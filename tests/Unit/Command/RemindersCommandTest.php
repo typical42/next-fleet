@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Tests\Unit\Command;
 
 use OCA\NextFleet\Command\RemindersCommand;
+use OCA\NextFleet\Service\BudgetWarnings;
 use OCA\NextFleet\Service\MailService;
 use OCA\NextFleet\Service\NotificationService;
 use OCA\NextFleet\Service\ReminderService;
@@ -62,6 +63,26 @@ class RemindersCommandTest extends TestCase {
 		$this->assertSame(['sent' => false], json_decode($command->getDisplay(), true));
 	}
 
+	/** The budgets are checked in the same round, before the digest, as ReminderJob checks them. */
+	public function testSendChecksTheBudgetsBetweenTheSweepAndTheDigest(): void {
+		$steps = [];
+		$notifications = $this->createMock(NotificationService::class);
+		$notifications->method('sweep')->willReturnCallback(static function () use (&$steps): void {
+			$steps[] = 'reminders';
+		});
+		$budgets = $this->createMock(BudgetWarnings::class);
+		$budgets->method('sweep')->willReturnCallback(static function () use (&$steps): void {
+			$steps[] = 'budgets';
+		});
+		$mail = $this->createMock(MailService::class);
+		$mail->method('digest')->willReturnCallback(static function () use (&$steps): void {
+			$steps[] = 'digest';
+		});
+
+		$this->assertSame(0, $this->command($notifications, $mail, budgets: $budgets)->execute(['--send' => true]));
+		$this->assertSame(['reminders', 'budgets', 'digest'], $steps);
+	}
+
 	/** Owned and user-granted vehicles carry the uid as stored, which a binary collation compares exactly. */
 	public function testAUidTypedInAnotherCaseListsTheAccountsReminders(): void {
 		$reminders = $this->createMock(ReminderService::class);
@@ -88,13 +109,14 @@ class RemindersCommandTest extends TestCase {
 		$this->assertSame("No such user: mallory\n", $command->getErrorOutput());
 	}
 
-	private function command(NotificationService $notifications, MailService $mail, ?ReminderService $reminders = null, ?IUserManager $users = null): CommandTester {
+	private function command(NotificationService $notifications, MailService $mail, ?ReminderService $reminders = null, ?IUserManager $users = null, ?BudgetWarnings $budgets = null): CommandTester {
 		return new CommandTester(new RemindersCommand(
 			$reminders ?? $this->createMock(ReminderService::class),
 			$notifications,
 			$mail,
 			$this->createMock(IFactory::class),
 			$users ?? $this->createMock(IUserManager::class),
+			$budgets ?? $this->createMock(BudgetWarnings::class),
 		));
 	}
 }

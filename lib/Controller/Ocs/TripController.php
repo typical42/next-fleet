@@ -63,6 +63,7 @@ class TripController extends OCSController {
 	 * @param string|null $category required: business, private or commute
 	 * @param string|null $booking_uuid the booking it was driven on
 	 * @param string|null $client_uuid a uuid of the client's for the new row: a retry under it answers that row
+	 * @param string|null $cost_centre_uuid a cost centre of the vehicle owner's; left out, the vehicle's default; null for none
 	 * @return DataResponse<Http::STATUS_CREATED, NextFleetTrip, array{}>|DataResponse<Http::STATUS_OK, NextFleetTrip, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_CONFLICT, NextFleetBookingConflict, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
 	 * @throws OCSForbiddenException the caller may not log on this vehicle, or the booking is not theirs
 	 * @throws OCSNotFoundException no such vehicle or booking
@@ -91,6 +92,7 @@ class TripController extends OCSController {
 		mixed $category = null,
 		mixed $booking_uuid = null,
 		mixed $client_uuid = null,
+		mixed $cost_centre_uuid = null,
 	): DataResponse {
 		return $this->booked(fn (): DataResponse => $this->created(
 			fn (): array => $this->service->record($this->userId(), $uuid, $this->request->getParams())->jsonSerialize(),
@@ -101,7 +103,8 @@ class TripController extends OCSController {
 	/**
 	 * Suggestions for a trip form
 	 *
-	 * The places, purposes and partners of this vehicle's own trips, the category the caller last
+	 * The places and purposes of this vehicle's own trips, the owner's partner list (the ones this
+	 * vehicle named first, latest first, then the rest by name), the category the caller last
 	 * entered here, and how the vehicle's last trip ended.
 	 *
 	 * @param string $uuid the vehicle's uuid
@@ -138,6 +141,7 @@ class TripController extends OCSController {
 	 * @param string|null $purpose why it was driven
 	 * @param string|null $partner whom it was driven for
 	 * @param string|null $category required: business, private or commute
+	 * @param string|null $cost_centre_uuid a cost centre of the vehicle owner's, or null for none; left out, the entry keeps its own
 	 * @return DataResponse<Http::STATUS_OK, NextFleetTrip, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
 	 * @throws OCSForbiddenException the caller may not edit this trip
 	 * @throws OCSNotFoundException no such vehicle or trip
@@ -164,6 +168,7 @@ class TripController extends OCSController {
 		mixed $purpose = null,
 		mixed $partner = null,
 		mixed $category = null,
+		mixed $cost_centre_uuid = null,
 	): DataResponse {
 		return $this->write(fn (): DataResponse => new DataResponse(
 			$this->service->update($this->userId(), $uuid, $trip, $this->token(), $this->request->getParams())->jsonSerialize(),

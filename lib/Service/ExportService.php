@@ -10,6 +10,7 @@ namespace OCA\NextFleet\Service;
 
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\BaseEntity;
+use OCA\NextFleet\Db\CostCentreMapper;
 use OCA\NextFleet\Db\Energy;
 use OCA\NextFleet\Db\EnergyMapper;
 use OCA\NextFleet\Db\Expense;
@@ -32,10 +33,10 @@ class ExportService {
 	 * in minutes. A trip's `created_at` is the server's clock, one column in UTC.
 	 */
 	private const HEADERS = [
-		'trips' => ['uuid', 'started', 'started_offset_min', 'ended', 'ended_offset_min', 'start_odo', 'end_odo', 'distance', 'odo_unit', 'from', 'to', 'purpose', 'partner', 'category', 'reconciled', 'voided', 'created_at', 'entered_by'],
-		'energy' => ['uuid', 'filled', 'filled_offset_min', 'odo', 'second_odo', 'odo_unit', 'energy', 'amount', 'unit_price', 'total', 'currency', 'vat_rate', 'full_tank', 'missed_previous', 'station', 'is_dc', 'location_kind', 'entered_by'],
-		'maintenance' => ['uuid', 'done', 'done_offset_min', 'odo', 'second_odo', 'odo_unit', 'type', 'title', 'vendor', 'cost', 'currency', 'vat_rate', 'notes', 'entered_by'],
-		'expenses' => ['uuid', 'spent', 'spent_offset_min', 'category', 'amount', 'currency', 'vat_rate', 'notes', 'entered_by'],
+		'trips' => ['uuid', 'started', 'started_offset_min', 'ended', 'ended_offset_min', 'start_odo', 'end_odo', 'distance', 'odo_unit', 'from', 'to', 'purpose', 'partner', 'category', 'reconciled', 'voided', 'created_at', 'entered_by', 'cost_centre_code', 'cost_centre_name'],
+		'energy' => ['uuid', 'filled', 'filled_offset_min', 'odo', 'second_odo', 'odo_unit', 'energy', 'amount', 'unit_price', 'total', 'currency', 'vat_rate', 'full_tank', 'missed_previous', 'station', 'is_dc', 'location_kind', 'entered_by', 'cost_centre_code', 'cost_centre_name'],
+		'maintenance' => ['uuid', 'done', 'done_offset_min', 'odo', 'second_odo', 'odo_unit', 'type', 'title', 'vendor', 'cost', 'currency', 'vat_rate', 'notes', 'entered_by', 'cost_centre_code', 'cost_centre_name'],
+		'expenses' => ['uuid', 'spent', 'spent_offset_min', 'category', 'amount', 'currency', 'vat_rate', 'notes', 'entered_by', 'cost_centre_code', 'cost_centre_name'],
 	];
 
 	public function __construct(
@@ -47,6 +48,7 @@ class ExportService {
 		private EnteredBy $enteredBy,
 		private LoggerInterface $logger,
 		private CostsShown $costs,
+		private CostCentreMapper $costCentres,
 	) {
 	}
 
@@ -96,9 +98,10 @@ class ExportService {
 	}
 
 	/**
-	 * Each row ends in `entered_by`, which follows the timeline's rule (`EnteredBy::names()`).
+	 * Each row ends in `entered_by`, which follows the timeline's rule (`EnteredBy::names()`), then
+	 * the code and name of the cost centre it names: only a live one, as its answer names it.
 	 *
-	 * @template E of BaseEntity
+	 * @template E of Trip|Energy|Maintenance|Expense
 	 * @param list<E> $entities
 	 * @param \Closure(Vehicle, int, E): ?list<int|string|null> $row
 	 * @return list<?list<int|string|null>>
@@ -106,13 +109,23 @@ class ExportService {
 	 */
 	private function rows(Vehicle $vehicle, int $year, array $entities, \Closure $row): array {
 		$names = $this->enteredBy->names($vehicle, array_map(static fn (BaseEntity $entity): string => $entity->getCreatedBy(), $entities));
+		$named = [];
+		foreach ($entities as $entity) {
+			if ($entity->getCostCentreUuid() !== null) {
+				$named[(int)$entity->getCostCentreId()] = true;
+			}
+		}
+		$centres = $this->costCentres->findAnyOf(array_keys($named));
 
-		return array_map(/** @param E $entity */ static function (BaseEntity $entity) use ($vehicle, $year, $row, $names): ?array {
+		return array_map(/** @param E $entity */ static function (BaseEntity $entity) use ($vehicle, $year, $row, $names, $centres): ?array {
 			$fields = $row($vehicle, $year, $entity);
 			if ($fields === null) {
 				return null;
 			}
 			$fields[] = $names === null ? null : $names[$entity->getCreatedBy()] ?? $entity->getCreatedBy();
+			$centre = $entity->getCostCentreUuid() === null ? null : $centres[(int)$entity->getCostCentreId()] ?? null;
+			$fields[] = $centre?->getCode();
+			$fields[] = $centre?->getName();
 
 			return $fields;
 		}, $entities);
@@ -131,9 +144,9 @@ class ExportService {
 
 		return [
 			$trip->getUuid(),
-			self::local($trip->getStartedAt(), $trip->getStartedAtOff()),
+			LocalYear::wallClock($trip->getStartedAt(), $trip->getStartedAtOff()),
 			$trip->getStartedAtOff(),
-			self::local($trip->getEndedAt(), $trip->getEndedAtOff()),
+			LocalYear::wallClock($trip->getEndedAt(), $trip->getEndedAtOff()),
 			$trip->getEndedAtOff(),
 			$trip->getStartOdo(),
 			$trip->getEndOdo(),
@@ -158,7 +171,7 @@ class ExportService {
 
 		return [
 			$fill->getUuid(),
-			self::local($fill->getFilledAt(), $fill->getFilledAtOff()),
+			LocalYear::wallClock($fill->getFilledAt(), $fill->getFilledAtOff()),
 			$fill->getFilledAtOff(),
 			$fill->getOdo(),
 			$fill->getSecondOdo(),
@@ -185,7 +198,7 @@ class ExportService {
 
 		return [
 			$record->getUuid(),
-			self::local($record->getDoneAt(), $record->getDoneAtOff()),
+			LocalYear::wallClock($record->getDoneAt(), $record->getDoneAtOff()),
 			$record->getDoneAtOff(),
 			$record->getOdo(),
 			$record->getSecondOdo(),
@@ -208,7 +221,7 @@ class ExportService {
 
 		return [
 			$expense->getUuid(),
-			self::local($expense->getSpentAt(), $expense->getSpentAtOff()),
+			LocalYear::wallClock($expense->getSpentAt(), $expense->getSpentAtOff()),
 			$expense->getSpentAtOff(),
 			$expense->getCategory(),
 			$expense->getAmount(),
@@ -216,11 +229,6 @@ class ExportService {
 			$expense->getVatRate(),
 			$expense->getNotes(),
 		];
-	}
-
-	/** The wall clock where it happened, in the one form every spreadsheet reads as a date. */
-	private static function local(int $at, int $off): string {
-		return gmdate('Y-m-d H:i', $at + $off * 60);
 	}
 
 	/**

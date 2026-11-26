@@ -62,6 +62,8 @@ To end a reminder for good, click **Delete reminder**.
   Each vehicle sets how often: **No mail**, **Daily**, **Weekly, on Monday** (the default) or **Monthly, on the 1st**.
 - **Dashboard**: the **Vehicle reminders** widget shows what is coming up, due or overdue.
 
+The [budget warning](partners.md#the-budget-warning) also comes as a notification and an email.
+
 ## Who gets them
 
 In **Edit vehicle**, under **Vehicle**, **Reminders go to** lists who gets the notifications and mails.

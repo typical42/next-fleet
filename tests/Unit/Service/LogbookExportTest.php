@@ -326,6 +326,26 @@ class LogbookExportTest extends TestCase {
 	}
 
 	/**
+	 * A link is not a logbook field (ADR 0013): a late change shows only the columns the logbook
+	 * prints, and one that moved only a link is not shown. A merge over a locked year is no late
+	 * change to it.
+	 */
+	public function testALateChangeShowsOnlyThePrintedColumns(): void {
+		$this->logbookMode = true;
+		$trip = $this->trip(self::NEW_YEAR + 86400);
+		$later = self::NEW_YEAR + 30 * 86400;
+		$this->changed($trip, $later, ['change' => 'edited', 'fields' => ['partner_uuid' => ['a', 'b']], 'late' => true]);
+		$this->changed($trip, $later + 30, ['change' => 'edited', 'fields' => ['cost_centre_uuid' => ['x', 'y']], 'late' => true]);
+		$this->changed($trip, $later + 60, ['change' => 'edited', 'fields' => ['partner' => ['Muster', 'Muster GmbH'], 'partner_uuid' => ['b', 'c']], 'late' => true]);
+
+		$this->export();
+
+		$this->assertSame([[
+			['change' => 'edited', 'at' => $later + 60, 'fields' => ['partner' => ['Muster', 'Muster GmbH']], 'offsets' => ['started_at_off' => 60, 'ended_at_off' => 60]],
+		]], array_column($this->printed?->trips ?? [], 'late'));
+	}
+
+	/**
 	 * A time before a change is only readable with the offset in force then, and a later edit may
 	 * have moved it since. So each late change carries the offsets as they stood before it, read
 	 * back from the trip as it is now through every row after.

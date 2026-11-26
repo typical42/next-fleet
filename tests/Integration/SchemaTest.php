@@ -12,6 +12,7 @@ use Doctrine\DBAL\Schema\Column;
 use Doctrine\DBAL\Schema\Schema;
 use Doctrine\DBAL\Schema\Table;
 use OCA\NextFleet\Db\BaseMapper;
+use OCA\NextFleet\Db\PartnerBackfill;
 use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\VehicleTables;
 use OCA\NextFleet\Tests\MigrationSteps as Steps;
@@ -53,7 +54,7 @@ class SchemaTest extends TestCase {
 		// leaves behind is the migration.
 		$schema = $db->createSchema();
 		$wrapper = $this->serverWrapper($schema);
-		foreach (Steps::inOrder($db, Server::get(ReminderRecipientMapper::class)) as $step) {
+		foreach (Steps::inOrder($db, Server::get(ReminderRecipientMapper::class), Server::get(PartnerBackfill::class)) as $step) {
 			$step->changeSchema(
 				$this->createMock(IOutput::class),
 				static fn (): ISchemaWrapper => $wrapper,

@@ -10,6 +10,7 @@ namespace OCA\NextFleet\Command;
 
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Notification\ReminderWords;
+use OCA\NextFleet\Service\BudgetWarnings;
 use OCA\NextFleet\Service\MailService;
 use OCA\NextFleet\Service\NotificationService;
 use OCA\NextFleet\Service\ReminderService;
@@ -32,6 +33,7 @@ class RemindersCommand extends Command {
 		private MailService $mail,
 		private IFactory $l10n,
 		private IUserManager $users,
+		private BudgetWarnings $budgets,
 	) {
 		parent::__construct();
 	}
@@ -76,7 +78,7 @@ class RemindersCommand extends Command {
 		$failed = false;
 		if ($send) {
 			// In ReminderJob's order, and stopping where it would.
-			foreach (['notifications' => $this->notifications->sweep(...), 'digest' => $this->mail->digest(...)] as $step => $run) {
+			foreach (['notifications' => $this->notifications->sweep(...), 'budgets' => $this->budgets->sweep(...), 'digest' => $this->mail->digest(...)] as $step => $run) {
 				try {
 					$run();
 				} catch (\Throwable $e) {

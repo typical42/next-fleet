@@ -163,6 +163,7 @@ class VehicleService {
 		private MoneyRows $money,
 		private AccessMapper $grants,
 		private SyncEpoch $epoch,
+		private CostCentreLinks $costCentres,
 	) {
 	}
 
@@ -223,6 +224,11 @@ class VehicleService {
 
 		// The owner is where the reminders go until somebody edits the list.
 		return $this->atomic(function () use ($userId, $vehicle): Vehicle {
+			// A partner merge or delete holds every vehicle of the owner (PartnerService::hold());
+			// one written meanwhile could carry a trip that links the record past it. Before the
+			// cost centre's hold, as an entry takes its vehicle's before it.
+			$this->mapper->holdOwner($userId);
+			$this->costCentres->hold($vehicle);
 			$written = $this->mapper->insert($vehicle);
 			$owner = new ReminderRecipient();
 			$owner->setVehicleId((int)$written->getId());
@@ -230,6 +236,7 @@ class VehicleService {
 			$owner->setCreatedBy($userId);
 			$this->recipients->insert($owner);
 			$written->setMay($this->access->operations($userId, $written));
+			$written->setUsesCostCentres($this->usesCostCentres($userId));
 
 			return $written;
 		}, $this->db);
@@ -312,6 +319,11 @@ class VehicleService {
 				if ($this->money->exist((int)$vehicle->getId())) {
 					throw new CurrencyInUseException('currency stays once the vehicle has costs recorded in it');
 				}
+			}
+			// A new default is held as an entry holds the one it names, in the same order.
+			if ($vehicle->getCostCentreId() !== $was->getCostCentreId()) {
+				$this->mapper->hold((int)$vehicle->getId());
+				$this->costCentres->hold($vehicle);
 			}
 			$written = $this->mapper->updateChecked($vehicle, $expectedUpdatedAt);
 			$this->trail($userId, $written, $was);
@@ -401,6 +413,17 @@ class VehicleService {
 		$ids = array_map(static fn (Vehicle $vehicle): int => (int)$vehicle->getId(), $this->liveOwnedBy($userId));
 
 		return $ids !== [] && $this->grants->everGrantedAmong($ids) !== [];
+	}
+
+	/**
+	 * Whether the owner uses cost centres and budgets: they switched them on, or they share a
+	 * vehicle, where a pool needs them (ADR 0012).
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	public function usesCostCentres(string $owner): bool {
+		return $this->config->getUserValue($owner, Application::APP_ID, Vehicle::OWNER_COST_CENTRES, '0') === '1'
+			|| $this->ownsShared($owner);
 	}
 
 	/**
@@ -676,8 +699,16 @@ class VehicleService {
 		foreach ($vehicles as $vehicle) {
 			$byId[(int)$vehicle->getId()] = $vehicle;
 		}
+		$shared = [];
 		foreach ($this->grants->everGrantedAmong(array_keys($byId)) as $id) {
 			$byId[$id]->setEverGranted(true);
+			$shared[$byId[$id]->getUserId()] = true;
+		}
+		$uses = [];
+		foreach ($vehicles as $vehicle) {
+			$owner = $vehicle->getUserId();
+			$uses[$owner] ??= isset($shared[$owner]) || $this->usesCostCentres($owner);
+			$vehicle->setUsesCostCentres($uses[$owner]);
 		}
 		$now = $this->time->getTime();
 		foreach ($this->bookings->findPooled(array_keys($byId), $userId, $now, $now + self::WEEK) as $booking) {
@@ -747,6 +778,10 @@ class VehicleService {
 			$vehicle->$setter($value);
 		}
 		$this->approval($vehicle, $fields);
+		// The default a new entry takes, of the owner's list (CostCentreLinks).
+		if (array_key_exists(CostCentreLinks::FIELD, $fields)) {
+			$vehicle->linkCostCentre($this->costCentres->defaultNamed($vehicle, $fields[CostCentreLinks::FIELD]));
+		}
 
 		// Hours beside hours would be one chain counted twice. Dropped rather than refused, as the
 		// sheet never blocks on validation. Its Readings stay (docs/architecture.md).

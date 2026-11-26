@@ -11,6 +11,7 @@ import NcSettingsSection from '@nextcloud/vue/components/NcSettingsSection'
 import NcTextField from '@nextcloud/vue/components/NcTextField'
 import { computed, onMounted, ref } from 'vue'
 
+import CostCentreList from '../components/CostCentreList.vue'
 import { getPreferences, readInbox, savePreferences } from '../services/api.js'
 import { jurisdictionWord, parseWhole } from '../utils/format.js'
 import { t } from '../utils/l10n.js'
@@ -25,6 +26,8 @@ const reclaimVat = ref(false)
 /** The owner's default for their vehicles' bookings, and whether it is for anything (docs/ui.md). */
 const bookingApproval = ref(false)
 const ownsShared = ref(false)
+/** The owner's switch for cost centres and budgets on vehicles they share with nobody. */
+const costCentres = ref(false)
 const busy = ref(true)
 const failure = ref('')
 
@@ -96,6 +99,7 @@ function hold(settings) {
 	reclaimVat.value = settings.preferences.reclaim_vat
 	bookingApproval.value = settings.preferences.booking_approval === true
 	ownsShared.value = settings.owns_shared === true
+	costCentres.value = settings.preferences.cost_centres === true
 	stored.gridFactor = settings.preferences.grid_factor
 	showGrid()
 	gridUnreadable.value = false
@@ -192,6 +196,26 @@ async function approve(asks) {
 		hold(await savePreferences({ booking_approval: asks }))
 	} catch (error) {
 		bookingApproval.value = stored
+		failure.value = error.message
+	} finally {
+		busy.value = false
+	}
+}
+
+/**
+ * As for VAT. It only shows the fields: entries keep the cost centres they name either way.
+ *
+ * @param {boolean} uses - what the switch now holds
+ */
+async function useCentres(uses) {
+	const stored = costCentres.value
+	costCentres.value = uses
+	busy.value = true
+	failure.value = ''
+	try {
+		hold(await savePreferences({ cost_centres: uses }))
+	} catch (error) {
+		costCentres.value = stored
 		failure.value = error.message
 	} finally {
 		busy.value = false
@@ -331,6 +355,29 @@ async function saveInbox(folder) {
 				{{ t('nextfleet', 'A booking by a driver waits until you or a manager approve it. This applies to each of your vehicles that is set to "As for all my vehicles". When you switch it off, the bookings that wait are approved.') }}
 			</p>
 		</div>
+
+		<!-- To every user: a freelancer switches it on, an owner of a shared vehicle has it on
+		     (docs/adr/0012-nextfleet-also-serves-a-small-fleet.md). -->
+		<div class="centres">
+			<h3>{{ t('nextfleet', 'Cost centres and budgets') }}</h3>
+			<template v-if="!ownsShared">
+				<NcCheckboxRadioSwitch :model-value="costCentres"
+					type="switch"
+					:disabled="busy"
+					@update:model-value="useCentres">
+					{{ t('nextfleet', 'Use cost centres and budgets') }}
+				</NcCheckboxRadioSwitch>
+				<p class="hint">
+					{{ t('nextfleet', 'Trips and costs then name a cost centre.') }}
+				</p>
+			</template>
+			<template v-if="ownsShared || costCentres">
+				<p class="hint">
+					{{ t('nextfleet', 'All your vehicles use this list. The people who drive them pick from it.') }}
+				</p>
+				<CostCentreList />
+			</template>
+		</div>
 	</NcSettingsSection>
 </template>
 
@@ -340,7 +387,8 @@ async function saveInbox(folder) {
 }
 
 .inbox,
-.bookings {
+.bookings,
+.centres {
 	margin-top: calc(var(--default-grid-baseline) * 4);
 }
 

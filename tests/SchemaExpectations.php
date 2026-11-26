@@ -160,8 +160,8 @@ trait SchemaExpectations {
 
 		$this->assertSame(
 			[
-				'fleet_access', 'fleet_audit', 'fleet_booking_recipients', 'fleet_bookings', 'fleet_documents', 'fleet_energy', 'fleet_expenses',
-				'fleet_maintenance', 'fleet_odo_readings', 'fleet_reminder_receipts', 'fleet_reminder_recipients',
+				'fleet_access', 'fleet_audit', 'fleet_booking_recipients', 'fleet_bookings', 'fleet_budgets', 'fleet_cost_centres', 'fleet_documents', 'fleet_energy', 'fleet_expenses',
+				'fleet_maintenance', 'fleet_odo_readings', 'fleet_partners', 'fleet_reminder_receipts', 'fleet_reminder_recipients',
 				'fleet_reminders', 'fleet_trips', 'fleet_vehicles',
 			],
 			$tables,
@@ -219,6 +219,8 @@ trait SchemaExpectations {
 			// Whether a booking ahead waits for an answer: always, never, or null for as the
 			// owner's default says, which starts off.
 			'booking_approval' => 'boolean, null',
+			// The cost centre a new entry on it takes, of the owner's list.
+			'cost_centre_id' => 'bigint, null',
 		]);
 	}
 
@@ -262,6 +264,35 @@ trait SchemaExpectations {
 			'category' => 'string(16), not null',
 			// A Reconciliation Trip, created to close a Gap.
 			'reconciled' => 'boolean, null, default false',
+			// The record `partner` names, in the owner's list. The text stays what the logbook
+			// prints; null where it names nobody.
+			'partner_id' => 'bigint, null',
+			// The cost centre of the owner's list it counts its distance to.
+			'cost_centre_id' => 'bigint, null',
+		]);
+	}
+
+	/** One cost centre in its owner's list (CONTEXT.md, Cost Centre). */
+	public function testCostCentresHoldsTheDataModelsColumnsAndNoOthers(): void {
+		$this->assertTable('fleet_cost_centres', [
+			'user_id' => 'string(64), not null',
+			// Such as 4711, what the bookkeeping knows it by. Optional.
+			'code' => 'string(32), null',
+			'name' => 'string(255), not null',
+			// No longer offered, but kept on the entries that name it.
+			'archived' => 'boolean, null, default false',
+		]);
+	}
+
+	/** One partner in its owner's list (CONTEXT.md, Partner). */
+	public function testPartnersHoldsTheDataModelsColumnsAndNoOthers(): void {
+		$this->assertTable('fleet_partners', [
+			// The owner whose list it is, not the account that typed it first.
+			'user_id' => 'string(64), not null',
+			// The trip text it was made from, trimmed and in NFC.
+			'name' => 'string(255), not null',
+			'address' => 'text, null',
+			'note' => 'text, null',
 		]);
 	}
 
@@ -287,6 +318,7 @@ trait SchemaExpectations {
 			'station' => 'string(255), null',
 			'is_dc' => 'boolean, null, default false',
 			'location_kind' => 'string(16), null',
+			'cost_centre_id' => 'bigint, null',
 		]);
 	}
 
@@ -316,6 +348,7 @@ trait SchemaExpectations {
 			'next_due_date' => 'date, null',
 			'next_due_odo' => 'bigint, null',
 			'took_back' => 'boolean, null',
+			'cost_centre_id' => 'bigint, null',
 		]);
 	}
 
@@ -328,6 +361,21 @@ trait SchemaExpectations {
 			'amount' => 'bigint, not null',
 			'vat_rate' => 'integer, null',
 			'notes' => 'text, null',
+			'cost_centre_id' => 'bigint, null',
+		]);
+	}
+
+	/** The amount the owner plans for one vehicle in one calendar year (CONTEXT.md, Budget). */
+	public function testBudgetsHoldsTheDataModelsColumnsAndNoOthers(): void {
+		$this->assertTable('fleet_budgets', [
+			'vehicle_id' => 'bigint, not null',
+			'year' => 'integer, not null',
+			// Cents in the vehicle's currency.
+			'amount' => 'bigint, not null',
+			// Whether the amount, and so the costs it is held against, are net of VAT.
+			'net' => 'boolean, null, default false',
+			// The highest share the warning has told, 0 for none.
+			'warned' => 'smallint, not null',
 		]);
 	}
 
@@ -489,7 +537,11 @@ trait SchemaExpectations {
 		], $this->indexes('fleet_access'));
 
 		$this->assertSame([
+			// What a cost centre's delete asks first: whether anything names it.
+			'fleet_trip_cc_idx' => 'index(cost_centre_id)',
 			'fleet_trip_creator_idx' => 'index(created_by)',
+			// A record's trips: the link a spelling finds it by, and what a merge moves.
+			'fleet_trip_partner_idx' => 'index(partner_id)',
 			'fleet_trip_uuid_uniq' => 'unique(uuid)',
 			'fleet_trip_veh_start_idx' => 'index(vehicle_id, started_at)',
 			'fleet_trip_veh_upd_idx' => 'index(vehicle_id, updated_at, id)',
@@ -502,6 +554,7 @@ trait SchemaExpectations {
 		], $this->indexes('fleet_audit'));
 
 		$this->assertSame([
+			'fleet_nrg_cc_idx' => 'index(cost_centre_id)',
 			'fleet_nrg_creator_idx' => 'index(created_by)',
 			'fleet_nrg_uuid_uniq' => 'unique(uuid)',
 			'fleet_nrg_veh_fill_idx' => 'index(vehicle_id, filled_at)',
@@ -509,6 +562,7 @@ trait SchemaExpectations {
 		], $this->indexes('fleet_energy'));
 
 		$this->assertSame([
+			'fleet_mnt_cc_idx' => 'index(cost_centre_id)',
 			'fleet_mnt_creator_idx' => 'index(created_by)',
 			'fleet_mnt_reminder_idx' => 'index(reminder_id)',
 			'fleet_mnt_uuid_uniq' => 'unique(uuid)',
@@ -517,11 +571,19 @@ trait SchemaExpectations {
 		], $this->indexes('fleet_maintenance'));
 
 		$this->assertSame([
+			'fleet_exp_cc_idx' => 'index(cost_centre_id)',
 			'fleet_exp_creator_idx' => 'index(created_by)',
 			'fleet_exp_uuid_uniq' => 'unique(uuid)',
 			'fleet_exp_veh_spent_idx' => 'index(vehicle_id, spent_at)',
 			'fleet_exp_veh_upd_idx' => 'index(vehicle_id, updated_at, id)',
 		], $this->indexes('fleet_expenses'));
+
+		// What a sync hands over, and an erasure's probe.
+		$this->assertSame([
+			'fleet_bgt_creator_idx' => 'index(created_by)',
+			'fleet_bgt_uuid_uniq' => 'unique(uuid)',
+			'fleet_bgt_veh_upd_idx' => 'index(vehicle_id, updated_at, id)',
+		], $this->indexes('fleet_budgets'));
 
 		$this->assertSame([
 			'fleet_rem_uuid_uniq' => 'unique(uuid)',
@@ -556,6 +618,21 @@ trait SchemaExpectations {
 			'fleet_doc_veh_idx' => 'index(vehicle_id)',
 			'fleet_doc_veh_upd_idx' => 'index(vehicle_id, updated_at, id)',
 		], $this->indexes('fleet_documents'));
+
+		// A name looked up in its owner's list, the lists a sync hands over, and an erasure's probe.
+		$this->assertSame([
+			'fleet_ptn_creator_idx' => 'index(created_by)',
+			'fleet_ptn_user_name_idx' => 'index(user_id, name)',
+			'fleet_ptn_user_upd_idx' => 'index(user_id, updated_at)',
+			'fleet_ptn_uuid_uniq' => 'unique(uuid)',
+		], $this->indexes('fleet_partners'));
+
+		// The lists a sync hands over, and an erasure's probe.
+		$this->assertSame([
+			'fleet_cc_creator_idx' => 'index(created_by)',
+			'fleet_cc_user_upd_idx' => 'index(user_id, updated_at)',
+			'fleet_cc_uuid_uniq' => 'unique(uuid)',
+		], $this->indexes('fleet_cost_centres'));
 
 		// A vehicle's bookings by time, the overlap check before each one, and the hourly search
 		// across vehicles for the requests whose end came unanswered.

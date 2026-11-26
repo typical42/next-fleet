@@ -30,6 +30,12 @@ The odometer is not a field you edit.
 Each Entry that knows a counter writes a Reading, and the vehicle caches the newest value.
 So trips, fill-ups and maintenance cannot drift apart.
 
+**Partners and cost centres are lists of the vehicle owner**, shared by all their vehicles ([ADR 0013](adr/0013-a-partner-is-a-record-the-trip-keeps-its-text.md)).
+A record's `user_id` is the owner, whoever typed the entry that made it.
+An entry links a record by id; a trip also keeps its partner text, which the logbook prints.
+Partner names go to whoever may `log` on one of the owner's vehicles (`PartnerService::ownersLoggedFor`), the cost centres to whoever reaches one, a viewer too ([API](api.md#sync)).
+A budget belongs to one vehicle and one calendar year.
+
 [design/data-model.md](design/data-model.md) draws every table and column, and [design/lifecycles.md](design/lifecycles.md) the states.
 Tables start with `fleet_`.
 Names stay under 27 characters, because Nextcloud adds `oc_`.
@@ -86,7 +92,7 @@ Names stay under 27 characters, because Nextcloud adds `oc_`.
   Oracle's `VARCHAR2(n)` counts bytes, and UTF-8 needs up to four per character.
   The bounds stay in characters.
   `Db\TypedText` lists these columns, and `TypedTextTest` and `OracleSchemaTest` guard the list.
-  Migration 9 keeps its own frozen copy, because a shipped step never changes.
+  Migration 9 keeps its own frozen copy, and a later step that adds such a column its own length, because a shipped step never changes.
   Codes the app makes stay at n: they are ASCII.
 - **Indexes are part of the schema, not an optimisation.**
   A unique `uuid` everywhere, `(vehicle_id, <time>)` on child tables, `(vehicle_id, updated_at, id)` for sync, `(created_by)` for erasure and export.
@@ -120,6 +126,16 @@ No route, command or job removes a row.
 Two hard deletes exist: taking a recipient off a list, and a grant whose grantee was gone at its commit.
 Opt-in retention will be the first purge, and must then take the child rows with it.
 
+**Deleting a partner erases it in place** ([ADR 0013](adr/0013-a-partner-is-a-record-the-trip-keeps-its-text.md)).
+A partner can be a private person, and the delete is how their erasure request is met.
+The row stays as a tombstone for sync, with `Partner::ERASED` for a name and no address or note.
+Each trip keeps the text and the tombstone's id, and answers no `partner_uuid`.
+The id marks the trip as linked, so `nextfleet:check` and the backfill do not link it again; an edit that keeps the text keeps it.
+
+**A cost centre is deleted only while nothing names it** (`CostCentreService`).
+An entry in any state, a voided trip too, or a vehicle's default keeps it; the owner archives it instead.
+The delete holds the record's row first, and so does every write that comes to name it (`CostCentreLinks::hold()`): that write either came first and keeps it, or waits and is refused.
+
 **Deleting an account pseudonymises, it purges nothing** ([ADR 0008](adr/0008-erasing-a-driver-pseudonymises.md)).
 `UserDeletedListener` hands the uid to `ErasureService`.
 In one transaction, one random `erased:…` pseudonym replaces it in every account column: `created_by`, the owner, receipts, bookings and user grants.
@@ -128,6 +144,9 @@ In one transaction, one random `erased:…` pseudonym replaces it in every accou
   The new account must inherit nothing.
   A uid cannot hold `:`, so no account can take the pseudonym.
 - The account's reminder-list entries are deleted: a deleted account receives nothing.
+- The account's partner list is deleted, each record as a delete of one takes it (above).
+  The trips keep their texts and are not touched, so no token moves.
+  The cost-centre list goes the same way: each record keeps no code and no name, and each entry keeps its id as a mark.
 - A new table that names an account declares `accountColumns()` and joins `AccountTables`.
   The erasure and the [personal data export](#personal-data-export) share that list.
 - Most accounts never used the app, so the erasure first asks each table for one row, and touches only the tables that answer.
@@ -140,6 +159,12 @@ Nobody is left who may decide over them.
 In the same transaction, each one loses its grants and goes to the trash.
 An admin who wants a pool to outlive its owner runs `occ nextfleet:transfer` first (`TransferService`).
 The grants stand, the former owner keeps `viewer`, the new owner joins the recipients, and an audit row records it.
+The partners the vehicle's trips link go into the new owner's list: a record of the same name there is taken, any other is copied with its address and note.
+Each trip, voided ones too, then links the new owner's record through `TripService::relink()`, as a merge does.
+A deleted record is not copied: the trip keeps it as its mark.
+The cost centres the vehicle's entries and its default name follow the same way: a record of the same code there is taken, else one of the same name, any other is copied.
+A trip's move is on its trail; a fill-up, a maintenance record and an expense are on none, and keep their tokens, since the transfer starts every sync over.
+The former owner's lists stay.
 
 **Deleting a group revokes its grants and takes it off the booking lists.**
 A group made later with the same id must reach nothing.
@@ -329,6 +354,20 @@ Two browser tabs are the case today, and sync stands on the same rule.
 - **A create may arrive twice** ([retried creates](api.md#retried-creates)).
   `Once` looks up the `client_uuid` before validation and again under the vehicle's hold.
   The unique `uuid` index catches twins that the hold does not order.
+- **A new name in an owner's list waits for the owner's hold** (`VehicleMapper::holdOwner()`, their first vehicle's row).
+  Two drivers who type one new partner at once on two vehicles then make one record: the second looks again under the hold and finds the first's.
+  No unique index does this, because a MariaDB server set to a case-blind collation would merge names that differ in case.
+  For the same reason each lookup by name, code or trip text keeps only the rows of what SQL matched whose value and owner are byte-identical, as the step-13 backfill groups names (`PartnerMapper`, `CostCentreMapper::findBy()`).
+  A rename takes the same hold, so it cannot race a new trip onto a taken name.
+- **A merge or a delete of a partner holds every vehicle of the owner**, and any other whose trips link the record, in id order (`PartnerService`).
+  The owner's first vehicle comes first, as for a new name.
+  It reads the set again under the holds and holds what came meanwhile (a transfer in, a new vehicle, a trip that links the record), until the set stands.
+  A new vehicle and a transfer in take the owner's hold first, so none comes once the set stands.
+  A trip written meanwhile waits, then finds the record as the merge or delete left it.
+  Each moved link goes through `TripService::relink()`: a new token and an audit row, in the same transaction.
+  It writes only the link it moves, so it cannot undo the other link an edit set.
+- **A transfer holds the vehicle and the new owner's first vehicle**, lower id first (`VehicleMapper::holdBeside()`), because it adds names to the new owner's list.
+  A cost centre of the new owner's list that it reuses, it holds and reads again, as an entry write does; past one deleted meanwhile, it looks on by name, else copies the record afresh.
 - The server time header is a diagnostic.
   It warns about a wrong device clock and never rewrites what the user typed.
 
@@ -444,6 +483,16 @@ A segment that ran backwards hides an unanswered question, so the period has no 
   It skips engine hours and TCO, which it does not show.
   The query count does not grow with the buckets (`StatisticsTest::testTheQueriesDoNotGrowWithTheBuckets`).
 
+**By cost centre, a figure goes where its own entry says** (`CostCentreSums`).
+
+- A trip counts its distance to its cost centre; an energy entry, a maintenance record or an expense counts its cost to its own.
+  A cost is never shared out by distance.
+- The costs are the rows of the costs series: only vehicles with a currency whose costs the reader sees, net or gross as the reader asks.
+  The distance is every live trip the reader sees, except a reconciled one.
+- An entry whose record was erased counts to the row without a cost centre.
+- For one vehicle and a calendar year, Statistics shows the budget with the sum the warning holds against it (`BudgetWarnings::spent()`, [the budget warning](#reminder-engine)).
+  That sum is in the owner's zone and net or gross as the budget says, so it can differ from the bars.
+
 **TCO** adds depreciation: (purchase − residual) ÷ distance over the holding.
 An empty field hides it.
 Neither price has a VAT rate, so both count as entered.
@@ -520,6 +569,9 @@ Its CSP allows inline style and nothing else.
   A country without a renderer answers 404, not an empty page that passes for a logbook.
 - **A late change is on its trip's line**, with what each field said before.
   Late is decided at export, against the export's rules, not by the flag the row stored.
+- **A link is no logbook field** ([ADR 0013](adr/0013-a-partner-is-a-record-the-trip-keeps-its-text.md)).
+  The trail records `partner_uuid` and `cost_centre_uuid` like any column, but the line shows only the columns it prints (`Trip::LINKS`).
+  A row that moved only a link, such as a merge's, is no late change.
 - **A change that left no audit row** was made around the app.
   The line says *Geändert ohne Protokoll am*.
   Defence in depth, not a rule anything relies on.
@@ -555,6 +607,12 @@ A link like the logbook: no token, rate-limited, logged by ids, `view` access.
   An instant is its local time plus its offset.
   So nothing depends on the reader's decimal separator.
 - The file is for a spreadsheet (`Csv`): UTF-8 with a BOM, comma, CRLF, and formula injection defused ([security](security.md#hostile-content)).
+- Each file ends in `cost_centre_code` and `cost_centre_name`, so a spreadsheet groups by either.
+  They name the live record the row's answer names in `cost_centre_uuid`, archived ones too; else they are empty.
+  The trip file's `partner` stays the text the logbook prints.
+
+`GET /apps/nextfleet/partners/{record}/csv?from=&to=` is one partner's trips across the owner's vehicles, the owner's alone.
+It is a link like the others, and has one line per live trip, with its vehicle, its text and its distance.
 
 ### Personal data export
 
@@ -677,6 +735,26 @@ No news, no mail.
 Receipts are claimed under each vehicle's hold, and the mail goes after the commits, so no vehicle waits on the mail server.
 A failed mail deletes its receipts.
 
+**The budget warning.**
+Between the notifications and the digest, the job checks the budgets (`BudgetWarnings::sweep()`).
+
+- A budget is held against the costs of its calendar year in the owner's zone: energy, maintenance and expenses, net or gross as the budget says (`BudgetWarnings::spent()`, through `CostService::total()`, which reads no counter).
+  The loss of value does not count, and every author's costs count, whoever reads.
+- Only the year it is now in the owner's zone is checked, asked before the vehicle is held, so a budget of another year takes no lock.
+  A budget is read again under its vehicle's hold; a deleted or disposed vehicle is skipped, a laid-up one is not: its costs go on.
+- The share told last is the budget's `warned`: 0, 80 or 100.
+  A share above it is told once, the higher one only, and stored before the commit.
+  The token stays, since `warned` is in no answer.
+- The owner and the managers hear it (`VehicleAccess::holders()` of `edit`), in a notification that replaces the budget's last one and, unless the vehicle's `reminder_mail` is off, in a mail sent at once.
+  It waits for no cadence: it comes twice a year at most.
+- A send goes after the commit.
+  A failed one is logged and not tried again, as the others have been told.
+- An edit lowers `warned` to the share the new amount or net choice reaches (`BudgetWarnings::rearm()`), so a raise arms a share again.
+  A cut lowers nothing.
+  After the commit, the notice shows the share still reached, or goes; no mail, as that share was mailed (`BudgetWarnings::retell()`).
+  A delete withdraws the notice, and the notifier drops one whose share the budget no longer stands at, or whose reader lost `costs`.
+  Only an edit arms a share again: costs that fall, a voided expense say, leave `warned` as it is.
+
 ## Nextcloud integration
 
 ### Access
@@ -708,6 +786,7 @@ The strongest row wins, and no row narrows another.
 - **A grantee is someone a share could reach.**
   A user or group the instance has, never the owner, and one the sharing settings let the owner reach, read as core's own share checks read them.
   Anyone else is the same 400 as nobody.
+- A grant that gives `log`, and a member joining a group that holds one, resets every client's sync (`GrantService::resync`): the vehicle may be held already, and the owner's partner list comes whole only to a client that starts over.
 - A revoke takes off the recipients who no longer reach `view`.
   A member who leaves a group gets the same, through a queued job (`ForgetMemberJob`), so a group admin's click waits on no vehicle.
 - A new grant notifies the grantee, or each group member through `GrantNoticeJob`.

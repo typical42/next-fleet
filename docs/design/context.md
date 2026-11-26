@@ -109,6 +109,37 @@ flowchart LR
     attach --- Files
 ```
 
+### Partners, cost centres and budgets
+
+The owner keeps one partner list and one cost-centre list for all their vehicles ([data model](../architecture.md#data-model)).
+Whoever logs on a vehicle reads the names; only the owner writes the lists and the budgets.
+
+```mermaid
+flowchart LR
+    Driver["«actor»<br/>Driver"]
+    Manager["«actor»<br/>Manager"]
+    Owner["«actor»<br/>Owner"]
+    Job["«actor»<br/>ReminderJob"]
+    subgraph NextFleet
+        typePartner(["Type a Partner on a Trip"])
+        link(["Link the Partner,<br/>a new name adds it"])
+        pick(["Pick a Cost Centre on an Entry"])
+        partners(["Rename, merge and delete a Partner"])
+        partnerTrips(["See one Partner's Trips, export CSV"])
+        centres(["Add, rename, archive and delete<br/>a Cost Centre"])
+        default(["Set the vehicle's default Cost Centre"])
+        budget(["Set a Budget"])
+        byCentre(["See costs and distance by Cost Centre"])
+        warn(["Warn at 80 % and 100 % of a Budget"])
+    end
+    Driver --- typePartner & pick & byCentre
+    typePartner -.->|«include»| link
+    Manager --- default
+    Owner --- partners & partnerTrips & centres & budget
+    Job --- warn
+    warn --- Manager & Owner
+```
+
 ### Pool
 
 A booking is the booker's.

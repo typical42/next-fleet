@@ -15,6 +15,7 @@ use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Service\BookingNotices;
 use OCA\NextFleet\Service\BookingService;
+use OCA\NextFleet\Service\CostCentreLinks;
 use OCA\NextFleet\Service\Names;
 use OCA\NextFleet\Service\UserZone;
 use OCA\NextFleet\Service\VehicleAccess;
@@ -108,6 +109,7 @@ class TakeNowDayTest extends TestCase {
 			new UserZone($config),
 			$this->createMock(IDBConnection::class),
 			$this->createMock(LoggerInterface::class),
+			$this->createMock(CostCentreLinks::class),
 		))->book(self::DRIVER, $vehicle->getUuid(), [
 			'starts_at' => $start,
 			'starts_at_off' => $off,

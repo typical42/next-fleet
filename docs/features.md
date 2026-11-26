@@ -36,8 +36,6 @@ Ranked by value for the effort.
 - Driving licence checks every six months per driver, a legal duty for company fleets.
 - The UVV / DGUV V70 yearly safety inspection as a reminder template.
 - A hint when consumption rises over three fill-ups.
-- Cost centre and partner as entities, once mileage is billed on.
-- A budget per vehicle and year, against the actual cost.
 - Talk: due items and handovers posted into a fleet room.
 - Idle detection: not moved for N days.
 - Seasonal plates: reminders when the season opens and closes, from the `laid_up` state.

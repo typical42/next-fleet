@@ -429,6 +429,8 @@ class BookingTest extends TestCase {
 			'start_odo' => 52000,
 			'end_odo' => 52140,
 			'purpose' => 'Customer visit',
+			// The vehicle names no default.
+			'cost_centre_uuid' => null,
 		], $in['trip_draft']);
 		$this->assertNull($in['trip_uuid']);
 		$this->assertSame([], \OCP\Server::get(OdometerService::class)->list(self::DRIVER, $uuid));

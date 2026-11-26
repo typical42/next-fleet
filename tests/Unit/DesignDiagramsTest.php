@@ -11,6 +11,7 @@ namespace OCA\NextFleet\Tests\Unit;
 use Doctrine\DBAL\Platforms\MariaDBPlatform;
 use Doctrine\DBAL\Types\Type;
 use OCA\NextFleet\Db\Booking;
+use OCA\NextFleet\Db\PartnerBackfill;
 use OCA\NextFleet\Db\Reminder;
 use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\Vehicle;
@@ -45,7 +46,7 @@ class DesignDiagramsTest extends TestCase {
 	private const STATE_LISTS = [
 		Booking::class => [[[Booking::class, 'STATES'], [Booking::class, 'OPEN'], [BookingService::class, 'ANSWERS']], []],
 		Reminder::class => [[[Reminder::class, 'STATES']], ['DATE', 'ODO', 'EITHER']],
-		Vehicle::class => [[[VehicleService::class, 'LIFECYCLES']], ['MAIL_OFF', 'MAIL_DAILY', 'MAIL_WEEKLY', 'MAIL_MONTHLY', 'NOTICE_BOOKED', 'NOTICE_TAKEN', 'NOTICE_RETURNED', 'NOTICE_CANCELLED', 'NOTICE_CHANGED', 'APPROVAL_DEFAULT', 'APPROVAL_ALWAYS', 'APPROVAL_NEVER', 'OWNER_APPROVAL']],
+		Vehicle::class => [[[VehicleService::class, 'LIFECYCLES']], ['MAIL_OFF', 'MAIL_DAILY', 'MAIL_WEEKLY', 'MAIL_MONTHLY', 'NOTICE_BOOKED', 'NOTICE_TAKEN', 'NOTICE_RETURNED', 'NOTICE_CANCELLED', 'NOTICE_CHANGED', 'APPROVAL_DEFAULT', 'APPROVAL_ALWAYS', 'APPROVAL_NEVER', 'OWNER_APPROVAL', 'OWNER_COST_CENTRES']],
 	];
 
 	public function testEveryClassOfTheDomainIsAClassUnderLib(): void {
@@ -172,7 +173,7 @@ class DesignDiagramsTest extends TestCase {
 		$db->method('getDatabaseProvider')->willReturn(IDBConnection::PLATFORM_MYSQL);
 
 		$schema = new SchemaWrapper(platform: new MariaDBPlatform());
-		foreach (MigrationSteps::inOrder($db, $this->createMock(ReminderRecipientMapper::class)) as $step) {
+		foreach (MigrationSteps::inOrder($db, $this->createMock(ReminderRecipientMapper::class), $this->createMock(PartnerBackfill::class)) as $step) {
 			$step->changeSchema($this->createMock(IOutput::class), static fn (): ISchemaWrapper => $schema, []);
 		}
 

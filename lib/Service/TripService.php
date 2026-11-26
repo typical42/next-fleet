@@ -10,6 +10,8 @@ namespace OCA\NextFleet\Service;
 
 use OCA\NextFleet\Db\Audit;
 use OCA\NextFleet\Db\AuditMapper;
+use OCA\NextFleet\Db\CostCentre;
+use OCA\NextFleet\Db\Partner;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
@@ -103,6 +105,8 @@ class TripService {
 		private BookingService $bookings,
 		private IDBConnection $db,
 		private LogbookPeriods $periods,
+		private PartnerLinks $partners,
+		private CostCentreLinks $costCentres,
 	) {
 	}
 
@@ -155,11 +159,13 @@ class TripService {
 		// Retried: a deadlock the hold does not order, with a write from outside this service,
 		// would otherwise be a 500 that loses the trip. The replay inserts the id the rolled-back
 		// attempt was given, which auto-increment never hands out again.
-		return $this->atomicRetry(function () use ($userId, $vehicle, $trip, $booking, $once): Trip {
+		return $this->atomicRetry(function () use ($userId, $vehicle, $fields, $trip, $booking, $once): Trip {
 			// First: the Reading settles the vehicle's whole chain, so a second writer on it has
 			// to wait and settle on this one's (VehicleMapper::hold()).
 			$this->vehicles->hold((int)$vehicle->getId());
 			$once->check();
+			$trip->linkPartner($this->partners->of($vehicle, $trip->getPartner()));
+			$this->costCentres->apply($trip, $vehicle, $fields, true);
 			$written = $this->trips->insert($trip);
 			$this->trail($vehicle, $written, $userId, self::CREATED, $this->stated($written));
 			$this->odometer->fromTrip($vehicle, $written);
@@ -172,10 +178,10 @@ class TripService {
 	}
 
 	/**
-	 * What the sheet's trip fields complete from (docs/ui.md): the places, purposes and partners of
-	 * this vehicle's own trips, each once and the latest first. Starts and destinations are one
-	 * list, because where a trip ended is where the next sets off. Asked with LOG, as the trip it
-	 * fills in is.
+	 * What the sheet's trip fields complete from (docs/ui.md): the places and purposes of this
+	 * vehicle's own trips, each once and the latest first, and the owner's partners
+	 * (PartnerLinks::offer()). Starts and destinations are one list, because where a trip ended is
+	 * where the next sets off. Asked with LOG, as the trip it fills in is.
 	 *
 	 * Beside the words: the category this person last entered here, and how the vehicle's last trip
 	 * ended - its stated end counter (none for one logged by distance) and its arrival.
@@ -188,12 +194,12 @@ class TripService {
 	public function prefill(string $userId, string $vehicleUuid): array {
 		$vehicle = $this->fleet->reach($userId, VehicleAccess::LOG, $vehicleUuid);
 
-		$places = $purposes = $partners = [];
-		foreach ($this->trips->findLatestDescribed((int)$vehicle->getId(), self::TRIP_HISTORY) as $trip) {
+		$places = $purposes = [];
+		$described = $this->trips->findLatestDescribed((int)$vehicle->getId(), self::TRIP_HISTORY);
+		foreach ($described as $trip) {
 			// The destination first: it is the later of the two places on the same trip.
 			array_push($places, $trip->getToLabel(), $trip->getFromLabel());
 			$purposes[] = $trip->getPurpose();
-			$partners[] = $trip->getPartner();
 		}
 
 		$last = $this->trips->findLatest((int)$vehicle->getId());
@@ -201,7 +207,7 @@ class TripService {
 		return [
 			'places' => self::distinct($places),
 			'purposes' => self::distinct($purposes),
-			'partners' => self::distinct($partners),
+			'partners' => $this->partners->offer($vehicle, $described),
 			'category' => $this->trips->findLatestEnteredBy((int)$vehicle->getId(), $userId)?->getCategory(),
 			'last' => $last === null ? null : [
 				'end_odo' => $last->getEndOdo(),
@@ -308,6 +314,10 @@ class TripService {
 			$this->fleet->change($userId, VehicleAccess::EDIT, $vehicle, $trip->getCreatedBy());
 			$was = clone $trip;
 			$this->apply($trip, $fields);
+			if ($trip->getPartner() !== $was->getPartner()) {
+				$trip->linkPartner($this->partners->of($vehicle, $trip->getPartner()));
+			}
+			$this->costCentres->apply($trip, $vehicle, $fields, false);
 
 			// A save that changed nothing is no revision and writes nothing: a token moved without
 			// an audit row is what the export prints as a change nobody recorded. Still checked.
@@ -328,6 +338,51 @@ class TripService {
 
 			return $edited;
 		}, $this->db);
+	}
+
+	/**
+	 * Moves one trip's link to a record of the owner's list, or marks it as the deleted record's
+	 * (Trip::linkPartner()), live or voided. The text stays. The change is audited like any edit,
+	 * with the trip's new token, so the export finds no change without a row.
+	 *
+	 * For PartnerService and TransferService: inside the caller's transaction, under the hold of
+	 * the trip's vehicle, the trip read under it. The owner's write, so no Entry gate.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	public function relink(string $userId, Vehicle $vehicle, Trip $trip, Partner $to): void {
+		$was = clone $trip;
+		$trip->linkPartner($to);
+		$this->moved($userId, $vehicle, $was, $trip, 'partnerId');
+	}
+
+	/**
+	 * relink() for the trip's cost centre, for TransferService, which carries it into the new
+	 * owner's list.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	public function relinkCostCentre(string $userId, Vehicle $vehicle, Trip $trip, CostCentre $to): void {
+		$was = clone $trip;
+		$trip->linkCostCentre($to);
+		$this->moved($userId, $vehicle, $was, $trip, 'costCentreId');
+	}
+
+	/**
+	 * Writes a moved link with its audit row, if it moved.
+	 *
+	 * @param 'partnerId'|'costCentreId' $link
+	 * @throws \OCP\DB\Exception
+	 */
+	private function moved(string $userId, Vehicle $vehicle, Trip $was, Trip $trip, string $link): void {
+		$changed = $this->changed($was, $trip);
+		if ($changed === []) {
+			return;
+		}
+
+		$moved = $this->trips->relink($trip, $link);
+		// Never late: a link is no logbook field (ADR 0013).
+		$this->trail($vehicle, $moved, $userId, self::EDITED, $changed, ['late' => false], $was);
 	}
 
 	/**

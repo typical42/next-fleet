@@ -63,6 +63,7 @@ class MaintenanceService {
 		private ReminderMapper $reminderRows,
 		private AfterCommit $after,
 		private CostsShown $costs,
+		private CostCentreLinks $costCentres,
 	) {
 	}
 
@@ -112,6 +113,7 @@ class MaintenanceService {
 		$record->setVehicleId((int)$vehicle->getId());
 		$record->setCreatedBy($userId);
 		$this->apply($vehicle, $record, $fields);
+		$this->costCentres->apply($record, $vehicle, $fields, true);
 		$closes = $this->reminders->closable((int)$vehicle->getId(), $fields['closes'] ?? null, null);
 		$record->setReminderId($closes?->getId());
 		// Known before the insert, so closeBy() below sets nothing the row does not hold already.
@@ -148,6 +150,7 @@ class MaintenanceService {
 			$before = clone $record;
 			$current = $this->closed($record);
 			$this->apply($vehicle, $record, $fields);
+			$this->costCentres->apply($record, $vehicle, $fields, false);
 			$closes = $this->reminders->closable((int)$vehicle->getId(), $fields['closes'] ?? null, $current);
 			$record->setReminderId($closes?->getId());
 			// By id, not instance: a reminder read afresh would pass for another, and keep(null) below

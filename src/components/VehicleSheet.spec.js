@@ -14,7 +14,7 @@ import { flushPromises, shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ConflictError, RefusedError, createVehicle, deleteVehicle, getPreferences, getVehicle, listReminders, recordReading, reminderTemplates, savePreferences, updateEntry, updateVehicle } from '../services/api.js'
+import { ConflictError, RefusedError, createVehicle, deleteVehicle, getPreferences, getVehicle, listCostCentres, listReminders, recordReading, reminderTemplates, savePreferences, updateEntry, updateVehicle } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
 import { formatDay } from '../utils/format.js'
 import { REGISTRATION_HELP } from '../utils/registration.js'
@@ -22,6 +22,7 @@ import BookingRecipients from './BookingRecipients.vue'
 import InspectionSticker from './InspectionSticker.vue'
 import ReminderRecipients from './ReminderRecipients.vue'
 import VehicleGrants from './VehicleGrants.vue'
+import VehicleBudgets from './VehicleBudgets.vue'
 import VehicleSheet from './VehicleSheet.vue'
 
 // The network is the api client's seam (api.spec.js); the store stays real, since the wiring
@@ -33,6 +34,7 @@ vi.mock('../services/api.js', async (original) => ({
 	deleteVehicle: vi.fn(),
 	getPreferences: vi.fn(),
 	getVehicle: vi.fn(),
+	listCostCentres: vi.fn(),
 	listReminders: vi.fn(),
 	recordReading: vi.fn(),
 	reminderTemplates: vi.fn(),
@@ -76,6 +78,14 @@ const VEHICLE = {
 const MANAGED = { ...VEHICLE, may: ['view', 'log', 'edit', 'delete'] }
 /** A vehicle nobody else ever had access to: its owner's alone. */
 const SOLO = { ...VEHICLE, ever_granted: false }
+/** The owner's cost centres, one archived, and a list of somebody else's the session reads too. */
+const CENTRES = [
+	{ uuid: 'c-1', user_id: 'owner', code: '4711', name: 'Sales', archived: false, created_at: 1, updated_at: 1 },
+	{ uuid: 'c-2', user_id: 'owner', code: null, name: 'Old project', archived: true, created_at: 2, updated_at: 2 },
+	{ uuid: 'c-3', user_id: 'boss', code: null, name: 'Pool', archived: false, created_at: 3, updated_at: 3 },
+]
+/** A vehicle whose owner uses cost centres, with no default yet. */
+const CENTRED = { ...VEHICLE, user_id: 'owner', uses_cost_centres: true, cost_centre_uuid: null }
 /** The label of the vehicle's choice whether bookings wait for an answer. */
 const APPROVAL = 'Bookings need approval'
 
@@ -445,6 +455,78 @@ describe('the vehicle sheet, editing', () => {
 			notes: 'two rows of seats',
 		}))
 		expect(emitted(wrapper, 'saved').updated_at).toBe(1700000900)
+	})
+
+	/** A new entry takes it (docs/api.md#cost-centres). */
+	it('offers the owner\'s live cost centres as the default of new entries', async () => {
+		vi.mocked(listCostCentres).mockResolvedValue(CENTRES)
+		const wrapper = await sheet(CENTRED)
+
+		const chooser = dropdown(wrapper, 'Default cost centre')
+		expect(labels(section(wrapper, 'Costs'))).toContain('Default cost centre')
+		expect(chooser.props('options').map((/** @type {any} */ one) => one.label)).toEqual(['4711 Sales'])
+		await chooser.vm.$emit('update:modelValue', chooser.props('options')[0])
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ cost_centre_uuid: 'c-1' }))
+	})
+
+	it('keeps an archived default on offer, and clears it to none', async () => {
+		vi.mocked(listCostCentres).mockResolvedValue(CENTRES)
+		const wrapper = await sheet({ ...CENTRED, cost_centre_uuid: 'c-2' })
+
+		const chooser = dropdown(wrapper, 'Default cost centre')
+		expect(chooser.props('modelValue').label).toBe('Old project (archived)')
+		await chooser.vm.$emit('update:modelValue', null)
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ cost_centre_uuid: null }))
+	})
+
+	/** Whoever sees the vehicle's costs sees its budgets; the list saves on each change. */
+	it('shows the budgets in Costs where the owner uses them and the reader sees the costs', async () => {
+		vi.mocked(listCostCentres).mockResolvedValue(CENTRES)
+		const budgeted = { ...CENTRED, may: [...CENTRED.may, 'costs'] }
+		const wrapper = await sheet(budgeted)
+
+		expect(section(wrapper, 'Costs').findComponent(VehicleBudgets).props('vehicle')).toEqual(budgeted)
+	})
+
+	it('shows no budgets where the owner does not use them', async () => {
+		const wrapper = await sheet({ ...CENTRED, may: [...CENTRED.may, 'costs'], uses_cost_centres: false })
+
+		expect(wrapper.findComponent(VehicleBudgets).exists()).toBe(false)
+	})
+
+	it('shows no budgets to a reader the costs are kept from', async () => {
+		vi.mocked(listCostCentres).mockResolvedValue(CENTRES)
+		const wrapper = await sheet(CENTRED)
+
+		expect(wrapper.findComponent(VehicleBudgets).exists()).toBe(false)
+	})
+
+	/** Freelancers first (docs/adr/0012-nextfleet-also-serves-a-small-fleet.md). */
+	it('asks for no default where the owner does not use cost centres, and sends it back as read', async () => {
+		const wrapper = await sheet({ ...CENTRED, uses_cost_centres: false, cost_centre_uuid: 'c-1' })
+
+		expect(dropdown(wrapper, 'Default cost centre')).toBeUndefined()
+		expect(listCostCentres).not.toHaveBeenCalled()
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ cost_centre_uuid: 'c-1' }))
+	})
+
+	it('sends the default back as read when the list cannot be read', async () => {
+		vi.mocked(listCostCentres).mockRejectedValue(new Error('offline'))
+		const wrapper = await sheet({ ...CENTRED, cost_centre_uuid: 'c-1' })
+
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(updateVehicle).toHaveBeenCalledWith(expect.objectContaining({ cost_centre_uuid: 'c-1' }))
 	})
 
 	/** Whether drivers and viewers see the costs is the owner's to say (docs/user/access.md). */
@@ -1191,14 +1273,15 @@ describe('the vehicle sheet, editing', () => {
 		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe(words)
 	})
 
-	it('says why the currency cannot change once costs are recorded', async () => {
+	/** A budget alone holds the currency too (MoneyRows::exist()), and the owner can delete it. */
+	it('says why the currency cannot change once costs or a budget are recorded', async () => {
 		vi.mocked(updateVehicle).mockRejectedValue(new RefusedError('currency stays once the vehicle has costs recorded in it', 'currency_in_use'))
 		const wrapper = await sheet(VEHICLE)
 
 		await saveButton(wrapper).vm.$emit('click')
 		await flushPromises()
 
-		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('The currency cannot change any more: costs are already recorded in it for this vehicle.')
+		expect(wrapper.findComponent(NcNoteCard).props('text')).toBe('The currency cannot change any more: costs or a budget are already recorded in it for this vehicle. If only a budget holds it, the owner can delete the budget.')
 	})
 
 	/** Litres, kWh and euros on screen, the column's integer on the wire - either decimal mark. */

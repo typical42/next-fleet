@@ -8,9 +8,13 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Integration;
 
+use OCA\NextFleet\Db\CostCentreMapper;
+use OCA\NextFleet\Db\PartnerMapper;
 use OCA\NextFleet\Db\Reminder;
 use OCA\NextFleet\Db\Trip;
+use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\TypedText;
+use OCA\NextFleet\Service\CostCentreService;
 use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\ReminderService;
@@ -42,6 +46,8 @@ class TypedTextTest extends TestCase {
 		'fleet_energy' => ['station' => 255],
 		'fleet_maintenance' => ['title' => 255, 'vendor' => 255],
 		'fleet_reminders' => ['title' => 255],
+		'fleet_partners' => ['name' => 255],
+		'fleet_cost_centres' => ['code' => 32, 'name' => 255],
 	];
 
 	private VehicleService $vehicles;
@@ -60,7 +66,7 @@ class TypedTextTest extends TestCase {
 	/** The rows this suite invents, gone for real - a soft delete would outlive the run. */
 	private function forgetTestRows(): void {
 		$db = \OCP\Server::get(IDBConnection::class);
-		foreach (['fleet_vehicles', 'fleet_reminder_recipients', 'fleet_odo_readings', 'fleet_trips', 'fleet_energy', 'fleet_maintenance', 'fleet_reminders', 'fleet_audit'] as $table) {
+		foreach (['fleet_vehicles', 'fleet_reminder_recipients', 'fleet_odo_readings', 'fleet_trips', 'fleet_energy', 'fleet_maintenance', 'fleet_reminders', 'fleet_audit', 'fleet_partners', 'fleet_cost_centres'] as $table) {
 			$qb = $db->getQueryBuilder();
 			$qb->delete($table)->where($qb->expr()->eq('created_by', $qb->createNamedParameter(self::OWNER)));
 			$qb->executeStatement();
@@ -102,6 +108,34 @@ class TypedTextTest extends TestCase {
 		]);
 
 		$this->assertRead($fields, 'trip', $uuid, $trip->getUuid());
+	}
+
+	/** A partner's name is the trip text it was made from, so it is as long. */
+	#[DataProvider('letters')]
+	public function testAPartnerHoldsItsNameAtFullLength(string $letter): void {
+		$fields = $this->full($letter, 'fleet_partners');
+
+		$trip = \OCP\Server::get(TripService::class)->record(self::OWNER, $this->vehicle(), [
+			'partner' => $fields['name'],
+			'started_at' => 1750000000, 'started_at_off' => 120,
+			'ended_at' => 1750005400, 'ended_at_off' => 120,
+			'category' => Trip::BUSINESS, 'start_odo' => 1000, 'end_odo' => 1042,
+		]);
+
+		$id = \OCP\Server::get(TripMapper::class)->findByUuid($trip->getUuid())->getPartnerId();
+		$this->assertNotNull($id);
+		$this->assertSame($fields['name'], \OCP\Server::get(PartnerMapper::class)->findAnyById($id)->getName());
+	}
+
+	#[DataProvider('letters')]
+	public function testACostCentreHoldsItsCodeAndNameAtFullLength(string $letter): void {
+		$fields = $this->full($letter, 'fleet_cost_centres');
+
+		$written = \OCP\Server::get(CostCentreService::class)->create(self::OWNER, $fields);
+
+		$this->assertSame([$fields['code'], $fields['name']], [$written['code'], $written['name']]);
+		$stored = \OCP\Server::get(CostCentreMapper::class)->findByUuid($written['uuid']);
+		$this->assertSame([$fields['code'], $fields['name']], [$stored->getCode(), $stored->getName()]);
 	}
 
 	#[DataProvider('letters')]

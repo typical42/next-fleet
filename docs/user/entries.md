@@ -26,7 +26,8 @@ Click **Try again** when you are online.
 
 - **Trip**: **Departure**, **Arrival** and **Category** (**Business**, **Private** or **Commute**).
   Then the counter at departure and arrival, or only the **Distance**.
-  **Purpose**, **Starting point**, **Destination** and **Business partner** suggest what you typed before.
+  **Purpose**, **Starting point** and **Destination** suggest what you typed before.
+  **Business partner** suggests the [partner list](partners.md) of the vehicle owner.
   If NextFleet knows where the last trip ended, click **Use it** to copy that reading.
 - **Energy**: **Date** and **Amount**.
   Add the **Total price** and the **Counter reading**: NextFleet needs the reading for the consumption.
@@ -39,6 +40,7 @@ Click **Try again** when you are online.
   A category without VAT, such as insurance in Germany, sets the VAT rate to 0.
 - **Odometer**: the reading on the dashboard.
 
+When the owner uses cost centres, each entry except the odometer has a **Cost centre** ([Cost centres](partners.md#select-the-cost-centre-of-an-entry)).
 A vehicle with **Also counts engine hours** shows a second counter on energy, maintenance and odometer entries.
 Trips always use kilometres.
 

@@ -17,6 +17,7 @@ use OCA\NextFleet\Db\ReminderReceipt;
 use OCA\NextFleet\Db\ReminderReceiptMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
+use OCA\NextFleet\Notification\BudgetWords;
 use OCA\NextFleet\Notification\ReminderWords;
 use OCA\NextFleet\Notification\VehicleWords;
 use OCP\AppFramework\Db\DoesNotExistException;
@@ -131,6 +132,38 @@ class MailService {
 		$this->deliver($user, $address, $template);
 
 		return $address;
+	}
+
+	/**
+	 * Mails the user the budget's warning at once, to the address the digest goes to: it is told
+	 * twice a year at most, so it waits for no cadence. An account the digest skips gets none.
+	 *
+	 * @param int $share BudgetWarnings::SHARES
+	 * @throws \RuntimeException when the mail server refused it
+	 * @throws \OCP\DB\Exception
+	 */
+	public function budget(string $userId, Vehicle $vehicle, int $year, int $share): void {
+		$user = $this->users->get($userId);
+		$address = $user === null ? null : self::addressOf($user);
+		if ($user === null || !$user->isEnabled() || $address === null) {
+			return;
+		}
+		[$l, $language] = $this->l10nOf($user);
+		$name = VehicleWords::name($l, $vehicle);
+
+		$template = $this->mailer->createEMailTemplate('nextfleet.budgetWarning');
+		$template->setSubject($l->t('Budget of %s', [$name]));
+		$template->addHeader();
+		$template->addHeading($l->t('Budget of %s', [$name]));
+		$line = BudgetWords::line($l, $year, $share);
+		if ($this->access->may($userId, VehicleAccess::VIEW, $vehicle)) {
+			$url = $this->urls->linkToRouteAbsolute('nextfleet.page.index', ['vehicle' => $vehicle->getUuid()]);
+			$template->addBodyText(htmlspecialchars($line) . ' – <a href="' . htmlspecialchars($url) . '">' . htmlspecialchars($name) . '</a>', $line . ' – ' . $url);
+		} else {
+			$template->addBodyText($line);
+		}
+		$template->addFooter('', $language);
+		$this->deliver($user, $address, $template);
 	}
 
 	/** Where the digest goes: the account's address, or null for none. */

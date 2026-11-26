@@ -179,8 +179,10 @@ class LogbookExport {
 		$earliest = $entered;
 		foreach (array_reverse($changes) as [$id, $change, $at, $fields, $before, $endedBy]) {
 			$earliest[$id] = min($earliest[$id], $endedBy);
-			if ($delayDays !== null && $change !== self::CREATED && $at > $earliest[$id] + $delayDays * 86400) {
-				$late[$id][] = ['change' => $change, 'at' => $at, 'fields' => $fields, 'offsets' => $before];
+			// A link is no logbook field (ADR 0013), so a merge over a locked year changes no line.
+			$printed = array_diff_key($fields, array_flip(Trip::LINKS));
+			if ($delayDays !== null && $change !== self::CREATED && $printed !== [] && $at > $earliest[$id] + $delayDays * 86400) {
+				$late[$id][] = ['change' => $change, 'at' => $at, 'fields' => $printed, 'offsets' => $before];
 			}
 		}
 

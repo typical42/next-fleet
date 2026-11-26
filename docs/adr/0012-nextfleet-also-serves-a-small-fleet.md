@@ -10,10 +10,13 @@ The code sets no limit; above about 10 vehicles, NextFleet makes no promise.
 
 **Freelancers first.** The logbook the tax office accepts, gap detection and the mileage claim stay what the app is for.
 A vehicle that only its owner uses shows no fleet setting.
-An owner without a shared vehicle sees no setting for all vehicles.
+An owner without a shared vehicle sees no setting for all vehicles, with one exception.
+**Use cost centres and budgets** shows to every owner, because a freelancer can need a budget too.
+Once the owner shares a vehicle, cost centres and budgets are on.
 
 **What comes in.** Rules for bookings: who may take a car at once, booking for a driver, approval for all vehicles at once, and who hears of which booking.
-Driving licence checks, a fleet table, and cost centres, partners and budgets.
+Driving licence checks, a fleet table, cost centres and budgets.
+Partners become records for every owner, freelancers too ([ADR 0013](0013-a-partner-is-a-record-the-trip-keeps-its-text.md)).
 Any other fleet feature needs a new ADR or a change to this one.
 
 **What stays out.**

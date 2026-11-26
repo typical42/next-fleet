@@ -1,5 +1,100 @@
 # Changelog
 
+## 1.0.0 — 2026-11-26
+
+### Partners
+
+- A partner is now a record in the list of the vehicle owner.
+  All vehicles of the owner share the list.
+- The upgrade makes one record for each partner name on the trips of an owner.
+  Two names that are written differently stay two records.
+- A trip keeps its partner name as you entered it.
+  The logbook shows this name.
+- The partner field of a trip offers all partners of the owner.
+  The partners of this vehicle come first, the most recent first.
+- Drivers and managers see the names of the owner's partners.
+  Viewers see only the partner of each trip, and only the owner sees the address and the note.
+- The logbook export does not show a change of a link to a partner record as a late change.
+- The user manual has the new page "Partners, cost centres and budgets".
+  It also says why the lists belong to the owner.
+- The new **Partners** page shows the list to each vehicle owner.
+  It also shows while your list is not empty, after your last vehicle was deleted or went to a new owner.
+  You can change a partner, merge two spellings of one partner, and delete a partner.
+  A merge and a delete ask first, because you cannot undo them.
+  The trips keep the partner name as you entered it.
+- The Partners page shows the trips to one partner in a period, with the distance, and saves them as a CSV file.
+
+### Cost centres
+
+- Trips, energy entries, maintenance records and expenses can name a cost centre.
+  The vehicle owner keeps one list for all of their vehicles.
+- The new section **Cost centres and budgets** in the settings holds the list.
+  You add, rename, archive and delete cost centres there.
+  A cost centre that an entry or a vehicle uses cannot be deleted; archive it.
+- An owner of a shared vehicle uses cost centres.
+  Other owners turn them on with **Use cost centres and budgets**.
+- **Edit vehicle** > **Costs** sets the default cost centre of the vehicle.
+  New entries get it; the entries already there keep theirs.
+- Each entry except the odometer has the field **Cost centre**, also for a driver who does not see the costs.
+  A driver selects from the list of the owner and cannot add to it.
+- The demo seed gives a shared fleet two cost centres and a default on one vehicle.
+- **Statistics** has the new section **By cost centre**: the trips, the distance and the costs of each cost centre.
+  A trip counts its distance to its cost centre; costs are not shared out by distance.
+- The CSV files of trips, fill-ups, maintenance and expenses have two new last columns: `cost_centre_code` and `cost_centre_name`.
+
+### Budgets
+
+- The owner sets a budget for each vehicle and calendar year in **Edit vehicle** > **Costs**, net or gross.
+  It shows when the owner uses cost centres and budgets.
+- The budget counts energy, maintenance and expenses, net or gross as the budget says.
+  The loss of value does not count.
+- Whoever sees the costs of the vehicle sees its budget; only the owner changes it.
+- When the costs of the year reach 80 % and 100 % of the budget, the owner and the managers get a notification and an email, one time each.
+  Costs that pass both shares at once get only the 100 % message.
+  The email comes only when the vehicle sends reminder emails.
+  A raise of the budget above the costs lets the message come again.
+- The demo seed gives the shared Passat a budget that its costs this year have used to 85 %.
+- **Statistics** shows the budget under the costs chart, for one vehicle and a calendar year.
+  The bar turns yellow at 80 % and red at 100 %, where the messages go out.
+
+### For apps, scripts and admins
+
+- A trip answer and the trip rows in sync have the new field `partner_uuid`.
+  A request still sends the partner name in `partner`, and the server links the record.
+- The new routes under `/api/v1/partners` list, read, rename, merge and delete the partners of the owner.
+  They also give the trips of one partner in a period.
+  `/index.php/apps/nextfleet/partners/{record}/csv` gives these trips as a CSV file.
+  A merge into a partner that is not in the list is refused with `target_gone`.
+  A partner, a cost centre or a budget that is gone answers 404 with its own message.
+- A merge or a delete of a partner changes no partner name on a trip.
+  It changes only the link, and the logbook export does not show it as a late change.
+- Sync has the new key `partners`: the partner lists of the owners whose vehicles you can open.
+- `occ nextfleet:check` finds a trip that has a partner name but no link to a partner record.
+  `occ maintenance:repair` links such a trip.
+- `occ nextfleet:transfer` copies the partners on the trips of the vehicle into the partner list of the new owner.
+  A partner of the same name in that list is used.
+  The trips keep their partner name.
+- When the account of an owner is deleted, the partner list of the owner is deleted too.
+  The trips keep their partner name.
+- The personal data export shows your partner list in full.
+- After the upgrade, each app starts its sync again from the start.
+- The new routes under `/api/v1/cost-centres` list, add, change, archive and delete the cost centres of the owner.
+  A cost centre that an entry or a vehicle uses cannot be deleted; archive it.
+- Trips, fill-ups, maintenance records and expenses have the new field `cost_centre_uuid`, and so has a vehicle for its default.
+  A new entry without the field gets the default of the vehicle; `null` means none.
+  A change without the field keeps the cost centre of the entry.
+- A vehicle answer has the new field `uses_cost_centres`, and the preferences have the new switch `cost_centres`.
+- Sync has the new key `cost_centres`, as for partners.
+- `occ nextfleet:transfer` copies the cost centres of the vehicle into the list of the new owner.
+  A cost centre with the same code in that list is used, else one with the same name.
+- When the account of an owner is deleted, the cost-centre list of the owner is deleted too.
+- The new routes under `/api/v1/vehicles/{uuid}/budgets` list, set, change and delete the budgets of a vehicle.
+  A second budget for a year is refused with `year_taken`, a vehicle without a currency with `no_currency`.
+  The currency of a vehicle with a budget stays.
+- Sync has the new table `budgets` in `changes`, left out for a reader who does not see the costs.
+- `occ nextfleet:reminders --send` checks the budgets too, as the hourly job does.
+- `/api/v1/statistics` has the new keys `by_cost_centre` and `budget`.
+
 ## 0.6.2 — 2026-11-24
 
 ### Fixed

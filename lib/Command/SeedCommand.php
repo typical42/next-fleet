@@ -8,9 +8,13 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Command;
 
+use OCA\NextFleet\Db\Budget;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Notification\VehicleWords;
 use OCA\NextFleet\Service\BookingService;
+use OCA\NextFleet\Service\BudgetService;
+use OCA\NextFleet\Service\BudgetWarnings;
+use OCA\NextFleet\Service\CostCentreService;
 use OCA\NextFleet\Service\DocumentService;
 use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\ExpenseService;
@@ -412,7 +416,8 @@ class SeedCommand extends Command {
 	 * What the first `--grant-to` adds: the Passat as a car two people use, with one business trip
 	 * the other account entered - so the timeline, the Fahrtenbuch and their mileage claim each
 	 * have somebody else's row to show. It sets off where the Passat's last Reading left the
-	 * counter, so no Gap opens before it, and ends short of the oil change's 112900.
+	 * counter, so no Gap opens before it, and ends short of the oil change's 112900. Its partner is
+	 * the owner's in another spelling, so the Partners page has two records to merge.
 	 *
 	 * And one booking of theirs, tomorrow morning in Berlin's hours: ahead of any day it is
 	 * seeded on, so the Bookings section has a coming one and the overview a pool.
@@ -423,7 +428,7 @@ class SeedCommand extends Command {
 	private const GRANTED = [
 		'plate' => self::DISTRICT . 'DE 100',
 		'costs_kept' => self::DISTRICT . 'PH 200',
-		'trip' => ['days' => 3, 'minutes' => 45, 'start_odo' => 112180, 'end_odo' => 112236, 'category' => 'business', 'from_label' => 'Stuttgart, Büro', 'to_label' => 'Ludwigsburg, Schneider Logistik', 'purpose' => 'Lieferung', 'partner' => 'Schneider Logistik GmbH'],
+		'trip' => ['days' => 3, 'minutes' => 45, 'start_odo' => 112180, 'end_odo' => 112236, 'category' => 'business', 'from_label' => 'Stuttgart, Büro', 'to_label' => 'Pforzheim, Müller Maschinenbau', 'purpose' => 'Lieferung', 'partner' => 'Müller Maschinenbau'],
 		'booking' => ['from' => 9, 'to' => 12, 'purpose' => 'Kundentermin Esslingen'],
 		'request' => ['from' => 14, 'to' => 17, 'purpose' => 'Messe Stuttgart'],
 	];
@@ -440,6 +445,24 @@ class SeedCommand extends Command {
 		// After the first account's request, so even a single account is never booked twice at once.
 		'booked_for' => ['from' => 18, 'to' => 20, 'purpose' => 'Abendtermin Waiblingen'],
 	];
+
+	/**
+	 * The owner's cost centres, which a shared fleet uses. The first is the Passat's default from
+	 * the start, so each of its entries names it and the other vehicles' entries none.
+	 */
+	private const COST_CENTRES = [
+		['code' => '4711', 'name' => 'Vertrieb'],
+		['code' => '4712', 'name' => 'Service'],
+	];
+
+	/**
+	 * What the Passat's costs this year are of its budget, in percent: past the warning's first
+	 * share, short of the second.
+	 */
+	private const BUDGET_USED = 85;
+
+	/** The budget of a year with no costs yet: nothing to warn of. */
+	private const BUDGET_UNUSED = 500000;
 
 	/** One account to drive the Passat, and a second to share the pool car with. */
 	private const MAX_GRANTEES = 2;
@@ -476,10 +499,13 @@ class SeedCommand extends Command {
 		private TripService $trips,
 		private GrantService $grants,
 		private BookingService $bookings,
+		private CostCentreService $costCentres,
 		private RecipientService $recipients,
 		private DocumentService $documents,
 		private SeedPapers $papers,
 		private ITimeFactory $time,
+		private BudgetService $budgets,
+		private BudgetWarnings $warnings,
 	) {
 		parent::__construct();
 	}
@@ -519,6 +545,10 @@ class SeedCommand extends Command {
 			$drivers[] = $driver;
 		}
 
+		// Only for a shared fleet: a freelancer's does not use them (docs/adr/0012-nextfleet-also-serves-a-small-fleet.md).
+		$default = $drivers === [] ? null : $this->costCentres($userId);
+		$named = $default === null ? [] : [self::GRANTED['plate'] => $default];
+
 		$retired = $this->retire($userId);
 		if ($retired > 0) {
 			$output->writeln('Retired ' . $retired . ' vehicle(s) from an earlier run.');
@@ -529,12 +559,13 @@ class SeedCommand extends Command {
 		$trips = 0;
 		$papers = 0;
 		$reminders = 0;
-		/** @var array<string, string> $uuids by plate */
-		$uuids = [];
+		/** @var array<string, Vehicle> $vehicles by plate */
+		$vehicles = [];
 		foreach (self::FLEET as $entry) {
-			$vehicle = $this->fleet->create($userId, $this->fields($entry));
+			$plate = $entry['vehicle']['plate'];
+			$vehicle = $this->fleet->create($userId, $this->fields($entry) + (isset($named[$plate]) ? ['cost_centre_uuid' => $named[$plate]] : []));
 			$uuid = $vehicle->getUuid();
-			$uuids[(string)$vehicle->getPlate()] = $uuid;
+			$vehicles[(string)$vehicle->getPlate()] = $vehicle;
 			// Readings first: a cost row's counter lands between them, and a derived Reading
 			// counts from the ones already there when it is written.
 			foreach ($entry['readings'] as $reading) {
@@ -594,8 +625,8 @@ class SeedCommand extends Command {
 			return self::SUCCESS;
 		}
 		$first = $drivers[0];
-		$uuid = $uuids[self::GRANTED['plate']];
-		$pool = $uuids[self::GRANTED['costs_kept']];
+		$uuid = $vehicles[self::GRANTED['plate']]->getUuid();
+		$pool = $vehicles[self::GRANTED['costs_kept']]->getUuid();
 		foreach ($drivers as $driver) {
 			$granted = $driver === $first ? [$uuid, $pool] : [$pool];
 			try {
@@ -630,9 +661,66 @@ class SeedCommand extends Command {
 			. self::GRANTED['costs_kept'] . ', a pool car whose costs are kept from drivers, with a booking of theirs waiting for approval.');
 		$output->writeln('The pool car ' . self::GRANTED['costs_kept'] . ' asks for approval as ' . $userId . '\'s default says; '
 			. implode(' and ', $drivers) . ' drive it, ' . $first . ' asks for each Take it now, and ' . $userId . ' booked it for ' . $last . '.');
+		$output->writeln('Gave ' . $userId . ' the cost centres ' . implode(' and ', array_column(self::COST_CENTRES, 'name')) . '; '
+			. ($named === []
+				? self::GRANTED['plate'] . ' has no default, since ' . self::COST_CENTRES[0]['name'] . ' is archived.'
+				: self::COST_CENTRES[0]['name'] . ' is the default of ' . self::GRANTED['plate'] . '.'));
+		$year = $this->budget($userId, $vehicles[self::GRANTED['plate']]);
+		$output->writeln('Gave ' . self::GRANTED['plate'] . ' a budget for ' . $year . ' that its costs have used to ' . self::BUDGET_USED . ' %, if it has costs this year.');
 		$output->writeln('"Bookings need approval" is now on for all of ' . $userId . '\'s vehicles that follow the default, not only the demo ones.');
 
 		return self::SUCCESS;
+	}
+
+	/**
+	 * A budget for the year it is in the owner's zone, gross, which the costs seeded into that year
+	 * have used to BUDGET_USED, so the reminder round warns at 80 %. After every entry, the account's
+	 * trip among them: the amount is read off them.
+	 *
+	 * @return int the year
+	 * @throws \OCP\DB\Exception
+	 */
+	private function budget(string $userId, Vehicle $vehicle): int {
+		$year = $this->warnings->currentYear($vehicle);
+		$planned = new Budget();
+		$planned->setYear($year);
+		$planned->setNet(false);
+		$spent = $this->warnings->spent($vehicle, $planned);
+		$amount = $spent === 0 ? self::BUDGET_UNUSED : intdiv($spent * 100, self::BUDGET_USED);
+		$this->budgets->create($userId, $vehicle->getUuid(), ['year' => $year, 'amount' => $amount, 'net' => false]);
+
+		return $year;
+	}
+
+	/**
+	 * The owner's cost centres, each added unless an earlier run left it: the list outlives the
+	 * vehicles retire() deletes, and a second record of a code or a name is refused. One the owner
+	 * renamed is found by its code, as a transfer finds it.
+	 *
+	 * @return ?string the first one's uuid, the Passat's default; null while the owner keeps it
+	 *                 archived, since no vehicle takes an archived one as a new default
+	 * @throws \OCP\DB\Exception
+	 */
+	private function costCentres(string $userId): ?string {
+		$own = array_values(array_filter(
+			$this->costCentres->list($userId),
+			static fn (array $one): bool => $one['user_id'] === $userId,
+		));
+		$default = null;
+		foreach (self::COST_CENTRES as $at => $wanted) {
+			$found = null;
+			foreach (['code', 'name'] as $key) {
+				foreach ($own as $one) {
+					$found ??= $one[$key] === $wanted[$key] ? $one : null;
+				}
+			}
+			$found ??= $this->costCentres->create($userId, $wanted);
+			if ($at === 0 && !$found['archived']) {
+				$default = $found['uuid'];
+			}
+		}
+
+		return $default;
 	}
 
 	/**

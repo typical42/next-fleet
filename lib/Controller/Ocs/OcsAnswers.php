@@ -57,7 +57,7 @@ trait OcsAnswers {
 		try {
 			return $call();
 		} catch (DoesNotExistException) {
-			throw new OCSNotFoundException('No such vehicle');
+			throw new OCSNotFoundException($this->missing());
 		} catch (AccessDeniedException) {
 			throw new OCSForbiddenException('Not yours');
 		} catch (RefusedException $e) {
@@ -65,6 +65,11 @@ trait OcsAnswers {
 		} catch (\InvalidArgumentException $e) {
 			return new DataResponse(['message' => $e->getMessage()], Http::STATUS_BAD_REQUEST);
 		}
+	}
+
+	/** What a 404 says; overridden as EntryAnswers::missing() is. */
+	private function missing(): string {
+		return 'No such vehicle';
 	}
 
 	/**

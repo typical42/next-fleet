@@ -56,12 +56,12 @@ flowchart LR
         Controllers["«component»<br/>Controller, Controller\Ocs"]
         Jobs["«component»<br/>BackgroundJob<br/>ReminderJob, PendingJob,<br/>GrantNoticeJob, ForgetMemberJob"]
         Commands["«component»<br/>Command<br/>nextfleet:*"]
-        Listeners["«component»<br/>Listener<br/>UserDeletedListener,<br/>GroupDeletedListener,<br/>GroupMemberRemovedListener"]
+        Listeners["«component»<br/>Listener<br/>UserDeletedListener,<br/>GroupDeletedListener,<br/>GroupMemberAddedListener,<br/>GroupMemberRemovedListener"]
         Notifier["«component»<br/>Notification\Notifier"]
         Search["«component»<br/>VehicleSearchProvider"]
         Widget["«component»<br/>DueWidget"]
         Migrator["«component»<br/>FleetMigrator"]
-        Repair["«component»<br/>Repair<br/>ErasedPseudonyms,<br/>StrangerRecipients"]
+        Repair["«component»<br/>Repair<br/>ErasedPseudonyms,<br/>StrangerRecipients,<br/>UnlinkedPartners"]
         Service["«component»<br/>Service"]
         Mappers["«component»<br/>Db mappers"]
     end
@@ -117,6 +117,35 @@ flowchart LR
     Booking & Document & Recipient & Grant --> Access
 ```
 
+#### The owner's lists and budgets
+
+`PartnerLinks` and `CostCentreLinks` find the partner and the cost centre an entry names, in the vehicle owner's lists ([ADR 0013](../adr/0013-a-partner-is-a-record-the-trip-keeps-its-text.md)).
+`PartnerService` and `CostCentreService` keep the lists, and only the owner writes them.
+A merge or a delete of a partner moves the trips' links through `TripService`, so each move is on the trail ([concurrency](../architecture.md#concurrency)).
+
+```mermaid
+flowchart LR
+    Trip["TripService"]
+    Energy["EnergyService"]
+    Maintenance["MaintenanceService"]
+    Expense["ExpenseService"]
+    Booking["BookingService"]
+    Vehicle["VehicleService"]
+    PartnerLinks["PartnerLinks"]
+    CentreLinks["CostCentreLinks"]
+    Partner["PartnerService"]
+    Centre["CostCentreService"]
+    Budget["BudgetService"]
+    Warnings["BudgetWarnings"]
+    Trip --> PartnerLinks
+    Trip & Energy & Maintenance & Expense & Booking & Vehicle --> CentreLinks
+    Partner -->|"relink()"| Trip
+    Partner -->|"list()"| Vehicle
+    Centre -->|"list(): the owners a reader reaches"| Vehicle
+    Budget --> Vehicle
+    Budget -->|re-arm after a raise| Warnings
+```
+
 #### Reading the figures
 
 What the timeline, the header, the statistics and the exports compute.
@@ -139,8 +168,11 @@ flowchart TB
     Periods["LogbookPeriods"]
     Completeness["Completeness"]
     Jurisdictions["Jurisdictions"]
+    Centres["CostCentreSums"]
+    Budget["BudgetWarnings"]
     Kpi --> Cost & Emission & Preferences & Consumption
-    Statistics --> Cost & Emission & Preferences & Consumption & EnteredBy
+    Statistics --> Cost & Emission & Preferences & Consumption & EnteredBy & Centres & Budget
+    Centres & Budget --> Cost
     Cost --> Consumption
     Timeline --> Consumption & Gaps & EnteredBy & Completeness
     Export --> EnteredBy
@@ -153,6 +185,7 @@ flowchart TB
 
 `ReminderEngine` is pure: it computes a state and stores nothing.
 The `…Notices` classes write and withdraw notifications.
+`BudgetWarnings` holds each budget against the year's costs in the same hourly round, and notifies and mails itself.
 `Notifier` words them when they are read ([the reminder engine](../architecture.md#reminder-engine)).
 
 ```mermaid
@@ -174,7 +207,10 @@ flowchart LR
     Names["Names"]
     Zone["UserZone"]
     Access["VehicleAccess"]
-    Job --> Notification & Mail
+    Warnings["BudgetWarnings"]
+    Cost["CostService"]
+    Job --> Notification & Mail & Warnings
+    Warnings --> Mail & Zone & Access & Cost
     Reminder & Recipient & Grant & Vehicle --> Notification
     Notification & Mail & Reminder --> Engine
     Mail --> Zone
@@ -210,9 +246,11 @@ flowchart LR
     Booking["BookingService"]
     Document["DocumentService"]
     Reminder["ReminderService"]
+    Trip["TripService"]
     Erasure --> Grant & GrantNotices & Pending & Epoch
     Erasure -->|"withdraw()"| Vehicle
     Transfer --> GrantNotices & BookingNotices & Names & Epoch
+    Transfer -->|"relink() into the new owner's lists"| Trip
     Check --> Erasure & Odometer & Pending
     Grant --> Pending
     PendingJob --> Erasure & Grant & Booking
@@ -246,17 +284,19 @@ flowchart TB
         VehicleView["VehicleView"]
         Statistics["StatisticsView"]
         Inbox["InboxView"]
+        Partners["PartnersView"]
         Reports["ReportsView"]
     end
     subgraph settingsBundle["«artifact» nextfleet-settings"]
         settings["settings.js"]
         SettingsView["SettingsView"]
+        CostCentres["CostCentreList"]
     end
     main -->|"import()"| boot --> App
     App --> List & Sheet & Undo
-    App --> Overview & VehicleView & Statistics & Inbox & Reports
+    App --> Overview & VehicleView & Statistics & Inbox & Partners & Reports
     VehicleView --> Sheet
-    settings --> SettingsView
+    settings --> SettingsView --> CostCentres
 ```
 
 ### The vehicle screen
@@ -299,16 +339,20 @@ flowchart LR
     Recipients["ReminderRecipients"]
     Notices["BookingRecipients"]
     Grants["VehicleGrants"]
+    Budgets["VehicleBudgets"]
     Inspection["InspectionSticker"]
     Statistics["StatisticsView"]
     Bars["StatisticsBars"]
     Buckets["StatisticsBuckets"]
     Line["StatisticsLine"]
     Table["StatisticsTable"]
+    Partners["PartnersView"]
+    PartnerDetail["PartnerDetail"]
     Overview --> Hint
     Inbox --> InboxSheet & Entry
-    Sheet --> Recipients & Notices & Grants & Inspection
+    Sheet --> Recipients & Notices & Grants & Budgets & Inspection
     Statistics --> Bars & Buckets & Line & Table
+    Partners --> PartnerDetail
 ```
 
 ### State and the server
@@ -325,7 +369,7 @@ flowchart LR
     Prefs["usePreferencesStore<br/>store/preferences.js"]
     api["«component»<br/>services/api.js"]
     internal["/apps/nextfleet/api/…<br/>internal routes"]
-    pages["/apps/nextfleet/vehicles/…<br/>printed pages, CSV, documents"]
+    pages["/apps/nextfleet/vehicles/…, /apps/nextfleet/partners/…<br/>printed pages, CSV, documents"]
     core["/ocs/v2.php/core/autocomplete/get"]
     preview["/core/preview<br/>inbox thumbnails"]
     Screens --> Vehicles & InboxStore & Prefs

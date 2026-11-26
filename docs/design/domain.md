@@ -295,6 +295,57 @@ classDiagram
     BookingNotices ..> VehicleAccess : view, edit
 ```
 
+## Partners, cost centres and budgets
+
+A `Partner` and a `CostCentre` are in the list of the vehicle owner, `user_id`, shared by all their vehicles ([data model](../architecture.md#data-model)).
+A trip keeps its `partner` text and links the record; `PartnerLinks` finds it by name, else by another trip with the same text, else makes it ([ADR 0013](../adr/0013-a-partner-is-a-record-the-trip-keeps-its-text.md)).
+Each `CostCentred` entry names one cost centre, and a new one takes the vehicle's default (`CostCentreLinks`).
+A `Budget` is one amount per vehicle and year; `BudgetWarnings` tells its shares ([the budget warning](../architecture.md#reminder-engine)).
+
+```mermaid
+classDiagram
+    class Partner {
+        user_id
+        name
+        address
+        note
+    }
+    class CostCentre {
+        user_id
+        code
+        name
+        archived
+    }
+    class Budget {
+        year
+        amount
+        net
+        warned
+    }
+    class CostCentred {
+        <<interface>>
+        cost_centre_id
+    }
+    class Trip {
+        partner
+        partner_id
+    }
+    class PartnerLinks
+    class CostCentreLinks
+    class BudgetWarnings
+    Trip ..|> CostCentred
+    Energy ..|> CostCentred
+    Maintenance ..|> CostCentred
+    Expense ..|> CostCentred
+    Vehicle ..|> CostCentred : default
+    Partner "0..1" <-- "*" Trip : links
+    CostCentre "0..1" <-- "*" CostCentred : names
+    Vehicle "1" --> "*" Budget
+    PartnerLinks ..> Partner : name, linked text, new
+    CostCentreLinks ..> CostCentre : the pick, else the default
+    BudgetWarnings ..> Budget : 80 and 100 per cent
+```
+
 ## Documents and the inbox
 
 A `Document` points at a Nextcloud file by `file_id`.

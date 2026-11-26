@@ -8,19 +8,21 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Service;
 
+use OCA\NextFleet\Db\BudgetMapper;
 use OCA\NextFleet\Db\EnergyMapper;
 use OCA\NextFleet\Db\ExpenseMapper;
 use OCA\NextFleet\Db\MaintenanceMapper;
 
 /**
  * Whether a vehicle has any amount recorded in its currency: a priced fill-up, a costed record or
- * an expense, voided ones included.
+ * an expense, voided ones included, or a budget.
  */
 class MoneyRows {
 	public function __construct(
 		private EnergyMapper $energy,
 		private MaintenanceMapper $maintenance,
 		private ExpenseMapper $expenses,
+		private BudgetMapper $budgets,
 	) {
 	}
 
@@ -28,6 +30,7 @@ class MoneyRows {
 	public function exist(int $vehicleId): bool {
 		return $this->expenses->hasMoney($vehicleId)
 			|| $this->energy->hasMoney($vehicleId)
-			|| $this->maintenance->hasMoney($vehicleId);
+			|| $this->maintenance->hasMoney($vehicleId)
+			|| $this->budgets->hasMoney($vehicleId);
 	}
 }

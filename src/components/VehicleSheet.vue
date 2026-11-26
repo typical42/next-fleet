@@ -17,11 +17,13 @@ import { computed, onMounted, ref, watch } from 'vue'
 import BookingRecipients from './BookingRecipients.vue'
 import InspectionSticker from './InspectionSticker.vue'
 import ReminderRecipients from './ReminderRecipients.vue'
+import VehicleBudgets from './VehicleBudgets.vue'
 import VehicleGrants from './VehicleGrants.vue'
-import { ConflictError, RefusedError, getPreferences, getVehicle, listReminders, reminderTemplates, settingsUrl } from '../services/api.js'
+import { ConflictError, RefusedError, getPreferences, getVehicle, listCostCentres, listReminders, reminderTemplates, settingsUrl } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
 import { usePreferencesStore } from '../store/preferences.js'
 import { may } from '../utils/access.js'
+import { centreOptions } from '../utils/costCentres.js'
 import { decimalComplaint, energyWord, formatCount, formatDay, formatDecimal, jurisdictionWord, lifecycleWord, parseDay, parseDecimal, parseWhole } from '../utils/format.js'
 import { OFF_ROAD, REGISTRATION_HELP, addOnOptions, bodyOptions, categoryOptions, filterOptions, joinBody, joinCategory, splitBody, splitCategory, takesAddOn, typeOfCategory } from '../utils/registration.js'
 import { INSPECTION, inspectionOf, rewrite } from '../utils/reminders.js'
@@ -208,6 +210,14 @@ const approves = computed(() => approvalRule.value === 'always' || (approvalRule
 // The fleet settings wait for somebody else to have had access: a freelancer's own car shows none
 // (docs/adr/0012-nextfleet-also-serves-a-small-fleet.md). Hidden, they still save as they were.
 const everShared = computed(() => props.vehicle?.ever_granted === true)
+// The default a new entry takes, of the owner's list (docs/api.md#cost-centres). Asked only where the
+// owner uses cost centres; hidden, it saves as it was read.
+const offersCentres = computed(() => props.vehicle?.uses_cost_centres === true)
+const costCentre = ref(props.vehicle?.cost_centre_uuid ?? null)
+/** Every cost-centre list the session reads; empty until read. @type {import('vue').Ref<import('../services/api.js').CostCentre[]>} */
+const centres = ref([])
+const centreChoices = computed(() => centreOptions(centres.value, props.vehicle?.user_id, props.vehicle?.cost_centre_uuid ?? null))
+const centreChoice = computed(() => centreChoices.value.find((one) => one.id === costCentre.value) ?? null)
 
 /**
  * Whether switching the mode off has been confirmed. The switch itself is not intercepted: the
@@ -277,7 +287,7 @@ function typed() {
 		vehicleType.value?.id, engine.value?.id, energyTypes.value.map((/** @type {{ id: string }} */ one) => one.id),
 		odoUnit.value?.id, lifecycle.value?.id, jurisdiction.value, countsHours.value, logbookMode.value,
 		category.value?.id, offRoad.value, body.value?.id, addOn.value?.id, costsShared.value, bookingNotices.value,
-		approvalRule.value,
+		approvalRule.value, costCentre.value,
 	])
 }
 const untyped = typed()
@@ -368,6 +378,7 @@ onMounted(async () => {
 	}
 
 	readInspection()
+	readCentres()
 	try {
 		const settings = await getPreferences()
 		countries.value = settings.jurisdictions
@@ -396,6 +407,18 @@ async function readInspection() {
 		interval.value = inspected.value?.recur_months ? intervalOption(inspected.value.recur_months) : null
 	} catch {
 		// A convenience; the vehicle's own fields are what the sheet is for.
+	}
+}
+
+/** The cost centres the default is picked from. Without them the default stays as it was read. */
+async function readCentres() {
+	if (!offersCentres.value) {
+		return
+	}
+	try {
+		centres.value = await listCostCentres()
+	} catch {
+		// A convenience, as the countries are.
 	}
 }
 
@@ -472,6 +495,7 @@ function fields(read) {
 		color: color.value,
 		notes: notes.value,
 		reminder_mail: reminderMail.value,
+		...(offersCentres.value ? { cost_centre_uuid: costCentre.value } : {}),
 		// Left out for anyone else: the save spreads the vehicle current() read, which carries it as stored.
 		...(may(props.vehicle, 'own') ? { costs_shared: costsShared.value, booking_notices: bookingNotices.value, booking_approval_rule: approvalRule.value } : {}),
 	}
@@ -517,7 +541,7 @@ async function attempt(work, kind) {
 		if (error instanceof ConflictError) {
 			refused.value = kind
 		} else if (error instanceof RefusedError && error.reason === 'currency_in_use') {
-			failure.value = t('nextfleet', 'The currency cannot change any more: costs are already recorded in it for this vehicle.')
+			failure.value = t('nextfleet', 'The currency cannot change any more: costs or a budget are already recorded in it for this vehicle. If only a budget holds it, the owner can delete the budget.')
 		} else {
 			failure.value = REFUSALS[error.message]?.() ?? error.message
 		}
@@ -969,6 +993,25 @@ function chosen(options, id) {
 						:label="t('nextfleet', 'Currency')"
 						:disabled="saving"
 						maxlength="3" />
+					<!-- One cell, so the hint stays under its field in the two-column grid. -->
+					<div v-if="offersCentres">
+						<NcSelect :model-value="centreChoice"
+							:options="centreChoices"
+							searchable
+							:input-label="t('nextfleet', 'Default cost centre')"
+							:disabled="saving"
+							label="label"
+							:calculate-position="placeDropdown"
+							@update:model-value="(one) => costCentre = one?.id ?? null" />
+						<p class="sheet__hint">
+							{{ t('nextfleet', 'New entries take this cost centre. Entries already there keep theirs.') }}
+						</p>
+					</div>
+					<!-- Written on each change, like the access list below; whoever sees the costs reads it. -->
+					<VehicleBudgets v-if="offersCentres && may(props.vehicle, 'costs')"
+						class="sheet__wide"
+						:vehicle="props.vehicle"
+						:disabled="saving" />
 					<!-- Saved with the vehicle, unlike the access list below, which saves on each change. -->
 					<NcFormBoxSwitch v-if="may(props.vehicle, 'own') && everShared"
 						v-model="costsShared"

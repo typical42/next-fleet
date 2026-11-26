@@ -21,10 +21,13 @@ use OCA\NextFleet\Exception\ImportRefusedException;
 use OCA\NextFleet\Exception\RefusedException;
 use OCA\NextFleet\Exception\StaleUpdateException;
 use OCA\NextFleet\Service\BookingService;
+use OCA\NextFleet\Service\BudgetService;
+use OCA\NextFleet\Service\CostCentreService;
 use OCA\NextFleet\Service\DocumentService;
 use OCA\NextFleet\Service\GrantService;
 use OCA\NextFleet\Service\ImportService;
 use OCA\NextFleet\Service\OdometerService;
+use OCA\NextFleet\Service\PartnerService;
 use OCA\NextFleet\Service\PreferencesService;
 use OCA\NextFleet\Service\RecipientService;
 use OCA\NextFleet\Service\ReminderService;
@@ -199,6 +202,38 @@ class TwinAnswersTest extends TestCase {
 			static fn (object $c): DataResponse => $c->reset(self::UUID, self::ROW), new RefusedException('not in question', OdometerService::NOT_IN_QUESTION), Http::STATUS_BAD_REQUEST];
 		yield 'a preference it may not take' => [Controller\PreferencesController::class, PreferencesService::class, 'write',
 			static fn (object $c): DataResponse => $c->update(), new \InvalidArgumentException('kpi_period is one of …'), Http::STATUS_BAD_REQUEST];
+	}
+
+	/**
+	 * A record merged or deleted elsewhere is a 404 that names its kind, not the vehicle.
+	 *
+	 * @dataProvider goneRecords
+	 * @param class-string $internal
+	 * @param class-string $service
+	 * @param \Closure(object): DataResponse $call
+	 */
+	public function testARecordGoneIsA404NamingItsKindThroughEitherDoor(string $internal, string $service, string $method, \Closure $call, string $message): void {
+		[$internalAnswer, $ocs] = $this->bothDoors(
+			$internal,
+			$service,
+			['updated_at' => 1750000000],
+			$call,
+			static fn (object $mock) => $mock->method($method)->willThrowException(new DoesNotExistException('gone')),
+		);
+
+		$this->assertSame([Http::STATUS_NOT_FOUND, ['message' => $message]], $internalAnswer);
+		$this->assertSame($internalAnswer, $ocs);
+	}
+
+	/** @return iterable<string, array{class-string, class-string, string, \Closure(object): DataResponse, string}> */
+	public static function goneRecords(): iterable {
+		yield 'a partner' => [Controller\PartnerController::class, PartnerService::class, 'update',
+			static fn (object $c): DataResponse => $c->update(self::ROW), 'No such partner'];
+		yield 'a cost centre' => [Controller\CostCentreController::class, CostCentreService::class, 'delete',
+			static fn (object $c): DataResponse => $c->delete(self::ROW), 'No such cost centre'];
+		// The service does not say which of the two it missed.
+		yield 'a budget' => [Controller\BudgetController::class, BudgetService::class, 'update',
+			static fn (object $c): DataResponse => $c->update(self::UUID, self::ROW), 'No such vehicle or budget'];
 	}
 
 	public function testTheOcsDoorRefusesWithNextcloudsOwnExceptionsForForbiddenAndNotFound(): void {

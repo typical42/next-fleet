@@ -12,6 +12,8 @@ use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\Booking;
 use OCA\NextFleet\Db\BookingMapper;
+use OCA\NextFleet\Db\Budget;
+use OCA\NextFleet\Db\BudgetMapper;
 use OCA\NextFleet\Db\Reminder;
 use OCA\NextFleet\Db\ReminderMapper;
 use OCA\NextFleet\Db\ReminderRecipient;
@@ -20,6 +22,7 @@ use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Notification\Notifier;
 use OCA\NextFleet\Service\BookingNotices;
+use OCA\NextFleet\Service\BudgetWarnings;
 use OCA\NextFleet\Service\GrantNotices;
 use OCA\NextFleet\Service\LookalikeNotices;
 use OCA\NextFleet\Service\VehicleAccess;
@@ -282,6 +285,59 @@ class NotifierTest extends TestCase {
 
 		$this->expectException(AlreadyProcessedException::class);
 		$this->notifier($grant, sees: false)->prepare($notification, 'en');
+	}
+
+	/** @return array<string, array{int, string}> */
+	public static function shares(): array {
+		return [
+			'80 %' => [80, 'B-XY 123: 80 % of the budget for 2031 is used'],
+			'100 %' => [100, 'B-XY 123: The budget for 2031 is used up'],
+		];
+	}
+
+	#[DataProvider('shares')]
+	public function testABudgetsWarningNamesTheShareAndTheYear(int $share, string $expected): void {
+		$parsed = null;
+		$notification = $this->budgetNotice($share);
+		$notification->method('setParsedSubject')->willReturnCallback(function (string $subject) use (&$parsed, $notification) {
+			$parsed = $subject;
+
+			return $notification;
+		});
+
+		$this->notifier(budget: self::budget($share))->prepare($notification, 'en');
+
+		$this->assertSame($expected, $parsed);
+	}
+
+	/** @return array<string, array{\Closure(Budget): void}> */
+	public static function budgetsMovedOn(): array {
+		return [
+			'raised past the share' => [static fn (Budget $budget) => $budget->setWarned(0)],
+			'deleted' => [static fn (Budget $budget) => $budget->setDeletedAt(1)],
+			'on another vehicle' => [static fn (Budget $budget) => $budget->setVehicleId(99)],
+		];
+	}
+
+	/** @param \Closure(Budget): void $move */
+	#[DataProvider('budgetsMovedOn')]
+	public function testABudgetsWarningNoLongerTrueIsProcessed(\Closure $move): void {
+		$budget = self::budget(80);
+		$move($budget);
+
+		$this->expectException(AlreadyProcessedException::class);
+		$this->notifier(budget: $budget)->prepare($this->budgetNotice(80), 'en');
+	}
+
+	/** A manager made a driver no longer sees what the car costs. */
+	public function testABudgetsWarningToAReaderWithoutCostsIsProcessed(): void {
+		$this->expectException(AlreadyProcessedException::class);
+		$this->notifier(sees: false, budget: self::budget(80))->prepare($this->budgetNotice(80), 'en');
+	}
+
+	public function testABudgetsWarningWhoseBudgetIsGoneIsProcessed(): void {
+		$this->expectException(AlreadyProcessedException::class);
+		$this->notifier()->prepare($this->budgetNotice(80), 'en');
 	}
 
 	/** @return array<string, array{?string}> */
@@ -592,6 +648,31 @@ class NotifierTest extends TestCase {
 	}
 
 	/** @return INotification&\PHPUnit\Framework\MockObject\MockObject */
+	private function budgetNotice(int $share): INotification {
+		$notification = $this->createMock(INotification::class);
+		$notification->method('getApp')->willReturn('nextfleet');
+		$notification->method('getUser')->willReturn('anna');
+		$notification->method('getObjectType')->willReturn(BudgetWarnings::OBJECT);
+		$notification->method('getObjectId')->willReturn('12');
+		$notification->method('getSubject')->willReturn(BudgetWarnings::OBJECT);
+		$notification->method('getSubjectParameters')->willReturn(['vehicle' => 'v-1', 'plate' => 'B-XY 123', 'year' => 2031, 'share' => $share]);
+		$notification->method('setIcon')->willReturnSelf();
+
+		return $notification;
+	}
+
+	/** The budget of vehicle 5 for 2031, its warning told up to that share. */
+	private static function budget(int $warned): Budget {
+		$budget = new Budget();
+		$budget->setId(12);
+		$budget->setVehicleId(5);
+		$budget->setYear(2031);
+		$budget->setWarned($warned);
+
+		return $budget;
+	}
+
+	/** @return INotification&\PHPUnit\Framework\MockObject\MockObject */
 	private function cancelNotice(?string $by = null): INotification {
 		$notification = $this->createMock(INotification::class);
 		$notification->method('getApp')->willReturn('nextfleet');
@@ -647,7 +728,7 @@ class NotifierTest extends TestCase {
 		return $reminder;
 	}
 
-	private function notifier(?Access $grant = null, ?Booking $booking = null, bool $sees = true, bool $listed = true, ?Reminder $reminder = null, bool $gone = false, bool $vehicleGone = false, string $unit = 'km', ?string $plate = 'B-XY 123', ?string $displayName = null, ?string $make = null): Notifier {
+	private function notifier(?Access $grant = null, ?Booking $booking = null, bool $sees = true, bool $listed = true, ?Reminder $reminder = null, bool $gone = false, bool $vehicleGone = false, string $unit = 'km', ?string $plate = 'B-XY 123', ?string $displayName = null, ?string $make = null, ?Budget $budget = null): Notifier {
 		$l = $this->createMock(IL10N::class);
 		$l->method('t')->willReturnCallback(static fn (string $text, array $parameters = []): string => vsprintf($text, $parameters));
 		$l->method('l')->willReturnCallback(static fn (string $type, \DateTime $day): string => $day->format(match ($type) {
@@ -661,6 +742,7 @@ class NotifierTest extends TestCase {
 		$vehicle->setPlate($plate);
 		$vehicle->setDisplayName($displayName);
 		$vehicle->setManufacturer($make);
+		$vehicle->setId(5);
 		$vehicle->setUserId('anna');
 		$vehicle->setOdoUnit($unit);
 		$vehicles = $this->createMock(VehicleMapper::class);
@@ -708,7 +790,10 @@ class NotifierTest extends TestCase {
 			return $gone ? [] : [$reminder];
 		});
 
-		return new Notifier($factory, $this->createMock(IConfig::class), $this->createMock(IURLGenerator::class), $vehicles, $access, $grants, $users, $bookings, $recipients, $reminders);
+		$budgets = $this->createMock(BudgetMapper::class);
+		$budgets->method('findAnyById')->willReturnCallback(static fn (): Budget => $budget ?? throw new DoesNotExistException('gone'));
+
+		return new Notifier($factory, $this->createMock(IConfig::class), $this->createMock(IURLGenerator::class), $vehicles, $access, $grants, $users, $bookings, $recipients, $reminders, $budgets);
 	}
 
 	/** @return INotification&\PHPUnit\Framework\MockObject\MockObject */

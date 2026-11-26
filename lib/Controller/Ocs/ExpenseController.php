@@ -54,6 +54,7 @@ class ExpenseController extends OCSController {
 	 * @param int|null $vat_rate basis points; null is not stated, never zero
 	 * @param string|null $notes what it was
 	 * @param string|null $client_uuid a uuid of the client's for the new row: a retry under it answers that row
+	 * @param string|null $cost_centre_uuid a cost centre of the vehicle owner's; left out, the vehicle's default; null for none
 	 * @return DataResponse<Http::STATUS_CREATED, NextFleetExpense, array{}>|DataResponse<Http::STATUS_OK, NextFleetExpense, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
 	 * @throws OCSForbiddenException the caller may not log on this vehicle
 	 * @throws OCSNotFoundException no such vehicle
@@ -74,6 +75,7 @@ class ExpenseController extends OCSController {
 		mixed $vat_rate = null,
 		mixed $notes = null,
 		mixed $client_uuid = null,
+		mixed $cost_centre_uuid = null,
 	): DataResponse {
 		return $this->write(fn (): DataResponse => $this->created(
 			fn (): array => $this->service->record($this->userId(), $uuid, $this->request->getParams()),
@@ -120,6 +122,7 @@ class ExpenseController extends OCSController {
 	 * @param string|null $category insurance, tax, toll, parking, fine, lease or other
 	 * @param int|null $vat_rate basis points; null is not stated, never zero
 	 * @param string|null $notes what it was
+	 * @param string|null $cost_centre_uuid a cost centre of the vehicle owner's, or null for none; left out, the entry keeps its own
 	 * @return DataResponse<Http::STATUS_OK, NextFleetExpense, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
 	 * @throws OCSForbiddenException the caller may not edit this Expense
 	 * @throws OCSNotFoundException no such vehicle or Expense
@@ -140,6 +143,7 @@ class ExpenseController extends OCSController {
 		mixed $category = null,
 		mixed $vat_rate = null,
 		mixed $notes = null,
+		mixed $cost_centre_uuid = null,
 	): DataResponse {
 		return $this->write(fn (): DataResponse => new DataResponse(
 			$this->service->update($this->userId(), $uuid, $expense, $this->token(), $this->request->getParams()),

@@ -12,8 +12,14 @@ use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\Audit;
 use OCA\NextFleet\Db\AuditMapper;
+use OCA\NextFleet\Db\CostCentre;
+use OCA\NextFleet\Db\CostCentreMapper;
+use OCA\NextFleet\Db\Partner;
+use OCA\NextFleet\Db\PartnerMapper;
 use OCA\NextFleet\Db\ReminderRecipient;
 use OCA\NextFleet\Db\ReminderRecipientMapper;
+use OCA\NextFleet\Db\Trip;
+use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCP\AppFramework\Db\TTransactional;
@@ -37,6 +43,10 @@ class TransferService {
 		private AccessMapper $grants,
 		private ReminderRecipientMapper $recipients,
 		private AuditMapper $audit,
+		private TripMapper $trips,
+		private PartnerMapper $partners,
+		private CostCentreMapper $centres,
+		private TripService $tripService,
 		private GrantNotices $notices,
 		private BookingNotices $bookingNotices,
 		private VehicleAccess $access,
@@ -66,7 +76,8 @@ class TransferService {
 		/** @var array{vehicle: Vehicle, from: string, spent: list<string>, answered: bool} $done */
 		$done = $this->atomicRetry(function () use ($vehicleUuid, $newOwner): array {
 			$id = (int)$this->vehicles->findByUuid($vehicleUuid)->getId();
-			$this->vehicles->hold($id);
+			// With the new owner's lists, which carryPartners() adds to.
+			$this->vehicles->holdBeside($id, $newOwner);
 			// Read again under the hold, for a token nobody moved since.
 			$vehicle = $this->vehicles->findByUuid($vehicleUuid);
 			$from = $vehicle->getUserId();
@@ -85,12 +96,15 @@ class TransferService {
 			}
 			$this->vehicles->refreshOwnerApproval($vehicle);
 			$vehicle->setBookingApproval($vehicle->needsApproval());
+			// Before the write below, which carries the vehicle's default with it.
+			$this->carryCostCentres($vehicle, $newOwner);
 			$vehicle->setUserId($newOwner);
 			$vehicle = $this->vehicles->updateChecked($vehicle, $vehicle->getUpdatedAt());
 			if ($this->users->userExists($from)) {
 				$this->viewer($id, $from);
 			}
 			$this->remind($id, $newOwner);
+			$this->carryPartners($vehicle, $newOwner);
 
 			$row = new Audit();
 			$row->setCreatedBy(Audit::TRANSFERRED_BY);
@@ -124,6 +138,120 @@ class TransferService {
 		$grant->setRole(self::VIEWER);
 		$grant->setCreatedBy(Audit::TRANSFERRED_BY);
 		$this->grants->insert($grant);
+	}
+
+	/**
+	 * Links the vehicle's trips, voided ones too, to the new owner's list
+	 * ([ADR 0013](docs/adr/0013-a-partner-is-a-record-the-trip-keeps-its-text.md)): a record of the
+	 * same name there is taken as it is, any other is copied with its address and note. Each move
+	 * is on the trip's trail, as a merge's is. A deleted record stays the trip's mark
+	 * (Trip::linkPartner()): copying it would bring back what its owner erased. The former owner's
+	 * list stays as it is.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	private function carryPartners(Vehicle $vehicle, string $newOwner): void {
+		$trips = $this->trips->findAnyLinkingOn((int)$vehicle->getId());
+		$records = $this->partners->findAnyOf(array_values(array_unique(array_map(static fn (Trip $trip): int => (int)$trip->getPartnerId(), $trips))));
+		/** @var array<int, Partner> $copies by the id of the record copied */
+		$copies = [];
+		foreach ($trips as $trip) {
+			$record = $records[(int)$trip->getPartnerId()] ?? null;
+			if ($record === null || $record->getDeletedAt() !== null || $record->getUserId() === $newOwner) {
+				continue;
+			}
+			$copies[(int)$record->getId()] ??= $this->copy($record, $newOwner);
+			$this->tripService->relink(Audit::TRANSFERRED_BY, $vehicle, $trip, $copies[(int)$record->getId()]);
+		}
+	}
+
+	/** @throws \OCP\DB\Exception */
+	private function copy(Partner $record, string $newOwner): Partner {
+		$found = $this->partners->findByName($newOwner, $record->getName());
+		if ($found !== null) {
+			return $found;
+		}
+		$copy = new Partner();
+		$copy->setUserId($newOwner);
+		$copy->setName($record->getName());
+		$copy->setAddress($record->getAddress());
+		$copy->setNote($record->getNote());
+		$copy->setCreatedBy(Audit::TRANSFERRED_BY);
+
+		return $this->partners->insert($copy);
+	}
+
+	/**
+	 * Links the cost centres the vehicle's entries and its default name, in any state, to the new
+	 * owner's list: a record there with the same code, else the same name, is taken as it is; any
+	 * other is copied. A trip's move is on its trail; the other entries are on none. A deleted
+	 * record stays the entries' mark, as a deleted partner does. The former owner's list stays as
+	 * it is.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	private function carryCostCentres(Vehicle $vehicle, string $newOwner): void {
+		$id = (int)$vehicle->getId();
+		$trips = $this->trips->findAnyLinkingOn($id, 'cost_centre_id');
+		$named = $this->centres->namedOn($id);
+		$default = $vehicle->getCostCentreId();
+		$ids = [...array_map(static fn (Trip $trip): int => (int)$trip->getCostCentreId(), $trips), ...$named];
+		if ($default !== null) {
+			$ids[] = $default;
+		}
+		/** @var array<int, CostCentre> $copies by the id of the record copied */
+		$copies = [];
+		foreach ($this->centres->findAnyOf(array_values(array_unique($ids))) as $recordId => $record) {
+			if ($record->getDeletedAt() === null && $record->getUserId() !== $newOwner) {
+				$copies[$recordId] = $this->copyCentre($record, $newOwner);
+			}
+		}
+
+		foreach ($trips as $trip) {
+			$copy = $copies[(int)$trip->getCostCentreId()] ?? null;
+			if ($copy !== null) {
+				$this->tripService->relinkCostCentre(Audit::TRANSFERRED_BY, $vehicle, $trip, $copy);
+			}
+		}
+		foreach ($named as $recordId) {
+			if (isset($copies[$recordId])) {
+				$this->centres->moveOn($id, $recordId, (int)$copies[$recordId]->getId());
+			}
+		}
+		if ($default !== null && isset($copies[$default])) {
+			$vehicle->linkCostCentre($copies[$default]);
+		}
+	}
+
+	/**
+	 * A record found in the new owner's list is held and read again, after the vehicle's hold as
+	 * for an entry write (CostCentreLinks): a delete of it at the same time then either waits and
+	 * finds it named, or has committed, and the lookup goes on as if it was never there. A new copy
+	 * needs no hold, as nobody sees it before the commit.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	private function copyCentre(CostCentre $record, string $newOwner): CostCentre {
+		foreach (['code' => $record->getCode(), 'name' => $record->getName()] as $column => $value) {
+			$found = $value === null ? null : $this->centres->findBy($newOwner, $column, $value);
+			if ($found === null) {
+				continue;
+			}
+			$id = (int)$found->getId();
+			$this->centres->hold($id);
+			$found = $this->centres->findAnyOf([$id])[$id] ?? null;
+			if ($found !== null && $found->getDeletedAt() === null) {
+				return $found;
+			}
+		}
+		$copy = new CostCentre();
+		$copy->setUserId($newOwner);
+		$copy->setCode($record->getCode());
+		$copy->setName($record->getName());
+		$copy->setArchived($record->getArchived());
+		$copy->setCreatedBy(Audit::TRANSFERRED_BY);
+
+		return $this->centres->insert($copy);
 	}
 
 	/** The owner is where reminders go (VehicleService::create()), unless they are there already. */

@@ -32,7 +32,9 @@ use OCP\DB\Types;
  *
  * @psalm-import-type NextFleetExpense from \OCA\NextFleet\ResponseDefinitions
  */
-class Expense extends BaseEntity implements \JsonSerializable {
+class Expense extends BaseEntity implements \JsonSerializable, CostCentred {
+	use NamesCostCentre;
+
 	protected int $vehicleId = 0;
 	protected int $spentAt = 0;
 	protected int $spentAtOff = 0;
@@ -50,6 +52,7 @@ class Expense extends BaseEntity implements \JsonSerializable {
 		$this->addType('amount', Types::BIGINT);
 		$this->addType('vatRate', Types::INTEGER);
 		$this->addType('notes', Types::STRING);
+		$this->addType('costCentreId', Types::BIGINT);
 	}
 
 	/** @return NextFleetExpense */
@@ -62,6 +65,7 @@ class Expense extends BaseEntity implements \JsonSerializable {
 			'amount' => $this->amount,
 			'vat_rate' => $this->vatRate,
 			'notes' => $this->notes,
+			'cost_centre_uuid' => $this->getCostCentreUuid(),
 			'created_at' => $this->createdAt,
 			'updated_at' => $this->updatedAt,
 			'deleted_at' => $this->deletedAt,

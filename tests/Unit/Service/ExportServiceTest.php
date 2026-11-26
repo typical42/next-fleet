@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Tests\Unit\Service;
 
 use OCA\NextFleet\Db\AccessMapper;
+use OCA\NextFleet\Db\CostCentreMapper;
 use OCA\NextFleet\Db\Energy;
 use OCA\NextFleet\Db\EnergyMapper;
 use OCA\NextFleet\Db\Expense;
@@ -142,6 +143,7 @@ class ExportServiceTest extends TestCase {
 			$this->createMock(EnteredBy::class),
 			$logger,
 			new CostsShown(new VehicleAccess($this->createMock(AccessMapper::class), $this->createMock(IUserManager::class), $this->createMock(IGroupManager::class))),
+			$this->createMock(CostCentreMapper::class),
 		);
 	}
 

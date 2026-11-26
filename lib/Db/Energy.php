@@ -43,7 +43,9 @@ use OCP\DB\Types;
  *
  * @psalm-import-type NextFleetEnergyEntry from \OCA\NextFleet\ResponseDefinitions
  */
-class Energy extends BaseEntity implements \JsonSerializable {
+class Energy extends BaseEntity implements \JsonSerializable, CostCentred {
+	use NamesCostCentre;
+
 	protected int $vehicleId = 0;
 	protected int $filledAt = 0;
 	protected int $filledAtOff = 0;
@@ -77,6 +79,7 @@ class Energy extends BaseEntity implements \JsonSerializable {
 		$this->addType('station', Types::STRING);
 		$this->addType('isDc', Types::BOOLEAN);
 		$this->addType('locationKind', Types::STRING);
+		$this->addType('costCentreId', Types::BIGINT);
 	}
 
 	/**
@@ -137,6 +140,7 @@ class Energy extends BaseEntity implements \JsonSerializable {
 			'station' => $this->station,
 			'is_dc' => $this->getIsDc(),
 			'location_kind' => $this->locationKind,
+			'cost_centre_uuid' => $this->getCostCentreUuid(),
 			'created_at' => $this->createdAt,
 			'updated_at' => $this->updatedAt,
 			'deleted_at' => $this->deletedAt,

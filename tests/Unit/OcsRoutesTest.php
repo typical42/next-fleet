@@ -26,7 +26,7 @@ class OcsRoutesTest extends TestCase {
 	 * the envelope. A client opens them with its app password as they are (docs/api.md#downloads).
 	 * Every other route has a twin (RouteSweepTest).
 	 */
-	public const DOWNLOADS = ['document#download', 'report#logbook', 'report#mileage', 'report#csv'];
+	public const DOWNLOADS = ['document#download', 'report#logbook', 'report#mileage', 'report#csv', 'partner#csv'];
 
 	/**
 	 * The routes a client has and the web UI does not: they read, and nothing internal answers

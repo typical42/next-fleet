@@ -41,6 +41,52 @@ class CostService {
 	}
 
 	/**
+	 * of()'s `total` alone, for a caller that needs the sum and no rate (BudgetWarnings): the
+	 * counter is not read. Every row in the period counts, whoever entered it.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	public function total(Vehicle $vehicle, int $from, int $to, bool $net): int {
+		$vehicleId = (int)$vehicle->getId();
+		$total = 0;
+		foreach ([
+			...$this->energy->findBetween($vehicleId, $from, $to),
+			...$this->maintenance->findBetween($vehicleId, $from, $to),
+			...$this->expenses->findBetween($vehicleId, $from, $to),
+		] as $entry) {
+			$total += self::amount($entry, $net);
+		}
+
+		return $total;
+	}
+
+	/**
+	 * An entry's money as a sum counts it (counted()). Public for CostCentreSums, which counts the
+	 * same rows by cost centre.
+	 */
+	public static function amount(Energy|Maintenance|Expense $entry, bool $net): int {
+		$gross = match (true) {
+			$entry instanceof Energy => $entry->getTotal(),
+			$entry instanceof Maintenance => $entry->getCost(),
+			default => $entry->getAmount(),
+		};
+
+		return self::counted($gross, $entry->getVatRate(), $net);
+	}
+
+	/**
+	 * A gross amount as a sum counts it: net of its own rate where asked, and gross where it
+	 * states no rate.
+	 */
+	private static function counted(?int $gross, ?int $rate, bool $net): int {
+		if ($gross === null || !$net || $rate === null) {
+			return (int)$gross;
+		}
+
+		return (int)round($gross * 10000 / (10000 + $rate));
+	}
+
+	/**
 	 * of() for many periods at once, as KpiService::year()'s months and their year ask: each table
 	 * is read once over all of them, and the distances by ConsumptionService::distances().
 	 *
@@ -83,23 +129,23 @@ class CostService {
 	 * which it does not show, and the distances off one read of the counter
 	 * (ConsumptionService::distancesAlong()). Its `hours` and `tco` are null.
 	 *
+	 * The caller reads the rows, over the periods at least: it counts them by cost centre too.
+	 *
 	 * @param non-empty-list<array{int, int}> $periods each `[from, to]`, half-open
-	 * @param list<Energy> $fills the vehicle's over the periods at least, read by the caller
+	 * @param list<Energy> $fills
+	 * @param list<Maintenance> $records
+	 * @param list<Expense> $expenses
 	 * @return list<Cost> in the periods' order
 	 * @throws \OCP\DB\Exception
 	 */
-	public function lean(Vehicle $vehicle, array $periods, bool $net, array $fills): array {
-		$vehicleId = (int)$vehicle->getId();
-		$from = min(array_column($periods, 0));
-		$to = max(array_column($periods, 1));
-
+	public function lean(Vehicle $vehicle, array $periods, bool $net, array $fills, array $records, array $expenses): array {
 		return $this->each(
 			$vehicle,
 			$periods,
 			$net,
 			$fills,
-			$this->maintenance->findBetween($vehicleId, $from, $to),
-			$this->expenses->findBetween($vehicleId, $from, $to),
+			$records,
+			$expenses,
 			$this->consumption->distancesAlong($vehicle, $periods),
 			array_fill(0, count($periods), null),
 			static fn (): ?float => null,
@@ -154,14 +200,9 @@ class CostService {
 	private function cost(Vehicle $vehicle, bool $net, array $fills, array $records, array $expenses, ?int $distance, ?int $hours, \Closure $tco, ?array $parts = null): array {
 		$unstated = false;
 		$count = static function (?int $gross, ?int $rate) use ($net, &$unstated): int {
-			if ($gross === null || !$net) {
-				return (int)$gross;
-			}
-			if ($rate === null) {
-				$unstated = true;
-				return $gross;
-			}
-			return (int)round($gross * 10000 / (10000 + $rate));
+			$unstated = $unstated || ($gross !== null && $net && $rate === null);
+
+			return self::counted($gross, $rate, $net);
 		};
 
 		$energy = 0;

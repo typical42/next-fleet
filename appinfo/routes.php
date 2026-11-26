@@ -173,7 +173,34 @@ return [
 		['name' => 'preferences#index', 'url' => '/api/preferences', 'verb' => 'GET'],
 		['name' => 'preferences#update', 'url' => '/api/preferences', 'verb' => 'PUT'],
 		// What waits in the folder the preferences name (lib/Service/InboxService.php).
-		['name' => 'inbox#index', 'url' => '/api/inbox', 'verb' => 'GET'],	],
+		['name' => 'inbox#index', 'url' => '/api/inbox', 'verb' => 'GET'],
+
+		// The caller's partner list, one per owner and no vehicle in the path (ADR 0013). Not
+		// `{partner}`, the field a trip sends (tests/Unit/RoutesTest.php).
+		['name' => 'partner#index', 'url' => '/api/partners', 'verb' => 'GET'],
+		['name' => 'partner#show', 'url' => '/api/partners/{record}', 'verb' => 'GET'],
+		['name' => 'partner#update', 'url' => '/api/partners/{record}', 'verb' => 'PUT'],
+		['name' => 'partner#delete', 'url' => '/api/partners/{record}', 'verb' => 'DELETE'],
+		// Its own verb and path: it writes two records and every trip that links the one.
+		['name' => 'partner#merge', 'url' => '/api/partners/{record}/merge', 'verb' => 'POST'],
+		['name' => 'partner#trips', 'url' => '/api/partners/{record}/trips', 'verb' => 'GET'],
+		// A file the browser saves, outside `/api` for the reason report#csv is.
+		['name' => 'partner#csv', 'url' => '/partners/{record}/csv', 'verb' => 'GET'],
+
+		// The owner's cost centres, and those of every owner whose vehicle the caller reaches.
+		// `{record}` for the reason the partner routes give.
+		['name' => 'costCentre#index', 'url' => '/api/cost-centres', 'verb' => 'GET'],
+		['name' => 'costCentre#create', 'url' => '/api/cost-centres', 'verb' => 'POST'],
+		['name' => 'costCentre#update', 'url' => '/api/cost-centres/{record}', 'verb' => 'PUT'],
+		['name' => 'costCentre#delete', 'url' => '/api/cost-centres/{record}', 'verb' => 'DELETE'],
+
+		// What the owner plans for a vehicle per calendar year. No restore: a delete is undone by
+		// setting the year again.
+		['name' => 'budget#index', 'url' => '/api/vehicles/{uuid}/budgets', 'verb' => 'GET'],
+		['name' => 'budget#create', 'url' => '/api/vehicles/{uuid}/budgets', 'verb' => 'POST'],
+		['name' => 'budget#update', 'url' => '/api/vehicles/{uuid}/budgets/{budget}', 'verb' => 'PUT'],
+		['name' => 'budget#delete', 'url' => '/api/vehicles/{uuid}/budgets/{budget}', 'verb' => 'DELETE'],
+	],
 
 	// The public API, at /ocs/v2.php/apps/nextfleet/api/v1 (docs/api.md). Each route twins the
 	// internal one at the same path under /api, through a controller of the same name under
@@ -277,6 +304,22 @@ return [
 		['name' => 'Ocs\Preferences#index', 'url' => '/api/v1/preferences', 'verb' => 'GET'],
 		['name' => 'Ocs\Preferences#update', 'url' => '/api/v1/preferences', 'verb' => 'PUT'],
 		['name' => 'Ocs\Inbox#index', 'url' => '/api/v1/inbox', 'verb' => 'GET'],
+
+		['name' => 'Ocs\Partner#index', 'url' => '/api/v1/partners', 'verb' => 'GET'],
+		['name' => 'Ocs\Partner#show', 'url' => '/api/v1/partners/{record}', 'verb' => 'GET'],
+		['name' => 'Ocs\Partner#update', 'url' => '/api/v1/partners/{record}', 'verb' => 'PUT'],
+		['name' => 'Ocs\Partner#delete', 'url' => '/api/v1/partners/{record}', 'verb' => 'DELETE'],
+		['name' => 'Ocs\Partner#merge', 'url' => '/api/v1/partners/{record}/merge', 'verb' => 'POST'],
+		['name' => 'Ocs\Partner#trips', 'url' => '/api/v1/partners/{record}/trips', 'verb' => 'GET'],
+
+		['name' => 'Ocs\CostCentre#index', 'url' => '/api/v1/cost-centres', 'verb' => 'GET'],
+		['name' => 'Ocs\CostCentre#create', 'url' => '/api/v1/cost-centres', 'verb' => 'POST'],
+		['name' => 'Ocs\CostCentre#update', 'url' => '/api/v1/cost-centres/{record}', 'verb' => 'PUT'],
+		['name' => 'Ocs\CostCentre#delete', 'url' => '/api/v1/cost-centres/{record}', 'verb' => 'DELETE'],
+		['name' => 'Ocs\Budget#index', 'url' => '/api/v1/vehicles/{uuid}/budgets', 'verb' => 'GET'],
+		['name' => 'Ocs\Budget#create', 'url' => '/api/v1/vehicles/{uuid}/budgets', 'verb' => 'POST'],
+		['name' => 'Ocs\Budget#update', 'url' => '/api/v1/vehicles/{uuid}/budgets/{budget}', 'verb' => 'PUT'],
+		['name' => 'Ocs\Budget#delete', 'url' => '/api/v1/vehicles/{uuid}/budgets/{budget}', 'verb' => 'DELETE'],
 
 		// The client's alone, with no internal twin: what changed since its last call, every table
 		// at once (docs/api.md#sync).

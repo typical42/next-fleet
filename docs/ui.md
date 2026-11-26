@@ -95,8 +95,9 @@ Drawn in [design/components.md#frontend](design/components.md#frontend).
 | **Vehicle sheet** | Create with a few fields; edit everything, in [four sections](#the-edit-sheets-sections) | Save |
 | **Statistics** | Every vehicle or one, over a range ([below](#the-statistics-screen)); the vehicle's *Costs* opens it on that vehicle | Pick a range |
 | **Inbox** | The receipts waiting in the inbox folder ([below](#the-inbox-screen)) | Attach |
+| **Partners** | The owner's partner list ([ADR 0013](adr/0013-a-partner-is-a-record-the-trip-keeps-its-text.md)); one partner opens with its fields, its trips over a range with a CSV, *Merge…* and *Delete…*. In the navigation for whoever owns a vehicle or keeps a list (the access table below). | Save |
 | **Reports** | The logbook and the mileage claim, as a page to print ([ADR 0005](adr/0005-no-pdf-library.md)) | Open |
-| **Personal settings** | Country, "I reclaim VAT", grid factor, inbox folder, and *Bookings need approval* under *Bookings* for an owner of a shared vehicle. A block on Nextcloud's settings page, with its own bundle. | Pick, it saves |
+| **Personal settings** | Country, "I reclaim VAT", grid factor, inbox folder, *Bookings need approval* under *Bookings* for an owner of a shared vehicle, and under *Cost centres and budgets* the owner's cost-centre list, behind the switch *Use cost centres and budgets* for an owner who shares no vehicle. A block on Nextcloud's settings page, with its own bundle. | Pick, it saves |
 
 **Reports** offers each button only where the country prints it, because any other opens a 404.
 Sold vehicles are offered too.
@@ -114,11 +115,16 @@ Up to 24 months are cut into months, a longer range into years.
 **Sections**, each a chart and a table, one per currency or unit, since nothing is summed across them:
 
 - *Costs in {currency}*: energy, maintenance and expenses stacked, and each category's share of the range.
+  For one vehicle and a calendar year with a budget, a meter under the chart holds the spent sum against the budget, yellow from 80 %, red from 100 %, where the warnings go out, and says whether it counts net or gross.
+  It counts as the budget warning does, so it can differ from the bars.
 - *Cost per 100 km* or *per hour*: a line, the vehicle's own or the fleet's; under the fleet's, a table compares the vehicles by cost, distance and rate.
   A note says when a cost in a period without a distance is left out of the rate.
 - *Distance by trip category* (*Hours by …* on an hour meter): business, private and commute stacked.
 - *Distance by driver* (or *Hours by driver*): trips, distance and business share over the range.
   The owner and managers of a vehicle see every driver, anyone else only themselves, and the screen says so ([legal](legal.md)).
+- *By cost centre*: a table only, trips and distance per unit, then costs per currency, *No cost centre* last.
+  It shows once an entry in the range names a cost centre; a row of *No cost centre* alone says nothing.
+  Its costs are the cost series' rows, so their notes (net, incomplete, counted gross) stand under it too.
 - *Consumption*: per fill-up interval for one vehicle, each vehicle's average for all.
 - *CO₂ (estimate)*, for one vehicle.
 
@@ -141,7 +147,9 @@ It opens on the trip, because a logbook is for trips.
   The start counter is a claim about what the dashboard read, and filling it in would answer the question gap detection asks.
   The sheet *offers* where the last trip ended, and *Use it* makes it the driver's word.
   The category is the one this person last used here, else none: calling a trip business is the claim, and the app does not make it.
-  Places, purposes and partners complete from this vehicle's history, which keeps six spellings of one client out of the reports.
+  Places and purposes complete from this vehicle's history, which keeps six spellings of one client out of the reports.
+  Partners complete from the owner's whole list, since a firm visits the same partner in each car: the ones this vehicle named first, latest first, then the rest by name.
+  A name the list does not have links the record another live trip with this text links (a merged or renamed spelling), else becomes a new record ([ADR 0013](adr/0013-a-partner-is-a-record-the-trip-keeps-its-text.md)).
 - **Energy**: amount and total price, then the counter, in the order you read them at the pump.
   Only the vehicle's `energy_types` are offered.
   "Full tank" is on by default, because it usually is.
@@ -153,6 +161,11 @@ It opens on the trip, because a logbook is for trips.
   The escape hatch for everything else.
 - **Expense**: the amount.
   A category the country charges no VAT on sets the rate to 0.
+
+Each kind but the odometer ends with *Cost centre* where the vehicle's owner uses cost centres (`uses_cost_centres`).
+It offers the owner's list without the archived ones, and starts on the vehicle's default; an edit keeps the entry's own, archived or not.
+It shows to every driver, costs hidden or not: it names a part of the business, not money.
+A new entry sends one only when somebody picked or cleared it, so the server applies the default it holds when the entry arrives.
 
 Rules for all five:
 
@@ -198,7 +211,9 @@ The code is no credential ([security](security.md#things-that-are-visible-in-the
 *Edit vehicle* has four sections, each under a heading, in this order:
 
 1. *Vehicle*: identity, registration, counter, energy, VIN, first registration, the HU/AU with its reminder recipients, tank, battery, country, Logbook mode, lifecycle, colour, notes.
-2. *Costs*: purchase price, residual value, currency, and *Drivers and viewers see costs*.
+2. *Costs*: purchase price, residual value, currency, *Default cost centre* where the owner uses cost centres, the budgets, and *Drivers and viewers see costs*.
+   The budgets show where the owner uses cost centres and budgets and the reader sees the costs: a row per year with its amount, net or gross.
+   The owner adds a year, changes an amount and deletes one; each saves at once, like the access list, and a manager only reads.
 3. *Access*: the grant list ([below](#the-access-section)).
 4. *Bookings*: *Bookings need approval*, and the booking notices with their events.
    Approval is a dropdown, not a switch: *As for all my vehicles (now: on)* or *(now: off)*, *Always*, *Never*.
@@ -297,7 +312,7 @@ The import sheet takes the vehicle sheet's place, so one dialog is open at a tim
 ### Screens follow the role
 
 A grantee sees the whole vehicle and only the buttons their role allows.
-The screen hides by `may` and nothing else; the server still refuses on its own.
+The screen hides by `may`, and the cost-centre fields also by `uses_cost_centres`; the server still refuses on its own.
 Drawn in [design/context.md#by-role](design/context.md#by-role).
 
 | Offered | Takes |
@@ -309,8 +324,10 @@ Drawn in [design/context.md#by-role](design/context.md#by-role).
 | *Import from a file…* | `edit`, on a vehicle not disposed of |
 | A timeline row that opens | the row's `edit` |
 | *Delete* or *Void trip* | the row's `delete` |
-| *Delete vehicle*, the Access section, *Drivers and viewers see costs*, *Bookings need approval*, the booking notices | `own` |
-| *Costs*, the header's cost tiles, *Open mileage claim* | `costs` |
+| *Delete vehicle*, the Access section, *Drivers and viewers see costs*, *Bookings need approval*, the booking notices, adding and changing a budget | `own` |
+| *Partners* in the navigation | `own` on any vehicle in the list; without it, an own partner list read non-empty at start, or `own` held earlier in the session. The list outlives the last vehicle, trashed or transferred away, and an erasure request is answered on it |
+| *Costs*, the header's cost tiles, *Open mileage claim*, the budgets | `costs` |
+| *Cost centre* on an entry, *Default cost centre* with `edit` | the vehicle's `uses_cost_centres` |
 | *Take the car* rather than *Request* on *Take it now*, back by midnight, where approval applies | `take_now` |
 
 A row the reader may not change still says everything, and opens nothing.
@@ -339,9 +356,12 @@ Access through a group cannot be left: the screen names the group instead.
 - **The country is not asked.**
   It comes from the personal setting and changes in the edit sheet.
   A freelancer's vehicles are all in one country.
-- **Switching Logbook mode off is the one thing that asks.**
-  Undo does not reach it: switching back on is a second flip, not a way back.
+- **Only what undo cannot reach asks.**
+  Switching Logbook mode off asks: switching back on is a second flip, not a way back.
   Switching on asks nothing.
+  A partner's merge and delete ask, because a delete is an erasure and a merge cannot be split again.
+  A cost centre's delete does not ask: only one that nothing names goes, so adding it again brings all of it back.
+  Nor does a budget's: it is one amount, typed again in a moment.
 - **Empty states teach.**
   The empty timeline offers *New entry* and *Import from a file…*.
   A list still loading shows a spinner, never "No vehicles yet".

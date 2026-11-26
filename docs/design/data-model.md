@@ -17,6 +17,8 @@ A dashed line points by a type column and an id, such as `source_type` and `sour
 Each Entry with a counter writes one Reading per counter.
 The vehicle caches the newest values in `odo_value` and `second_value`.
 Each instant a user entered has its offset in a `_off` column ([time](../architecture.md#time)).
+A partner is in its owner's list, so `user_id` is the vehicle owner.
+The trip keeps its `partner` text and links the record in `partner_id` ([ADR 0013](../adr/0013-a-partner-is-a-record-the-trip-keeps-its-text.md)).
 
 ```mermaid
 erDiagram
@@ -28,6 +30,7 @@ erDiagram
     fleet_trips |o..|| fleet_odo_readings : "writes"
     fleet_energy |o..o{ fleet_odo_readings : "writes, one per counter"
     fleet_maintenance |o..o{ fleet_odo_readings : "writes, one per counter"
+    fleet_partners |o--o{ fleet_trips : "named on"
 
     fleet_vehicles {
         string(64) user_id
@@ -63,6 +66,7 @@ erDiagram
         string(32) color
         text notes
         string(8) reminder_mail
+        bigint cost_centre_id FK
     }
     fleet_odo_readings {
         bigint vehicle_id FK
@@ -89,8 +93,16 @@ erDiagram
         string(255) to_label
         string(255) purpose
         string(255) partner
+        bigint partner_id FK
         string(16) category
         boolean reconciled
+        bigint cost_centre_id FK
+    }
+    fleet_partners {
+        string(64) user_id
+        string(255) name
+        text address
+        text note
     }
     fleet_energy {
         bigint vehicle_id FK
@@ -108,6 +120,7 @@ erDiagram
         string(255) station
         boolean is_dc
         string(16) location_kind
+        bigint cost_centre_id FK
     }
     fleet_maintenance {
         bigint vehicle_id FK
@@ -132,6 +145,7 @@ erDiagram
         date next_due_date
         bigint next_due_odo
         boolean took_back
+        bigint cost_centre_id FK
     }
     fleet_expenses {
         bigint vehicle_id FK
@@ -141,6 +155,48 @@ erDiagram
         bigint amount
         integer vat_rate
         text notes
+        bigint cost_centre_id FK
+    }
+```
+
+## Cost centres
+
+A cost centre is in its owner's list, so `user_id` is the vehicle owner.
+Each entry names one in `cost_centre_id`; the vehicle's is the one a new entry takes.
+An archived one stays on the entries that name it.
+
+```mermaid
+erDiagram
+    fleet_cost_centres |o--o{ fleet_vehicles : "taken by new entries of"
+    fleet_cost_centres |o--o{ fleet_trips : "counts the distance of"
+    fleet_cost_centres |o--o{ fleet_energy : "counts"
+    fleet_cost_centres |o--o{ fleet_maintenance : "counts"
+    fleet_cost_centres |o--o{ fleet_expenses : "counts"
+
+    fleet_cost_centres {
+        string(64) user_id
+        string(32) code
+        string(255) name
+        boolean archived
+    }
+```
+
+## Budgets
+
+A budget is one amount per vehicle and calendar year, in cents of the vehicle's currency.
+`net` says whether it and the costs held against it are net of VAT.
+`warned` is the highest share the warning has told; it is no field of the answer.
+
+```mermaid
+erDiagram
+    fleet_vehicles ||--o{ fleet_budgets : "plans"
+
+    fleet_budgets {
+        bigint vehicle_id FK
+        integer year
+        bigint amount
+        boolean net
+        smallint warned
     }
 ```
 

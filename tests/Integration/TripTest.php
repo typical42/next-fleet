@@ -70,6 +70,7 @@ class TripTest extends TestCase {
 			'fleet_odo_readings' => 'created_by',
 			'fleet_vehicles' => 'user_id',
 			'fleet_access' => 'created_by',
+			'fleet_partners' => 'user_id',
 		];
 		foreach ($tables as $table => $column) {
 			$qb = $db->getQueryBuilder();
@@ -334,9 +335,10 @@ class TripTest extends TestCase {
 	}
 
 	/**
-	 * What the sheet completes route, purpose and partner from: this vehicle's own trips, each word
-	 * once and the latest first. A starting point and a destination are one list, because where a
-	 * trip ended is where the next one sets off. A voided trip and another vehicle's are not asked.
+	 * What the sheet completes route and purpose from: this vehicle's own trips, each word once and
+	 * the latest first. A starting point and a destination are one list, because where a trip ended
+	 * is where the next one sets off. A voided trip and another vehicle's are not asked. Partners
+	 * come from the owner's list (testThePrefillOffersTheOwnersPartnersThisVehiclesLatestFirst).
 	 */
 	public function testThePrefillOffersThisVehiclesTripWordsLatestFirst(): void {
 		$mine = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 130']);
@@ -352,10 +354,35 @@ class TripTest extends TestCase {
 		$this->assertSame([
 			'places' => ['Depot', 'Office', 'Müller GmbH'],
 			'purposes' => ['Delivery', 'Client visit'],
-			'partners' => ['Müller GmbH'],
+			'partners' => ['Müller GmbH', 'Nobody', 'Theirs'],
 			'category' => Trip::BUSINESS,
 			'last' => ['end_odo' => 120200, 'ended_at' => 1750205400, 'ended_at_off' => 0],
 		], $this->service->prefill(self::AUTHOR, $uuid));
+	}
+
+	/**
+	 * The sheet completes a partner from the owner's whole list, since a firm visits the same
+	 * partner in each car: the ones this vehicle named first, latest first, then the rest by name.
+	 * Each by the name its record has now, and only once. Another owner's list is not asked.
+	 */
+	public function testThePrefillOffersTheOwnersPartnersThisVehiclesLatestFirst(): void {
+		$uuid = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 132'])->getUuid();
+		$other = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 133'])->getUuid();
+		$this->record($other, 1750000000, ['end_odo' => 5000, 'partner' => 'Zander']);
+		$this->record($other, 1750100000, ['end_odo' => 5100, 'partner' => 'Adler']);
+		$this->record($uuid, 1750000000, ['end_odo' => 120000, 'partner' => 'Weber']);
+		$mueller = $this->record($uuid, 1750100000, ['end_odo' => 120100, 'partner' => 'Mueller']);
+		$this->record($uuid, 1750200000, ['end_odo' => 120200, 'partner' => 'Weber']);
+		$qb = \OCP\Server::get(IDBConnection::class)->getQueryBuilder();
+		$qb->update('fleet_partners')
+			->set('name', $qb->createNamedParameter('Müller'))
+			->where($qb->expr()->eq('id', $qb->createNamedParameter($mueller->getPartnerId(), IQueryBuilder::PARAM_INT)));
+		$qb->executeStatement();
+		$theirs = $this->vehicles->create(self::OTHER, ['plate' => 'B-XY 134'])->getUuid();
+		$this->service->record(self::OTHER, $theirs, ['started_at' => 1750000000, 'started_at_off' => 0, 'ended_at' => 1750005400,
+			'ended_at_off' => 0, 'end_odo' => 100, 'category' => Trip::BUSINESS, 'partner' => 'Bauer']);
+
+		$this->assertSame(['Weber', 'Müller', 'Adler', 'Zander'], $this->service->prefill(self::AUTHOR, $uuid)['partners']);
 	}
 
 	/**
