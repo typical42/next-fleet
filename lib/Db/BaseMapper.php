@@ -40,6 +40,64 @@ abstract class BaseMapper extends QBMapper {
 	}
 
 	/**
+	 * Every read of a CostCentred row names its cost centre, so every answer carries
+	 * `cost_centre_uuid`.
+	 *
+	 * @return list<T>
+	 * @throws \OCP\DB\Exception
+	 */
+	protected function findEntities(IQueryBuilder $query): array {
+		$entities = parent::findEntities($query);
+		$this->nameCostCentres($entities);
+
+		return $entities;
+	}
+
+	/**
+	 * @return T
+	 * @throws DoesNotExistException
+	 * @throws MultipleObjectsReturnedException
+	 * @throws \OCP\DB\Exception
+	 */
+	protected function findEntity(IQueryBuilder $query): Entity {
+		$entity = parent::findEntity($query);
+		$this->nameCostCentres([$entity]);
+
+		return $entity;
+	}
+
+	/**
+	 * Hangs on each row the uuid of the cost centre it names, one query per InList chunk. A live
+	 * record only, as NamesCostCentre::linkCostCentre() names one.
+	 *
+	 * @param list<Entity> $entities
+	 * @throws \OCP\DB\Exception
+	 */
+	private function nameCostCentres(array $entities): void {
+		$byCentre = [];
+		foreach ($entities as $entity) {
+			if ($entity instanceof CostCentred && $entity->getCostCentreId() !== null) {
+				$byCentre[$entity->getCostCentreId()][] = $entity;
+			}
+		}
+
+		foreach (InList::chunks(array_keys($byCentre)) as $chunk) {
+			$qb = $this->db->getQueryBuilder();
+			$qb->select('id', 'uuid')
+				->from('fleet_cost_centres')
+				->where(InList::in($qb, 'id', $chunk, IQueryBuilder::PARAM_INT_ARRAY))
+				->andWhere($qb->expr()->isNull('deleted_at'));
+			$result = $qb->executeQuery();
+			while (($row = $result->fetch()) !== false) {
+				foreach ($byCentre[(int)$row['id']] as $entity) {
+					$entity->setCostCentreUuid((string)$row['uuid']);
+				}
+			}
+			$result->closeCursor();
+		}
+	}
+
+	/**
 	 * Stamps the row's identity and its dating. A uuid the entity already carries is kept - an
 	 * import brings its own - but `created_by` has to be there, and `created_at` is the
 	 * server's whatever the caller put in it.
@@ -57,7 +115,7 @@ abstract class BaseMapper extends QBMapper {
 		}
 
 		if ($entity->getUuid() === '') {
-			$entity->setUuid($this->newUuid());
+			$entity->setUuid(self::newUuid($this->random));
 		}
 
 		$now = $this->time->getTime();
@@ -720,10 +778,11 @@ abstract class BaseMapper extends QBMapper {
 	}
 
 	/**
-	 * A uuid the database never sees twice, from the server's CSPRNG.
+	 * A uuid the database never sees twice, from the server's CSPRNG. Public for a migration that
+	 * writes rows without an entity, whose columns may have grown since.
 	 */
-	private function newUuid(): string {
-		$hex = $this->random->generate(32, '0123456789abcdef');
+	public static function newUuid(ISecureRandom $random): string {
+		$hex = $random->generate(32, '0123456789abcdef');
 
 		// RFC 4122 version 4: the version nibble is 4, the variant nibble one of 8-b.
 		$hex[12] = '4';

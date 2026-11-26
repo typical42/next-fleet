@@ -12,6 +12,7 @@ use OCA\NextFleet\Dashboard\DueWidget;
 use OCA\NextFleet\Jurisdiction\Generic\ServiceTemplates;
 use OCA\NextFleet\Jurisdiction\IServiceTemplates;
 use OCA\NextFleet\Listener\GroupDeletedListener;
+use OCA\NextFleet\Listener\GroupMemberAddedListener;
 use OCA\NextFleet\Listener\GroupMemberRemovedListener;
 use OCA\NextFleet\Listener\UserDeletedListener;
 use OCA\NextFleet\Middleware\PlaceholderMiddleware;
@@ -24,6 +25,7 @@ use OCP\AppFramework\Bootstrap\IBootstrap;
 use OCP\AppFramework\Bootstrap\IRegistrationContext;
 use OCP\Group\Events\BeforeGroupDeletedEvent;
 use OCP\Group\Events\GroupDeletedEvent;
+use OCP\Group\Events\UserAddedEvent;
 use OCP\Group\Events\UserRemovedEvent;
 use OCP\User\Events\UserDeletedEvent;
 
@@ -45,6 +47,7 @@ class Application extends App implements IBootstrap {
 		$context->registerEventListener(BeforeGroupDeletedEvent::class, GroupDeletedListener::class);
 		$context->registerEventListener(GroupDeletedEvent::class, GroupDeletedListener::class);
 		$context->registerEventListener(UserRemovedEvent::class, GroupMemberRemovedListener::class);
+		$context->registerEventListener(UserAddedEvent::class, GroupMemberAddedListener::class);
 		$context->registerSearchProvider(VehicleSearchProvider::class);
 		$context->registerDashboardWidget(DueWidget::class);
 		$context->registerUserMigrator(FleetMigrator::class);

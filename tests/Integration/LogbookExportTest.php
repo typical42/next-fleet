@@ -11,9 +11,14 @@ namespace OCA\NextFleet\Tests\Integration;
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Db\Audit;
 use OCA\NextFleet\Db\AuditMapper;
+use OCA\NextFleet\Db\PartnerMapper;
 use OCA\NextFleet\Db\Trip;
+use OCA\NextFleet\Db\TripMapper;
+use OCA\NextFleet\Service\CostCentreService;
 use OCA\NextFleet\Service\GrantService;
 use OCA\NextFleet\Service\LogbookExport;
+use OCA\NextFleet\Service\PartnerService;
+use OCA\NextFleet\Service\TransferService;
 use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\AppFramework\Utility\ITimeFactory;
@@ -71,11 +76,28 @@ class LogbookExportTest extends TestCase {
 	/** The rows this suite invents, gone for real - a soft delete would outlive the run. */
 	private function forgetTestRows(): void {
 		$db = \OCP\Server::get(IDBConnection::class);
+		// A transfer writes as the admin, on these vehicles and their trips.
+		foreach ([Audit::TRIP => 'fleet_trips', Audit::VEHICLE => 'fleet_vehicles'] as $entity => $table) {
+			$qb = $db->getQueryBuilder();
+			$qb->select('id')->from($table)
+				->where($qb->expr()->in($table === 'fleet_trips' ? 'created_by' : 'user_id', $qb->createNamedParameter([self::AUTHOR, self::DRIVER], $qb::PARAM_STR_ARRAY)));
+			$ids = array_map('intval', $qb->executeQuery()->fetchAll(\PDO::FETCH_COLUMN));
+			if ($ids !== []) {
+				$qb = $db->getQueryBuilder();
+				$qb->delete('fleet_audit')
+					->where($qb->expr()->eq('created_by', $qb->createNamedParameter(Audit::TRANSFERRED_BY)))
+					->andWhere($qb->expr()->eq('entity', $qb->createNamedParameter($entity)))
+					->andWhere($qb->expr()->in('entity_id', $qb->createNamedParameter($ids, $qb::PARAM_INT_ARRAY)));
+				$qb->executeStatement();
+			}
+		}
 		$tables = [
 			'fleet_trips' => 'created_by',
 			'fleet_audit' => 'created_by',
 			'fleet_odo_readings' => 'created_by',
 			'fleet_access' => 'created_by',
+			'fleet_partners' => 'user_id',
+			'fleet_cost_centres' => 'user_id',
 			'fleet_vehicles' => 'user_id',
 		];
 		foreach ($tables as $table => $column) {
@@ -105,8 +127,8 @@ class LogbookExportTest extends TestCase {
 	}
 
 	/** @return array{list<string>, \DOMXPath} one export's trip lines, whitespace collapsed, and its page */
-	private function printed(string $uuid, int $year): array {
-		$html = $this->export->year(self::AUTHOR, $uuid, $year);
+	private function printed(string $uuid, int $year, string $reader = self::AUTHOR): array {
+		$html = $this->export->year($reader, $uuid, $year);
 
 		$this->assertNotNull($html);
 		$document = new \DOMDocument();
@@ -417,6 +439,111 @@ class LogbookExportTest extends TestCase {
 	private function renamed(string $uuid, string $plate): void {
 		$vehicle = $this->vehicles->find(self::AUTHOR, $uuid);
 		$this->vehicles->update(self::AUTHOR, $uuid, $vehicle->getUpdatedAt(), ['plate' => $plate]);
+	}
+
+	/**
+	 * A link is no logbook field (ADR 0013). A late edit of the partner text moves the link too, and
+	 * its line shows the text alone. A merge moves the links of a locked month, a voided trip's too,
+	 * and leaves every line as it was: neither a late change nor a change without a row.
+	 */
+	public function testAMergeOverALockedMonthChangesNoLine(): void {
+		$uuid = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 139', 'jurisdiction' => 'de'])->getUuid();
+		$this->switchMode($uuid, true);
+		$monthAgo = $this->now - 30 * 86400;
+		$mixed = $this->trip($uuid, $monthAgo, ['start_odo' => 120000, 'end_odo' => 120450]);
+		$linkOnly = $this->trip($uuid, $monthAgo + 86400, ['start_odo' => 120450, 'end_odo' => 120900]);
+		$voided = $this->trip($uuid, $monthAgo + 2 * 86400, ['start_odo' => 120900, 'end_odo' => 121000]);
+		$this->trips->delete(self::AUTHOR, $uuid, $voided->getUuid(), $voided->getUpdatedAt());
+		$edited = $this->trips->update(self::AUTHOR, $uuid, $mixed->getUuid(), $mixed->getUpdatedAt(), ['partner' => 'Muster AG'] + $mixed->jsonSerialize());
+		$this->assertNotSame($mixed->getPartnerUuid(), $edited->getPartnerUuid());
+		$year = (int)gmdate('Y', $monthAgo + 3600);
+		[$before] = $this->printed($uuid, $year);
+
+		$this->partners()->merge(self::AUTHOR, (string)$linkOnly->getPartnerUuid(), $this->tokenOf((string)$linkOnly->getPartnerUuid()), $edited->getPartnerUuid());
+
+		[$lines] = $this->printed($uuid, $year);
+		$this->assertSame($before, $lines);
+		$this->assertCount(3, $lines);
+		$this->assertMatchesRegularExpression('/Nachträglich geändert am \d\d\.\d\d\.\d{4}, \d\d:\d\d UTC[+−]\d\d:\d\d\. Vorher: Geschäftspartner „Muster GmbH“$/u', $lines[0]);
+		$this->assertStringNotContainsString('Nachträglich', $lines[1]);
+		// The voided line says when it was voided, and nothing more.
+		$this->assertSame(1, substr_count($lines[2], 'Nachträglich'));
+		$this->assertStringContainsString('Nachträglich annulliert', $lines[2]);
+		foreach ([$lines[1], $lines[2]] as $line) {
+			$this->assertStringNotContainsString('ohne Protokoll', $line);
+			$this->assertStringContainsString('Muster GmbH', $line);
+		}
+	}
+
+	/** A delete is an erasure of the record, not of the logbook: every line stays as it was. */
+	public function testADeleteOfAPartnerChangesNoLine(): void {
+		$uuid = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 143', 'jurisdiction' => 'de'])->getUuid();
+		$this->switchMode($uuid, true);
+		$monthAgo = $this->now - 30 * 86400;
+		$trip = $this->trip($uuid, $monthAgo, ['start_odo' => 120000, 'end_odo' => 120450]);
+		$voided = $this->trip($uuid, $monthAgo + 86400, ['start_odo' => 120450, 'end_odo' => 120900]);
+		$this->trips->delete(self::AUTHOR, $uuid, $voided->getUuid(), $voided->getUpdatedAt());
+		$year = (int)gmdate('Y', $monthAgo + 3600);
+		[$before] = $this->printed($uuid, $year);
+		$partner = (string)$trip->getPartnerUuid();
+
+		$this->partners()->delete(self::AUTHOR, $partner, $this->tokenOf($partner));
+
+		[$lines] = $this->printed($uuid, $year);
+		$this->assertSame($before, $lines);
+		foreach ($lines as $line) {
+			$this->assertStringContainsString('Muster GmbH', $line);
+			$this->assertStringNotContainsString('ohne Protokoll', $line);
+		}
+	}
+
+	/** A transfer moves each trip's link into the new owner's list, and no line of the year. */
+	public function testATransferChangesNoLine(): void {
+		$uuid = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 149', 'jurisdiction' => 'de'])->getUuid();
+		$this->switchMode($uuid, true);
+		$monthAgo = $this->now - 30 * 86400;
+		$trip = $this->trip($uuid, $monthAgo, ['start_odo' => 120000, 'end_odo' => 120450]);
+		$voided = $this->trip($uuid, $monthAgo + 86400, ['start_odo' => 120450, 'end_odo' => 120900]);
+		$this->trips->delete(self::AUTHOR, $uuid, $voided->getUuid(), $voided->getUpdatedAt());
+		$year = (int)gmdate('Y', $monthAgo + 3600);
+		[$before] = $this->printed($uuid, $year);
+
+		\OCP\Server::get(TransferService::class)->transfer($uuid, self::DRIVER);
+
+		$this->assertNotSame($trip->getPartnerUuid(), \OCP\Server::get(TripMapper::class)->findByUuid($trip->getUuid())->getPartnerUuid());
+		[$lines] = $this->printed($uuid, $year, self::DRIVER);
+		$this->assertSame($before, $lines);
+		foreach ($lines as $line) {
+			$this->assertStringContainsString('Muster GmbH', $line);
+			$this->assertStringNotContainsString('ohne Protokoll', $line);
+		}
+	}
+
+	/** A late edit of the cost centre alone moves only a link, so its line stays as it was. */
+	public function testALateEditOfTheCostCentreAloneChangesNoLine(): void {
+		$sales = \OCP\Server::get(CostCentreService::class)->create(self::AUTHOR, ['name' => 'Vertrieb'])['uuid'];
+		$service = \OCP\Server::get(CostCentreService::class)->create(self::AUTHOR, ['name' => 'Service'])['uuid'];
+		$uuid = $this->vehicles->create(self::AUTHOR, ['plate' => 'B-XY 151', 'jurisdiction' => 'de'])->getUuid();
+		$this->switchMode($uuid, true);
+		$monthAgo = $this->now - 30 * 86400;
+		$trip = $this->trip($uuid, $monthAgo, ['start_odo' => 120000, 'end_odo' => 120450, 'cost_centre_uuid' => $sales]);
+		$year = (int)gmdate('Y', $monthAgo + 3600);
+		[$before] = $this->printed($uuid, $year);
+
+		$edited = $this->trips->update(self::AUTHOR, $uuid, $trip->getUuid(), $trip->getUpdatedAt(), ['cost_centre_uuid' => $service] + $trip->jsonSerialize());
+
+		$this->assertSame($service, $edited->getCostCentreUuid());
+		[$lines] = $this->printed($uuid, $year);
+		$this->assertSame($before, $lines);
+		$this->assertStringNotContainsString('Nachträglich', $lines[0]);
+	}
+
+	private function partners(): PartnerService {
+		return \OCP\Server::get(PartnerService::class);
+	}
+
+	private function tokenOf(string $partner): int {
+		return \OCP\Server::get(PartnerMapper::class)->findByUuid($partner)->getUpdatedAt();
 	}
 
 	/**

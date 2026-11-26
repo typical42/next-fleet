@@ -226,7 +226,7 @@ test('the vehicle\'s costs link opens Statistics on it, which reads a month and 
 	// A spreadsheet's CSV: a BOM, commas, CRLF, a value with a comma quoted
 	// (docs/architecture.md#csv-export).
 	const [head, row, end] = csv.split('\r\n')
-	expect(head).toBe('﻿uuid,started,started_offset_min,ended,ended_offset_min,start_odo,end_odo,distance,odo_unit,from,to,purpose,partner,category,reconciled,voided,created_at,entered_by')
+	expect(head).toBe('﻿uuid,started,started_offset_min,ended,ended_offset_min,start_odo,end_odo,distance,odo_unit,from,to,purpose,partner,category,reconciled,voided,created_at,entered_by,cost_centre_code,cost_centre_name')
 	expect(row).toContain(`,${year}-03-05 11:00,60,${year}-03-05 14:00,60,10000,10250,`)
 	expect(row).toContain(',km,"Stuttgart, Büro",Freiburg,Kundentermin,Müller GmbH,business,')
 	expect(end).toBe('')
@@ -414,6 +414,24 @@ for (const viewport of [{ width: 320, height: 640 }, { width: 1280, height: 800 
 				}
 				await expect(page.getByRole('link', { name: 'Open logbook' })).toBeVisible()
 				await check(page, 'the reports screen')
+
+				// The partner of the trip march() logged, and its trips over all time.
+				if (folded) {
+					await page.getByRole('button', { name: 'Open navigation' }).click()
+				}
+				await page.locator('.app-navigation').getByRole('link', { name: 'Partners', exact: true }).click()
+				if (folded) {
+					await page.getByRole('button', { name: 'Close navigation' }).click()
+				}
+				const partners = page.locator('#nextfleet').getByRole('main')
+				await partners.getByRole('link', { name: 'Müller GmbH', exact: true }).click()
+				await partners.getByRole('combobox', { name: 'Period' }).click()
+				await page.getByRole('option').filter({ hasText: 'All time' }).click()
+				await expect(partners.getByRole('table')).toBeVisible()
+				await check(page, 'one partner', undefined, ['.partner__table'])
+				await partners.getByRole('button', { name: 'Back to the partners' }).click()
+				await expect(partners.getByRole('heading', { name: 'Partners' })).toBeVisible()
+				await check(page, 'the partners list')
 
 				await page.goto(settingsPage)
 				await expect(page.locator('#nextfleet-settings')).toContainText('Germany')

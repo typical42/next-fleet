@@ -11,6 +11,8 @@ namespace OCA\NextFleet\Tests\Unit\Service;
 use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\BaseEntity;
 use OCA\NextFleet\Db\BookingMapper;
+use OCA\NextFleet\Db\BudgetMapper;
+use OCA\NextFleet\Db\CostCentreMapper;
 use OCA\NextFleet\Db\DocumentMapper;
 use OCA\NextFleet\Db\Energy;
 use OCA\NextFleet\Db\EnergyMapper;
@@ -20,6 +22,7 @@ use OCA\NextFleet\Db\Maintenance;
 use OCA\NextFleet\Db\MaintenanceMapper;
 use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Db\OdoReadingMapper;
+use OCA\NextFleet\Db\PartnerMapper;
 use OCA\NextFleet\Db\ReminderMapper;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\TripMapper;
@@ -205,6 +208,9 @@ class SyncServiceTest extends TestCase {
 			$this->createMock(ITimeFactory::class),
 			$logger ?? new SpyLogger(),
 			new CostsShown(new VehicleAccess($this->createMock(AccessMapper::class), $this->createMock(IUserManager::class), $this->createMock(IGroupManager::class))),
+			$this->createMock(PartnerMapper::class),
+			$this->createMock(CostCentreMapper::class),
+			$tables['budgets'] ?? $this->createMock(BudgetMapper::class),
 		);
 	}
 }

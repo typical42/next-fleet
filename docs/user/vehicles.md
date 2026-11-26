@@ -50,7 +50,7 @@ Click **Edit vehicle**, change the fields, and click **Save**.
 The sheet has four sections, each with a heading:
 
 1. **Vehicle**: the data of the vehicle, its counter, the technical inspection (HU/AU), who gets the reminders, **Logbook mode**, the lifecycle and your notes.
-2. **Costs**: the purchase price, the residual value, the currency, and the switch **Drivers and viewers see costs**.
+2. **Costs**: the purchase price, the residual value, the currency, the **Default cost centre**, the budgets, and the switch **Drivers and viewers see costs**.
 3. **Access**: who else can use the vehicle ([Give access](access.md#give-access)).
    Only the owner sees this section.
 4. **Bookings**: whether bookings need approval, and who hears of bookings ([Set up a pool car](access.md#set-up-a-pool-car)).
@@ -68,7 +68,13 @@ Some fields need a word:
   They decide which energy entries you can record.
 - **Also counts engine hours**: a vehicle in kilometres can also count engine hours, for example a truck with a crane.
 - **Currency**: three letters, for example `EUR`.
-  After the first cost in a currency, you cannot change it.
+  After the first cost or budget in a currency, you cannot change it.
+  If only a budget holds it, the owner deletes the budget first ([Budgets](partners.md#budgets)).
+- **Default cost centre**: the cost centre that new entries get ([Cost centres](partners.md#set-the-default-cost-centre-of-a-vehicle)).
+  It shows only when the owner uses cost centres.
+- **Budgets**: the amount for each year ([Budgets](partners.md#budgets)).
+  They show only when the owner uses cost centres and budgets, and only to users who see the costs.
+  A budget is saved at once, not with **Save**.
 - **Country**: **Germany** or **Generic**.
   **Generic** has no national rules.
 - **Registration**: the EU codes ([Registration type](#registration-type)).

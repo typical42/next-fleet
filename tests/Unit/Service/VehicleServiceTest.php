@@ -20,6 +20,7 @@ use OCA\NextFleet\Exception\AccessDeniedException;
 use OCA\NextFleet\Exception\CurrencyInUseException;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCA\NextFleet\Service\BookingNotices;
+use OCA\NextFleet\Service\CostCentreLinks;
 use OCA\NextFleet\Service\Field;
 use OCA\NextFleet\Service\GrantNotices;
 use OCA\NextFleet\Service\MoneyRows;
@@ -111,7 +112,7 @@ class VehicleServiceTest extends TestCase {
 		$this->access->method('reachable')->willReturn([]);
 	}
 
-	private function service(): VehicleService {
+	private function service(?CostCentreLinks $costCentres = null): VehicleService {
 		return new VehicleService(
 			$this->mapper,
 			$this->access,
@@ -130,6 +131,7 @@ class VehicleServiceTest extends TestCase {
 			$this->money,
 			$this->createMock(AccessMapper::class),
 			$this->epoch,
+			$costCentres ?? $this->createMock(CostCentreLinks::class),
 		);
 	}
 
@@ -158,6 +160,26 @@ class VehicleServiceTest extends TestCase {
 		]);
 	}
 
+	/**
+	 * A new vehicle waits for the owner's hold, which a partner merge or delete takes with every
+	 * vehicle of the owner: one written meanwhile could carry a trip that links the record past
+	 * them. The owner's hold comes before the cost centre's, the order an entry takes its vehicle's
+	 * and the record's in.
+	 */
+	public function testCreateTakesTheOwnersHoldBeforeItWrites(): void {
+		$this->mapper->method('holdOwner')->willReturnCallback(function (string $userId): void {
+			$this->calls[] = 'hold owner ' . $userId;
+		});
+		$costCentres = $this->createMock(CostCentreLinks::class);
+		$costCentres->method('hold')->willReturnCallback(function (): void {
+			$this->calls[] = 'hold cost centre';
+		});
+
+		$this->service($costCentres)->create('alice', ['plate' => 'B-XY 123']);
+
+		$this->assertSame(['begin', 'hold owner alice', 'hold cost centre', 'commit'], $this->calls);
+	}
+
 	public function testCreateTakesTheOwnerFromTheSessionAndNotFromTheRequest(): void {
 		$vehicle = $this->service()->create('alice', [
 			'plate' => 'B-XY 123',
@@ -176,9 +198,9 @@ class VehicleServiceTest extends TestCase {
 	 */
 	public function testCreateTakesTheJurisdictionFromThePersonalSetting(): void {
 		$this->config = $this->createMock(IConfig::class);
-		$this->config->method('getUserValue')
-			->with('alice', 'nextfleet', 'jurisdiction', 'de')
-			->willReturn('uk');
+		$this->config->method('getUserValue')->willReturnCallback(
+			static fn (string $uid, string $app, string $key, string $default): string => $uid === 'alice' && $app === 'nextfleet' && $key === 'jurisdiction' ? 'uk' : $default,
+		);
 
 		$vehicle = $this->service()->create('alice', []);
 

@@ -104,11 +104,20 @@ With a pooled car, an employer processes employee data.
   A co-driver who leaves must not shred someone else's tax evidence.
   The basis is Art. 17(3)(b) GDPR, and beyond it Art. 6(1)(f).
 - **An erased owner's vehicles close** and stay in the trash under the same rules.
+  Their partner list is deleted, each partner as the owner's delete takes it (below).
 - **The audit keeps old trip text.** § 146 (4) AO and the GoBD forbid a change that hides what stood before.
   An erasure renames the uid on the row and keeps the text.
 - **Free text that names a person stays.**
   An erasure replaces uids.
   It does not read prose.
+- **A partner can be a private person** ([ADR 0013](adr/0013-a-partner-is-a-record-the-trip-keeps-its-text.md)).
+  The record holds a name, an address and a note, and only the owner reads the address and the note.
+  Deleting it is how the owner meets that person's erasure request: the name, address and note go, and no trip links it any more.
+  The partner text on each trip stays, because the logbook must be kept ten years (§ 147 AO) and § 146 (4) AO forbids changing it.
+  The basis is Art. 17(3)(b) GDPR, as for a driver.
+- **A transfer copies the partners with the vehicle** (`occ nextfleet:transfer`).
+  The partners its trips name go into the new owner's list, with address and note, because the new owner keeps that logbook now.
+  A partner the former owner deleted is not copied.
 - **Bookings and handover notes are personal data.**
   Erasure treats them like trips.
   A cancel notice to the booker names nobody, because a Nextcloud notification is not a row the app can rename.

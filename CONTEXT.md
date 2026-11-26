@@ -316,7 +316,8 @@ between the two is what timeliness means.
 **Partner**:
 The business contact a Trip visited. A record in its Owner's list, shared by all their Vehicles. The
 Trip keeps the text as entered, which the logbook prints, and a link to the record
-([ADR 0013](docs/adr/0013-a-partner-is-a-record-the-trip-keeps-its-text.md)).
+([ADR 0013](docs/adr/0013-a-partner-is-a-record-the-trip-keeps-its-text.md)). A merge moves one
+record's links to another; a delete erases the record. Neither changes a Trip's text.
 _Avoid_: Client, customer, contact
 
 **Cost Centre**:

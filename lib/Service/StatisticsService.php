@@ -8,9 +8,13 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Service;
 
+use OCA\NextFleet\Db\BudgetMapper;
+use OCA\NextFleet\Db\CostCentreMapper;
 use OCA\NextFleet\Db\Energy;
 use OCA\NextFleet\Db\EnergyMapper;
+use OCA\NextFleet\Db\Expense;
 use OCA\NextFleet\Db\ExpenseMapper;
+use OCA\NextFleet\Db\Maintenance;
 use OCA\NextFleet\Db\MaintenanceMapper;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\TripMapper;
@@ -31,6 +35,8 @@ use OCP\AppFramework\Utility\ITimeFactory;
  * @psalm-import-type NextFleetDistanceCost from \OCA\NextFleet\ResponseDefinitions as DistanceCost
  * @psalm-import-type NextFleetPerDistance from \OCA\NextFleet\ResponseDefinitions as PerDistance
  * @psalm-import-type NextFleetStatistics from \OCA\NextFleet\ResponseDefinitions as Statistics
+ * @psalm-import-type NextFleetCostCentreSum from \OCA\NextFleet\ResponseDefinitions as CentreSum
+ * @psalm-import-type NextFleetBudgetUse from \OCA\NextFleet\ResponseDefinitions as BudgetUse
  * @psalm-type Part = array{?int, ?int, int, int}
  */
 class StatisticsService {
@@ -51,6 +57,9 @@ class StatisticsService {
 		private EmissionService $emissions,
 		private PreferencesService $preferences,
 		private ITimeFactory $time,
+		private CostCentreMapper $costCentres,
+		private BudgetMapper $budgets,
+		private BudgetWarnings $budgetWarnings,
 	) {
 	}
 
@@ -77,9 +86,10 @@ class StatisticsService {
 		$bucket = !$all && count(self::cut($from, $to, 'month')) <= self::MONTHS ? 'month' : 'year';
 		$periods = self::cut($from, $to, $bucket);
 
-		// Read once for the costs and the consumption both.
+		// Read once for the costs, the consumption and the cost centres.
 		$fills = array_map(fn (Vehicle $vehicle): array => $this->energy->findAllForVehicle((int)$vehicle->getId()), $vehicles);
-		$costs = $this->priced($vehicles, $fills, $periods, $from->getTimestamp(), $to->getTimestamp(), $net);
+		$entries = $this->entries($vehicles, $fills, $from->getTimestamp(), $to->getTimestamp());
+		$costs = $this->priced($vehicles, $fills, $entries, $periods, $from->getTimestamp(), $to->getTimestamp(), $net);
 		// Nobody drove a Reconciliation Trip: it is the counter's word for distance no trip claims.
 		$trips = array_map(fn (Vehicle $vehicle): array => array_values(array_filter(
 			$this->trips->findBetween((int)$vehicle->getId(), $from->getTimestamp(), $to->getTimestamp()),
@@ -101,33 +111,112 @@ class StatisticsService {
 			'consumption' => $this->consumption($vehicles, $fills, $from->getTimestamp(), $to->getTimestamp(), $uuid !== null),
 			'distance' => self::distance($vehicles, $trips, $periods),
 			'by_driver' => $this->byDriver($userId, $vehicles, $trips),
+			'by_cost_centre' => $this->byCostCentre($vehicles, $entries, $trips, $net),
 			// At the reader's own grid factor, as KpiService::year() reads it.
 			'co2' => $uuid === null
 				? null
 				: $this->emissions->of($vehicles[0], $from->getTimestamp(), $to->getTimestamp(), $this->preferences->gridFactor($userId)),
+			'budget' => $uuid === null ? null : $this->budget($vehicles[0], $from, $to),
 		];
 	}
 
 	/**
-	 * Each period's cost of every vehicle whose costs the reader sees, the range's last: a vehicle
-	 * without a currency has no sum to add.
+	 * The fill-ups, maintenance records and expenses in the range of every vehicle whose costs the
+	 * reader sees: a vehicle without a currency has no sum to add.
 	 *
 	 * @param list<Vehicle> $vehicles
 	 * @param list<list<Energy>> $fills each vehicle's, by its index in `$vehicles`
+	 * @return array<int, array{list<Energy>, list<Maintenance>, list<Expense>}> by the vehicle's index
+	 * @throws \OCP\DB\Exception
+	 */
+	private function entries(array $vehicles, array $fills, int $from, int $to): array {
+		$entries = [];
+		foreach ($vehicles as $i => $vehicle) {
+			if ($vehicle->getCurrency() !== null && $vehicle->showsCosts()) {
+				$vehicleId = (int)$vehicle->getId();
+				$entries[$i] = [
+					array_values(array_filter($fills[$i], static fn (Energy $fill): bool => $fill->getFilledAt() >= $from && $fill->getFilledAt() < $to)),
+					$this->maintenance->findBetween($vehicleId, $from, $to),
+					$this->expenses->findBetween($vehicleId, $from, $to),
+				];
+			}
+		}
+
+		return $entries;
+	}
+
+	/**
+	 * Each period's cost of every vehicle entries() read, the range's last.
+	 *
+	 * @param list<Vehicle> $vehicles
+	 * @param list<list<Energy>> $fills each vehicle's, by its index in `$vehicles`
+	 * @param array<int, array{list<Energy>, list<Maintenance>, list<Expense>}> $entries as entries() reads them
 	 * @param non-empty-list<array{int, int}> $periods
 	 * @return array<int, non-empty-list<Cost>> by the vehicle's index in `$vehicles`
 	 * @throws \OCP\DB\Exception
 	 */
-	private function priced(array $vehicles, array $fills, array $periods, int $from, int $to, bool $net): array {
+	private function priced(array $vehicles, array $fills, array $entries, array $periods, int $from, int $to, bool $net): array {
 		$costs = [];
-		foreach ($vehicles as $i => $vehicle) {
-			if ($vehicle->getCurrency() !== null && $vehicle->showsCosts()) {
-				/** @var non-empty-list<Cost> one per period, as asked */
-				$costs[$i] = $this->cost->lean($vehicle, [...$periods, [$from, $to]], $net, $fills[$i]);
-			}
+		foreach ($entries as $i => [, $records, $expenses]) {
+			/** @var non-empty-list<Cost> one per period, as asked */
+			$costs[$i] = $this->cost->lean($vehicles[$i], [...$periods, [$from, $to]], $net, $fills[$i], $records, $expenses);
 		}
 
 		return $costs;
+	}
+
+	/**
+	 * CostCentreSums over what entries() read and the trips, with the records they name.
+	 *
+	 * @param list<Vehicle> $vehicles
+	 * @param array<int, array{list<Energy>, list<Maintenance>, list<Expense>}> $entries as entries() reads them
+	 * @param list<list<Trip>> $trips each vehicle's in the range, by its index in `$vehicles`
+	 * @return list<CentreSum>
+	 * @throws \OCP\DB\Exception
+	 */
+	private function byCostCentre(array $vehicles, array $entries, array $trips, bool $net): array {
+		$costed = array_map(static fn (array $rows): array => array_merge(...$rows), $entries);
+		// Only a live record is read as named (BaseMapper), and only that one is looked up.
+		$ids = [];
+		foreach ([...array_values($costed), ...$trips] as $rows) {
+			foreach ($rows as $row) {
+				if ($row->getCostCentreUuid() !== null) {
+					$ids[(int)$row->getCostCentreId()] = true;
+				}
+			}
+		}
+		$centres = [];
+		foreach ($this->costCentres->findAnyOf(array_keys($ids)) as $centre) {
+			$centres[$centre->getUuid()] = $centre;
+		}
+
+		return CostCentreSums::of($vehicles, $costed, $trips, $centres, $net);
+	}
+
+	/**
+	 * The vehicle's budget beside its costs, when the range is one calendar year in the reader's
+	 * zone and the reader sees the costs. Spent as the budget counts it (BudgetWarnings::spent()),
+	 * so it can differ from the costs beside it, which follow the reader's VAT switch and zone.
+	 *
+	 * @return ?BudgetUse
+	 * @throws \OCP\DB\Exception
+	 */
+	private function budget(Vehicle $vehicle, \DateTimeImmutable $from, \DateTimeImmutable $to): ?array {
+		$year = (int)$from->format('Y');
+		$currency = $vehicle->getCurrency();
+		if ($currency === null || !$vehicle->showsCosts()
+			|| $from != self::january($year, $from->getTimezone()) || $to != self::january($year + 1, $from->getTimezone())) {
+			return null;
+		}
+		$budget = $this->budgets->findYear((int)$vehicle->getId(), $year);
+
+		return $budget === null ? null : [
+			'year' => $year,
+			'amount' => $budget->getAmount(),
+			'net' => $budget->getNet(),
+			'currency' => $currency,
+			'spent' => $this->budgetWarnings->spent($vehicle, $budget),
+		];
 	}
 
 	/**

@@ -44,10 +44,11 @@ A range of up to 24 months shows each month, a longer one each year.
 
 | Section | Shows |
 |---|---|
-| **Costs in EUR**, or your currency | A bar for each month or year, in **Energy**, **Maintenance** and **Expenses**, and each one's share. The table has each expense category in its own row. |
+| **Costs in EUR**, or your currency | A bar for each month or year, in **Energy**, **Maintenance** and **Expenses**, and each one's share. The table has each expense category in its own row. For one vehicle and a calendar year with a [budget](partners.md#see-the-budget-in-statistics), a bar shows how much of the budget is spent. |
 | **Cost per 100 km** or **Cost per hour** | A line for the vehicle, or for all vehicles together. With all vehicles, a table compares them. A month or year with a distance and no costs shows 0. In the **Whole period** column, the cost per 100 km counts only the costs of the months or years with a distance. |
 | **Distance by trip category**, or **Hours by trip category** | A bar for each month or year, in **Business**, **Private** and **Commute**. |
 | **Distance by driver**, or **Hours by driver** | The **Trips**, the **Distance** and the **Business share** of each driver. |
+| **By cost centre** | The trips, the distance and the costs of each [cost centre](partners.md#see-the-costs-and-the-distance-of-each-cost-centre), and **No cost centre** last. Only when an entry in the range names a cost centre. |
 | **Consumption** | For one vehicle, each stretch from one full tank to the next. For all vehicles, the average of each vehicle. |
 | **CO₂ (estimate)** | For one vehicle: each energy times an emission factor. |
 
@@ -77,5 +78,6 @@ For CO₂ of electricity, NextFleet uses the grid average of the country, or you
 
 The file name starts with the plate, for example `B-XY_123-2026-trips.csv`.
 Each user who sees the vehicle can export.
+The last two columns are the code and the name of the cost centre of each entry.
 
-Next: [Reminders](reminders.md)
+Next: [Partners, cost centres and budgets](partners.md)

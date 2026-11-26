@@ -38,7 +38,7 @@ trait EntryAnswers {
 			// A retried create: what the first one wrote, as it stands (Service\Once).
 			return new DataResponse($e->answer);
 		} catch (DoesNotExistException) {
-			return new DataResponse(['message' => 'No such vehicle'], Http::STATUS_NOT_FOUND);
+			return new DataResponse(['message' => $this->missing()], Http::STATUS_NOT_FOUND);
 		} catch (AccessDeniedException) {
 			return new DataResponse(['message' => 'Not yours'], Http::STATUS_FORBIDDEN);
 		} catch (BookingConflictException $e) {
@@ -55,6 +55,14 @@ trait EntryAnswers {
 		} catch (\InvalidArgumentException $e) {
 			return new DataResponse(['message' => $e->getMessage()], Http::STATUS_BAD_REQUEST);
 		}
+	}
+
+	/**
+	 * What a 404 says. A controller whose routes name a record of their own overrides it, so a
+	 * record gone elsewhere is not worded as a vehicle gone.
+	 */
+	private function missing(): string {
+		return 'No such vehicle';
 	}
 
 	/**

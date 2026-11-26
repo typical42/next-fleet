@@ -54,7 +54,8 @@ export function daysOf(range, now, { year = now.getFullYear(), from = null, to =
 /**
  * A route answer with no figure in it. A cost series comes for every priced vehicle, recorded or
  * not, and one vehicle's CO₂ comes always (docs/api.md#statistics), so their presence says nothing.
- * A rate's totals are those costs again; only its distance adds a figure.
+ * A rate's totals are those costs again; only its distance adds a figure. A budget is a figure
+ * even before anything is spent against it.
  *
  * @param {import('../services/api.js').Statistics} answer - as the route answers it
  * @return {boolean} whether the answer has nothing to show
@@ -65,6 +66,7 @@ export function blank(answer) {
 		&& answer.consumption.length === 0
 		&& answer.distance.length === 0
 		&& (answer.co2 === null || (answer.co2.grams === null && !answer.co2.unstated))
+		&& !answer.budget
 }
 
 /**

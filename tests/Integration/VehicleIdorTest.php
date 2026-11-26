@@ -11,6 +11,8 @@ namespace OCA\NextFleet\Tests\Integration;
 use OCA\NextFleet\AppInfo\Application;
 use OCA\NextFleet\Controller\BookingController;
 use OCA\NextFleet\Controller\BookingRecipientController;
+use OCA\NextFleet\Controller\BudgetController;
+use OCA\NextFleet\Controller\CostCentreController;
 use OCA\NextFleet\Controller\DocumentController;
 use OCA\NextFleet\Controller\EnergyController;
 use OCA\NextFleet\Controller\ExpenseController;
@@ -21,6 +23,7 @@ use OCA\NextFleet\Controller\KpiController;
 use OCA\NextFleet\Controller\MaintenanceController;
 use OCA\NextFleet\Controller\Ocs;
 use OCA\NextFleet\Controller\OdometerController;
+use OCA\NextFleet\Controller\PartnerController;
 use OCA\NextFleet\Controller\PreferencesController;
 use OCA\NextFleet\Controller\RecipientController;
 use OCA\NextFleet\Controller\ReminderController;
@@ -37,9 +40,13 @@ use OCA\NextFleet\Db\DocumentMapper;
 use OCA\NextFleet\Db\EnergyMapper;
 use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Db\OdoReadingMapper;
+use OCA\NextFleet\Db\Partner;
+use OCA\NextFleet\Db\PartnerMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Service\BookingService;
+use OCA\NextFleet\Service\BudgetService;
+use OCA\NextFleet\Service\CostCentreService;
 use OCA\NextFleet\Service\DocumentService;
 use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\ExpenseService;
@@ -52,6 +59,7 @@ use OCA\NextFleet\Service\LogbookExport;
 use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\MileageClaimExport;
 use OCA\NextFleet\Service\OdometerService;
+use OCA\NextFleet\Service\PartnerService;
 use OCA\NextFleet\Service\PreferencesService;
 use OCA\NextFleet\Service\RecipientService;
 use OCA\NextFleet\Service\ReminderService;
@@ -124,7 +132,7 @@ class VehicleIdorTest extends TestCase {
 	 * refusal - their own fleet, their own settings. Listed rather than inferred: a route added
 	 * here is a claim that nothing in its answer belongs to anybody else.
 	 */
-	private const NAMES_NO_VEHICLE = ['vehicle#index', 'vehicle#create', 'reminder#fleet', 'preferences#index', 'preferences#update', 'inbox#index', 'sync#index'];
+	private const NAMES_NO_VEHICLE = ['vehicle#index', 'vehicle#create', 'reminder#fleet', 'preferences#index', 'preferences#update', 'inbox#index', 'sync#index', 'partner#index', 'costCentre#index', 'costCentre#create'];
 
 	private VehicleService $service;
 	private OdometerService $odometry;
@@ -148,7 +156,18 @@ class VehicleIdorTest extends TestCase {
 	private BookingService $pool;
 	private SyncService $syncing;
 	private AccessMapper $grants;
+	private PartnerService $partners;
+	private CostCentreService $centres;
+	private BudgetService $budgets;
 	private Vehicle $vehicle;
+	/** A record of the owner's list, with an address only the owner reads. */
+	private Partner $partner;
+	/**
+	 * A cost centre of the owner's list, in its wire form.
+	 *
+	 * @var array{uuid: string, user_id: string, code: ?string, name: string, archived: bool, created_at: int, updated_at: int}
+	 */
+	private array $centre;
 	/** Which door a route is walked through: the internal routes, or their OCS twins. */
 	private bool $ocs = false;
 
@@ -182,11 +201,22 @@ class VehicleIdorTest extends TestCase {
 		$this->settings = \OCP\Server::get(PreferencesService::class);
 		$this->inbox = \OCP\Server::get(InboxService::class);
 		$this->pool = \OCP\Server::get(BookingService::class);
+		$this->budgets = \OCP\Server::get(BudgetService::class);
 		$this->syncing = \OCP\Server::get(SyncService::class);
 		$this->grants = \OCP\Server::get(AccessMapper::class);
 
+		$this->partners = \OCP\Server::get(PartnerService::class);
+
 		$this->forgetTestRows();
 		$this->vehicle = $this->service->create(self::OWNER, ['plate' => self::PLATE]);
+		$partner = new Partner();
+		$partner->setUserId(self::OWNER);
+		$partner->setName('Muster GmbH');
+		$partner->setAddress('Hamburg');
+		$partner->setCreatedBy(self::OWNER);
+		$this->partner = \OCP\Server::get(PartnerMapper::class)->insert($partner);
+		$this->centres = \OCP\Server::get(CostCentreService::class);
+		$this->centre = $this->centres->create(self::OWNER, ['code' => '4711', 'name' => 'Vertrieb']);
 	}
 
 	protected function tearDown(): void {
@@ -209,7 +239,7 @@ class VehicleIdorTest extends TestCase {
 		$qb->executeStatement();
 
 		// `fleet_access` again: a grant the owner gave to a real account names nobody above.
-		foreach (['fleet_access', 'fleet_odo_readings', 'fleet_trips', 'fleet_energy', 'fleet_maintenance', 'fleet_expenses', 'fleet_reminders', 'fleet_reminder_recipients', 'fleet_booking_recipients', 'fleet_bookings', 'fleet_documents'] as $table) {
+		foreach (['fleet_access', 'fleet_odo_readings', 'fleet_trips', 'fleet_energy', 'fleet_maintenance', 'fleet_expenses', 'fleet_reminders', 'fleet_reminder_recipients', 'fleet_booking_recipients', 'fleet_bookings', 'fleet_documents', 'fleet_partners', 'fleet_cost_centres'] as $table) {
 			$qb = $db->getQueryBuilder();
 			$qb->delete($table)
 				->where($qb->expr()->in('created_by', $qb->createNamedParameter($people, $qb::PARAM_STR_ARRAY)));
@@ -249,6 +279,24 @@ class VehicleIdorTest extends TestCase {
 	private function controller(string $userId, array $params): VehicleController|Ocs\VehicleController {
 		/** @var VehicleController|Ocs\VehicleController */
 		return $this->door(VehicleController::class, $this->service, $userId, $params);
+	}
+
+	/** @param array<string, mixed> $params */
+	private function partnerRoute(string $userId, array $params): PartnerController|Ocs\PartnerController {
+		/** @var PartnerController|Ocs\PartnerController */
+		return $this->door(PartnerController::class, $this->partners, $userId, $params);
+	}
+
+	/** @param array<string, mixed> $params */
+	private function costCentreRoute(string $userId, array $params): CostCentreController|Ocs\CostCentreController {
+		/** @var CostCentreController|Ocs\CostCentreController */
+		return $this->door(CostCentreController::class, $this->centres, $userId, $params);
+	}
+
+	/** @param array<string, mixed> $params */
+	private function budgetRoute(string $userId, array $params): BudgetController|Ocs\BudgetController {
+		/** @var BudgetController|Ocs\BudgetController */
+		return $this->door(BudgetController::class, $this->budgets, $userId, $params);
 	}
 
 	/** @param array<string, mixed> $params */
@@ -573,6 +621,27 @@ class VehicleIdorTest extends TestCase {
 			'inbox#index' => $this->inboxRoute(self::STRANGER, $params)->index(),
 			// The client's alone, so only through OCS (docs/api.md#sync).
 			'sync#index' => (new Ocs\SyncController(Application::APP_ID, $this->request($params), $this->syncing, $this->session(self::STRANGER)))->index(),
+			// The list is the caller's own; every other partner route is walked against the owner's
+			// record, which a stranger reaches through no vehicle.
+			'partner#index' => $this->partnerRoute(self::STRANGER, $params)->index(),
+			'partner#show' => $this->partnerRoute(self::STRANGER, $params)->show($this->partner->getUuid()),
+			'partner#update' => $this->partnerRoute(self::STRANGER, $params + ['name' => 'Taken'])->update($this->partner->getUuid()),
+			'partner#delete' => $this->partnerRoute(self::STRANGER, $params)->delete($this->partner->getUuid()),
+			'partner#merge' => $this->partnerRoute(self::STRANGER, $params + ['into' => $this->partner->getUuid()])->merge($this->partner->getUuid()),
+			'partner#trips' => $this->partnerRoute(self::STRANGER, $params)->trips($this->partner->getUuid()),
+			// A download, so only the internal door (docs/api.md#downloads).
+			'partner#csv' => (new PartnerController(Application::APP_ID, $this->request($params), $this->partners, $this->session(self::STRANGER)))
+				->csv($this->partner->getUuid()),
+			// The list and a create are the caller's own; a write is walked against the owner's record.
+			'costCentre#index' => $this->costCentreRoute(self::STRANGER, $params)->index(),
+			'costCentre#create' => $this->costCentreRoute(self::STRANGER, $params + ['name' => 'Eigenes'])->create(),
+			'costCentre#update' => $this->costCentreRoute(self::STRANGER, $params + ['name' => 'Taken'])->update($this->centre['uuid']),
+			'costCentre#delete' => $this->costCentreRoute(self::STRANGER, $params)->delete($this->centre['uuid']),
+			'budget#index' => $this->budgetRoute(self::STRANGER, $params)->index($uuid),
+			'budget#create' => $this->budgetRoute(self::STRANGER, $params + ['year' => 2031, 'amount' => 100000, 'net' => false])->create($uuid),
+			// Walked against a budget that is not there, for the reason the trip's are.
+			'budget#update' => $this->budgetRoute(self::STRANGER, $params + ['amount' => 100000, 'net' => false])->update($uuid, self::NO_SUCH_ENTRY),
+			'budget#delete' => $this->budgetRoute(self::STRANGER, $params)->delete($uuid, self::NO_SUCH_ENTRY),
 			default => $this->fail($route . ' is a route the IDOR sweep has never been through'),
 		});
 
@@ -596,6 +665,11 @@ class VehicleIdorTest extends TestCase {
 		$this->assertSame([], $this->papers->list(self::OWNER, $uuid));
 		$this->assertSame([], $this->access->list(self::OWNER, $uuid));
 		$this->assertSame([], $this->pool->list(self::OWNER, $uuid, []));
+		$this->assertSame([['Muster GmbH', 'Hamburg']], array_map(
+			static fn (array $partner): array => [$partner['name'], $partner['address']],
+			$this->partners->list(self::OWNER),
+		));
+		$this->assertSame([$this->centre], $this->centres->list(self::OWNER));
 	}
 
 	/**

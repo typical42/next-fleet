@@ -16,6 +16,7 @@ use OCA\NextFleet\Db\Maintenance;
 use OCA\NextFleet\Db\MaintenanceMapper;
 use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Db\OdoReadingMapper;
+use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
@@ -68,7 +69,7 @@ class CheckService {
 		$exists = [];
 		$findings = $only === null ? $this->orphans() : [];
 		foreach ($vehicles as $vehicle) {
-			array_push($findings, ...$this->owner($vehicle, $pending, $exists), ...$this->odometer($vehicle), ...$this->entries($vehicle), ...$this->grants($vehicle, $pending, $exists));
+			array_push($findings, ...$this->owner($vehicle, $pending, $exists), ...$this->odometer($vehicle), ...$this->entries($vehicle), ...$this->partners($vehicle), ...$this->grants($vehicle, $pending, $exists));
 		}
 		if ($only !== null) {
 			return ['findings' => $findings, 'warnings' => []];
@@ -199,6 +200,20 @@ class CheckService {
 		}
 
 		return $findings;
+	}
+
+	/**
+	 * Each trip that names a partner links its record (ADR 0013): the upgrade linked every text,
+	 * and TripService links each one since.
+	 *
+	 * @return list<Finding>
+	 * @throws \OCP\DB\Exception
+	 */
+	private function partners(Vehicle $vehicle): array {
+		return array_map(
+			static fn (Trip $trip): array => self::finding('partner', 'fleet_trips', $trip->getUuid(), $vehicle, 'names a partner, but links no partner record'),
+			$this->trips->findAnyUnlinkedPartners((int)$vehicle->getId()),
+		);
 	}
 
 	/**

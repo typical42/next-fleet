@@ -141,7 +141,7 @@ Our signature goes on whatever we merge.
 ## What is logged
 
 Data that leaves or enters in bulk writes one `info` line per request: the CSV export, each sync page, each import, the logbook, the mileage claim and the personal data export.
-The line names who, which vehicle, what and how many rows.
+The line names who, which vehicle or partner, what and how many rows.
 Never a payload or a file name.
 
 `info` shows from `loglevel` 1.

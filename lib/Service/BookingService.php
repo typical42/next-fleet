@@ -61,6 +61,7 @@ class BookingService {
 		private UserZone $zones,
 		private IDBConnection $db,
 		private LoggerInterface $logger,
+		private CostCentreLinks $costCentres,
 	) {
 	}
 
@@ -553,12 +554,12 @@ class BookingService {
 	}
 
 	/**
-	 * The trip a returned booking describes: out to in, counter to counter. No category, for the
-	 * reason checkIn() gives.
+	 * The trip a returned booking describes: out to in, counter to counter, and the vehicle's
+	 * default cost centre. No category, for the reason checkIn() gives.
 	 *
-	 * @return array{started_at: ?int, started_at_off: ?int, ended_at: ?int, ended_at_off: ?int, start_odo: ?int, end_odo: ?int, purpose: ?string}
+	 * @return array{started_at: ?int, started_at_off: ?int, ended_at: ?int, ended_at_off: ?int, start_odo: ?int, end_odo: ?int, purpose: ?string, cost_centre_uuid: ?string}
 	 */
-	private static function draft(Booking $booking): array {
+	private static function draft(Booking $booking, ?string $centre): array {
 		return [
 			'started_at' => $booking->getOutAt(),
 			'started_at_off' => $booking->getOutAtOff(),
@@ -567,6 +568,7 @@ class BookingService {
 			'start_odo' => $booking->getOutOdo(),
 			'end_odo' => $booking->getInOdo(),
 			'purpose' => $booking->getPurpose(),
+			'cost_centre_uuid' => $centre,
 		];
 	}
 
@@ -835,8 +837,10 @@ class BookingService {
 		$now = $this->time->getTime();
 		$names = [];
 		$approves = $this->access->mayApprove($userId, $vehicle);
+		// What a trip logged from a returned booking takes, as any new trip does.
+		$centre = $this->costCentres->defaultOf($vehicle)?->getUuid();
 
-		return array_map(function (Booking $booking) use ($userId, $vehicle, $trips, $counters, $now, $approves, &$names): array {
+		return array_map(function (Booking $booking) use ($userId, $vehicle, $trips, $counters, $now, $approves, $centre, &$names): array {
 			$booker = $booking->getUserId();
 			$names[$booker] ??= $this->nameOf($booker);
 			$maker = $booking->getCreatedBy();
@@ -889,7 +893,7 @@ class BookingService {
 				'trip_uuid' => $trip?->getUuid(),
 				// The trip stays tied when voided: the booking was driven, whatever became of its log.
 				'trip_voided' => $trip?->getDeletedAt() !== null,
-				'trip_draft' => $untripped ? self::draft($booking) : null,
+				'trip_draft' => $untripped ? self::draft($booking, $centre) : null,
 				'approval' => $booking->getApproval(),
 				// Between the booker and whoever answers: a question may be about the booker.
 				'approval_comment' => $booker === $userId || $approves ? $booking->getApprovalComment() : null,

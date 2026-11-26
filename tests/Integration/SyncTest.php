@@ -8,17 +8,22 @@ declare(strict_types=1);
 
 namespace OCA\NextFleet\Tests\Integration;
 
+use OCA\NextFleet\Db\Audit;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Service\BookingService;
+use OCA\NextFleet\Service\BudgetService;
+use OCA\NextFleet\Service\CostCentreService;
 use OCA\NextFleet\Service\DocumentService;
 use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\ExpenseService;
 use OCA\NextFleet\Service\GrantService;
 use OCA\NextFleet\Service\MaintenanceService;
 use OCA\NextFleet\Service\OdometerService;
+use OCA\NextFleet\Service\PartnerService;
 use OCA\NextFleet\Service\ReminderService;
 use OCA\NextFleet\Service\SyncService;
+use OCA\NextFleet\Service\TransferService;
 use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\Files\IRootFolder;
@@ -44,17 +49,20 @@ class SyncTest extends TestCase {
 	private const GROUP = 'nextfleet-test-sync-crew';
 	/** Made and deleted by the deleted-group case alone. */
 	private const GONE = 'nextfleet-test-sync-gone';
+	/** Made and deleted by the joined-group case alone. */
+	private const JOINED = 'nextfleet-test-sync-joined';
 	/** Made and deleted by the erasure case alone. */
 	private const ERASED = 'nextfleet-test-sync-erased';
 
 	/** Every table that hangs a row off a vehicle. */
-	private const TABLES = ['fleet_odo_readings', 'fleet_trips', 'fleet_energy', 'fleet_maintenance', 'fleet_expenses', 'fleet_reminders', 'fleet_reminder_recipients', 'fleet_documents', 'fleet_bookings', 'fleet_access'];
+	private const TABLES = ['fleet_odo_readings', 'fleet_trips', 'fleet_energy', 'fleet_maintenance', 'fleet_expenses', 'fleet_reminders', 'fleet_reminder_recipients', 'fleet_documents', 'fleet_bookings', 'fleet_access', 'fleet_budgets'];
 
 	private SyncService $sync;
 	private VehicleService $vehicles;
 	private ExpenseService $expenses;
 	/** @var list<int> */
 	private array $vehicleIds = [];
+	private int $partnerTrips = 0;
 
 	public static function setUpBeforeClass(): void {
 		self::forgetAccounts();
@@ -72,7 +80,7 @@ class SyncTest extends TestCase {
 
 	private static function forgetAccounts(): void {
 		self::deleteAccounts([...self::ACCOUNTS, self::ERASED]);
-		foreach ([self::GROUP, self::GONE] as $gid) {
+		foreach ([self::GROUP, self::GONE, self::JOINED] as $gid) {
 			\OCP\Server::get(IGroupManager::class)->get($gid)?->delete();
 		}
 	}
@@ -94,10 +102,13 @@ class SyncTest extends TestCase {
 			$qb->delete($table)->where($qb->expr()->in($table === 'fleet_vehicles' ? 'id' : 'vehicle_id', $qb->createNamedParameter($this->vehicleIds, $qb::PARAM_INT_ARRAY)));
 			$qb->executeStatement();
 		}
-		// The trail names its row by id alone, and only the owner writes here.
-		$qb = $db->getQueryBuilder();
-		$qb->delete('fleet_audit')->where($qb->expr()->eq('created_by', $qb->createNamedParameter(self::OWNER)));
-		$qb->executeStatement();
+		// The trail names its row by id alone, and only the owner writes here but for a transfer,
+		// which hands a copy of the lists to the new owner.
+		foreach (['fleet_audit' => 'created_by', 'fleet_partners' => 'user_id', 'fleet_cost_centres' => 'user_id'] as $table => $column) {
+			$qb = $db->getQueryBuilder();
+			$qb->delete($table)->where($qb->expr()->in($column, $qb->createNamedParameter([...self::ACCOUNTS, Audit::TRANSFERRED_BY], $qb::PARAM_STR_ARRAY)));
+			$qb->executeStatement();
+		}
 		$this->vehicleIds = [];
 	}
 
@@ -330,8 +341,9 @@ class SyncTest extends TestCase {
 		foreach ([300, 400, 500] as $amount) {
 			$this->expense($kept, $amount);
 		}
-		$grant = $this->grant($regranted, self::DRIVER, 'user');
-		$this->grant($kept, self::DRIVER, 'user');
+		// Viewers: a grant that gives `log` would start the client over, and this is about a run.
+		$grant = $this->grant($regranted, self::DRIVER, 'user', 'viewer');
+		$this->grant($kept, self::DRIVER, 'user', 'viewer');
 		$this->age($regranted);
 		$this->age($kept);
 		$first = $this->sync(self::DRIVER, '', 1);
@@ -342,7 +354,7 @@ class SyncTest extends TestCase {
 		$this->assertSame([$regranted->getUuid()], $revoked['unreachable']);
 		$this->assertTrue($revoked['more']);
 
-		$this->grant($regranted, self::DRIVER, 'user');
+		$this->grant($regranted, self::DRIVER, 'user', 'viewer');
 		$cursor = $revoked['cursor'];
 		$pages = 0;
 		do {
@@ -402,7 +414,48 @@ class SyncTest extends TestCase {
 		$this->assertTrue($this->sync(self::DRIVER, $promoted['cursor'])['reset'], 'made a viewer');
 	}
 
-	/** Below `edit`, every role reads a vehicle that shares its costs alike. */
+	/**
+	 * A viewer made driver of a vehicle the client holds may read the owner's partners now, and no
+	 * partner changed: the client starts over, and the list comes whole.
+	 */
+	public function testAGrantThatGivesLogStartsEveryClientOver(): void {
+		$vehicle = $this->vehicle();
+		$grant = $this->grant($vehicle, self::DRIVER, 'user', 'viewer');
+		$partner = $this->partner($vehicle, 'Müller');
+		$this->age($vehicle);
+		$this->agePartners();
+		$cursor = $this->sync(self::DRIVER)['cursor'];
+
+		\OCP\Server::get(GrantService::class)->change(self::OWNER, $vehicle->getUuid(), $grant, ['role' => 'driver']);
+
+		$answer = $this->sync(self::DRIVER, $cursor);
+		$this->assertTrue($answer['reset']);
+		$this->assertSame('Müller', $this->partnerItem($answer, $partner)['row']['name'] ?? null);
+	}
+
+	/**
+	 * Joining a group that may log on a vehicle the client holds as a viewer's gives `log` with no
+	 * grant changed: the client starts over all the same.
+	 */
+	public function testJoiningAGroupThatGivesLogStartsEveryClientOver(): void {
+		$vehicle = $this->vehicle();
+		$this->grant($vehicle, self::MEMBER, 'user', 'viewer');
+		$joined = \OCP\Server::get(IGroupManager::class)->createGroup(self::JOINED) ?? throw new \RuntimeException('no ' . self::JOINED);
+		$this->grant($vehicle, self::JOINED, 'group');
+		$cursor = $this->sync(self::MEMBER)['cursor'];
+
+		$joined->addUser(\OCP\Server::get(IUserManager::class)->get(self::MEMBER) ?? throw new \RuntimeException('no ' . self::MEMBER));
+		try {
+			$this->assertTrue($this->sync(self::MEMBER, $cursor)['reset']);
+		} finally {
+			$joined->delete();
+		}
+	}
+
+	/**
+	 * Below `edit`, every role reads a vehicle that shares its costs alike. A driver made viewer
+	 * drops the owner's partners by the vehicle's `may` (docs/api.md#sync), so nothing starts over.
+	 */
 	public function testARoleChangeBelowEditLeavesEveryCursorStanding(): void {
 		$vehicle = $this->vehicle();
 		$grant = $this->grant($vehicle, self::DRIVER, 'user');
@@ -487,6 +540,208 @@ class SyncTest extends TestCase {
 		$this->assertFalse($answer['more']);
 		$this->assertSame(4, $pages, 'five expenses, a trip and its reading, two at a time');
 		$this->assertSame($written, $seen);
+	}
+
+	/**
+	 * The partner list of each owner whose vehicle the caller reaches, the address and the note to
+	 * the owner alone; at the top, as a list hangs off no vehicle.
+	 */
+	public function testAFirstSyncHandsOverTheListOfEveryOwnerReached(): void {
+		$vehicle = $this->vehicle();
+		$this->grant($vehicle, self::DRIVER, 'user');
+		$partner = $this->partner($vehicle, 'Müller');
+		$token = \OCP\Server::get(PartnerService::class)->update(self::OWNER, $partner, $this->tokenOf('fleet_partners', $partner), ['name' => 'Müller', 'address' => 'Hamburg'])['updated_at'];
+
+		$asDriver = $this->partnerItem($this->sync(self::DRIVER), $partner);
+		$asOwner = $this->partnerItem($this->sync(self::OWNER), $partner);
+
+		$this->assertSame([self::OWNER, $token, null], [$asDriver['user_id'], $asDriver['updated_at'], $asDriver['deleted_at']]);
+		$this->assertSame(['Müller', null, null], [$asDriver['row']['name'], $asDriver['row']['address'], $asDriver['row']['note']]);
+		$this->assertSame('Hamburg', $asOwner['row']['address']);
+	}
+
+	public function testARenameAndADeleteOfAPartnerReachTheNextSync(): void {
+		$vehicle = $this->vehicle();
+		$renamed = $this->partner($vehicle, 'Mueller');
+		$deleted = $this->partner($vehicle, 'Erika Mustermann');
+		$this->age($vehicle);
+		$this->agePartners();
+		$cursor = $this->sync(self::OWNER)['cursor'];
+		$partners = \OCP\Server::get(PartnerService::class);
+
+		$partners->update(self::OWNER, $renamed, $this->tokenOf('fleet_partners', $renamed), ['name' => 'Müller']);
+		$gone = $partners->delete(self::OWNER, $deleted, $this->tokenOf('fleet_partners', $deleted));
+
+		$answer = $this->sync(self::OWNER, $cursor);
+		$this->assertSame('Müller', $this->partnerItem($answer, $renamed)['row']['name'] ?? null);
+		$tombstone = $this->partnerItem($answer, $deleted);
+		$this->assertSame([$gone['deleted_at'], null], [$tombstone['deleted_at'], $tombstone['row']]);
+		// The trip whose link the delete took comes too.
+		$this->assertCount(1, $answer['changes']['trips']);
+		$this->assertSame(['partner' => 'Erika Mustermann', 'partner_uuid' => null], array_intersect_key(
+			(array)$answer['changes']['trips'][0]['row'],
+			['partner' => true, 'partner_uuid' => true],
+		));
+	}
+
+	public function testAListNothingChangedInIsNotSentAgain(): void {
+		$vehicle = $this->vehicle();
+		$this->partner($vehicle, 'Müller');
+		$this->age($vehicle);
+		$this->agePartners();
+		$cursor = $this->sync(self::OWNER)['cursor'];
+
+		$this->assertSame([], $this->sync(self::OWNER, $cursor)['partners']);
+	}
+
+	/** Once a run, on its first page: a list is short, and its rows are no vehicle's to page by. */
+	public function testAListComesOnTheFirstPageOfARunOnly(): void {
+		$vehicle = $this->vehicle();
+		$partner = $this->partner($vehicle, 'Müller');
+		$this->expense($vehicle, 100);
+
+		$first = $this->sync(self::OWNER, '', 1);
+		$second = $this->sync(self::OWNER, $first['cursor'], 1);
+
+		$this->assertTrue($first['more']);
+		$this->assertSame($partner, $this->partnerItem($first, $partner)['uuid']);
+		$this->assertSame([], $second['partners']);
+	}
+
+	/** The cost centres of each owner reached, as the partners: a driver picks from them offline. */
+	public function testAFirstSyncHandsOverTheCostCentresOfEveryOwnerReached(): void {
+		$vehicle = $this->vehicle();
+		$this->grant($vehicle, self::DRIVER, 'user');
+		$sales = \OCP\Server::get(CostCentreService::class)->create(self::OWNER, ['code' => '4711', 'name' => 'Vertrieb']);
+
+		$items = $this->sync(self::DRIVER)['cost_centres'];
+
+		$this->assertSame([[self::OWNER, $sales['uuid'], null, $sales]], array_map(
+			static fn (array $item): array => [$item['user_id'], $item['uuid'], $item['deleted_at'], $item['row']],
+			$items,
+		));
+	}
+
+	/**
+	 * The former owner stays as a viewer, and reads the new owner's partners no more than any
+	 * viewer does. The transfer starts every client over, so theirs drops the rows it held.
+	 */
+	public function testAFormerOwnerIsHandedNoPartnerOnceTheVehicleIsTransferred(): void {
+		$vehicle = $this->vehicle();
+		$this->partner($vehicle, 'Müller');
+		$cursor = $this->sync(self::OWNER)['cursor'];
+
+		\OCP\Server::get(TransferService::class)->transfer($vehicle->getUuid(), self::DRIVER);
+
+		$answer = $this->sync(self::OWNER, $cursor);
+		$this->assertTrue($answer['reset']);
+		$this->assertSame([$vehicle->getUuid()], array_column($answer['vehicles'], 'uuid'));
+		$this->assertSame([], $answer['partners']);
+		$this->assertSame(['Müller'], array_column(array_column($this->sync(self::DRIVER)['partners'], 'row'), 'name'));
+	}
+
+	/** A viewer names the cost centre an entry shows; a partner's name is for whoever logs a trip. */
+	public function testAViewerIsHandedTheCostCentresAndNoPartner(): void {
+		$vehicle = $this->vehicle();
+		$this->grant($vehicle, self::DRIVER, 'user', 'viewer');
+		$this->partner($vehicle, 'Müller');
+		$sales = \OCP\Server::get(CostCentreService::class)->create(self::OWNER, ['name' => 'Vertrieb']);
+
+		$answer = $this->sync(self::DRIVER);
+
+		$this->assertSame([$sales['uuid']], array_column($answer['cost_centres'], 'uuid'));
+		$this->assertSame([], $answer['partners']);
+	}
+
+	public function testADeletedCostCentreReachesTheNextSyncAsATombstone(): void {
+		$vehicle = $this->vehicle();
+		$centres = \OCP\Server::get(CostCentreService::class);
+		$sales = $centres->create(self::OWNER, ['name' => 'Vertrieb']);
+		$this->age($vehicle);
+		$qb = \OCP\Server::get(IDBConnection::class)->getQueryBuilder();
+		$qb->update('fleet_cost_centres')
+			->set('updated_at', $qb->createNamedParameter($sales['updated_at'] - 1000))
+			->where($qb->expr()->eq('uuid', $qb->createNamedParameter($sales['uuid'])));
+		$qb->executeStatement();
+		$cursor = $this->sync(self::OWNER)['cursor'];
+
+		$gone = $centres->delete(self::OWNER, $sales['uuid'], $sales['updated_at'] - 1000);
+
+		$items = $this->sync(self::OWNER, $cursor)['cost_centres'];
+		$this->assertSame([[$sales['uuid'], $gone['deleted_at'], null]], array_map(
+			static fn (array $item): array => [$item['uuid'], $item['deleted_at'], $item['row']],
+			$items,
+		));
+	}
+
+	/** A budget rides as a vehicle table does, in the form its list route answers. */
+	public function testABudgetComesAsItsListRouteAnswersIt(): void {
+		$vehicle = $this->pricedVehicle();
+		$budgets = \OCP\Server::get(BudgetService::class);
+		$budget = $budgets->create(self::OWNER, $vehicle->getUuid(), ['year' => 2031, 'amount' => 500000, 'net' => true]);
+
+		$answer = $this->sync(self::OWNER);
+
+		$this->assertSame($budgets->list(self::OWNER, $vehicle->getUuid()), [$this->item($answer, 'budgets', $budget['uuid'])['row']]);
+	}
+
+	/** A budget is money: kept from a driver the vehicle keeps its costs from, as an expense is. */
+	public function testABudgetIsKeptFromADriverTheCostsAreKeptFrom(): void {
+		$vehicle = $this->pricedVehicle();
+		$this->grant($vehicle, self::DRIVER, 'user');
+		$budgets = \OCP\Server::get(BudgetService::class);
+		$budget = $budgets->create(self::OWNER, $vehicle->getUuid(), ['year' => 2031, 'amount' => 500000, 'net' => true]);
+		$cursor = $this->sync(self::DRIVER)['cursor'];
+		$this->stamp('fleet_budgets', $budget['uuid'], $budget['updated_at'] - 1000);
+		$budgets->delete(self::OWNER, $vehicle->getUuid(), $budget['uuid'], $budget['updated_at'] - 1000);
+
+		$this->assertSame([], $this->sync(self::DRIVER)['changes']['budgets']);
+		$this->assertSame([], $this->sync(self::DRIVER, $cursor)['changes']['budgets']);
+	}
+
+	private function pricedVehicle(): Vehicle {
+		$vehicle = $this->vehicles->create(self::OWNER, ['plate' => 'S-YN 2', 'currency' => 'EUR', 'costs_shared' => false]);
+		$this->vehicleIds[] = (int)$vehicle->getId();
+
+		return $vehicle;
+	}
+
+	/**
+	 * @param array<string, mixed> $answer
+	 * @return array<string, mixed>
+	 */
+	private function partnerItem(array $answer, string $uuid): array {
+		foreach ($answer['partners'] as $item) {
+			if ($item['uuid'] === $uuid) {
+				return $item;
+			}
+		}
+		$this->fail("$uuid is not among the partners");
+	}
+
+	/** @return string the uuid of the record a trip with this text links */
+	private function partner(Vehicle $vehicle, string $name): string {
+		// Each a day after the last, a little further on the counter.
+		$day = 86400 * $this->partnerTrips++;
+		$trip = \OCP\Server::get(TripService::class)->record(self::OWNER, $vehicle->getUuid(), [
+			'started_at' => 1750000000 + $day,
+			'started_at_off' => 120,
+			'ended_at' => 1750005400 + $day,
+			'ended_at_off' => 120,
+			'end_odo' => 12000 + intdiv($day, 1000),
+			'category' => Trip::BUSINESS,
+			'partner' => $name,
+		]);
+
+		return (string)$trip->getPartnerUuid();
+	}
+
+	private function agePartners(): void {
+		$qb = \OCP\Server::get(IDBConnection::class)->getQueryBuilder();
+		$qb->update('fleet_partners')
+			->set('updated_at', $qb->createFunction($qb->getColumnName('updated_at') . ' - 1000'))
+			->where($qb->expr()->eq('user_id', $qb->createNamedParameter(self::OWNER)));
+		$qb->executeStatement();
 	}
 
 	/** @return array<string, mixed> the answer */

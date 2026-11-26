@@ -55,11 +55,16 @@ Importing it restores nothing.
 1. **Migrations** in `lib/Migration/` add tables, columns and indexes.
    Nextcloud runs each one once.
    They keep all rows.
+   The step of 1.0.0 makes a partner record for each partner name on the trips of an owner, and links each trip to it.
+   It changes no trip name and no `updated_at`, so apps start their sync again.
 2. **Repair steps** in `lib/Repair/` run after them:
    - `ErasedPseudonyms` renames deleted accounts from versions before 0.3.0 to the new format.
      A live account with an old-format name is reported in the upgrade output, the log and a notification to the administrators.
    - `StrangerRecipients` removes reminder recipients who cannot see the vehicle and whom nobody may share with.
      It runs only on an upgrade from before 0.3.1.
+   - `UnlinkedPartners` links each trip whose partner name has no record yet, as a trip saved in the app is linked.
+     It runs on each upgrade after 1.0.0; on the upgrade to 1.0.0 the migration did this already.
+     With nothing to link, it changes nothing.
 
 Each release is installed over the one before it in a test.
 The test fails if a row is lost, or if the schema differs from a fresh install ([release](../development.md#release)).
@@ -70,6 +75,10 @@ The database has no foreign keys, so it does not stop every wrong link between r
 
 1. Run `occ nextfleet:check`.
 2. For a `cache` or `flag` finding, run `occ nextfleet:recompute --vehicle <uuid>`.
+   For a `partner` finding, run `occ maintenance:repair`.
+   Its step `UnlinkedPartners` links each such trip, and each voided one, to the partner of its name, else to the partner another live trip with this text links, and adds a new partner if there is none.
+   The trip keeps its partner name.
+   A trip in a kept logbook gets an audit row for the link, and the apps fetch the trip again at their next sync.
 3. For other findings, look at the rows it names ([Troubleshooting](troubleshooting.md)).
 
 Next: [occ commands](occ.md)

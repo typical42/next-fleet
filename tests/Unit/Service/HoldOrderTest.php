@@ -10,9 +10,12 @@ namespace OCA\NextFleet\Tests\Unit\Service;
 
 use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
+use OCA\NextFleet\Db\AuditMapper;
 use OCA\NextFleet\Db\Booking;
 use OCA\NextFleet\Db\BookingMapper;
 use OCA\NextFleet\Db\BookingRecipientMapper;
+use OCA\NextFleet\Db\CostCentre;
+use OCA\NextFleet\Db\CostCentreMapper;
 use OCA\NextFleet\Db\Document;
 use OCA\NextFleet\Db\DocumentMapper;
 use OCA\NextFleet\Db\Energy;
@@ -21,8 +24,11 @@ use OCA\NextFleet\Db\Expense;
 use OCA\NextFleet\Db\ExpenseMapper;
 use OCA\NextFleet\Db\Maintenance;
 use OCA\NextFleet\Db\MaintenanceMapper;
+use OCA\NextFleet\Db\Partner;
+use OCA\NextFleet\Db\PartnerMapper;
 use OCA\NextFleet\Db\ReminderMapper;
 use OCA\NextFleet\Db\ReminderRecipientMapper;
+use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
@@ -30,6 +36,7 @@ use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCA\NextFleet\Service\AfterCommit;
 use OCA\NextFleet\Service\BookingNotices;
 use OCA\NextFleet\Service\BookingService;
+use OCA\NextFleet\Service\CostCentreLinks;
 use OCA\NextFleet\Service\CostsShown;
 use OCA\NextFleet\Service\DocumentService;
 use OCA\NextFleet\Service\EnergyService;
@@ -41,10 +48,13 @@ use OCA\NextFleet\Service\Names;
 use OCA\NextFleet\Service\NotificationService;
 use OCA\NextFleet\Service\OdometerService;
 use OCA\NextFleet\Service\OwnFiles;
+use OCA\NextFleet\Service\PartnerService;
 use OCA\NextFleet\Service\Pending;
 use OCA\NextFleet\Service\ReminderService;
 use OCA\NextFleet\Service\Sharable;
 use OCA\NextFleet\Service\SyncEpoch;
+use OCA\NextFleet\Service\TransferService;
+use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\UserZone;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
@@ -190,8 +200,8 @@ class HoldOrderTest extends TestCase {
 	private function entry(string $kind, string $action, array $fields): void {
 		$this->calls = [];
 		$service = match ($kind) {
-			'energy' => new EnergyService($this->rows(EnergyMapper::class, $this->row(new Energy())), $this->odometer, $this->fleet, $this->vehicles, $this->createMock(Jurisdictions::class), $this->db, $this->createMock(CostsShown::class)),
-			'expense' => new ExpenseService($this->rows(ExpenseMapper::class, $this->row(new Expense())), $this->fleet, $this->vehicles, $this->createMock(Jurisdictions::class), $this->db, $this->shownExpenses()),
+			'energy' => new EnergyService($this->rows(EnergyMapper::class, $this->row(new Energy())), $this->odometer, $this->fleet, $this->vehicles, $this->createMock(Jurisdictions::class), $this->db, $this->createMock(CostsShown::class), $this->createMock(CostCentreLinks::class)),
+			'expense' => new ExpenseService($this->rows(ExpenseMapper::class, $this->row(new Expense())), $this->fleet, $this->vehicles, $this->createMock(Jurisdictions::class), $this->db, $this->shownExpenses(), $this->createMock(CostCentreLinks::class)),
 			'maintenance' => $this->workshop(),
 		};
 		match ($action) {
@@ -225,6 +235,7 @@ class HoldOrderTest extends TestCase {
 			$reminderRows,
 			new AfterCommit($this->db, $this->createMock(LoggerInterface::class)),
 			$this->createMock(CostsShown::class),
+			$this->createMock(CostCentreLinks::class),
 		);
 	}
 
@@ -296,6 +307,7 @@ class HoldOrderTest extends TestCase {
 			$this->createMock(UserZone::class),
 			$this->db,
 			$this->createMock(LoggerInterface::class),
+			$this->createMock(CostCentreLinks::class),
 		);
 	}
 
@@ -461,5 +473,153 @@ class HoldOrderTest extends TestCase {
 	public static function grantees(): iterable {
 		yield 'still there' => [true, ['begin', 'hold', 'exists', 'commit']];
 		yield 'deleted meanwhile' => [false, ['begin', 'hold', 'exists', 'vehicle', 'recipients', 'discard', 'commit']];
+	}
+
+	/**
+	 * A merge or a delete of a partner holds every vehicle whose trips it may move before it moves
+	 * one: the owner's, and any other whose trips link the record. A vehicle that comes to either
+	 * while the holds are taken - a transfer in, a vehicle the owner adds, a trip that comes to link
+	 * the record - is held too.
+	 *
+	 * @dataProvider partnerWrites
+	 */
+	public function testAPartnerMergeOrDeleteHoldsAVehicleThatCameWhileItTookTheHolds(string $action, string $came): void {
+		$late = new Vehicle();
+		$late->setId(9);
+		$moved = new Trip();
+		$moved->setId(21);
+		$moved->setVehicleId(9);
+		$owned = 0;
+		$linking = 0;
+		$vehicles = $this->createMock(VehicleMapper::class);
+		$vehicles->method('hold')->willReturnCallback(function (int $id): void {
+			$this->calls[] = 'hold ' . $id;
+		});
+		$vehicles->method('findAnyOwnedBy')->willReturnCallback(function () use (&$owned, $came, $late): array {
+			return $came === 'owned' && $owned++ > 0 ? [$this->vehicle, $late] : [$this->vehicle];
+		});
+		$vehicles->method('findAnyById')->willReturn($late);
+		$trips = $this->createMock(TripMapper::class);
+		$trips->method('findAnyLinking')->willReturnCallback(function () use (&$linking, $came, $moved): array {
+			return $came === 'linking' && $linking++ > 0 ? [$moved] : [];
+		});
+		$partners = $this->createMock(PartnerMapper::class);
+		$partners->method('findByUuid')->willReturnCallback(static function (string $uuid): Partner {
+			$partner = new Partner();
+			$partner->setId($uuid === self::ROW ? 11 : 12);
+			$partner->setUuid($uuid);
+			$partner->setUserId(self::OWNER);
+			$partner->setUpdatedAt(self::TOKEN);
+
+			return $partner;
+		});
+		$partners->method('softDelete')->willReturnCallback($this->noted('erase', static fn (Partner $partner): Partner => $partner));
+		$tripService = $this->createMock(TripService::class);
+		$tripService->method('relink')->willReturnCallback($this->noted('relink'));
+		$service = new PartnerService($partners, $trips, $vehicles, $this->fleet, $tripService, $this->db, $this->createMock(LoggerInterface::class));
+
+		match ($action) {
+			'merge' => $service->merge(self::OWNER, self::ROW, self::TOKEN, self::CLIENT_UUID),
+			'delete' => $service->delete(self::OWNER, self::ROW, self::TOKEN),
+		};
+
+		$holds = array_values(array_filter($this->calls, static fn (string $call): bool => str_starts_with($call, 'hold ')));
+		$this->assertSame(['hold 7', 'hold 9'], $holds);
+		$writes = array_keys(array_filter($this->calls, static fn (string $call): bool => in_array($call, ['relink', 'erase'], true)));
+		$this->assertNotSame([], $writes);
+		$this->assertLessThan($writes[0], array_search('hold 9', $this->calls, true), 'a write before the late vehicle was held');
+	}
+
+	/**
+	 * A transfer that takes a cost centre of the new owner's list for the vehicle's entries holds it
+	 * first and reads it again, as an entry write does (CostCentreLinks): a delete of it at the same
+	 * time either waits and then finds it named, or has deleted it, and the transfer looks on: for
+	 * a record of the name, else it copies the record afresh.
+	 *
+	 * @param list<string> $expected
+	 * @dataProvider reusedCentres
+	 */
+	public function testATransferHoldsTheCostCentreItReuses(bool $deleted, bool $named, array $expected): void {
+		$theirs = self::centre(31, 'alice', null);
+		$found = self::centre(41, 'bob', null);
+		$byName = $named ? self::centre(50, 'bob', null) : null;
+		$trip = new Trip();
+		$trip->setId(21);
+		$trip->setVehicleId(7);
+		$trip->setCostCentreId(31);
+		$names = $this->createMock(Names::class);
+		$names->method('spelled')->willReturn('bob');
+		$this->vehicles->method('findByUuid')->willReturn($this->vehicle);
+		$this->vehicles->method('updateChecked')->willReturnArgument(0);
+		$trips = $this->createMock(TripMapper::class);
+		$trips->method('findAnyLinkingOn')->willReturnCallback(static fn (int $id, string $column = 'partner_id'): array => $column === 'cost_centre_id' ? [$trip] : []);
+		$centres = $this->createMock(CostCentreMapper::class);
+		$centres->method('namedOn')->willReturn([]);
+		$centres->method('findBy')->willReturnCallback(static fn (string $userId, string $column, string $value): ?CostCentre => $column === 'code' ? $found : $byName);
+		$centres->method('findAnyOf')->willReturnCallback($this->noted('read centre', static fn (array $ids): array => match ($ids) {
+			[31] => [31 => $theirs],
+			[41] => [41 => self::centre(41, 'bob', $deleted ? self::NOW : null)],
+			[50] => [50 => $byName],
+		}));
+		$centres->method('hold')->willReturnCallback(function (int $id): void {
+			$this->calls[] = 'hold centre ' . $id;
+		});
+		$centres->method('insert')->willReturnCallback($this->noted('insert centre', static function (CostCentre $copy): CostCentre {
+			$copy->setId(42);
+
+			return $copy;
+		}));
+		$tripService = $this->createMock(TripService::class);
+		$tripService->method('relinkCostCentre')->willReturnCallback(function (string $by, Vehicle $vehicle, Trip $trip, CostCentre $to): void {
+			$this->calls[] = 'relink to ' . $to->getId();
+		});
+		$service = new TransferService(
+			$this->vehicles,
+			$this->createMock(AccessMapper::class),
+			$this->createMock(ReminderRecipientMapper::class),
+			$this->createMock(AuditMapper::class),
+			$trips,
+			$this->createMock(PartnerMapper::class),
+			$centres,
+			$tripService,
+			$this->createMock(GrantNotices::class),
+			$this->createMock(BookingNotices::class),
+			$this->createMock(VehicleAccess::class),
+			$this->createMock(SyncEpoch::class),
+			$this->createMock(IUserManager::class),
+			$names,
+			$this->db,
+		);
+
+		$service->transfer(self::VEHICLE, 'bob');
+
+		$this->assertSame($expected, array_values(array_filter($this->calls, static fn (string $call): bool => str_contains($call, 'centre') || str_starts_with($call, 'relink'))));
+	}
+
+	/** @return iterable<string, array{bool, bool, list<string>}> */
+	public static function reusedCentres(): iterable {
+		yield 'still there' => [false, false, ['read centre', 'hold centre 41', 'read centre', 'relink to 41']];
+		yield 'deleted meanwhile' => [true, false, ['read centre', 'hold centre 41', 'read centre', 'insert centre', 'relink to 42']];
+		yield 'deleted meanwhile, another of the name' => [true, true, ['read centre', 'hold centre 41', 'read centre', 'hold centre 50', 'read centre', 'relink to 50']];
+	}
+
+	private static function centre(int $id, string $userId, ?int $deletedAt): CostCentre {
+		$centre = new CostCentre();
+		$centre->setId($id);
+		$centre->setUserId($userId);
+		$centre->setCode('4711');
+		$centre->setName('Vertrieb');
+		$centre->setArchived(false);
+		$centre->setDeletedAt($deletedAt);
+
+		return $centre;
+	}
+
+	/** @return iterable<string, array{string, string}> */
+	public static function partnerWrites(): iterable {
+		foreach (['merge', 'delete'] as $action) {
+			yield "$action, a vehicle the owner gained" => [$action, 'owned'];
+			yield "$action, a vehicle whose trip came to link the record" => [$action, 'linking'];
+		}
 	}
 }

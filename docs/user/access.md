@@ -15,6 +15,7 @@ Do these steps in this order:
 4. Decide if a driver needs approval also for [Take it now](#take-it-now-without-approval).
 5. Decide [who hears of bookings](#hear-of-bookings).
 6. If necessary, [book the car for a driver](#book-for-a-driver).
+7. If you want, add [cost centres](partners.md#cost-centres) and a [budget](partners.md#budgets) for the car.
 
 A vehicle that only you use shows none of these settings.
 
@@ -23,9 +24,9 @@ A vehicle that only you use shows none of these settings.
 | Role | Can |
 |---|---|
 | **Viewer** | See the vehicle, its entries, figures, reminders and documents. Export CSV files. See the costs, unless the owner keeps them from drivers and viewers. |
-| **Driver** | All a viewer can. Add entries, and change or delete their own. Book the vehicle. Attach documents to their own entries and bookings. |
-| **Manager** | All a driver can. Always see the costs. Change and delete all entries and bookings, and answer the ones that wait for approval. Book the vehicle for a driver. Edit the vehicle, its reminders and who gets them. Attach documents to the vehicle. Import. |
-| Owner | All a manager can. Give and remove access. Decide whether drivers and viewers see the costs, whether bookings need approval, which driver can take the vehicle without approval, and who hears of bookings. Delete the vehicle. |
+| **Driver** | All a viewer can. Add entries, and change or delete their own. Select the cost centre of an entry. Book the vehicle. Attach documents to their own entries and bookings. |
+| **Manager** | All a driver can. Always see the costs and the budgets. Change and delete all entries and bookings, and answer the ones that wait for approval. Book the vehicle for a driver. Edit the vehicle, its default cost centre, its reminders and who gets them. Get the budget warning. Attach documents to the vehicle. Import. |
+| Owner | All a manager can. Give and remove access. Decide whether drivers and viewers see the costs, whether bookings need approval, which driver can take the vehicle without approval, and who hears of bookings. Keep the partner list and the cost centres, and set the budgets ([Partners, cost centres and budgets](partners.md)). Delete the vehicle. |
 
 The owner is the user who added the vehicle.
 Only an administrator can give it to another owner.
@@ -43,7 +44,7 @@ The switch shows only after you gave access to another user or a group.
 2. Under **Costs**, switch off **Drivers and viewers see costs**.
 3. Click **Save**.
 
-Drivers and viewers then see no sums, no prices and no expenses of other users, and no mileage claim.
+Drivers and viewers then see no sums, no prices and no expenses of other users, no budget and no mileage claim.
 They still enter amounts, and see the amounts they entered.
 On the timeline, **Expenses** shows the expenses they entered.
 A receipt shows the price, so they see no document on another user's fill-up, maintenance or expense either.

@@ -63,6 +63,7 @@ class EnergyController extends OCSController {
 	 * @param int|null $odo the counter
 	 * @param int|null $second_odo the engine hours, on a vehicle that counts them
 	 * @param string|null $client_uuid a uuid of the client's for the new row: a retry under it answers that row
+	 * @param string|null $cost_centre_uuid a cost centre of the vehicle owner's; left out, the vehicle's default; null for none
 	 * @return DataResponse<Http::STATUS_CREATED, NextFleetEnergy, array{}>|DataResponse<Http::STATUS_OK, NextFleetEnergy, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
 	 * @throws OCSForbiddenException the caller may not log on this vehicle
 	 * @throws OCSNotFoundException no such vehicle
@@ -91,6 +92,7 @@ class EnergyController extends OCSController {
 		mixed $odo = null,
 		mixed $second_odo = null,
 		mixed $client_uuid = null,
+		mixed $cost_centre_uuid = null,
 	): DataResponse {
 		return $this->write(fn (): DataResponse => $this->created(
 			fn (): array => $this->service->record($this->userId(), $uuid, $this->request->getParams()),
@@ -144,6 +146,7 @@ class EnergyController extends OCSController {
 	 * @param bool|null $is_dc a DC fast charge
 	 * @param int|null $odo the counter
 	 * @param int|null $second_odo the engine hours, on a vehicle that counts them
+	 * @param string|null $cost_centre_uuid a cost centre of the vehicle owner's, or null for none; left out, the entry keeps its own
 	 * @return DataResponse<Http::STATUS_OK, NextFleetEnergy, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
 	 * @throws OCSForbiddenException the caller may not edit this fill-up
 	 * @throws OCSNotFoundException no such vehicle or fill-up
@@ -172,6 +175,7 @@ class EnergyController extends OCSController {
 		mixed $is_dc = null,
 		mixed $odo = null,
 		mixed $second_odo = null,
+		mixed $cost_centre_uuid = null,
 	): DataResponse {
 		return $this->write(fn (): DataResponse => new DataResponse(
 			$this->service->update($this->userId(), $uuid, $fillUp, $this->token(), $this->request->getParams()),

@@ -18,15 +18,17 @@ import { computed, onMounted, ref, watch } from 'vue'
 import UndoToast from './components/UndoToast.vue'
 import VehicleList from './components/VehicleList.vue'
 import VehicleSheet from './components/VehicleSheet.vue'
-import { settingsUrl } from './services/api.js'
+import { listPartners, settingsUrl } from './services/api.js'
 import { useInboxStore } from './store/inbox.js'
 import { useVehiclesStore } from './store/index.js'
 import { usePreferencesStore } from './store/preferences.js'
 import InboxView from './views/InboxView.vue'
 import OverviewView from './views/OverviewView.vue'
+import PartnersView from './views/PartnersView.vue'
 import ReportsView from './views/ReportsView.vue'
 import StatisticsView from './views/StatisticsView.vue'
 import VehicleView from './views/VehicleView.vue'
+import { may } from './utils/access.js'
 import { t } from './utils/l10n.js'
 
 const store = useVehiclesStore()
@@ -52,6 +54,10 @@ const reporting = ref(false)
 const sorting = ref(false)
 /** Whether it shows the statistics, which read one vehicle or all of them. */
 const counting = ref(false)
+/** Whether it shows the partner list, which belongs to the owner and to no one vehicle. */
+const partnering = ref(false)
+/** Counts the clicks on the entry: each one opens the list anew, also from one partner opened. */
+const partnerVisit = ref(0)
 /** The vehicle the statistics open on; empty for every vehicle. */
 const counted = ref('')
 const creating = ref(false)
@@ -74,7 +80,17 @@ watch(() => store.visible.some((one) => one.uuid === selected.value), (listed) =
 })
 // Read off what the content area shows, not off `selected`: a vehicle that left the fleet falls
 // back to the overview with its uuid still selected.
-const overview = computed(() => !reporting.value && !sorting.value && !counting.value && !vehicle.value)
+const overview = computed(() => !reporting.value && !sorting.value && !counting.value && !partnering.value && !vehicle.value)
+// The list is the vehicle owner's (ADR 0013): a driver of somebody else's car has none to keep.
+const owner = computed(() => store.list.some((one) => may(one, 'own')))
+/** Whether the entry shows without `owner` (docs/ui.md#screens-follow-the-role). */
+const keepsPartners = ref(false)
+// Not read again: a trip since the start may have added partners, and a reload is what drops them.
+watch(owner, (now, before) => {
+	if (before && !now) {
+		keepsPartners.value = true
+	}
+})
 
 onMounted(load)
 
@@ -106,6 +122,15 @@ async function load() {
 			// The entry shows without a count.
 		}
 	}
+
+	// For the entry only; silent for the same reason. The screen reads the list again.
+	if (!owner.value) {
+		try {
+			keepsPartners.value = (await listPartners()).length > 0
+		} catch {
+			// The entry shows from the next load on.
+		}
+	}
 }
 
 /**
@@ -123,6 +148,7 @@ function show(uuid) {
 	reporting.value = false
 	sorting.value = false
 	counting.value = false
+	partnering.value = false
 	arrivedToEnter.value = false
 	openedDisposed.value = disposed.value.some((one) => one.uuid === uuid)
 	selected.value = uuid
@@ -133,6 +159,7 @@ function report() {
 	selected.value = ''
 	sorting.value = false
 	counting.value = false
+	partnering.value = false
 	reporting.value = true
 }
 
@@ -141,6 +168,7 @@ function sort() {
 	selected.value = ''
 	reporting.value = false
 	counting.value = false
+	partnering.value = false
 	sorting.value = true
 }
 
@@ -153,9 +181,21 @@ function count(uuid) {
 	selected.value = ''
 	reporting.value = false
 	sorting.value = false
+	partnering.value = false
 	arrivedToEnter.value = false
 	counted.value = uuid
 	counting.value = true
+}
+
+/** No vehicle stays selected: all of the owner's vehicles share the list. */
+function partners() {
+	selected.value = ''
+	reporting.value = false
+	sorting.value = false
+	counting.value = false
+	arrivedToEnter.value = false
+	partnerVisit.value++
+	partnering.value = true
 }
 </script>
 
@@ -186,6 +226,10 @@ function count(uuid) {
 					<NcAppNavigationItem :name="t('nextfleet', 'Statistics')"
 						:active="counting"
 						@click="count('')" />
+					<NcAppNavigationItem v-if="owner || keepsPartners"
+						:name="t('nextfleet', 'Partners')"
+						:active="partnering"
+						@click="partners" />
 					<NcAppNavigationItem :name="t('nextfleet', 'Reports')"
 						:active="reporting"
 						@click="report" />
@@ -215,6 +259,8 @@ function count(uuid) {
 			<InboxView v-else-if="sorting" :vehicles="store.visible" />
 			<!-- The whole fleet, for the reason the reports take it. -->
 			<StatisticsView v-else-if="counting" :vehicles="store.list" :vehicle="counted" />
+			<!-- The whole fleet, to name the vehicle of each trip, sold ones included. -->
+			<PartnersView v-else-if="partnering" :key="partnerVisit" :vehicles="store.list" />
 			<VehicleView v-else-if="vehicle"
 				:vehicle="vehicle"
 				:enter="arrivedToEnter"

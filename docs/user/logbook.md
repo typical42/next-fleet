@@ -16,6 +16,8 @@ It accepts an electronic logbook only if no entry changes without a record.
 - A trip without a necessary field shows **Incomplete**.
 - The timeline shows the gaps between trips ([Close a gap](entries.md#close-a-gap)).
 - The printed logbook lists each void and each late change.
+  The logbook prints the partner as the trip text, and no cost centre.
+  So a change to the [partner list](partners.md#partners) or to the cost centre of a trip is not a late change.
 
 The necessary fields depend on the category of the trip:
 

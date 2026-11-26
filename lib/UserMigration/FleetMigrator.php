@@ -15,7 +15,10 @@ use OCA\NextFleet\Db\Audit;
 use OCA\NextFleet\Db\BaseEntity;
 use OCA\NextFleet\Db\Booking;
 use OCA\NextFleet\Db\BookingRecipient;
+use OCA\NextFleet\Db\Budget;
+use OCA\NextFleet\Db\CostCentre;
 use OCA\NextFleet\Db\Maintenance;
+use OCA\NextFleet\Db\Partner;
 use OCA\NextFleet\Db\Reminder;
 use OCA\NextFleet\Db\ReminderRecipient;
 use OCA\NextFleet\Db\TripMapper;
@@ -151,11 +154,17 @@ class FleetMigrator implements IMigrator {
 
 			return $row;
 		}
+		// The account's own lists: no vehicle holds them, so no grant decides over them.
+		if (($entity instanceof Partner || $entity instanceof CostCentre) && $entity->getUserId() === $uid) {
+			return $row;
+		}
 		if ($entity instanceof Maintenance && !$this->may($uid, VehicleAccess::VIEW, $entity->getVehicleId())) {
 			$row = array_merge($row, array_fill_keys(array_map($entity->propertyToColumn(...), Maintenance::KEPT), null));
 		}
 		$vehicle = $entity instanceof Vehicle ? $entity : null;
-		if (in_array($table, self::AUTHORED, true) || ($row['created_by'] ?? null) !== $uid || $this->may($uid, VehicleAccess::VIEW, $this->vehicleOf($entity), $vehicle)) {
+		// A budget is money: whole while the account sees the vehicle's costs.
+		$sees = $entity instanceof Budget ? VehicleAccess::COSTS : VehicleAccess::VIEW;
+		if (in_array($table, self::AUTHORED, true) || ($row['created_by'] ?? null) !== $uid || $this->may($uid, $sees, $this->vehicleOf($entity), $vehicle)) {
 			if ($vehicle !== null && !$this->may($uid, VehicleAccess::COSTS, (int)$vehicle->getId(), $vehicle)) {
 				$row = array_merge($row, array_fill_keys(self::PRICES, null));
 			}
@@ -180,7 +189,7 @@ class FleetMigrator implements IMigrator {
 					? $this->trips->findAnyById($entity->getEntityId())->getVehicleId()
 					: $entity->getEntityId(),
 				// The rest of the tables that mirror shared state; AUTHORED took the others.
-				$entity instanceof Access, $entity instanceof Reminder, $entity instanceof ReminderRecipient, $entity instanceof BookingRecipient => $entity->getVehicleId(),
+				$entity instanceof Access, $entity instanceof Reminder, $entity instanceof ReminderRecipient, $entity instanceof BookingRecipient, $entity instanceof Budget => $entity->getVehicleId(),
 				default => null,
 			};
 		} catch (DoesNotExistException) {

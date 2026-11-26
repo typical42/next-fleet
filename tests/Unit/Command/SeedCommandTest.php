@@ -22,6 +22,10 @@ use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCA\NextFleet\Service\BookingNotices;
 use OCA\NextFleet\Service\BookingService;
+use OCA\NextFleet\Service\BudgetService;
+use OCA\NextFleet\Service\BudgetWarnings;
+use OCA\NextFleet\Service\CostCentreLinks;
+use OCA\NextFleet\Service\CostCentreService;
 use OCA\NextFleet\Service\DocumentService;
 use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\ExpenseService;
@@ -234,6 +238,7 @@ class SeedCommandTest extends TestCase {
 			$this->createMock(MoneyRows::class),
 			$this->createMock(AccessMapper::class),
 			$this->createMock(SyncEpoch::class),
+			$this->createMock(CostCentreLinks::class),
 		);
 
 		return new CommandTester(new SeedCommand(
@@ -247,12 +252,31 @@ class SeedCommandTest extends TestCase {
 			$this->trips,
 			$this->grants,
 			$this->bookings,
+			$this->centres(),
 			$recipients ?? $this->createMock(RecipientService::class),
 			$this->createMock(DocumentService::class),
 			// SeedTest reads the trips and the papers back for real.
 			$this->createMock(SeedPapers::class),
 			$time,
+			$this->createMock(BudgetService::class),
+			$this->createMock(BudgetWarnings::class),
 		));
+	}
+
+	/** An owner's list with nothing in it yet: each cost centre the seed adds is answered by its code. */
+	private function centres(): CostCentreService&MockObject {
+		$centres = $this->createMock(CostCentreService::class);
+		$centres->method('create')->willReturnCallback(static fn (string $userId, array $fields): array => [
+			'uuid' => 'cost-centre-' . (string)$fields['code'],
+			'user_id' => $userId,
+			'code' => (string)$fields['code'],
+			'name' => (string)$fields['name'],
+			'archived' => false,
+			'created_at' => 1,
+			'updated_at' => 1,
+		]);
+
+		return $centres;
 	}
 
 	/** The name `occ` lists it under, which docs/development.md#testing names too. */
@@ -268,10 +292,13 @@ class SeedCommandTest extends TestCase {
 			$this->trips,
 			$this->grants,
 			$this->bookings,
+			$this->createMock(CostCentreService::class),
 			$this->createMock(RecipientService::class),
 			$this->createMock(DocumentService::class),
 			$this->createMock(SeedPapers::class),
 			$this->createMock(ITimeFactory::class),
+			$this->createMock(BudgetService::class),
+			$this->createMock(BudgetWarnings::class),
 		);
 
 		$this->assertSame('nextfleet:seed', $command->getName());

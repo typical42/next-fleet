@@ -40,9 +40,10 @@ class SyncController extends OCSController {
 	/**
 	 * What changed since the last sync
 	 *
-	 * Every reachable vehicle, the rows changed since `cursor`, and the vehicles out of reach
-	 * since. At least once, never missed: a client upserts by `uuid` and `updated_at`, and asks
-	 * again with the answer's `cursor` while `more` is true.
+	 * Every reachable vehicle, the rows changed since `cursor`, the cost-centre lists of their
+	 * owners, the partner lists of the owners of those the caller may log on, and the vehicles out
+	 * of reach since. At least once, never missed: a client upserts by `uuid`
+	 * and `updated_at`, and asks again with the answer's `cursor` while `more` is true.
 	 *
 	 * @param string $cursor what the last answer handed out; empty for a client that holds nothing
 	 * @param int<1, 2000> $limit how many changed rows a page holds

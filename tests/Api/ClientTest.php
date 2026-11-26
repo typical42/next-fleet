@@ -236,6 +236,26 @@ class ClientTest extends TestCase {
 		$this->assertCount(1, (array)$trips->data()['rows'], $trips->body);
 	}
 
+	/**
+	 * Two trips that name one new partner, sent at once on two vehicles of one owner: both link one
+	 * record, and each answer names it. As above, this proves the outcome in whatever order the server
+	 * took the two; that a new name waits for the owner's hold is PartnerLinksTest's to prove.
+	 */
+	public function testTwoTripsSentAtOnceWithOneNewPartnerLinkOneRecord(): void {
+		$partner = 'Race GmbH ' . bin2hex(random_bytes(4));
+		$trip = ['started_at' => 1750000000, 'started_at_off' => 120, 'ended_at' => 1750005400, 'ended_at_off' => 120,
+			'end_odo' => 1000, 'category' => 'business', 'partner' => $partner];
+		$first = $this->vehicle('API 9')['uuid'];
+		$second = $this->vehicle('API 10')['uuid'];
+
+		$answers = self::$server->race(self::$anna, [['POST', "/vehicles/$first/trips", $trip], ['POST', "/vehicles/$second/trips", $trip]]);
+
+		$this->assertSame([201, 201], [$answers[0]->status, $answers[1]->status], $answers[0]->body . "\n" . $answers[1]->body);
+		$this->assertIsString($answers[0]->data()['partner_uuid']);
+		$this->assertSame($answers[0]->data()['partner_uuid'], $answers[1]->data()['partner_uuid']);
+		$this->assertSame($partner, $answers[1]->data()['partner']);
+	}
+
 	/** @return array<string, array{string}> */
 	public static function reports(): array {
 		return [
@@ -254,6 +274,142 @@ class ClientTest extends TestCase {
 		$answer = self::$server->request('GET', "/index.php/apps/nextfleet/vehicles/{$vehicle['uuid']}/$report", self::$anna);
 
 		$this->assertSame(200, $answer->status, $answer->body);
+	}
+
+	/**
+	 * The owner keeps the partner list through the API: a rename onto a taken name is refused with
+	 * its reason, a merge moves the trips, the trips and their CSV are read, and a delete reaches
+	 * sync as a tombstone. The trips keep their texts.
+	 */
+	public function testTheOwnerKeepsThePartnerList(): void {
+		$suffix = bin2hex(random_bytes(4));
+		$vehicle = $this->vehicle('API 11')['uuid'];
+		$trips = [];
+		foreach (["Müller $suffix" => 1750000000, "Mueller $suffix" => 1750100000] as $partner => $at) {
+			$created = self::$server->ocs(self::$anna, 'POST', "/vehicles/$vehicle/trips", [
+				'started_at' => $at, 'started_at_off' => 120, 'ended_at' => $at + 3600, 'ended_at_off' => 120,
+				'end_odo' => intdiv($at - 1740000000, 1000), 'category' => 'business', 'partner' => $partner,
+			]);
+			$this->assertSame(201, $created->status, $created->body);
+			$trips[] = $created->data();
+		}
+		[$kept, $variant] = [$trips[0]['partner_uuid'], $trips[1]['partner_uuid']];
+		$listed = self::$server->ocs(self::$anna, 'GET', '/partners');
+		$this->assertSame(200, $listed->status, $listed->body);
+		$token = array_column($listed->data(), 'updated_at', 'uuid')[$variant];
+
+		$taken = self::$server->ocs(self::$anna, 'PUT', "/partners/$variant", ['updated_at' => $token, 'name' => "Müller $suffix"]);
+		$this->assertSame([400, 'name_taken'], [$taken->status, $taken->data()['reason'] ?? null], $taken->body);
+
+		$merged = self::$server->ocs(self::$anna, 'POST', "/partners/$variant/merge", ['updated_at' => $token, 'into' => $kept]);
+		$this->assertSame(200, $merged->status, $merged->body);
+		$this->assertSame($kept, $merged->data()['uuid']);
+
+		$read = self::$server->ocs(self::$anna, 'GET', "/partners/$kept/trips", ['from' => '2025-06-01', 'to' => '2025-07-01']);
+		$this->assertSame(200, $read->status, $read->body);
+		$this->assertSame(["Müller $suffix", "Mueller $suffix"], array_column(array_column($read->data()['trips'], 'trip'), 'partner'));
+		$csv = self::$server->request('GET', "/index.php/apps/nextfleet/partners/$kept/csv?from=2025-06-01&to=2025-07-01", self::$anna);
+		$this->assertSame(200, $csv->status, $csv->body);
+		$this->assertStringContainsString("Mueller $suffix", $csv->body);
+
+		$cursor = $this->sync(self::$anna)['cursor'];
+		$deleted = self::$server->ocs(self::$anna, 'DELETE', "/partners/$kept", ['updated_at' => $merged->data()['updated_at']]);
+		$this->assertSame(200, $deleted->status, $deleted->body);
+		$this->assertSame(404, self::$server->ocs(self::$anna, 'GET', "/partners/$kept")->status);
+		$synced = array_column($this->sync(self::$anna, $cursor)['partners'], null, 'uuid');
+		$this->assertArrayHasKey($kept, $synced);
+		$this->assertSame([$deleted->data()['deleted_at'], null], [$synced[$kept]['deleted_at'], $synced[$kept]['row']]);
+	}
+
+	/**
+	 * A viewer gets the owner's cost centres and no partner, by sync and by the partner's route.
+	 * Made driver, their client starts over and gets the names, without address and note.
+	 */
+	public function testPartnerNamesGoOnlyToWhoeverMayLog(): void {
+		$suffix = bin2hex(random_bytes(4));
+		$viewer = self::$server->account(self::PREFIX . 'viewer-');
+		$vehicle = $this->vehicle('API 13')['uuid'];
+		$trip = self::$server->ocs(self::$anna, 'POST', "/vehicles/$vehicle/trips", [
+			'started_at' => 1750000000, 'started_at_off' => 120, 'ended_at' => 1750003600, 'ended_at_off' => 120,
+			'end_odo' => 1000, 'category' => 'business', 'partner' => "Müller $suffix",
+		]);
+		$this->assertSame(201, $trip->status, $trip->body);
+		$partner = $trip->data()['partner_uuid'];
+		$centre = self::$server->ocs(self::$anna, 'POST', '/cost-centres', ['name' => "Vertrieb $suffix"]);
+		$this->assertSame(201, $centre->status, $centre->body);
+		$granted = self::$server->ocs(self::$anna, 'POST', "/vehicles/$vehicle/grants", ['grantee' => $viewer->uid, 'grantee_type' => 'user', 'role' => 'viewer']);
+		$this->assertSame(200, $granted->status, $granted->body);
+
+		$this->assertSame(403, self::$server->ocs($viewer, 'GET', "/partners/$partner")->status);
+		$synced = $this->sync($viewer);
+		$this->assertSame([], $synced['partners']);
+		// Anna's lists hold what the other cases made too.
+		$this->assertContains($centre->data()['uuid'], array_column($synced['cost_centres'], 'uuid'));
+
+		$grant = array_column($granted->data(), 'uuid', 'grantee')[$viewer->uid];
+		$changed = self::$server->ocs(self::$anna, 'PUT', "/vehicles/$vehicle/grants/$grant", ['role' => 'driver']);
+		$this->assertSame(200, $changed->status, $changed->body);
+
+		$read = self::$server->ocs($viewer, 'GET', "/partners/$partner");
+		$this->assertSame(200, $read->status, $read->body);
+		$this->assertSame(["Müller $suffix", null, null], [$read->data()['name'], $read->data()['address'], $read->data()['note']]);
+		$again = $this->sync($viewer, $synced['cursor']);
+		$this->assertTrue($again['reset']);
+		$this->assertContains($partner, array_column($again['partners'], 'uuid'));
+	}
+
+	/**
+	 * The owner keeps cost centres through the API: a taken code is refused with its reason, a
+	 * vehicle's default reaches a new trip unless the trip sends null, one in use is archived
+	 * rather than deleted, and the list reaches sync.
+	 */
+	public function testTheOwnerKeepsCostCentresAndAnEntryTakesTheDefault(): void {
+		$suffix = bin2hex(random_bytes(4));
+		$made = self::$server->ocs(self::$anna, 'POST', '/cost-centres', ['code' => "C$suffix", 'name' => "Vertrieb $suffix"]);
+		$this->assertSame(201, $made->status, $made->body);
+		$centre = $made->data();
+		$taken = self::$server->ocs(self::$anna, 'POST', '/cost-centres', ['code' => "C$suffix", 'name' => "Service $suffix"]);
+		$this->assertSame([400, 'code_taken'], [$taken->status, $taken->data()['reason'] ?? null], $taken->body);
+
+		$vehicle = $this->vehicle('API 12');
+		$set = self::$server->ocs(self::$anna, 'PUT', '/vehicles/' . $vehicle['uuid'], ['updated_at' => $vehicle['updated_at'], 'cost_centre_uuid' => $centre['uuid']]);
+		$this->assertSame(200, $set->status, $set->body);
+		$this->assertSame($centre['uuid'], $set->data()['cost_centre_uuid']);
+		$trip = ['started_at' => 1750000000, 'started_at_off' => 120, 'ended_at' => 1750003600, 'ended_at_off' => 120, 'end_odo' => 1000, 'category' => 'business'];
+		$defaulted = self::$server->ocs(self::$anna, 'POST', '/vehicles/' . $vehicle['uuid'] . '/trips', $trip);
+		$this->assertSame([201, $centre['uuid']], [$defaulted->status, $defaulted->data()['cost_centre_uuid'] ?? null], $defaulted->body);
+		$none = self::$server->ocs(self::$anna, 'POST', '/vehicles/' . $vehicle['uuid'] . '/trips', ['started_at' => 1750100000, 'ended_at' => 1750103600, 'end_odo' => 1100, 'cost_centre_uuid' => null] + $trip);
+		$this->assertSame(201, $none->status, $none->body);
+		$this->assertNull($none->data()['cost_centre_uuid']);
+
+		$refused = self::$server->ocs(self::$anna, 'DELETE', '/cost-centres/' . $centre['uuid'], ['updated_at' => $centre['updated_at']]);
+		$this->assertSame([400, 'in_use'], [$refused->status, $refused->data()['reason'] ?? null], $refused->body);
+		$archived = self::$server->ocs(self::$anna, 'PUT', '/cost-centres/' . $centre['uuid'], ['updated_at' => $centre['updated_at'], 'code' => "C$suffix", 'name' => "Vertrieb $suffix", 'archived' => true]);
+		$this->assertSame([200, true], [$archived->status, $archived->data()['archived'] ?? null], $archived->body);
+
+		$listed = array_column(self::$server->ocs(self::$anna, 'GET', '/cost-centres')->data(), null, 'uuid');
+		$this->assertTrue($listed[$centre['uuid']]['archived']);
+		$synced = array_column($this->sync(self::$anna)['cost_centres'], null, 'uuid');
+		$this->assertSame("Vertrieb $suffix", $synced[$centre['uuid']]['row']['name'] ?? null);
+	}
+
+	/** The owner plans a year; a second budget for it is refused, and sync carries the one there is. */
+	public function testTheOwnerSetsABudgetPerYear(): void {
+		$vehicle = $this->vehicle('API 13', ['currency' => 'EUR']);
+		$path = '/vehicles/' . $vehicle['uuid'] . '/budgets';
+		$made = self::$server->ocs(self::$anna, 'POST', $path, ['year' => 2031, 'amount' => 500000, 'net' => true]);
+		$this->assertSame([201, 2031, 500000, true], [$made->status, $made->data()['year'] ?? null, $made->data()['amount'] ?? null, $made->data()['net'] ?? null], $made->body);
+		$taken = self::$server->ocs(self::$anna, 'POST', $path, ['year' => 2031, 'amount' => 600000, 'net' => true]);
+		$this->assertSame([400, 'year_taken'], [$taken->status, $taken->data()['reason'] ?? null], $taken->body);
+
+		$raised = self::$server->ocs(self::$anna, 'PUT', $path . '/' . $made->data()['uuid'], ['updated_at' => $made->data()['updated_at'], 'amount' => 600000, 'net' => false]);
+		$this->assertSame([200, 600000, false], [$raised->status, $raised->data()['amount'] ?? null, $raised->data()['net'] ?? null], $raised->body);
+		$this->assertSame([$raised->data()], self::$server->ocs(self::$anna, 'GET', $path)->data());
+		$this->assertSame($raised->data(), $this->synced($this->sync(self::$anna), 'budgets', $made->data()['uuid'])['row']);
+
+		$gone = self::$server->ocs(self::$anna, 'DELETE', $path . '/' . $made->data()['uuid'], ['updated_at' => $raised->data()['updated_at']]);
+		$this->assertSame(200, $gone->status, $gone->body);
+		$this->assertSame([], self::$server->ocs(self::$anna, 'GET', $path)->data());
 	}
 
 	/** A delete reaches the client as a tombstone, and its restore as the row again. */

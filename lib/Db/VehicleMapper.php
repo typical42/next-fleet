@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace OCA\NextFleet\Db;
 
 use OCA\NextFleet\AppInfo\Application;
+use OCP\AppFramework\Db\DoesNotExistException;
 use OCP\AppFramework\Db\Entity;
 use OCP\AppFramework\Utility\ITimeFactory;
 use OCP\DB\QueryBuilder\IQueryBuilder;
@@ -124,6 +125,104 @@ class VehicleMapper extends BaseMapper {
 			->set('odo_value', 'odo_value')
 			->where($qb->expr()->eq('id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)));
 		$qb->executeStatement();
+	}
+
+	/**
+	 * Who owns the vehicle as the database has it now: under the vehicle's hold, a transfer has
+	 * either committed or not begun (TransferService holds it too).
+	 *
+	 * @throws DoesNotExistException
+	 * @throws \OCP\DB\Exception
+	 */
+	public function ownerOf(int $vehicleId): string {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('user_id')
+			->from($this->tableName)
+			->where($qb->expr()->eq('id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)));
+		$result = $qb->executeQuery();
+		$owner = $result->fetchOne();
+		$result->closeCursor();
+		if (!is_string($owner)) {
+			throw new DoesNotExistException('vehicle ' . $vehicleId);
+		}
+
+		return $owner;
+	}
+
+	/**
+	 * The default cost centre the vehicle names as the database has it now, as ownerOf() reads the
+	 * owner: a transfer moves the default with the owner.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	public function costCentreOf(int $vehicleId): ?int {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select('cost_centre_id')
+			->from($this->tableName)
+			->where($qb->expr()->eq('id', $qb->createNamedParameter($vehicleId, IQueryBuilder::PARAM_INT)));
+		$result = $qb->executeQuery();
+		$id = $result->fetchOne();
+		$result->closeCursor();
+
+		return is_numeric($id) ? (int)$id : null;
+	}
+
+	/**
+	 * Holds what stands for the owner's lists: their first vehicle by id, in any state. A write that
+	 * adds a name to a list holds it, so a second writer on another of the owner's vehicles waits
+	 * and then finds the name.
+	 *
+	 * The caller holds its own vehicle first, which comes no earlier than this one. Two such writes
+	 * cannot wait on each other. A write that holds several of the owner's vehicles in id order can:
+	 * the database breaks that deadlock, and `atomicRetry()` replays the side it rolled back.
+	 *
+	 * Asked again once held: a transfer that committed meanwhile can have moved the first vehicle
+	 * away.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	public function holdOwner(string $userId): void {
+		$held = null;
+		while (($first = $this->firstOf($userId)) !== null && $first !== $held) {
+			$this->hold($first);
+			$held = $first;
+		}
+	}
+
+	/**
+	 * Holds the vehicle and holdOwner()'s vehicle of another account, the lower id first: for a
+	 * write that adds names to the list of an account that does not own the vehicle yet.
+	 *
+	 * An account with no vehicle has nothing to hold, so two such writes to it at once can each
+	 * add the same name, and the owner merges the two. A transfer that moves the account's first vehicle
+	 * away meanwhile can break the id order; the database breaks that deadlock, as holdOwner()
+	 * says.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	public function holdBeside(int $vehicleId, string $userId): void {
+		$first = $this->firstOf($userId);
+		if ($first !== null && $first < $vehicleId) {
+			$this->holdOwner($userId);
+			$this->hold($vehicleId);
+
+			return;
+		}
+		$this->hold($vehicleId);
+		$this->holdOwner($userId);
+	}
+
+	/** @throws \OCP\DB\Exception */
+	private function firstOf(string $userId): ?int {
+		$qb = $this->db->getQueryBuilder();
+		$qb->select($qb->func()->min('id'))
+			->from($this->tableName)
+			->where($qb->expr()->eq('user_id', $qb->createNamedParameter($userId)));
+		$result = $qb->executeQuery();
+		$first = $result->fetchOne();
+		$result->closeCursor();
+
+		return $first === null || $first === false ? null : (int)$first;
 	}
 
 	/**

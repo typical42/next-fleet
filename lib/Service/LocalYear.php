@@ -28,7 +28,22 @@ final class LocalYear {
 	 * @return array{int, int}
 	 */
 	public static function window(int $year): array {
-		return [gmmktime(0, 0, 0, 1, 1, $year) - self::EAST, gmmktime(0, 0, 0, 1, 1, $year + 1) + self::WEST];
+		return self::around(gmmktime(0, 0, 0, 1, 1, $year), gmmktime(0, 0, 0, 1, 1, $year + 1));
+	}
+
+	/**
+	 * The same for any local days, given as the UTC midnights of the first and of the day after
+	 * the last; a null bound is no bound.
+	 *
+	 * @return array{int, int}
+	 */
+	public static function around(?int $from, ?int $to): array {
+		return [$from === null ? PHP_INT_MIN : $from - self::EAST, $to === null ? PHP_INT_MAX : $to + self::WEST];
+	}
+
+	/** The wall clock where it happened, in the one form every spreadsheet reads as a date. */
+	public static function wallClock(int $at, int $off): string {
+		return gmdate('Y-m-d H:i', $at + $off * 60);
 	}
 
 	/** Whether an instant entered at `$off` minutes falls in the year where it happened. */

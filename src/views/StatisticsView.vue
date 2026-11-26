@@ -3,6 +3,7 @@
   - SPDX-License-Identifier: AGPL-3.0-or-later
 -->
 <script setup>
+import { getCanonicalLocale } from '@nextcloud/l10n'
 import NcActionButton from '@nextcloud/vue/components/NcActionButton'
 import NcActions from '@nextcloud/vue/components/NcActions'
 import NcButton from '@nextcloud/vue/components/NcButton'
@@ -22,6 +23,7 @@ import { usePreferencesStore } from '../store/preferences.js'
 import { BANDS, bandWord, barsOf, co2Of, labelsOf, tableOf } from '../utils/costs.js'
 import { categoryWord, energyWord, formatConsumption, formatMoney, nameOf } from '../utils/format.js'
 import { t } from '../utils/l10n.js'
+import { centresTableOf } from '../utils/costCentres.js'
 import { blank, daysOf, RANGES, rangeWord } from '../utils/statistics.js'
 import { averagesTableOf, bentOf, rateTableOf, segmentsTableOf, vehiclesTableOf } from '../utils/trends.js'
 import { driversTableOf, TRIP_BANDS, tripBarsOf, tripTableOf, tripTitlesOf } from '../utils/trips.js'
@@ -205,6 +207,40 @@ const drivers = computed(() => (answer.value?.by_driver ?? []).map((series) => (
 	title: series.per === 'h' ? t('nextfleet', 'Hours by driver') : t('nextfleet', 'Distance by driver'),
 	table: driversTableOf(series),
 })))
+// Only "No cost centre" says nothing to a reader whose entries name none.
+const centres = computed(() => (answer.value?.by_cost_centre ?? []).some(({ uuid }) => uuid !== null)
+	? centresTableOf(answer.value?.by_cost_centre ?? [])
+	: null)
+// The same rows as the cost series, so their flags hold for the cost centres' costs.
+const centreNotes = computed(() => [...new Set((answer.value?.costs ?? []).flatMap((series) => notesOf(series.range)))])
+/**
+ * The budget beside the costs of its currency. Its own count, net or gross and in the owner's
+ * zone, so it can differ from the bars (docs/api.md#statistics).
+ */
+const budget = computed(() => {
+	const use = answer.value?.budget
+	if (!use) {
+		return null
+	}
+	const percent = new Intl.NumberFormat(getCanonicalLocale(), { style: 'percent', maximumFractionDigits: 0 })
+
+	return {
+		...use,
+		title: t('nextfleet', 'Budget for {year}', { year: String(use.year) }),
+		// Colours turn on the cent a warning goes out at (BudgetWarnings::share()): a meter
+		// leaves green past `low` and turns red past `high`, and clamps the value to `max`.
+		max: Math.max(use.amount, use.spent),
+		low: Math.ceil(use.amount * 80 / 100) - 1,
+		high: use.amount - 1,
+		figure: t('nextfleet', '{spent} of {amount} spent, {share}', {
+			spent: formatMoney(use.spent, use.currency),
+			amount: formatMoney(use.amount, use.currency),
+			// Down, as BudgetWarnings::share() counts: 100 % only once it is used up.
+			share: percent.format(Math.floor(use.spent * 100 / use.amount) / 100),
+		}),
+		note: use.net ? t('nextfleet', 'The budget counts net, without VAT.') : t('nextfleet', 'The budget counts gross, with VAT.'),
+	}
+})
 const onlyOwn = computed(() => (answer.value?.vehicles ?? []).some((one) => !one.drivers))
 const kept = computed(() => (answer.value?.vehicles ?? []).some((one) => !one.costs))
 const co2 = computed(() => answer.value && shown.value ? co2Of(answer.value.co2) : null)
@@ -313,6 +349,20 @@ async function reload() {
 						<StatisticsBars :bands="costBands" :bars="chart.bars" :titles="chart.titles" />
 						<StatisticsBuckets :labels="labels" />
 					</figure>
+					<div v-if="budget && budget.currency === chart.series.currency" class="statistics__budget">
+						<h4>{{ budget.title }}</h4>
+						<meter min="0"
+							:max="budget.max"
+							:value="budget.spent"
+							:low="budget.low"
+							:high="budget.high"
+							optimum="0"
+							:aria-label="budget.title" />
+						<p>{{ budget.figure }}</p>
+						<p class="statistics__note">
+							{{ budget.note }}
+						</p>
+					</div>
 
 					<StatisticsTable :label="answer.bucket === 'year'
 							? t('nextfleet', 'Costs in {currency}, by year', { currency: chart.series.currency })
@@ -374,6 +424,20 @@ async function reload() {
 					<StatisticsTable :label="chart.title" :table="chart.table" />
 					<p v-if="onlyOwn" class="statistics__note">
 						{{ t('nextfleet', 'Shows only your own trips where you neither own nor manage the vehicle.') }}
+					</p>
+				</section>
+
+				<!-- The distance needs no cost right; costs come only where the reader sees them. -->
+				<section v-if="centres" class="statistics__centres" aria-labelledby="statistics-centres">
+					<h3 id="statistics-centres">
+						{{ t('nextfleet', 'By cost centre') }}
+					</h3>
+					<StatisticsTable :label="t('nextfleet', 'By cost centre')" :table="centres" />
+					<p v-for="note in centreNotes" :key="note" class="statistics__note">
+						{{ note }}
+					</p>
+					<p class="statistics__note">
+						{{ t('nextfleet', 'A cost counts to the cost centre its entry names. Costs are not shared out by distance.') }}
 					</p>
 				</section>
 
@@ -452,6 +516,7 @@ async function reload() {
 .statistics__rate,
 .statistics__trips,
 .statistics__drivers,
+.statistics__centres,
 .statistics__consumption,
 .statistics__co2 {
 	margin-top: calc(var(--default-grid-baseline) * 6);
@@ -461,9 +526,20 @@ async function reload() {
 .statistics__rate h3,
 .statistics__trips h3,
 .statistics__drivers h3,
+.statistics__centres h3,
 .statistics__consumption h3,
 .statistics__co2 h3 {
 	margin-top: 0;
+}
+
+.statistics__budget {
+	max-width: 720px;
+	margin-bottom: calc(var(--default-grid-baseline) * 4);
+}
+
+.statistics__budget meter {
+	width: 100%;
+	height: calc(var(--default-grid-baseline) * 4);
 }
 
 .statistics__co2-figure {

@@ -19,7 +19,7 @@
 #   tools/upgrade-check.sh [--db mariadb|pgsql|oracle] <tarball> [<base>]
 #
 # <tarball> is the package to check: pass the file you are about to sign, not a rebuild of it.
-# <base> is the version users have, as a git ref or a tarball. It defaults to v0.6.1, the last
+# <base> is the version users have, as a git ref or a tarball. It defaults to v0.6.2, the last
 # release; each release moves it on.
 #
 # The servers are tools/upgrade-check.compose.yml, its own project with its own volumes. They are
@@ -51,7 +51,7 @@ if [ $# -lt 1 ] || [ ! -f "$1" ]; then
 	usage
 fi
 tarball=$(realpath "$1")
-base=${2:-v0.6.1}
+base=${2:-v0.6.2}
 # --db goes first; after the tarball it would be taken for the base.
 case $base in -*) usage ;; esac
 if [ -f "$base" ]; then
@@ -271,6 +271,39 @@ meant() {
 	echo "$list"
 }
 
+# Version000013 gives every partner text a record in its vehicle owner's list and links the trip to
+# it, live or voided. It must move no text and no token: LogbookExport reads a newer `updated_at` as
+# a change nobody recorded. Proved where the package runs that step and the base has not, by
+# partners_before() and partners_after(), each on a path's server with the path's name.
+links_partners() {
+	grep -q '^000013' "$work/new.migrations" && ! grep -q '^000013' "$work/base.migrations"
+}
+
+partners_before() {
+	links_partners || return 0
+	named=$(sql "$1" "select count(*) from \"oc_fleet_trips\" where length(trim(\"partner\")) > 0")
+	[ "$named" -gt 0 ] || fail "$1: no trip names a partner before the upgrade, so the links are unproven"
+	stamped=$(checksum "$1" oc_fleet_trips '"uuid", "partner", "updated_at"')
+	echo "${stamped##*[[:space:]]}" >"$work/$2.partners"
+}
+
+partners_after() {
+	links_partners || return 0
+	stamped=$(checksum "$1" oc_fleet_trips '"uuid", "partner", "updated_at"')
+	[ "${stamped##*[[:space:]]}" = "$(cat "$work/$2.partners")" ] ||
+		fail "$1: the upgrade changed a trip's partner text or updated_at"
+	# SQL trims spaces only, where the app trims ASCII whitespace (PHP trim()); no seed pads a text
+	# with anything else, or writes one that NFC would change. `=` is byte-exact only under the
+	# binary collation Nextcloud creates tables with, as the app's lookups are on any.
+	unlinked=$(sql "$1" "select count(*) from \"oc_fleet_trips\" t
+		join \"oc_fleet_vehicles\" v on v.\"id\" = t.\"vehicle_id\"
+		left join \"oc_fleet_partners\" p on p.\"id\" = t.\"partner_id\" and p.\"user_id\" = v.\"user_id\"
+			and p.\"deleted_at\" is null and p.\"name\" = trim(t.\"partner\")
+		where length(trim(t.\"partner\")) > 0 and p.\"id\" is null")
+	[ "$unlinked" = 0 ] ||
+		fail "$1: $unlinked trips name a partner but link no record of that name in their owner's list"
+}
+
 # One line per table: its name, its row count and a checksum over every row's content in the
 # columns it had before the upgrade. A line that differs after the upgrade is a row lost or
 # changed. The snapshot before the upgrade passes a third argument, so that it reads the rows
@@ -467,6 +500,15 @@ history() {
 		from \"oc_fleet_trips\" where \"uuid\" = '$trip'")
 	send "$1" PUT "api/vehicles/$vehicle/trips/$trip" "$body"
 
+	# A voided trip keeps its partner text, which an upgrade must keep and link too.
+	named=$(sql "$1" "select \"uuid\" from \"oc_fleet_trips\" where \"deleted_at\" is null
+		and \"partner\" is not null order by \"id\" desc fetch first 1 rows only")
+	[ -n "$named" ] || fail "$1: the $old seed wrote no trip with a partner"
+	driven=$(sql "$1" "select v.\"uuid\" from \"oc_fleet_vehicles\" v
+		join \"oc_fleet_trips\" t on t.\"vehicle_id\" = v.\"id\" where t.\"uuid\" = '$named'")
+	stamp=$(sql "$1" "select \"updated_at\" from \"oc_fleet_trips\" where \"uuid\" = '$named'")
+	send "$1" DELETE "api/vehicles/$driven/trips/$named" "{\"updated_at\":$stamp}"
+
 	# A seed writes its records before its reminders, so none closes one.
 	reminder=$(sql "$1" "select \"uuid\" from \"oc_fleet_reminders\" where \"recur_months\" is not null
 		order by \"id\" fetch first 1 rows only")
@@ -533,6 +575,7 @@ for path in $paths; do
 	loads "$server"
 	history "$server"
 	rows "$server" "$work/$path.before" meant
+	partners_before "$server" "$path"
 	empty=$(awk '$2 == 0 { print $1 }' "$work/$path.before")
 	[ -z "$empty" ] || fail "$server: empty before the upgrade, so unproven: $(echo "$empty" | tr '\n' ' ')"
 	plate=$(sql "$server" "select \"plate\" from \"oc_fleet_vehicles\" where \"deleted_at\" is null
@@ -586,6 +629,7 @@ for path in $paths; do
 	# ones counts too.
 	loads "$server" "$plate"
 	flawless "$server" "$@"
+	partners_after "$server" "$path"
 
 	rows "$server" "$work/$path.after"
 	lost=$(comm -23 "$work/$path.before" "$work/$path.after")

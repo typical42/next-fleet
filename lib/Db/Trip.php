@@ -43,15 +43,25 @@ use OCP\DB\Types;
  * @method void setPurpose(?string $purpose)
  * @method string|null getPartner()
  * @method void setPartner(?string $partner)
+ * @method int|null getPartnerId()
+ * @method void setPartnerId(?int $partnerId)
  * @method string getCategory()
  * @method void setCategory(string $category)
  *
  * @psalm-import-type NextFleetTrip from \OCA\NextFleet\ResponseDefinitions
  */
-class Trip extends BaseEntity implements \JsonSerializable {
+class Trip extends BaseEntity implements \JsonSerializable, CostCentred {
+	use NamesCostCentre;
+
 	public const BUSINESS = 'business';
 	public const PRIVATE = 'private';
 	public const COMMUTE = 'commute';
+
+	/**
+	 * The answer's fields that link a record of the owner's lists. Audited like any column, but no
+	 * logbook prints them ([ADR 0013](docs/adr/0013-a-partner-is-a-record-the-trip-keeps-its-text.md)).
+	 */
+	public const LINKS = ['partner_uuid', 'cost_centre_uuid'];
 
 	protected int $vehicleId = 0;
 	protected int $startedAt = 0;
@@ -65,6 +75,13 @@ class Trip extends BaseEntity implements \JsonSerializable {
 	protected ?string $toLabel = null;
 	protected ?string $purpose = null;
 	protected ?string $partner = null;
+	/** The record `partner` names in the owner's list; never in an answer, which carries its uuid. */
+	protected ?int $partnerId = null;
+	/**
+	 * That record's uuid. Not a column: TripMapper looks it up for a page at once, and it is private
+	 * so the entity's magic setter never marks it for an INSERT, as OdoReading::$sourceUuid.
+	 */
+	private ?string $partnerUuid = null;
 	protected string $category = '';
 	protected ?bool $reconciled = null;
 
@@ -82,8 +99,10 @@ class Trip extends BaseEntity implements \JsonSerializable {
 		$this->addType('toLabel', Types::STRING);
 		$this->addType('purpose', Types::STRING);
 		$this->addType('partner', Types::STRING);
+		$this->addType('partnerId', Types::BIGINT);
 		$this->addType('category', Types::STRING);
 		$this->addType('reconciled', Types::BOOLEAN);
+		$this->addType('costCentreId', Types::BIGINT);
 	}
 
 	/**
@@ -115,6 +134,24 @@ class Trip extends BaseEntity implements \JsonSerializable {
 		return null;
 	}
 
+	public function getPartnerUuid(): ?string {
+		return $this->partnerUuid;
+	}
+
+	public function setPartnerUuid(?string $partnerUuid): void {
+		$this->partnerUuid = $partnerUuid;
+	}
+
+	/**
+	 * Links the record, or none. A deleted record is linked by id alone: the trip keeps the mark,
+	 * so neither the check nor the backfill takes it for a text never linked, but no answer names
+	 * the record any more.
+	 */
+	public function linkPartner(?Partner $partner): void {
+		$this->setPartnerId($partner === null ? null : (int)$partner->getId());
+		$this->partnerUuid = $partner?->getDeletedAt() === null ? $partner?->getUuid() : null;
+	}
+
 	/**
 	 * `reconciled` goes out as a real boolean: the timeline marks a Reconciliation Trip by it.
 	 *
@@ -134,7 +171,9 @@ class Trip extends BaseEntity implements \JsonSerializable {
 			'to_label' => $this->toLabel,
 			'purpose' => $this->purpose,
 			'partner' => $this->partner,
+			'partner_uuid' => $this->partnerUuid,
 			'category' => $this->category,
+			'cost_centre_uuid' => $this->getCostCentreUuid(),
 			'reconciled' => $this->getReconciled(),
 			'created_at' => $this->createdAt,
 			'updated_at' => $this->updatedAt,

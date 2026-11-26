@@ -15,16 +15,21 @@ use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\AccountTables;
 use OCA\NextFleet\Db\BookingRecipientMapper;
+use OCA\NextFleet\Db\CostCentreMapper;
 use OCA\NextFleet\Db\Document;
 use OCA\NextFleet\Db\DocumentMapper;
+use OCA\NextFleet\Db\Partner;
+use OCA\NextFleet\Db\PartnerMapper;
 use OCA\NextFleet\Db\ReminderMapper;
 use OCA\NextFleet\Db\ReminderReceiptMapper;
 use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\Trip;
+use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Repair\ErasedPseudonyms;
 use OCA\NextFleet\Service\BookingService;
+use OCA\NextFleet\Service\CostCentreService;
 use OCA\NextFleet\Service\EnergyService;
 use OCA\NextFleet\Service\ErasureService;
 use OCA\NextFleet\Service\ExpenseService;
@@ -32,6 +37,7 @@ use OCA\NextFleet\Service\GrantNotices;
 use OCA\NextFleet\Service\GrantService;
 use OCA\NextFleet\Service\LookalikeNotices;
 use OCA\NextFleet\Service\MaintenanceService;
+use OCA\NextFleet\Service\PartnerService;
 use OCA\NextFleet\Service\Pending;
 use OCA\NextFleet\Service\RecipientService;
 use OCA\NextFleet\Service\ReminderService;
@@ -88,6 +94,9 @@ class ErasureTest extends TestCase {
 		'fleet_access' => ['grantee', 'created_by'],
 		'fleet_bookings' => ['user_id', 'created_by', 'approval_by'],
 		'fleet_booking_recipients' => ['user_id', 'created_by'],
+		'fleet_partners' => ['user_id', 'created_by'],
+		'fleet_cost_centres' => ['user_id', 'created_by'],
+		'fleet_budgets' => ['created_by'],
 	];
 
 	private VehicleService $vehicles;
@@ -96,6 +105,8 @@ class ErasureTest extends TestCase {
 	private RecipientService $recipients;
 	/** @var list<int> */
 	private array $vehicleIds = [];
+	/** @var list<string> the cost centres this suite made, found by uuid once erased */
+	private array $centreUuids = [];
 
 	protected function setUp(): void {
 		$this->vehicles = \OCP\Server::get(VehicleService::class);
@@ -120,8 +131,15 @@ class ErasureTest extends TestCase {
 	 */
 	private function forget(): void {
 		$db = \OCP\Server::get(IDBConnection::class);
+		$this->forgetPartners();
+		if ($this->centreUuids !== []) {
+			$qb = $db->getQueryBuilder();
+			$qb->delete('fleet_cost_centres')->where($qb->expr()->in('uuid', $qb->createNamedParameter($this->centreUuids, $qb::PARAM_STR_ARRAY)));
+			$qb->executeStatement();
+			$this->centreUuids = [];
+		}
 		foreach (array_keys(self::PEOPLE_COLUMNS) as $table) {
-			if ($this->vehicleIds === [] || in_array($table, ['fleet_vehicles', 'fleet_audit', 'fleet_reminder_receipts'], true)) {
+			if ($this->vehicleIds === [] || in_array($table, ['fleet_vehicles', 'fleet_audit', 'fleet_reminder_receipts', 'fleet_partners', 'fleet_cost_centres'], true)) {
 				continue;
 			}
 			$qb = $db->getQueryBuilder();
@@ -225,6 +243,19 @@ class ErasureTest extends TestCase {
 		\OCP\Server::get(GrantService::class)->grant(self::DRIVER, $own->getUuid(), ['grantee' => self::OWNER, 'grantee_type' => 'user', 'role' => 'viewer']);
 		// And put themselves on its booking list.
 		$this->recipients->addBooking(self::DRIVER, $own->getUuid(), self::DRIVER, 'user');
+		// A partner they name there is in their own list.
+		$this->trip(self::DRIVER, $own, 'Müller');
+		// And a cost centre of their own.
+		$this->centreUuids[] = \OCP\Server::get(CostCentreService::class)->create(self::DRIVER, ['name' => 'Eigenes'])['uuid'];
+		// And a budget on it.
+		$budget = new \OCA\NextFleet\Db\Budget();
+		$budget->setVehicleId((int)$own->getId());
+		$budget->setCreatedBy(self::DRIVER);
+		$budget->setYear(2031);
+		$budget->setAmount(500000);
+		$budget->setNet(false);
+		$budget->setWarned(0);
+		\OCP\Server::get(\OCA\NextFleet\Db\BudgetMapper::class)->insert($budget);
 		$every = [];
 		foreach (self::PEOPLE_COLUMNS as $table => $columns) {
 			foreach ($columns as $column) {
@@ -290,6 +321,43 @@ class ErasureTest extends TestCase {
 		// first; the pending marker, set and removed; the audit's transfer rows.
 		$this->assertLessThanOrEqual($tables + 6, $queries);
 		$this->assertSame($epoch, $config->getValueString(Application::APP_ID, SyncService::EPOCH));
+	}
+
+	/**
+	 * An erased owner's partner list goes, each record as a delete takes it: no name, no address,
+	 * no note, and no trip names it. The trips keep their texts for the logbook's ten years.
+	 */
+	public function testAnErasedOwnersPartnerListIsDeletedAndTheTripsKeepTheirTexts(): void {
+		$vehicle = $this->vehicle(self::OWNER, 'B-XY 123');
+		$trip = $this->trip(self::OWNER, $vehicle, 'Erika Mustermann');
+		$partners = \OCP\Server::get(PartnerService::class);
+		$uuid = (string)$trip->getPartnerUuid();
+		$partners->update(self::OWNER, $uuid, \OCP\Server::get(PartnerMapper::class)->findByUuid($uuid)->getUpdatedAt(), ['name' => 'Erika Mustermann', 'address' => 'Musterweg 1', 'note' => 'Tante']);
+
+		\OCP\Server::get(IUserManager::class)->get(self::OWNER)?->delete();
+
+		$record = \OCP\Server::get(PartnerMapper::class)->findAnyByUuid($uuid);
+		$this->assertNotNull($record->getDeletedAt());
+		$this->assertSame([Partner::ERASED, null, null], [$record->getName(), $record->getAddress(), $record->getNote()]);
+		$this->assertStringStartsWith(ErasureService::PREFIX, $record->getUserId());
+		$stored = \OCP\Server::get(TripMapper::class)->findAnyByUuid($trip->getUuid());
+		$this->assertSame('Erika Mustermann', $stored->getPartner());
+		$this->assertNull($stored->getPartnerUuid());
+	}
+
+	/** An erased owner's cost centres go with the account; each entry keeps the id as its mark. */
+	public function testAnErasedOwnersCostCentresAreDeleted(): void {
+		$vehicle = $this->vehicle(self::OWNER, 'B-XY 123');
+		$sales = \OCP\Server::get(CostCentreService::class)->create(self::OWNER, ['code' => '4711', 'name' => 'Vertrieb']);
+		$this->centreUuids[] = $sales['uuid'];
+		$trip = $this->trips->record(self::OWNER, $vehicle->getUuid(), ['started_at' => 1750000000, 'started_at_off' => 120, 'ended_at' => 1750003600, 'ended_at_off' => 120, 'end_odo' => 12000, 'category' => Trip::BUSINESS, 'cost_centre_uuid' => $sales['uuid']]);
+
+		\OCP\Server::get(IUserManager::class)->get(self::OWNER)?->delete();
+
+		$record = \OCP\Server::get(CostCentreMapper::class)->findAnyByUuid($sales['uuid']);
+		$this->assertNotNull($record->getDeletedAt());
+		$this->assertSame([CostCentreMapper::ERASED, null], [$record->getName(), $record->getCode()]);
+		$this->assertNull(\OCP\Server::get(TripMapper::class)->findAnyByUuid($trip->getUuid())->getCostCentreUuid());
 	}
 
 	/** A deleted account receives nothing, so it leaves every reminder list. */
@@ -550,6 +618,8 @@ class ErasureTest extends TestCase {
 			\OCP\Server::get(ISecureRandom::class),
 			$recipients,
 			\OCP\Server::get(BookingRecipientMapper::class),
+			\OCP\Server::get(PartnerMapper::class),
+			\OCP\Server::get(CostCentreMapper::class),
 			$vehicles,
 			\OCP\Server::get(AccountTables::class),
 			\OCP\Server::get(SyncEpoch::class),
@@ -585,6 +655,27 @@ class ErasureTest extends TestCase {
 		}
 	}
 
+	/**
+	 * The records this suite's trips link. They hang on no vehicle, and an erased owner's are
+	 * named by a pseudonym, so they are found through the trips.
+	 */
+	private function forgetPartners(): void {
+		if ($this->vehicleIds === []) {
+			return;
+		}
+		$db = \OCP\Server::get(IDBConnection::class);
+		$qb = $db->getQueryBuilder();
+		$qb->selectDistinct('partner_id')->from('fleet_trips')
+			->where($qb->expr()->in('vehicle_id', $qb->createNamedParameter($this->vehicleIds, $qb::PARAM_INT_ARRAY)))
+			->andWhere($qb->expr()->isNotNull('partner_id'));
+		$ids = array_map('intval', $qb->executeQuery()->fetchAll(\PDO::FETCH_COLUMN));
+		if ($ids !== []) {
+			$qb = $db->getQueryBuilder();
+			$qb->delete('fleet_partners')->where($qb->expr()->in('id', $qb->createNamedParameter($ids, $qb::PARAM_INT_ARRAY)));
+			$qb->executeStatement();
+		}
+	}
+
 	private function vehicle(string $owner, string $plate): Vehicle {
 		$vehicle = $this->vehicles->create($owner, ['plate' => $plate]);
 		$this->vehicleIds[] = (int)$vehicle->getId();
@@ -592,8 +683,9 @@ class ErasureTest extends TestCase {
 		return $vehicle;
 	}
 
-	private function trip(string $author, Vehicle $vehicle): Trip {
+	private function trip(string $author, Vehicle $vehicle, ?string $partner = null): Trip {
 		return $this->trips->record($author, $vehicle->getUuid(), [
+			'partner' => $partner,
 			'started_at' => 1750000000,
 			'started_at_off' => 120,
 			'ended_at' => 1750005400,

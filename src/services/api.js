@@ -56,6 +56,10 @@ import { t } from '../utils/l10n.js'
  *   - the session's own next booking of it within seven days, not yet taken; null when none
  * @property {boolean} [ever_granted] - whether anybody but the owner has or had access: the rule
  *   "Entered by" follows, and the screen shows Bookings by it
+ * @property {string} [user_id] - the owner, whose cost-centre list its entries name
+ * @property {string|null} [cost_centre_uuid] - the cost centre a new entry takes; null for none
+ * @property {boolean} [uses_cost_centres] - whether the owner uses cost centres, so the sheets ask
+ *   for one; the server's answer
  */
 
 /**
@@ -90,7 +94,9 @@ import { t } from '../utils/l10n.js'
  * @property {string|null} from_label - where it set off
  * @property {string|null} to_label - where it arrived
  * @property {string|null} purpose - why it was driven
- * @property {string|null} partner - the business contact it visited
+ * @property {string|null} partner - the business contact it visited, as entered; what the logbook prints
+ * @property {string|null} partner_uuid - the record in the owner's list that `partner` links; the server sets it
+ * @property {string|null} [cost_centre_uuid] - the cost centre of the vehicle owner's list it counts to; null for none
  * @property {string} category - `business`, `private` or `commute` (CONTEXT.md)
  * @property {boolean} reconciled - the app wrote it to close a Gap; never a field a client fills in
  */
@@ -107,6 +113,7 @@ import { t } from '../utils/l10n.js'
  * @property {boolean} full_tank - filled to the brim
  * @property {boolean} missed_previous - a fill-up before it was not recorded
  * @property {string|null} station - where it was bought
+ * @property {string|null} [cost_centre_uuid] - the cost centre of the vehicle owner's list it counts to; null for none
  */
 
 /**
@@ -118,6 +125,7 @@ import { t } from '../utils/l10n.js'
  * @property {string|null} type - one of MAINTENANCE_TYPES (src/utils/format.js)
  * @property {string|null} vendor - who did it
  * @property {number|null} cost - gross cents
+ * @property {string|null} [cost_centre_uuid] - the cost centre of the vehicle owner's list it counts to; null for none
  */
 
 /**
@@ -127,6 +135,7 @@ import { t } from '../utils/l10n.js'
  * @property {string} uuid - identity
  * @property {string|null} category - one of EXPENSE_CATEGORIES (src/utils/format.js)
  * @property {number} amount - gross cents
+ * @property {string|null} [cost_centre_uuid] - the cost centre of the vehicle owner's list it counts to; null for none
  */
 
 /**
@@ -332,8 +341,34 @@ import { t } from '../utils/l10n.js'
  *   range
  * @property {DistanceSeries[]} distance - one per unit
  * @property {DriverSeries[]} by_driver - one per unit
+ * @property {CostCentreSum[]} by_cost_centre - by code and name, the entries naming none last
  * @property {Co2|null} co2 - one vehicle's for the range; null for all of them, or where its
  *   country states no factors
+ * @property {BudgetUse|null} budget - one vehicle's for a calendar year, where it has one and the
+ *   reader sees its costs
+ */
+
+/**
+ * What the entries naming one cost centre cost and drove over the range. Each row holds every
+ * currency and unit any row has.
+ *
+ * @typedef {object} CostCentreSum
+ * @property {string|null} uuid - null for the entries that name none
+ * @property {string|null} code - the record's
+ * @property {string|null} name - the record's; null for none
+ * @property {{currency: string, total: number}[]} costs - cents, by currency
+ * @property {{per: 'km'|'h', trips: number, distance: number}[]} distance - by unit
+ */
+
+/**
+ * A budget against the costs of its year, both counted as the budget says.
+ *
+ * @typedef {object} BudgetUse
+ * @property {number} year - the calendar year
+ * @property {number} amount - cents
+ * @property {boolean} net - whether it counts net of VAT
+ * @property {string} currency - the vehicle's
+ * @property {number} spent - cents, the year's costs in the owner's zone
  */
 
 /**
@@ -500,6 +535,7 @@ import { t } from '../utils/l10n.js'
  * @property {number} start_odo - the counter as it was taken
  * @property {number} end_odo - the counter as it was given back
  * @property {string|null} purpose - the booking's
+ * @property {string|null} [cost_centre_uuid] - the vehicle's default cost centre
  */
 
 /**
@@ -507,12 +543,13 @@ import { t } from '../utils/l10n.js'
  * The options travel with the values because a dropdown needs both.
  *
  * @typedef {object} Settings
- * @property {{ jurisdiction: string, dismissed_hints: string[], dismissed_logbook_hints: string[], reclaim_vat: boolean, kpi_period: string, grid_factor: number|null, inbox_folder: number|null, booking_approval?: boolean }} preferences -
+ * @property {{ jurisdiction: string, dismissed_hints: string[], dismissed_logbook_hints: string[], reclaim_vat: boolean, kpi_period: string, grid_factor: number|null, inbox_folder: number|null, booking_approval?: boolean, cost_centres?: boolean }} preferences -
  *   this user's own choices: the country new vehicles are kept under, the vehicles whose "complete
  *   this vehicle" hint they have answered, whether cost figures are net of VAT, the period the
  *   vehicle header shows, their electricity's grams of CO₂ per kWh (null for the country's),
  *   the file id of their inbox folder (null for none; kept even once the folder is gone), and
- *   whether bookings wait for an answer on their vehicles that follow this default
+ *   whether bookings wait for an answer on their vehicles that follow this default, and whether
+ *   they use cost centres and budgets although they share no vehicle
  * @property {boolean} [owns_shared] - whether they own a vehicle somebody else uses or used, the
  *   vehicles that default is for
  * @property {{ key: string, name: string, logbook_export: boolean, mileage_claim: boolean, logbook_rules: boolean, grid_factor: {grams: number, year: number, source: string}|null }[]} jurisdictions -
@@ -600,8 +637,8 @@ export class ConflictError extends Error {}
 
 /**
  * Something the request named is not there for this user. Its own class because the server's
- * message names only the vehicle, and attaching a document means something else by it
- * (src/components/VehicleDocuments.vue).
+ * message is English and names only the kind of record, and attaching a document means something
+ * else by it (src/components/VehicleDocuments.vue).
  */
 export class NotFoundError extends Error {}
 
@@ -805,7 +842,7 @@ export async function recordTrip(uuid, trip) {
  * What the entry sheet completes a trip's route, purpose and partner from (docs/ui.md).
  *
  * @param {string} uuid - the vehicle the trip is for
- * @return {Promise<TripPrefill>} the words of this vehicle's own trips
+ * @return {Promise<TripPrefill>} the words of this vehicle's own trips, and the owner's partners
  */
 export async function tripPrefill(uuid) {
 	return request('GET', `/api/vehicles/${uuid}/trips/prefill`)
@@ -815,7 +852,7 @@ export async function tripPrefill(uuid) {
  * @typedef {object} TripPrefill
  * @property {string[]} places - starting points and destinations in one list, each once, latest first
  * @property {string[]} purposes - as places
- * @property {string[]} partners - as places
+ * @property {string[]} partners - the owner's list: the ones this vehicle named first, latest first, then the rest by name
  * @property {string|null} category - the one the caller last entered on this vehicle, or none
  * @property {{end_odo: number|null, ended_at: number, ended_at_off: number}|null} last - how the
  *   vehicle's last trip ended: its end counter as stated, none for one logged by distance
@@ -1281,17 +1318,8 @@ async function autocomplete(term, types) {
  * @return {Promise<TimelinePage>} the rows and the cursor the next page starts at
  */
 export async function readTimeline(uuid, { type, cursor }) {
-	const query = new URLSearchParams()
-	for (const [name, value] of Object.entries({ type, cursor })) {
-		if (value) {
-			query.set(name, value)
-		}
-	}
-
 	// An empty filter is left out: the server refuses it rather than read it as "everything".
-	const asked = query.toString()
-
-	return request('GET', `/api/vehicles/${uuid}/timeline${asked === '' ? '' : `?${asked}`}`)
+	return request('GET', `/api/vehicles/${uuid}/timeline${queryOf({ type, cursor })}`)
 }
 
 /**
@@ -1324,16 +1352,7 @@ export async function readKpis(uuid, { from, to, net }) {
  * @return {Promise<Statistics>} the range
  */
 export async function readStatistics({ vehicle, from, to, tz, net }) {
-	const query = new URLSearchParams()
-	for (const [name, value] of Object.entries({ vehicle, from, to })) {
-		if (value) {
-			query.set(name, value)
-		}
-	}
-	query.set('tz', tz)
-	query.set('net', String(net))
-
-	return request('GET', `/api/statistics?${query}`)
+	return request('GET', `/api/statistics${queryOf({ vehicle, from, to, tz, net: String(net) })}`)
 }
 
 /**
@@ -1409,6 +1428,212 @@ export function mileageClaimUrl(uuid, year) {
  */
 export function csvUrl(uuid, year, table) {
 	return generateUrl(`/apps/nextfleet/vehicles/${uuid}/csv/${year}/${table}`)
+}
+
+/**
+ * A record in the owner's partner list. Trips link it and keep their own text
+ * (docs/adr/0013-a-partner-is-a-record-the-trip-keeps-its-text.md).
+ *
+ * @typedef {object} Partner
+ * @property {string} uuid - identity
+ * @property {string} user_id - the owner whose list it is in
+ * @property {string} name - unique in the list after trimming and NFC, case kept
+ * @property {string|null} address - one free text; only the owner reads it
+ * @property {string|null} note - only the owner reads it
+ * @property {number} created_at - seconds
+ * @property {number} updated_at - the token the next write is checked against
+ */
+
+/**
+ * @typedef {object} PartnerTrips
+ * @property {Partner} partner - the record
+ * @property {{vehicle_uuid: string, distance: number|null, trip: Trip}[]} trips - its live trips on the owner's vehicles, by the time
+ *   they set off, each with its distance as the sum counts it
+ * @property {{per: 'km'|'h', trips: number, distance: number}[]} distance - their sum per counter unit
+ */
+
+/**
+ * A period as the partner routes take it: days as for statistics, or neither for all of it.
+ *
+ * @typedef {{from?: string, to?: string}} Days
+ */
+
+/**
+ * The caller's own partner list, by name.
+ *
+ * @return {Promise<Partner[]>} the list
+ */
+export async function listPartners() {
+	return request('GET', '/api/partners')
+}
+
+/**
+ * Write the whole record back, checked against the token it was read with: a field left out is emptied.
+ *
+ * @param {Partner} partner - as it was read
+ * @param {{name: string, address: string|null, note: string|null}} fields - the record as the form holds it
+ * @return {Promise<Partner>} the record under its next token
+ * @throws {RefusedError} `name_taken` when another record of the list has the name
+ */
+export async function updatePartner(partner, fields) {
+	return request('PUT', `/api/partners/${partner.uuid}`, { ...fields, updated_at: partner.updated_at })
+}
+
+/**
+ * Merge a record into another of the list: its trips link the other, their texts stay, and it is gone.
+ *
+ * @param {Partner} partner - the record that goes, as it was read
+ * @param {string} into - the uuid of the record that stays
+ * @return {Promise<Partner>} the record that stays
+ */
+export async function mergePartner(partner, into) {
+	return request('POST', `/api/partners/${partner.uuid}/merge`, { into, updated_at: partner.updated_at })
+}
+
+/**
+ * Delete a record with its address and note. An erasure, so there is no undo; the trip texts stay.
+ *
+ * @param {Partner} partner - as it was read
+ * @return {Promise<{uuid: string, deleted_at: number}>} what is left of it
+ */
+export async function deletePartner(partner) {
+	return request('DELETE', `/api/partners/${partner.uuid}?updated_at=${partner.updated_at}`)
+}
+
+/**
+ * One partner's trips across the owner's vehicles, as the logbook dates them.
+ *
+ * @param {string} uuid - the record
+ * @param {Days} days - the period
+ * @return {Promise<PartnerTrips>} the trips and their distance
+ */
+export async function readPartnerTrips(uuid, days) {
+	return request('GET', `/api/partners/${uuid}/trips${queryOf(days)}`)
+}
+
+/**
+ * Where those trips are saved as CSV; an address for the reason logbookUrl() gives.
+ *
+ * @param {string} uuid - the record
+ * @param {Days} days - the period
+ * @return {string} the file's address
+ */
+export function partnerCsvUrl(uuid, days) {
+	return generateUrl(`/apps/nextfleet/partners/${uuid}/csv${queryOf(days)}`)
+}
+
+/**
+ * A record in the owner's cost-centre list. An entry names one in `cost_centre_uuid`.
+ *
+ * @typedef {object} CostCentre
+ * @property {string} uuid - identity
+ * @property {string} user_id - the owner whose list it is in
+ * @property {string|null} code - such as `4711`; unique in the list when given
+ * @property {string} name - unique in the list
+ * @property {boolean} archived - no longer offered, but kept on the entries that name it
+ * @property {number} created_at - seconds
+ * @property {number} updated_at - the token the next write is checked against
+ */
+
+/**
+ * The caller's own list and the lists of the owners whose vehicles the caller reaches, archived
+ * records too. A sheet offers the vehicle owner's.
+ *
+ * @return {Promise<CostCentre[]>} the records, by owner and name
+ */
+export async function listCostCentres() {
+	return request('GET', '/api/cost-centres')
+}
+
+/**
+ * Add a record to the caller's own list.
+ *
+ * @param {{code: string|null, name: string}} fields - the record
+ * @return {Promise<CostCentre>} the record as stored
+ * @throws {RefusedError} `code_taken` or `name_taken` when another record has it
+ */
+export async function createCostCentre(fields) {
+	return request('POST', '/api/cost-centres', fields)
+}
+
+/**
+ * Write the whole record back, checked against the token it was read with.
+ *
+ * @param {CostCentre} centre - as it was read
+ * @param {{code: string|null, name: string, archived: boolean}} fields - the record as it is to be
+ * @return {Promise<CostCentre>} the record under its next token
+ * @throws {RefusedError} `code_taken` or `name_taken` when another record has it
+ */
+export async function updateCostCentre(centre, fields) {
+	return request('PUT', `/api/cost-centres/${centre.uuid}`, { ...fields, updated_at: centre.updated_at })
+}
+
+/**
+ * Delete a record that nothing names.
+ *
+ * @param {CostCentre} centre - as it was read
+ * @return {Promise<{uuid: string, deleted_at: number}>} what is left of it
+ * @throws {RefusedError} `in_use` while an entry or a vehicle names it
+ */
+export async function deleteCostCentre(centre) {
+	return request('DELETE', `/api/cost-centres/${centre.uuid}?updated_at=${centre.updated_at}`)
+}
+
+/**
+ * @typedef {object} Budget
+ * @property {string} uuid - identity
+ * @property {number} year - the calendar year, in the owner's time zone
+ * @property {number} amount - cents in the vehicle's currency
+ * @property {boolean} net - whether the amount, and the costs held against it, are net of VAT
+ * @property {number} created_at - seconds
+ * @property {number} updated_at - the token the next write is checked against
+ * @property {number|null} deleted_at - seconds, null while it stands
+ * @property {string} created_by - the owner who set it
+ */
+
+/**
+ * A vehicle's budgets, by year; none for a reader the costs are kept from.
+ *
+ * @param {string} uuid - the vehicle
+ * @return {Promise<Budget[]>} the budgets
+ */
+export async function listBudgets(uuid) {
+	return request('GET', `/api/vehicles/${uuid}/budgets`)
+}
+
+/**
+ * Set the budget of a year the vehicle has none for. The owner's alone.
+ *
+ * @param {string} uuid - the vehicle
+ * @param {{year: number, amount: number, net: boolean}} fields - the budget
+ * @return {Promise<Budget>} the budget as stored
+ * @throws {RefusedError} `no_currency` for a vehicle without one, `year_taken` for a year with a budget
+ */
+export async function createBudget(uuid, fields) {
+	return request('POST', `/api/vehicles/${uuid}/budgets`, fields)
+}
+
+/**
+ * Change the amount and whether it is net, checked against the token it was read with.
+ *
+ * @param {string} uuid - the vehicle
+ * @param {Budget} budget - as it was read
+ * @param {{amount: number, net: boolean}} fields - the budget as it is to be
+ * @return {Promise<Budget>} the budget under its next token
+ */
+export async function updateBudget(uuid, budget, fields) {
+	return request('PUT', `/api/vehicles/${uuid}/budgets/${budget.uuid}`, { ...fields, updated_at: budget.updated_at })
+}
+
+/**
+ * Delete a budget. There is no undo: setting the year again is the way back.
+ *
+ * @param {string} uuid - the vehicle
+ * @param {Budget} budget - as it was read
+ * @return {Promise<Budget>} the budget as deleted
+ */
+export async function deleteBudget(uuid, budget) {
+	return request('DELETE', `/api/vehicles/${uuid}/budgets/${budget.uuid}?updated_at=${budget.updated_at}`)
 }
 
 /**
@@ -1686,8 +1911,27 @@ export async function savePreferences(fields) {
 }
 
 /**
+ * A query string of the values given, in their order. An empty or missing value is left out, and
+ * with none left there is no `?` either.
+ *
+ * @param {Record<string, string|null|undefined>} fields - by parameter name
+ * @return {string} `?a=1&b=2`, or nothing
+ */
+function queryOf(fields) {
+	const query = new URLSearchParams()
+	for (const [name, value] of Object.entries(fields)) {
+		if (value) {
+			query.set(name, value)
+		}
+	}
+	const asked = query.toString()
+
+	return asked === '' ? '' : `?${asked}`
+}
+
+/**
  * @param {string} method - the HTTP verb
- * @param {string} path - below the app's own route prefix
+ * @param {string} path - below the app's own route prefix, query string included (queryOf())
  * @param {object} [body] - sent as JSON, which Nextcloud merges into the request parameters
  * @return {Promise<any>} the parsed answer
  */

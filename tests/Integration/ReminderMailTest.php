@@ -526,7 +526,7 @@ class ReminderMailTest extends TestCase {
 			\OCP\Server::get(LoggerInterface::class),
 			\OCP\Server::get(IUserManager::class),
 		);
-		(new ReminderJob($clock, $notifications, $this->mailAt($moment, $mailer)))->start(\OCP\Server::get(IJobList::class));
+		(new ReminderJob($clock, $notifications, $this->mailAt($moment, $mailer), $this->createMock(\OCA\NextFleet\Service\BudgetWarnings::class)))->start(\OCP\Server::get(IJobList::class));
 	}
 
 	/** The digest alone, on a clock set to that moment in UTC. */

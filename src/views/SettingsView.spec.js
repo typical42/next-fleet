@@ -13,6 +13,7 @@ import { flushPromises, shallowMount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { getPreferences, readInbox, savePreferences } from '../services/api.js'
+import CostCentreList from '../components/CostCentreList.vue'
 import SettingsView from './SettingsView.vue'
 
 vi.mock('../services/api.js', () => ({
@@ -73,6 +74,14 @@ function dropdown(wrapper) {
  */
 function vatSwitch(wrapper) {
 	return wrapper.findComponent(NcCheckboxRadioSwitch)
+}
+
+/**
+ * @param {import('@vue/test-utils').VueWrapper} wrapper - the mounted screen
+ * @return {any} the "Use cost centres and budgets" switch, if shown
+ */
+function centresSwitch(wrapper) {
+	return wrapper.findAllComponents(NcCheckboxRadioSwitch).find((one) => one.text() === 'Use cost centres and budgets')
 }
 
 /**
@@ -214,12 +223,12 @@ describe('settings screen', () => {
 	/** Freelancers first (docs/adr/0012-nextfleet-also-serves-a-small-fleet.md). */
 	it('offers the default for bookings only to an owner of a shared vehicle', async () => {
 		const freelancer = await screen()
-		expect(freelancer.findAll('h3').map((one) => one.text())).toEqual([])
-		expect(freelancer.findAllComponents(NcCheckboxRadioSwitch)).toHaveLength(1)
+		expect(freelancer.findAll('h3').map((one) => one.text())).toEqual(['Cost centres and budgets'])
+		expect(freelancer.findAllComponents(NcCheckboxRadioSwitch).map((one) => one.text())).toEqual(['I reclaim VAT', 'Use cost centres and budgets'])
 
 		vi.mocked(getPreferences).mockResolvedValue({ ...settings, owns_shared: true, preferences: { ...settings.preferences, booking_approval: true } })
 		const owner = await screen()
-		expect(owner.findAll('h3').map((one) => one.text())).toEqual(['Bookings'])
+		expect(owner.findAll('h3').map((one) => one.text())).toEqual(['Bookings', 'Cost centres and budgets'])
 		expect(approvalSwitch(owner).props('modelValue')).toBe(true)
 		expect(approvalSwitch(owner).text()).toBe('Bookings need approval')
 	})
@@ -239,6 +248,40 @@ describe('settings screen', () => {
 		await flushPromises()
 		expect(approvalSwitch(wrapper).props('modelValue')).toBe(true)
 		expect(note(wrapper)).toBe('booking_approval is true or false')
+	})
+
+	/** Freelancers first again: the list waits for a shared vehicle or the switch (ADR 0012). */
+	it('shows the cost centres once the owner switches them on, and saves the switch', async () => {
+		vi.mocked(savePreferences).mockResolvedValue({ ...settings, preferences: { ...settings.preferences, cost_centres: true } })
+		const wrapper = await screen()
+		expect(wrapper.findComponent(CostCentreList).exists()).toBe(false)
+
+		await centresSwitch(wrapper).vm.$emit('update:modelValue', true)
+		await flushPromises()
+
+		expect(savePreferences).toHaveBeenCalledWith({ cost_centres: true })
+		expect(centresSwitch(wrapper).props('modelValue')).toBe(true)
+		expect(wrapper.findComponent(CostCentreList).exists()).toBe(true)
+	})
+
+	it('puts the cost-centre switch back when the write is refused', async () => {
+		vi.mocked(savePreferences).mockRejectedValue(new Error('cost_centres is true or false'))
+		const wrapper = await screen()
+
+		await centresSwitch(wrapper).vm.$emit('update:modelValue', true)
+		await flushPromises()
+
+		expect(centresSwitch(wrapper).props('modelValue')).toBe(false)
+		expect(wrapper.findComponent(CostCentreList).exists()).toBe(false)
+		expect(note(wrapper)).toBe('cost_centres is true or false')
+	})
+
+	it('shows the cost centres to an owner of a shared vehicle without asking', async () => {
+		vi.mocked(getPreferences).mockResolvedValue({ ...settings, owns_shared: true })
+		const wrapper = await screen()
+
+		expect(wrapper.findComponent(CostCentreList).exists()).toBe(true)
+		expect(wrapper.findAllComponents(NcCheckboxRadioSwitch).map((one) => one.text())).not.toContain('Use cost centres and budgets')
 	})
 
 	it('shows this user\'s grid factor, and the country average an empty field stands for', async () => {

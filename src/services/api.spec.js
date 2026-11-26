@@ -4,7 +4,7 @@
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { addBookingRecipient, addGrant, addRecipient, attachDocument, BookingConflictError, cancelBooking, ChangedError, changeBooking, changeGrant, checkIn, checkOut, closeGap, createBooking, ImportRefusedError, listBookers, listBookings, ConflictError, previewImport, runImport, undoImport, createReminder, createVehicle, csvUrl, deleteEntry, deleteVehicle, detachDocument, dismissReminder, documentUrl, energyPrefill, expensePrefill, fetchDocument, getPreferences, getVehicle, leaveVehicle, LockedError, maintenancePrefill, readHeld, recordEnergy, recordExpense, recordMaintenance, tripPrefill, restoreDocument, listDocuments, listFleetReminders, listGrants, listRecipients, listReminders, listVehicles, logbookUrl, mileageClaimUrl, NotFoundError, OfflineError, readEntry, readGaps, readInbox, readKpis, readStatistics, readTimeline, recordReading, recordTrip, RefusedError, reminderTemplates, removeBookingRecipient, removeRecipient, resetReading, restoreEntry, revokeGrant, searchGrantees, searchUsers, restoreVehicle, savePreferences, snoozeReminder, stickerUrl, thumbnailUrl, UnansweredError, updateEntry, updateVehicle } from './api.js'
+import { addBookingRecipient, createBudget, deleteBudget, listBudgets, updateBudget, createCostCentre, deleteCostCentre, listCostCentres, updateCostCentre, addGrant, addRecipient, attachDocument, BookingConflictError, cancelBooking, ChangedError, changeBooking, changeGrant, checkIn, checkOut, closeGap, createBooking, ImportRefusedError, listBookers, listBookings, ConflictError, previewImport, runImport, undoImport, createReminder, createVehicle, csvUrl, deleteEntry, deletePartner, deleteVehicle, detachDocument, dismissReminder, documentUrl, energyPrefill, expensePrefill, fetchDocument, getPreferences, getVehicle, leaveVehicle, LockedError, maintenancePrefill, readHeld, recordEnergy, recordExpense, recordMaintenance, tripPrefill, restoreDocument, listDocuments, listFleetReminders, listGrants, listRecipients, listReminders, listPartners, listVehicles, logbookUrl, mergePartner, partnerCsvUrl, readPartnerTrips, updatePartner, mileageClaimUrl, NotFoundError, OfflineError, readEntry, readGaps, readInbox, readKpis, readStatistics, readTimeline, recordReading, recordTrip, RefusedError, reminderTemplates, removeBookingRecipient, removeRecipient, resetReading, restoreEntry, revokeGrant, searchGrantees, searchUsers, restoreVehicle, savePreferences, snoozeReminder, stickerUrl, thumbnailUrl, UnansweredError, updateEntry, updateVehicle } from './api.js'
 
 vi.mock('@nextcloud/router', () => ({
 	generateUrl: (/** @type {string} */ path) => `/index.php${path}`,
@@ -769,5 +769,106 @@ describe('the grant calls', () => {
 			{ grantee: 'jane', grantee_type: 'user', display_name: 'Jane Doe' },
 			{ grantee: 'crew', grantee_type: 'group', display_name: 'The Crew' },
 		])
+	})
+})
+
+describe('the partner calls', () => {
+	const base = '/index.php/apps/nextfleet/api/partners'
+	const partner = { uuid: 'p-1', user_id: 'owner', name: 'Müller GmbH', address: null, note: null, created_at: 1750000100, updated_at: 1750000200 }
+
+	/** The list belongs to an owner, not to a vehicle, so no vehicle is in the path (ADR 0013). */
+	it('reads the list and the trips of one partner outside any vehicle', async () => {
+		const fetch = answers(200, [])
+
+		await listPartners()
+		await readPartnerTrips('p-1', { from: '2026-01-01', to: '2027-01-01' })
+		await readPartnerTrips('p-1', {})
+
+		expect(fetch.mock.calls[0][0]).toBe(base)
+		expect(fetch.mock.calls[1][0]).toBe(`${base}/p-1/trips?from=2026-01-01&to=2027-01-01`)
+		expect(fetch.mock.calls[2][0]).toBe(`${base}/p-1/trips`)
+	})
+
+	it('writes the whole record, merges and deletes, each with the token it read', async () => {
+		const fetch = answers(200, partner)
+
+		await updatePartner(partner, { name: 'Müller GmbH', address: null, note: 'Gate 3' })
+		await mergePartner(partner, 'p-2')
+		await deletePartner(partner)
+
+		expect(fetch.mock.calls[0][0]).toBe(`${base}/p-1`)
+		expect(fetch.mock.calls[0][1].method).toBe('PUT')
+		expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ name: 'Müller GmbH', address: null, note: 'Gate 3', updated_at: 1750000200 })
+		expect(fetch.mock.calls[1][0]).toBe(`${base}/p-1/merge`)
+		expect(fetch.mock.calls[1][1].method).toBe('POST')
+		expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ into: 'p-2', updated_at: 1750000200 })
+		expect(fetch.mock.calls[2][0]).toBe(`${base}/p-1?updated_at=1750000200`)
+		expect(fetch.mock.calls[2][1].method).toBe('DELETE')
+	})
+
+	it('saves the trips of a period as CSV from a download address', () => {
+		expect(partnerCsvUrl('p-1', { from: '2026-01-01', to: '2027-01-01' }))
+			.toBe('/index.php/apps/nextfleet/partners/p-1/csv?from=2026-01-01&to=2027-01-01')
+		expect(partnerCsvUrl('p-1', {})).toBe('/index.php/apps/nextfleet/partners/p-1/csv')
+	})
+})
+
+describe('the cost-centre calls', () => {
+	const base = '/index.php/apps/nextfleet/api/cost-centres'
+	const centre = { uuid: 'c-1', user_id: 'owner', code: '4711', name: 'Sales', archived: false, created_at: 1750000100, updated_at: 1750000200 }
+
+	it('reads the lists and adds to the own one outside any vehicle', async () => {
+		const fetch = answers(200, [])
+
+		await listCostCentres()
+		await createCostCentre({ code: null, name: 'Service' })
+
+		expect(fetch.mock.calls[0][0]).toBe(base)
+		expect(fetch.mock.calls[1][0]).toBe(base)
+		expect(fetch.mock.calls[1][1].method).toBe('POST')
+		expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ code: null, name: 'Service' })
+	})
+
+	it('writes the whole record and deletes it, each with the token it read', async () => {
+		const fetch = answers(200, centre)
+
+		await updateCostCentre(centre, { code: '4711', name: 'Sales', archived: true })
+		await deleteCostCentre(centre)
+
+		expect(fetch.mock.calls[0][0]).toBe(`${base}/c-1`)
+		expect(fetch.mock.calls[0][1].method).toBe('PUT')
+		expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ code: '4711', name: 'Sales', archived: true, updated_at: 1750000200 })
+		expect(fetch.mock.calls[1][0]).toBe(`${base}/c-1?updated_at=1750000200`)
+		expect(fetch.mock.calls[1][1].method).toBe('DELETE')
+	})
+})
+
+describe('the budget calls', () => {
+	const base = '/index.php/apps/nextfleet/api/vehicles/v-1/budgets'
+	const budget = { uuid: 'b-1', year: 2031, amount: 500000, net: true, created_at: 1750000100, updated_at: 1750000200, deleted_at: null, created_by: 'owner' }
+
+	it('reads a vehicle\'s budgets and sets a year', async () => {
+		const fetch = answers(200, [])
+
+		await listBudgets('v-1')
+		await createBudget('v-1', { year: 2031, amount: 500000, net: true })
+
+		expect(fetch.mock.calls[0][0]).toBe(base)
+		expect(fetch.mock.calls[1][0]).toBe(base)
+		expect(fetch.mock.calls[1][1].method).toBe('POST')
+		expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual({ year: 2031, amount: 500000, net: true })
+	})
+
+	it('changes the amount and deletes, each with the token it read', async () => {
+		const fetch = answers(200, budget)
+
+		await updateBudget('v-1', budget, { amount: 600000, net: false })
+		await deleteBudget('v-1', budget)
+
+		expect(fetch.mock.calls[0][0]).toBe(`${base}/b-1`)
+		expect(fetch.mock.calls[0][1].method).toBe('PUT')
+		expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ amount: 600000, net: false, updated_at: 1750000200 })
+		expect(fetch.mock.calls[1][0]).toBe(`${base}/b-1?updated_at=1750000200`)
+		expect(fetch.mock.calls[1][1].method).toBe('DELETE')
 	})
 })

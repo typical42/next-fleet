@@ -29,7 +29,7 @@ import { mkdir } from 'node:fs/promises'
 
 import { chromium } from '@playwright/test'
 
-import { appPage, login, logout } from '../tests/e2e/app.js'
+import { appPage, login, logout, settingsPage } from '../tests/e2e/app.js'
 
 const baseURL = process.env.NEXTFLEET_URL_NC35 ?? 'http://localhost:8080'
 const out = 'design/screenshots'
@@ -86,6 +86,19 @@ await page.waitForFunction(() => [...document.querySelectorAll('[role="dialog"]'
 	.every((d) => getComputedStyle(d).opacity === '1'))
 await shoot(page, 'entry-sheet')
 await page.keyboard.press('Escape')
+await sheet.waitFor({ state: 'hidden' })
+
+// The Passat's Costs, for docs/user/: the default cost centre and the budget the pool seed gives
+// it. The budget list fills in after the sheet is up.
+await page.getByRole('button', { name: 'Edit vehicle' }).click()
+const costs = page.getByRole('dialog', { name: 'Edit vehicle' })
+await costs.locator('.budgets').getByRole('button', { name: 'Change' }).waitFor({ timeout: 10000 })
+await page.waitForFunction(() => [...document.querySelectorAll('[role="dialog"]')]
+	.every((d) => getComputedStyle(d).opacity === '1'))
+await costs.getByRole('heading', { name: 'Costs' }).evaluate((one) => one.scrollIntoView({ block: 'start' }))
+await shoot(page, 'vehicle-costs', costs)
+await page.keyboard.press('Escape')
+await costs.waitFor({ state: 'hidden' })
 
 // The pool car, for docs/user/ rather than the store: its bookings, then its edit sheet. Waiting on
 // the booking made for a driver fails a seed without `--grant-to`, and waiting on Ben's notice row
@@ -128,6 +141,22 @@ await page.waitForFunction((name) => {
 await shoot(page, 'statistics')
 await page.getByRole('button', { name: 'Open navigation' }).click()
 
+// The Passat alone over this year, for docs/user/: its budget under the costs chart, and its
+// entries by cost centre, which the pool seed points at Vertrieb.
+const statistics = page.locator('#nextfleet').getByRole('main')
+await statistics.getByRole('combobox', { name: 'Vehicle' }).click()
+await page.getByRole('option').filter({ hasText: 'NF-DE 100' }).click()
+await statistics.getByRole('combobox', { name: 'Range' }).click()
+await page.getByRole('option').filter({ hasText: 'Calendar year' }).click()
+const budget = statistics.locator('.statistics__budget')
+await budget.getByRole('meter').waitFor()
+await budget.evaluate((one) => one.scrollIntoView({ block: 'center' }))
+await shoot(page, 'statistics-budget', budget)
+const centres = statistics.locator('.statistics__centres')
+await centres.getByRole('cell').first().waitFor()
+await centres.evaluate((one) => one.scrollIntoView({ block: 'center' }))
+await shoot(page, 'statistics-centres', centres)
+
 // Reports on the Passat, where both a Fahrtenbuch and a mileage claim print.
 await page.locator('.app-navigation').getByRole('link', { name: 'Reports' }).click()
 const reports = page.locator('#nextfleet').getByRole('main')
@@ -135,6 +164,24 @@ await reports.getByRole('combobox', { name: 'Vehicle' }).click()
 await page.getByRole('option').filter({ hasText: 'NF-DE 100' }).click()
 await reports.getByRole('link', { name: 'Open mileage claim' }).waitFor()
 await shoot(page, 'reports')
+
+// One partner, for docs/user/: the second spelling the pool seed types, with its trips over all
+// time and the merge that would make it one with the first.
+await page.locator('.app-navigation').getByRole('link', { name: 'Partners', exact: true }).click()
+const partners = page.locator('#nextfleet').getByRole('main')
+await partners.getByRole('link', { name: 'Müller Maschinenbau', exact: true }).click()
+await partners.getByRole('combobox', { name: 'Period' }).click()
+await page.getByRole('option').filter({ hasText: 'All time' }).click()
+await partners.getByRole('table').getByText('Pforzheim').first().waitFor()
+await shoot(page, 'partner')
+
+// The cost-centre list in the personal settings, for docs/user/.
+await page.goto(settingsPage)
+// The section, not CostCentreList inside it, which has the same class.
+const centreList = page.locator('#nextfleet-settings .centres').first()
+await centreList.getByText('4712 Service').waitFor()
+await centreList.evaluate((one) => one.scrollIntoView({ block: 'center' }))
+await shoot(page, 'cost-centres', centreList)
 
 // The overview again at listing size, not a scaled copy: beside the store's title a shrunk 1280px
 // shot is unreadable. The missing-details hint would fill the frame; CSS hides it, since

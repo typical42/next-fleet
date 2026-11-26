@@ -59,6 +59,7 @@ class MaintenanceController extends OCSController {
 	 * @param int|null $second_odo the engine hours, on a vehicle that counts them
 	 * @param string|null $closes the uuid of the reminder this work closes
 	 * @param string|null $client_uuid a uuid of the client's for the new row: a retry under it answers that row
+	 * @param string|null $cost_centre_uuid a cost centre of the vehicle owner's; left out, the vehicle's default; null for none
 	 * @return DataResponse<Http::STATUS_CREATED, NextFleetMaintenance, array{}>|DataResponse<Http::STATUS_OK, NextFleetMaintenance, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
 	 * @throws OCSForbiddenException the caller may not log on this vehicle
 	 * @throws OCSNotFoundException no such vehicle
@@ -84,6 +85,7 @@ class MaintenanceController extends OCSController {
 		mixed $second_odo = null,
 		mixed $closes = null,
 		mixed $client_uuid = null,
+		mixed $cost_centre_uuid = null,
 	): DataResponse {
 		return $this->write(fn (): DataResponse => $this->created(
 			fn (): array => $this->service->record($this->userId(), $uuid, $this->request->getParams()),
@@ -133,6 +135,7 @@ class MaintenanceController extends OCSController {
 	 * @param int|null $odo the counter
 	 * @param int|null $second_odo the engine hours, on a vehicle that counts them
 	 * @param string|null $closes the uuid of the reminder this work closes
+	 * @param string|null $cost_centre_uuid a cost centre of the vehicle owner's, or null for none; left out, the entry keeps its own
 	 * @return DataResponse<Http::STATUS_OK, NextFleetMaintenance, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
 	 * @throws OCSForbiddenException the caller may not edit this record
 	 * @throws OCSNotFoundException no such vehicle or record
@@ -158,6 +161,7 @@ class MaintenanceController extends OCSController {
 		mixed $odo = null,
 		mixed $second_odo = null,
 		mixed $closes = null,
+		mixed $cost_centre_uuid = null,
 	): DataResponse {
 		return $this->write(fn (): DataResponse => new DataResponse(
 			$this->service->update($this->userId(), $uuid, $record, $this->token(), $this->request->getParams()),

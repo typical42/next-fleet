@@ -20,7 +20,7 @@ final class SyncCursor {
 	 * The tables a sync carries, in the order that breaks a tie between rows of one `updated_at`.
 	 * A table added later goes at the end: moving one would re-order a run in progress.
 	 */
-	public const TABLES = ['readings', 'trips', 'energy', 'maintenance', 'expenses', 'reminders', 'documents', 'bookings', 'grants'];
+	public const TABLES = ['readings', 'trips', 'energy', 'maintenance', 'expenses', 'reminders', 'documents', 'bookings', 'grants', 'budgets'];
 
 	private const FORGED = 'cursor is not one this route hands out';
 

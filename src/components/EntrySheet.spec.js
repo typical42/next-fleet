@@ -17,7 +17,7 @@ import { flushPromises, shallowMount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { BookingConflictError, ConflictError, RefusedError, deleteEntry, energyPrefill, expensePrefill, getVehicle, listReminders, maintenancePrefill, readEntry, recordEnergy, recordExpense, recordMaintenance, recordReading, recordTrip, tripPrefill, updateEntry } from '../services/api.js'
+import { BookingConflictError, ConflictError, RefusedError, deleteEntry, energyPrefill, expensePrefill, getVehicle, listCostCentres, listReminders, maintenancePrefill, readEntry, recordEnergy, recordExpense, recordMaintenance, recordReading, recordTrip, tripPrefill, updateEntry } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
 import EntrySheet from './EntrySheet.vue'
 
@@ -29,6 +29,7 @@ vi.mock('../services/api.js', async (original) => ({
 	energyPrefill: vi.fn(),
 	expensePrefill: vi.fn(),
 	getVehicle: vi.fn(),
+	listCostCentres: vi.fn(),
 	listReminders: vi.fn(),
 	maintenancePrefill: vi.fn(),
 	readEntry: vi.fn(),
@@ -1488,5 +1489,122 @@ describe('the entry sheet on a receipt from the inbox', () => {
 		await flushPromises()
 
 		expect(wrapper.emitted('saved')).toEqual([[{ uuid: 'x-5', amount: 4250 }, 'expense']])
+	})
+})
+
+describe('the entry sheet, its cost centre', () => {
+	const CENTRES = [
+		{ uuid: 'c-1', user_id: 'owner', code: '4711', name: 'Sales', archived: false, created_at: 1, updated_at: 1 },
+		{ uuid: 'c-2', user_id: 'owner', code: null, name: 'Service', archived: false, created_at: 2, updated_at: 2 },
+		{ uuid: 'c-3', user_id: 'owner', code: null, name: 'Old project', archived: true, created_at: 3, updated_at: 3 },
+		{ uuid: 'c-4', user_id: 'boss', code: null, name: 'Pool', archived: false, created_at: 4, updated_at: 4 },
+	]
+	/** A vehicle whose owner uses cost centres, with Sales as its default. */
+	const CENTRED = { ...VEHICLE, user_id: 'owner', energy_types: ['diesel'], uses_cost_centres: true, cost_centre_uuid: 'c-1' }
+
+	beforeEach(() => {
+		vi.mocked(listCostCentres).mockResolvedValue(CENTRES)
+		vi.mocked(updateEntry).mockImplementation(async (uuid, type, entry, fields) => ({ ...entry, ...fields, updated_at: entry.updated_at + 1 }))
+	})
+
+	/** The default the server holds when the entry arrives wins over the one the sheet read. */
+	it('offers the owner\'s live cost centres, starts on the vehicle\'s default, and leaves it to the server', async () => {
+		const wrapper = sheet(CENTRED)
+		await flushPromises()
+
+		const centre = dropdown(wrapper, 'Cost centre')
+		expect(centre.props('options').map((/** @type {any} */ one) => one.label)).toEqual(['4711 Sales', 'Service'])
+		expect(centre.props('modelValue').id).toBe('c-1')
+		await dropdown(wrapper, 'Category').vm.$emit('update:modelValue', { id: 'business', label: 'Business' })
+		await record(wrapper, { 'Odometer at arrival': '148400' })
+
+		expect(vi.mocked(recordTrip).mock.calls[0][1]).not.toHaveProperty('cost_centre_uuid')
+	})
+
+	it('sends the one the driver picks', async () => {
+		const wrapper = sheet(CENTRED)
+		await flushPromises()
+
+		await dropdown(wrapper, 'Cost centre').vm.$emit('update:modelValue', { id: 'c-2', label: 'Service' })
+		await dropdown(wrapper, 'Category').vm.$emit('update:modelValue', { id: 'business', label: 'Business' })
+		await record(wrapper, { 'Odometer at arrival': '148400' })
+
+		expect(recordTrip).toHaveBeenCalledWith('v-1', expect.objectContaining({ cost_centre_uuid: 'c-2' }))
+	})
+
+	it('sends none when the driver clears it', async () => {
+		const wrapper = sheet(CENTRED)
+		await flushPromises()
+
+		await choose(wrapper, 'Entry type', 'expense')
+		await dropdown(wrapper, 'Cost centre').vm.$emit('update:modelValue', null)
+		await field(wrapper, 'Amount').vm.$emit('update:modelValue', '12')
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(recordExpense).toHaveBeenCalledWith('v-1', expect.objectContaining({ cost_centre_uuid: null }))
+	})
+
+	it('does not start on an archived default', async () => {
+		const wrapper = sheet({ ...CENTRED, cost_centre_uuid: 'c-3' })
+		await flushPromises()
+
+		expect(dropdown(wrapper, 'Cost centre').props('modelValue')).toBeNull()
+	})
+
+	/** Freelancers first (docs/adr/0012-nextfleet-also-serves-a-small-fleet.md). */
+	it('asks nothing where the owner does not use cost centres, and leaves the default to the server', async () => {
+		const wrapper = sheet({ ...CENTRED, uses_cost_centres: false })
+		await flushPromises()
+
+		expect(dropdown(wrapper, 'Cost centre')).toBeUndefined()
+		expect(listCostCentres).not.toHaveBeenCalled()
+		await dropdown(wrapper, 'Category').vm.$emit('update:modelValue', { id: 'business', label: 'Business' })
+		await record(wrapper, { 'Odometer at arrival': '148400' })
+
+		expect(vi.mocked(recordTrip).mock.calls[0][1]).not.toHaveProperty('cost_centre_uuid')
+	})
+
+	it('leaves the default to the server when the list cannot be read', async () => {
+		vi.mocked(listCostCentres).mockRejectedValue(new Error('offline'))
+		const wrapper = sheet(CENTRED)
+		await flushPromises()
+
+		await dropdown(wrapper, 'Category').vm.$emit('update:modelValue', { id: 'business', label: 'Business' })
+		await record(wrapper, { 'Odometer at arrival': '148400' })
+
+		expect(vi.mocked(recordTrip).mock.calls[0][1]).not.toHaveProperty('cost_centre_uuid')
+	})
+
+	it('asks for none on a counter reading', async () => {
+		const wrapper = sheet(CENTRED)
+		await flushPromises()
+
+		await choose(wrapper, 'Entry type', 'odometer')
+
+		expect(dropdown(wrapper, 'Cost centre')).toBeUndefined()
+	})
+
+	it('opens an entry on its own cost centre, archived or not, and writes it back', async () => {
+		const fill = { uuid: 'e-1', updated_at: 1750000000, filled_at: 1788391800, filled_at_off: 120, energy: 'diesel', amount: 48200, total: 8210, unit_price: 1703, vat_rate: 1900, odo: 148400, second_odo: null, full_tank: true, missed_previous: false, station: null, is_dc: false, location_kind: null, cost_centre_uuid: 'c-3' }
+		const wrapper = sheet(CENTRED, { type: 'energy', occurred_at: 1788391800, occurred_at_off: 120, energy: fill, readings: [], flags: [], may: ['edit', 'delete'] })
+		await flushPromises()
+
+		expect(dropdown(wrapper, 'Cost centre').props('modelValue').label).toBe('Old project (archived)')
+		await saveButton(wrapper).vm.$emit('click')
+		await flushPromises()
+
+		expect(updateEntry).toHaveBeenCalledWith('v-1', 'energy', expect.anything(), expect.objectContaining({ cost_centre_uuid: 'c-3' }))
+	})
+
+	it('starts a returned booking\'s trip on the cost centre of its draft', async () => {
+		const back = { uuid: 'b-8', state: 'returned', trip_draft: { started_at: 1790935200, started_at_off: 120, ended_at: 1790940000, ended_at_off: 120, start_odo: 52000, end_odo: 52140, purpose: null, cost_centre_uuid: 'c-2' }, may: ['log_trip'] }
+		const wrapper = shallowMount(EntrySheet, {
+			props: { vehicle: CENTRED, booking: back },
+			global: { renderStubDefaultSlot: true, stubs: { NcDialog: { template: '<div><slot /><slot name="actions" /></div>' } } },
+		})
+		await flushPromises()
+
+		expect(dropdown(wrapper, 'Cost centre').props('modelValue').id).toBe('c-2')
 	})
 })

@@ -37,6 +37,9 @@ class Audit extends BaseEntity {
 	 */
 	public const TRANSFERRED_BY = 'occ:transfer';
 
+	/** Who linked what the repair step UnlinkedPartners links; no account did, as above. */
+	public const REPAIRED_BY = 'occ:repair';
+
 	protected string $entity = '';
 	protected int $entityId = 0;
 	/**

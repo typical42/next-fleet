@@ -14,6 +14,7 @@ use OCA\NextFleet\Db\AuditMapper;
 use OCA\NextFleet\Db\BaseEntity;
 use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Db\OdoReadingMapper;
+use OCA\NextFleet\Db\Partner;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
@@ -25,9 +26,11 @@ use OCA\NextFleet\Jurisdiction\IJurisdiction;
 use OCA\NextFleet\Jurisdiction\ILogbookRules;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCA\NextFleet\Service\BookingService;
+use OCA\NextFleet\Service\CostCentreLinks;
 use OCA\NextFleet\Service\Gaps;
 use OCA\NextFleet\Service\LogbookPeriods;
 use OCA\NextFleet\Service\OdometerService;
+use OCA\NextFleet\Service\PartnerLinks;
 use OCA\NextFleet\Service\TripService;
 use OCA\NextFleet\Service\VehicleAccess;
 use OCA\NextFleet\Service\VehicleService;
@@ -357,7 +360,31 @@ class TripServiceTest extends TestCase {
 			$this->createMock(BookingService::class),
 			$this->db,
 			new LogbookPeriods($this->auditMapper),
+			$this->partners(),
+			$this->createMock(CostCentreLinks::class),
 		);
+	}
+
+	/** The owner's list: each name is one record, its uuid made of the name. */
+	private function partners(): PartnerLinks {
+		$partners = $this->createMock(PartnerLinks::class);
+		$partners->method('of')->willReturnCallback(static function (Vehicle $vehicle, ?string $text): ?Partner {
+			if ($text === null) {
+				return null;
+			}
+			$partner = new Partner();
+			$partner->setId(crc32($text));
+			$partner->setUuid(self::partnerUuid($text));
+			$partner->setName($text);
+
+			return $partner;
+		});
+
+		return $partners;
+	}
+
+	private static function partnerUuid(string $name): string {
+		return '0195e2f1-2222-4000-8000-' . substr(md5($name), 0, 12);
 	}
 
 	/** The mode was on from `$on` to `$off` and is off now, as VehicleService's flips say. */
@@ -838,7 +865,7 @@ class TripServiceTest extends TestCase {
 		$this->assertSame(
 			[
 				'started_at', 'started_at_off', 'ended_at', 'ended_at_off', 'start_odo', 'end_odo',
-				'from_label', 'to_label', 'purpose', 'partner', 'category',
+				'from_label', 'to_label', 'purpose', 'partner', 'partner_uuid', 'category',
 			],
 			array_keys($this->audits[0]->getDiffJson()['fields']),
 		);
@@ -1323,10 +1350,29 @@ class TripServiceTest extends TestCase {
 				'end_odo' => [120450, 120460],
 				'purpose' => ['Kundentermin', null],
 				'partner' => [null, 'Meyer GmbH'],
+				// The link moves with the text, and is audited like any column (ADR 0013).
+				'partner_uuid' => [null, self::partnerUuid('Meyer GmbH')],
 			],
 			'late' => false,
 			'updated_at' => self::EDITED_AT,
 		], $edit->getDiffJson());
+	}
+
+	/** A link a merge moved is the owner's word on the text, and an edit of another field keeps it. */
+	public function testAnEditThatKeepsThePartnerTextKeepsItsLink(): void {
+		$this->logbookMode = true;
+		$service = $this->service();
+		$trip = $service->record(self::OWNER, self::VEHICLE, $this->drove(1750000000, 120450) + ['partner' => 'Meyer']);
+		$merged = new Partner();
+		$merged->setId(99);
+		$merged->setUuid(self::partnerUuid('Meyer GmbH'));
+		$trip->linkPartner($merged);
+
+		$edited = $service->update(self::OWNER, self::VEHICLE, $trip->getUuid(), $trip->getUpdatedAt(),
+			$this->drove(1750000000, 120450) + ['partner' => 'Meyer', 'purpose' => 'Kundentermin']);
+
+		$this->assertSame([99, self::partnerUuid('Meyer GmbH')], [$edited->getPartnerId(), $edited->getPartnerUuid()]);
+		$this->assertSame(['purpose' => [null, 'Kundentermin']], $this->audits[1]->getDiffJson()['fields']);
 	}
 
 	/** The mode refuses no write; it only marks the late one. */

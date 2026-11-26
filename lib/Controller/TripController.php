@@ -47,7 +47,10 @@ class TripController extends Controller {
 		));
 	}
 
-	/** What the sheet completes route, purpose and partner from: this vehicle's own trips. */
+	/**
+	 * What the sheet completes route and purpose from (this vehicle's own trips) and partner from
+	 * (the owner's whole list, this vehicle's first).
+	 */
 	#[NoAdminRequired]
 	public function prefill(string $uuid): DataResponse {
 		return $this->answer(fn (): DataResponse => new DataResponse($this->service->prefill($this->userId(), $uuid)));

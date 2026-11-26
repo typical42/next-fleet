@@ -44,10 +44,10 @@ Its HTTP status is the envelope's `statuscode`.
 | Status | Means | The reason is in |
 | --- | --- | --- |
 | 200, 201 | Done; 201 for a new row | `data` is the row |
-| 400 | The request is wrong | `data.message`; `data.reason` where a client may word it: `currency_in_use`, `end_below_start`, `ends_in_future`, `not_in_question`, `no_energy` |
+| 400 | The request is wrong | `data.message`; `data.reason` where a client may word it: `code_taken`, `currency_in_use`, `end_below_start`, `ends_in_future`, `in_use`, `name_taken`, `not_in_question`, `no_currency`, `no_energy`, `target_gone`, `year_taken` |
 | 401 | No login, or a bad app password. Nextcloud answers it, before the app runs. | `meta.message` |
 | 403 | The role does not cover this | `meta.message` |
-| 404 | No such vehicle or row, or not on this vehicle | `meta.message` |
+| 404 | No such vehicle or row, or not on this vehicle | `meta.message`: `No such partner`, `No such cost centre` or `No such vehicle or budget` on their routes, else `No such vehicle` |
 | 409 | A booking in the way, an import file changed since its preview, or an undo that names a foreign entry | `data.message`, `data.booking` |
 | 412 | Changed since the client read it | `data.conflict` is `true` |
 | 422 | An import file that will not be read | `data.reason`, such as `too_large`; `data.row` |
@@ -89,6 +89,11 @@ The wire carries what the database stores ([data model](architecture.md#data-mod
   Only the figures of `…/kpis`, `…/costs/{year}` and `…/statistics` are worked out, and some of them are floats.
 - A Reading names the Entry that wrote it as `source_uuid`.
   `source_id` is a server row id and means nothing to a client.
+- A trip names its partner record as `partner_uuid`; `partner` stays the text as entered ([ADR 0013](adr/0013-a-partner-is-a-record-the-trip-keeps-its-text.md)).
+  A write sends the text only.
+  The server links the record of that name in the owner's list, else the record another live trip with this text links, else a new one.
+  An edit that keeps the text keeps the link.
+- A trip, a fill-up, a maintenance record and an expense name a [cost centre](#cost-centres) as `cost_centre_uuid`, and so does a vehicle for the one its new entries take.
 - `{fillUp}` in a path names an Energy Entry. v1 froze the path, so the old word stays.
 
 ## Costs
@@ -106,7 +111,8 @@ Of everything else:
 - a document linked to somebody else's fill-up, maintenance record or expense, a `receipt` on a booking somebody else is the booker of, and a `receipt` on the vehicle itself, is left out of `…/documents`, the list a write answers and sync, and its download, detach and restore are a 404;
 - attaching a document to an expense left out is a 404, as for one that does not exist;
 - `…/kpis` and `…/costs/{year}` answer with every amount in `cost` null, as for a period with nothing recorded;
-- `…/statistics` adds nothing of the vehicle to `costs`, and says so with `costs: false` in `vehicles`;
+- `…/statistics` adds nothing of the vehicle to `costs` or to the costs in `by_cost_centre`, gives no `budget`, and says so with `costs: false` in `vehicles`;
+- `…/budgets` is empty, and sync hands out no budget;
 - the mileage claim is a 403.
 
 ## Statistics
@@ -139,7 +145,14 @@ Of everything else:
   An erased driver keeps their pseudonym as both `user_id` and `name`.
   The owner and managers get every driver's; anyone else only their own.
   Each of `vehicles` says which in `drivers`.
+- `by_cost_centre` holds a row per [cost centre](#cost-centres) that an entry in the range names, by code and name, then one with `uuid` null for the entries that name none.
+  Each row has its `code` and `name`, `costs` with a `total` for each currency of any row, and `distance` with the `trips` and `distance` for each unit of any row.
+  Costs count as `costs` does, from the vehicles whose costs the caller sees; distance counts as `distance` does, for everybody.
+  A cost counts to the cost centre its own entry names; nothing is shared out by distance.
 - `co2` is the vehicle's for the range, as `…/costs/{year}` states it; null when all vehicles are read.
+- `budget` is one vehicle's [budget](#budgets) for a range that is one calendar year, with `year`, `amount`, `net`, `currency` and `spent`.
+  `spent` counts as the warning does: net or gross as the budget says, over the year in the owner's zone, so it can differ from `costs`.
+  It is null for all vehicles, any other range, a year without a budget, or a caller without [costs](#costs).
 
 ## Booking notices
 
@@ -212,6 +225,81 @@ The owner or a manager may book for somebody else ([architecture](architecture.m
   The first confirmation moves the booking's `updated_at`, so sync hands it out; a client that read the booking before gets a 412 on its next write and reads it again.
   The booker's notice has a **Seen** action that posts this route.
 
+## Partners
+
+A partner list belongs to the vehicle owner, and all their vehicles share it ([ADR 0013](adr/0013-a-partner-is-a-record-the-trip-keeps-its-text.md)).
+The routes name no vehicle.
+
+| Route | Does | Who |
+| --- | --- | --- |
+| `GET /partners` | The caller's own list, by name | Anybody |
+| `GET /partners/{record}` | One record | The owner; without `address` and `note`, whoever may `log` on one of the owner's vehicles |
+| `PUT /partners/{record}` | Sets `name`, `address` and `note`, the whole record | The owner |
+| `POST /partners/{record}/merge` | Merges it into `into`, another record of the list, and answers that record | The owner |
+| `DELETE /partners/{record}` | Deletes it, with no undo | The owner |
+| `GET /partners/{record}/trips?from=&to=` | Its live trips on the owner's vehicles, each with its `distance`, and their sum per unit | The owner |
+
+- **A name is unique in its list**, compared after trimming and Unicode NFC, case kept.
+  A rename onto a taken name is a 400 with `reason` `name_taken`: merge instead.
+- **A merge into a record not on the list** is a 400 with `reason` `target_gone`, whether it was merged or deleted meanwhile or never was.
+- **No trip text changes.**
+  A merge and a delete move only links.
+  Each trip whose link moved gets a new `updated_at`, so sync hands it over again.
+- **A delete takes the name, the address and the note.**
+  Its trips answer `partner_uuid: null`.
+  A new trip with the same text makes a new record.
+- **The trips** are those that set off in the period by their own offset, as the logbook dates them.
+  `from` and `to` are calendar days as for [statistics](#statistics), or neither for all of them.
+
+## Cost centres
+
+A cost-centre list belongs to the vehicle owner, as a partner list does.
+A record holds an optional `code`, such as `4711`, a `name`, and `archived`.
+
+| Route | Does | Who |
+| --- | --- | --- |
+| `GET /cost-centres` | The caller's own list and that of every owner whose vehicle the caller reaches, archived records too, by owner and name | Anybody |
+| `POST /cost-centres` | Adds `code` and `name` to the caller's own list | Anybody, for their own list |
+| `PUT /cost-centres/{record}` | Sets `code`, `name` and `archived`, the whole record | The owner |
+| `DELETE /cost-centres/{record}` | Deletes it while nothing names it | The owner |
+
+- **Code and name are unique in their list**, compared after trimming and Unicode NFC, case kept.
+  A taken one is a 400 with `reason` `code_taken` or `name_taken`.
+- **One that an entry or a vehicle names stays.**
+  Its delete is a 400 with `reason` `in_use`; archive it instead.
+  An archived one stays on its entries and is no longer offered.
+- **An entry names one of its vehicle owner's list** in `cost_centre_uuid`.
+  Any other uuid is a 400.
+  A create that leaves the field out takes the vehicle's `cost_centre_uuid`, unless that one is archived; `null` is none.
+  An edit that leaves it out keeps the entry's own, so a client that does not know the field loses nothing.
+  The vehicle's default changes no entry already there.
+  The import takes the default, and so does a check-in's `trip_draft`.
+- **A trip's cost centre is on its trail** like any field, but no logbook prints it.
+- **Whether to show the field**: a vehicle's `uses_cost_centres` says whether its owner uses cost centres and budgets.
+  They do once they share a vehicle, or once they set `cost_centres` true in `/api/v1/preferences`.
+  The server takes the field either way.
+
+## Budgets
+
+A budget is the amount the owner plans for one vehicle in one calendar year: `year`, `amount` in cents of the vehicle's currency, and `net`.
+
+| Route | Does | Who |
+| --- | --- | --- |
+| `GET /vehicles/{uuid}/budgets` | The vehicle's budgets, by year | Whoever sees its [costs](#costs); empty for the others |
+| `POST /vehicles/{uuid}/budgets` | Sets `year`, `amount` and `net` | The owner |
+| `PUT /vehicles/{uuid}/budgets/{budget}` | Sets `amount` and `net`; the year stays | The owner |
+| `DELETE /vehicles/{uuid}/budgets/{budget}` | Deletes it, with no undo | The owner |
+
+- **One per year.**
+  A second for a year is a 400 with `reason` `year_taken`.
+  A vehicle without a currency is a 400 with `reason` `no_currency`, and its currency stays while a budget does.
+- **`net` counts the costs the same way**, net of VAT or gross, whatever the reader's VAT switch.
+  An entry without a VAT rate counts gross.
+- **The year is the calendar year in the owner's time zone.**
+- **The warning** comes at 80 % and at 100 % of the costs of the year, to the owner and the managers, as a notification and, unless the vehicle's `reminder_mail` is `off`, a mail ([architecture](architecture.md#reminder-engine)).
+  Costs that pass both shares at once are told the 100 % share only.
+  An edit that leaves the costs below a share it told arms that share again.
+
 ## Sync
 
 `GET /api/v1/sync?cursor=&limit=` hands a client what changed since its last call.
@@ -221,11 +309,13 @@ Each answer hands out the next one.
 | Key | Holds |
 | --- | --- |
 | `vehicles` | Every vehicle the caller reaches, in full, on every call. Their caches move without a token. |
-| `changes` | Per table, the rows changed since the cursor: `vehicle_uuid`, `uuid`, `updated_at`, `deleted_at` and `row`, which is null for a deleted row |
+| `changes` | Per table, the rows changed since the cursor: `vehicle_uuid`, `uuid`, `updated_at`, `deleted_at` and `row`, which is null for a deleted row. `budgets` is one of them, left out for a caller without [costs](#costs). |
+| `partners` | The [partner](#partners) lists of every owner on one of whose vehicles the caller may `log`, as `changes` holds rows but with the owner's `user_id` for `vehicle_uuid`. A viewer gets none: a name is personal data, and only a trip needs it. `address` and `note` go to the owner alone. On a run's first page only. |
+| `cost_centres` | The [cost-centre](#cost-centres) lists of every owner whose vehicle the caller reaches, a viewer's too: a viewer names the cost centre an entry shows. The same way as `partners`. |
 | `unreachable` | Vehicles the client held that it no longer reaches. Drop them and their rows. |
 | `cursor` | What the next call sends. Opaque. |
 | `more` | Another page waits. |
-| `reset` | An erasure, a transfer, a change of `costs_shared`, a change of access to a vehicle that keeps its costs, or a role change that gives or takes `edit` happened. Drop everything and start from this answer. |
+| `reset` | An erasure, a transfer, a change of `costs_shared`, a change of access to a vehicle that keeps its costs, a role change that gives or takes `edit`, or a grant or a group join that gives `log` happened. Drop everything and start from this answer. |
 
 - **At least once.**
   A run's mark is the server's clock at its first page minus 120 seconds.
@@ -233,6 +323,8 @@ Each answer hands out the next one.
   Upsert by `uuid` and keep the higher `updated_at`.
 - **Whole where a token cannot tell.**
   A vehicle the client does not hold yet (new, granted, restored) comes with every live row.
+  So do the partner and cost-centre lists of an owner none of whose vehicles the client holds yet.
+  Drop an owner's cost-centre list once they own none of `vehicles`, and their partner list once no vehicle of theirs in `vehicles` has `log` in its `may`: no delete in them reaches you, and they come whole if you reach the owner again.
 - **Paging.**
   `limit` is 1 to 2000, 500 by default, in (`updated_at`, table, `id`) order.
   A run counts as held once its last page, `more: false`, is answered.
@@ -241,15 +333,16 @@ Each answer hands out the next one.
 
 ## Downloads
 
-A file is not an envelope, so these stay internal routes under `/index.php/apps/nextfleet/vehicles/{uuid}`.
+A file is not an envelope, so these stay internal routes under `/index.php/apps/nextfleet`.
 Each is a `GET` with the same app password, no CSRF token and no `OCS-APIRequest`.
 A refusal is JSON with `message`.
 
 | Path | Serves |
 | --- | --- |
-| `/documents/{document}` | A paper's file, always as an attachment |
-| `/csv/{year}/{table}` | One table of one year as CSV |
-| `/logbook/{year}`, `/mileage/{year}` | The printable logbook and mileage claim, as HTML |
+| `/vehicles/{uuid}/documents/{document}` | A paper's file, always as an attachment |
+| `/vehicles/{uuid}/csv/{year}/{table}` | One table of one year as CSV |
+| `/vehicles/{uuid}/logbook/{year}`, `/vehicles/{uuid}/mileage/{year}` | The printable logbook and mileage claim, as HTML |
+| `/partners/{record}/csv?from=&to=` | A partner's trips as CSV, as `…/partners/{record}/trips` reads them |
 
 ## Rate limits
 

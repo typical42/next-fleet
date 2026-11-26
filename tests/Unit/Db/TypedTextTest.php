@@ -10,6 +10,7 @@ namespace OCA\NextFleet\Tests\Unit\Db;
 
 use Doctrine\DBAL\Platforms\MariaDBPlatform;
 use Doctrine\DBAL\Types\Type;
+use OCA\NextFleet\Db\PartnerBackfill;
 use OCA\NextFleet\Db\ReminderRecipientMapper;
 use OCA\NextFleet\Db\TypedText;
 use OCA\NextFleet\Service\Field;
@@ -31,9 +32,11 @@ class TypedTextTest extends TestCase {
 	/** The table each service stores its fields in. */
 	private const TABLES = [
 		'BookingService' => 'fleet_bookings',
+		'CostCentreService' => 'fleet_cost_centres',
 		'EnergyService' => 'fleet_energy',
 		'ExpenseService' => 'fleet_expenses',
 		'MaintenanceService' => 'fleet_maintenance',
+		'PartnerService' => 'fleet_partners',
 		'ReminderService' => 'fleet_reminders',
 		'TripService' => 'fleet_trips',
 		'VehicleService' => 'fleet_vehicles',
@@ -64,7 +67,12 @@ class TypedTextTest extends TestCase {
 
 			preg_match_all("/Field::read\\('(\\w+)', 'text', ([\\w:]+),/", (string)file_get_contents($file), $reads, PREG_SET_ORDER);
 			foreach ($reads as [, $field, $bound]) {
-				$fields[$service][$field] = is_numeric($bound) ? (int)$bound : (int)constant(Field::class . '::' . substr($bound, strlen('Field::')));
+				$fields[$service][$field] = match (true) {
+					is_numeric($bound) => (int)$bound,
+					str_starts_with($bound, 'Field::') => (int)constant(Field::class . '::' . substr($bound, strlen('Field::'))),
+					// An entity's own bound, such as Partner::NAME_LENGTH.
+					default => (int)constant('OCA\\NextFleet\\Db\\' . $bound),
+				};
 			}
 		}
 
@@ -100,7 +108,7 @@ class TypedTextTest extends TestCase {
 		$db->method('getDatabaseProvider')->willReturn(IDBConnection::PLATFORM_MYSQL);
 
 		$schema = new SchemaWrapper(platform: new MariaDBPlatform());
-		foreach (MigrationSteps::inOrder($db, $this->createMock(ReminderRecipientMapper::class)) as $step) {
+		foreach (MigrationSteps::inOrder($db, $this->createMock(ReminderRecipientMapper::class), $this->createMock(PartnerBackfill::class)) as $step) {
 			$step->changeSchema($this->createMock(IOutput::class), static fn (): ISchemaWrapper => $schema, []);
 		}
 

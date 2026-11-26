@@ -14,11 +14,12 @@ import App from './App.vue'
 import UndoToast from './components/UndoToast.vue'
 import VehicleList from './components/VehicleList.vue'
 import VehicleSheet from './components/VehicleSheet.vue'
-import { deleteVehicle, getPreferences, listVehicles, readInbox } from './services/api.js'
+import { deleteVehicle, getPreferences, listPartners, listVehicles, readInbox } from './services/api.js'
 import { useVehiclesStore } from './store/index.js'
 import { usePreferencesStore } from './store/preferences.js'
 import InboxView from './views/InboxView.vue'
 import OverviewView from './views/OverviewView.vue'
+import PartnersView from './views/PartnersView.vue'
 import ReportsView from './views/ReportsView.vue'
 import StatisticsView from './views/StatisticsView.vue'
 import VehicleView from './views/VehicleView.vue'
@@ -31,6 +32,7 @@ vi.mock('./services/api.js', async (original) => ({
 	deleteVehicle: vi.fn(),
 	getPreferences: vi.fn(),
 	getVehicle: vi.fn(),
+	listPartners: vi.fn(),
 	listVehicles: vi.fn(),
 	readInbox: vi.fn(),
 	recordReading: vi.fn(),
@@ -45,6 +47,7 @@ const SETTINGS = {
 }
 /** Someone who chose an inbox folder on their settings page. */
 const INBOXED = { ...SETTINGS, preferences: { ...SETTINGS.preferences, inbox_folder: 7 } }
+const PARTNER = { uuid: 'p-1', user_id: 'admin', name: 'Müller GmbH', address: null, note: null, created_at: 1700000000, updated_at: 1700000000 }
 /** The same vehicle as the delete left it: one token further on, and out of the fleet. */
 const DELETED = { ...VEHICLE, updated_at: 1700000800 }
 
@@ -93,6 +96,7 @@ beforeEach(() => {
 	setActivePinia(createPinia())
 	vi.resetAllMocks()
 	vi.mocked(listVehicles).mockResolvedValue([VEHICLE])
+	vi.mocked(listPartners).mockResolvedValue([])
 	// The undo checks the token the delete answers with (docs/architecture.md#concurrency).
 	vi.mocked(deleteVehicle).mockResolvedValue(DELETED)
 })
@@ -398,6 +402,117 @@ describe('the app shell', () => {
 
 		expect(wrapper.findComponent(InboxView).exists()).toBe(false)
 		expect(entry(wrapper, 'Inbox').props('active')).toBe(false)
+	})
+
+	/** The list belongs to an owner (ADR 0013); a driver of somebody else's car has none to keep. */
+	it('offers the partners to whoever owns a vehicle, between the statistics and the reports', async () => {
+		vi.mocked(listVehicles).mockResolvedValue([{ ...VEHICLE, may: ['view', 'own'] }])
+
+		const wrapper = shallowMount(App, {
+			global: {
+				stubs: {
+					NcContent: { template: '<div><slot /></div>' },
+					NcAppNavigation: { template: '<div><slot name="list" /><slot name="footer" /></div>' },
+					NcAppNavigationList: { template: '<ul><slot /></ul>' },
+					NcAppNavigationItem: { props: ['name'], template: '<li class="item">{{ name }}</li>' },
+				},
+			},
+		})
+		await flushPromises()
+
+		expect(wrapper.findAll('.item').map((one) => one.text())).toEqual(['Overview', 'Statistics', 'Partners', 'Reports', 'Settings'])
+	})
+
+	it('offers no partners to somebody who only uses the vehicles of others', async () => {
+		vi.mocked(listVehicles).mockResolvedValue([{ ...VEHICLE, may: ['view', 'log'] }])
+
+		const wrapper = await shell()
+
+		expect(entry(wrapper, 'Partners')).toBeUndefined()
+	})
+
+	/** With every vehicle trashed or transferred away, the list is still where an erasure request is answered. */
+	it('offers the partners to somebody who owns no vehicle but still keeps a partner list', async () => {
+		vi.mocked(listVehicles).mockResolvedValue([{ ...VEHICLE, may: ['view', 'log'] }])
+		vi.mocked(listPartners).mockResolvedValue([PARTNER])
+
+		const wrapper = await shell()
+
+		expect(entry(wrapper, 'Partners')).toBeDefined()
+	})
+
+	it('offers no partners to somebody who owns no vehicle and keeps an empty list', async () => {
+		vi.mocked(listVehicles).mockResolvedValue([{ ...VEHICLE, may: ['view', 'log'] }])
+		vi.mocked(listPartners).mockResolvedValue([])
+
+		const wrapper = await shell()
+
+		expect(entry(wrapper, 'Statistics')).toBeDefined()
+		expect(entry(wrapper, 'Partners')).toBeUndefined()
+	})
+
+	/** Partners a trip added since the start would otherwise be out of reach until a reload. */
+	it('keeps offering the partners once the last owned vehicle is deleted', async () => {
+		const OWNED = { ...VEHICLE, may: ['view', 'own'] }
+		vi.mocked(listVehicles).mockResolvedValue([OWNED])
+		vi.mocked(deleteVehicle).mockResolvedValue({ ...OWNED, updated_at: DELETED.updated_at })
+		const wrapper = await shell()
+
+		await useVehiclesStore().remove(OWNED)
+		await flushPromises()
+
+		expect(entry(wrapper, 'Partners')).toBeDefined()
+	})
+
+	/** The owner has the entry anyway; the list is read only where it decides. */
+	it('does not read the partner list of an owner at start', async () => {
+		vi.mocked(listVehicles).mockResolvedValue([{ ...VEHICLE, may: ['view', 'own'] }])
+
+		await shell()
+
+		expect(listPartners).not.toHaveBeenCalled()
+	})
+
+	/** The entry is a convenience; a failed read must not cover the screen that did load. */
+	it('offers no partners when the list could not be read, and still shows the fleet', async () => {
+		vi.mocked(listVehicles).mockResolvedValue([{ ...VEHICLE, may: ['view', 'log'] }])
+		vi.mocked(listPartners).mockRejectedValue(new Error('The server answered 500'))
+
+		const wrapper = await shell()
+
+		expect(entry(wrapper, 'Partners')).toBeUndefined()
+		expect(wrapper.findComponent(VehicleView).exists()).toBe(true)
+	})
+
+	it('opens the partners screen, and leaves it for a vehicle', async () => {
+		vi.mocked(listVehicles).mockResolvedValue([{ ...VEHICLE, may: ['view', 'own'] }])
+		const wrapper = await shell()
+
+		await entry(wrapper, 'Partners').vm.$emit('click')
+
+		expect(wrapper.findComponent(VehicleView).exists()).toBe(false)
+		/** @type {any} */
+		const screen = wrapper.findComponent(PartnersView)
+		expect(screen.props('vehicles')).toEqual([{ ...VEHICLE, may: ['view', 'own'] }])
+		expect(entry(wrapper, 'Partners').props('active')).toBe(true)
+		expect(entry(wrapper, 'Overview').props('active')).toBe(false)
+
+		await wrapper.findComponent(VehicleList).vm.$emit('select', VEHICLE.uuid)
+
+		expect(wrapper.findComponent(PartnersView).exists()).toBe(false)
+		expect(entry(wrapper, 'Partners').props('active')).toBe(false)
+	})
+
+	/** The entry leads to the list, also from one partner opened on the screen. */
+	it('opens the partners screen anew on a second click', async () => {
+		vi.mocked(listVehicles).mockResolvedValue([{ ...VEHICLE, may: ['view', 'own'] }])
+		const wrapper = await shell()
+		await entry(wrapper, 'Partners').vm.$emit('click')
+		const before = wrapper.findComponent(PartnersView).vm
+
+		await entry(wrapper, 'Partners').vm.$emit('click')
+
+		expect(wrapper.findComponent(PartnersView).vm).not.toBe(before)
 	})
 
 	/**

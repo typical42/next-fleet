@@ -10,11 +10,16 @@ namespace OCA\NextFleet\Tests\Integration;
 
 use OCA\NextFleet\Command\SeedCommand;
 use OCA\NextFleet\Db\Booking;
+use OCA\NextFleet\Db\Budget;
+use OCA\NextFleet\Db\BudgetMapper;
 use OCA\NextFleet\Db\Trip;
 use OCA\NextFleet\Db\TripMapper;
 use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Service\BookingService;
+use OCA\NextFleet\Service\BudgetWarnings;
+use OCA\NextFleet\Service\CostCentreService;
 use OCA\NextFleet\Service\MileageClaimExport;
+use OCA\NextFleet\Service\PartnerService;
 use OCA\NextFleet\Service\RecipientService;
 use OCA\NextFleet\Service\VehicleService;
 use OCP\IUserManager;
@@ -162,6 +167,56 @@ class SeedAccessTest extends TestCase {
 		$uuid = $this->passatOf(self::OWNER)->getUuid();
 		$this->assertStringContainsString('Lieferung', (string)$claims->year(self::DRIVER, $uuid, $year));
 		$this->assertStringNotContainsString('Lieferung', (string)$claims->year(self::OWNER, $uuid, $year));
+	}
+
+	/**
+	 * The account typed the owner's partner in another spelling, so the Partners page has two
+	 * records of one partner to merge.
+	 */
+	public function testTheAccountLeftTheOwnerAVariantSpellingToMerge(): void {
+		$names = array_column(\OCP\Server::get(PartnerService::class)->list(self::OWNER), 'name');
+
+		$this->assertContains('Müller Maschinenbau GmbH', $names);
+		$this->assertContains('Müller Maschinenbau', $names);
+	}
+
+	/**
+	 * The owner shares, so they use cost centres: two of them, one the Passat's default, which the
+	 * account's trip takes. A second run keeps the list as it is.
+	 */
+	public function testTheOwnerKeepsTwoCostCentresAndThePassatsTripTakesItsDefault(): void {
+		$own = fn (): array => array_values(array_filter(
+			\OCP\Server::get(CostCentreService::class)->list(self::OWNER),
+			static fn (array $one): bool => $one['user_id'] === self::OWNER,
+		));
+		$this->assertSame(['4712 Service', '4711 Vertrieb'], array_map(static fn (array $one): string => $one['code'] . ' ' . $one['name'], $own()));
+
+		$sales = $own()[1]['uuid'];
+		$this->assertSame($sales, $this->passatOf(self::OWNER)->getCostCentreUuid());
+		$trips = \OCP\Server::get(TripMapper::class)->findAnyStartedBetween((int)$this->passatOf(self::OWNER)->getId(), 0, PHP_INT_MAX);
+		$theirs = array_values(array_filter($trips, static fn (Trip $trip): bool => $trip->getCreatedBy() === self::DRIVER));
+		$this->assertSame($sales, $theirs[0]->getCostCentreUuid());
+
+		self::seed(['user' => self::OWNER, '--grant-to' => [self::DRIVER, self::SECOND]]);
+		$this->assertSame([$sales], array_column(array_filter($own(), static fn (array $one): bool => $one['name'] === 'Vertrieb'), 'uuid'));
+		$this->assertSame($sales, $this->passatOf(self::OWNER)->getCostCentreUuid());
+
+		// Renamed and archived by the owner: found by its code, and no new vehicle's default.
+		$service = \OCP\Server::get(CostCentreService::class);
+		$service->update(self::OWNER, $sales, $own()[1]['updated_at'], ['code' => '4711', 'name' => 'Vertrieb Süd', 'archived' => true]);
+		self::seed(['user' => self::OWNER, '--grant-to' => [self::DRIVER, self::SECOND]]);
+		$this->assertCount(2, $own());
+		$this->assertNull($this->passatOf(self::OWNER)->getCostCentreUuid());
+	}
+
+	/** The Passat's budget for this year is past 80 % of what it cost, so the warning has a case to show. */
+	public function testThePassatHasABudgetPastEightyPercent(): void {
+		$passat = $this->passatOf(self::OWNER);
+		$warnings = \OCP\Server::get(BudgetWarnings::class);
+		$budgets = \OCP\Server::get(BudgetMapper::class)->findOf((int)$passat->getId());
+
+		$this->assertSame([$warnings->currentYear($passat)], array_map(static fn (Budget $one): int => $one->getYear(), $budgets));
+		$this->assertSame(80, BudgetWarnings::share($budgets[0]->getAmount(), $warnings->spent($passat, $budgets[0])));
 	}
 
 	/** And one booking of theirs, tomorrow 09:00 to 12:00 by Berlin's clock, which the owner sees. */

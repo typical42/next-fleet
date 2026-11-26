@@ -355,6 +355,29 @@ class CostServiceTest extends TestCase {
 		$this->assertEqualsWithDelta(437.5 + 125000.0, $costs[3]['tco'], 0.001);
 	}
 
+	/**
+	 * The sum alone, as a budget holds it: of()'s total without a reading of the counter, net of
+	 * each row's own rate, a row without one gross.
+	 */
+	public function testTheTotalSumsTheCostsAndReadsNoCounter(): void {
+		$this->fill(11900, 1900);
+		$this->maintain(10700, 700);
+		$this->spend(5000, null);
+		$this->fill(null, 1900);
+		$readings = $this->createMock(OdoReadingMapper::class);
+		$readings->expects($this->never())->method($this->anything());
+		$energy = $this->createMock(EnergyMapper::class);
+		$energy->method('findBetween')->willReturnCallback(fn (): array => $this->fills);
+		$maintenance = $this->createMock(MaintenanceMapper::class);
+		$maintenance->method('findBetween')->willReturnCallback(fn (): array => $this->records);
+		$expenses = $this->createMock(ExpenseMapper::class);
+		$expenses->method('findBetween')->willReturnCallback(fn (): array => $this->expenses);
+		$service = new CostService(new ConsumptionService($energy, $readings), $energy, $maintenance, $expenses);
+
+		$this->assertSame(27600, $service->total($this->vehicle(), 0, 1000, false));
+		$this->assertSame(25000, $service->total($this->vehicle(), 0, 1000, true));
+	}
+
 	/** @return array<string, mixed> */
 	private function of(Vehicle $vehicle, bool $net = false): array {
 		return $this->service()->of($vehicle, 0, 1000, $net);

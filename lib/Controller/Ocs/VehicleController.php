@@ -108,6 +108,7 @@ class VehicleController extends OCSController {
 	 * @param bool|null $booking_approval a driver's booking waits for the owner's or a manager's answer; sets booking_approval_rule to always or never where it differs from the owner's default
 	 * @param string|null $booking_approval_rule default (as the owner's default says), always or never; default by default, and it outranks booking_approval
 	 * @param string|null $client_uuid a uuid of the client's for the new row: a retry under it answers that row
+	 * @param string|null $cost_centre_uuid the cost centre a new entry takes, of the owner's list; null for none
 	 * @return DataResponse<Http::STATUS_CREATED, NextFleetVehicle, array{}>|DataResponse<Http::STATUS_OK, NextFleetVehicle, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
 	 * @throws OCSForbiddenException never for a create; listed because every write can answer it
 	 * @throws OCSNotFoundException never for a create; listed because every write can answer it
@@ -151,6 +152,7 @@ class VehicleController extends OCSController {
 		mixed $booking_approval = null,
 		mixed $booking_approval_rule = null,
 		mixed $client_uuid = null,
+		mixed $cost_centre_uuid = null,
 	): DataResponse {
 		return $this->write(fn (): DataResponse => $this->created(
 			fn (): array => $this->service->create($this->userId(), $this->request->getParams())->jsonSerialize(),
@@ -196,6 +198,7 @@ class VehicleController extends OCSController {
 	 * @param list<string>|null $booking_notices the booking events the owner hears while the notice list is empty, and a new recipient starts with: booked, taken, returned, cancelled, changed; the owner's alone to change
 	 * @param bool|null $booking_approval a driver's booking waits for the owner's or a manager's answer; a change sets booking_approval_rule to always or never; the owner's alone to change
 	 * @param string|null $booking_approval_rule default (as the owner's default says), always or never; outranks booking_approval; the owner's alone to change
+	 * @param string|null $cost_centre_uuid the cost centre a new entry takes, of the owner's list; null for none
 	 * @return DataResponse<Http::STATUS_OK, NextFleetVehicle, array{}>|DataResponse<Http::STATUS_BAD_REQUEST, NextFleetRefusal, array{}>|DataResponse<Http::STATUS_PRECONDITION_FAILED, NextFleetConflict, array{}>
 	 * @throws OCSForbiddenException the caller may not edit this vehicle, or changes costs_shared, booking_notices or booking approval without owning it
 	 * @throws OCSNotFoundException no such vehicle
@@ -239,6 +242,7 @@ class VehicleController extends OCSController {
 		mixed $booking_notices = null,
 		mixed $booking_approval = null,
 		mixed $booking_approval_rule = null,
+		mixed $cost_centre_uuid = null,
 	): DataResponse {
 		return $this->write(fn (): DataResponse => new DataResponse(
 			$this->service->update($this->userId(), $uuid, $this->token(), $this->request->getParams())->jsonSerialize(),

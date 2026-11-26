@@ -110,6 +110,8 @@ class PreferencesService {
 				self::INBOX => $this->inboxId($userId),
 				// VehicleMapper reads it too, with every vehicle of this owner's.
 				Vehicle::OWNER_APPROVAL => $this->config->getUserValue($userId, Application::APP_ID, Vehicle::OWNER_APPROVAL, '0') === '1',
+				// As switched: sharing a vehicle turns them on too (VehicleService::usesCostCentres()).
+				Vehicle::OWNER_COST_CENTRES => $this->config->getUserValue($userId, Application::APP_ID, Vehicle::OWNER_COST_CENTRES, '0') === '1',
 			],
 			// The vehicles the default for bookings is for: the screen offers it only where one is.
 			'owns_shared' => $this->vehicles->ownsShared($userId),
@@ -154,12 +156,14 @@ class PreferencesService {
 				$values[$key] = json_encode($this->uuids($key, $fields[$key]), JSON_THROW_ON_ERROR);
 			}
 		}
-		if (array_key_exists(self::RECLAIM_VAT, $fields)) {
-			// A JSON boolean and nothing looser: "no", 0 or "false" would each read as some answer.
-			if (!is_bool($fields[self::RECLAIM_VAT])) {
-				throw new \InvalidArgumentException(self::RECLAIM_VAT . ' is true or false');
+		foreach ([self::RECLAIM_VAT, Vehicle::OWNER_COST_CENTRES] as $key) {
+			if (array_key_exists($key, $fields)) {
+				// A JSON boolean and nothing looser: "no", 0 or "false" would each read as some answer.
+				if (!is_bool($fields[$key])) {
+					throw new \InvalidArgumentException($key . ' is true or false');
+				}
+				$values[$key] = $fields[$key] ? '1' : '0';
 			}
-			$values[self::RECLAIM_VAT] = $fields[self::RECLAIM_VAT] ? '1' : '0';
 		}
 		$approval = $fields[Vehicle::OWNER_APPROVAL] ?? null;
 		if (array_key_exists(Vehicle::OWNER_APPROVAL, $fields) && !is_bool($approval)) {

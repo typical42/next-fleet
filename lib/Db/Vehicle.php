@@ -83,7 +83,9 @@ use OCP\DB\Types;
  *
  * @psalm-import-type NextFleetVehicle from \OCA\NextFleet\ResponseDefinitions
  */
-class Vehicle extends BaseEntity implements \JsonSerializable {
+class Vehicle extends BaseEntity implements \JsonSerializable, CostCentred {
+	use NamesCostCentre;
+
 	public const ACTIVE = 'active';
 	public const LAID_UP = 'laid_up';
 	public const DISPOSED = 'disposed';
@@ -109,6 +111,8 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 	public const APPROVAL_RULES = [self::APPROVAL_DEFAULT, self::APPROVAL_ALWAYS, self::APPROVAL_NEVER];
 	/** The owner's default, a preference of theirs (PreferencesService) under this key. */
 	public const OWNER_APPROVAL = 'booking_approval';
+	/** The owner's switch for cost centres and budgets, a preference of theirs under this key. */
+	public const OWNER_COST_CENTRES = 'cost_centres';
 
 	protected string $userId = '';
 	protected ?string $plate = null;
@@ -197,6 +201,11 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 	 */
 	private bool $everGranted = false;
 	/**
+	 * Whether the owner uses cost centres and budgets: switched on, or a vehicle of theirs shared
+	 * (ADR 0012). The sheets show the cost-centre field by it. Not a column, like `may`.
+	 */
+	private bool $usesCostCentres = false;
+	/**
 	 * The owner's default for their vehicles' bookings, which a null `bookingApproval` follows
 	 * (VehicleMapper reads it with the row). Not a column, like `may`.
 	 */
@@ -228,6 +237,7 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 		$this->addType('retentionMonths', Types::INTEGER);
 		$this->addType('color', Types::STRING);
 		$this->addType('notes', Types::STRING);
+		$this->addType('costCentreId', Types::BIGINT);
 		$this->addType('secondUnit', Types::STRING);
 		$this->addType('secondValue', Types::BIGINT);
 		$this->addType('reminderMail', Types::STRING);
@@ -309,6 +319,10 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 		$this->everGranted = $everGranted;
 	}
 
+	public function setUsesCostCentres(bool $usesCostCentres): void {
+		$this->usesCostCentres = $usesCostCentres;
+	}
+
 	/** @return array{uuid: string, starts_at: int, starts_at_off: int, ends_at: int, ends_at_off: int, approval: ?string}|null */
 	public function getMyNextBooking(): ?array {
 		return $this->myNextBooking;
@@ -354,6 +368,7 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 			'retention_months' => $this->retentionMonths,
 			'color' => $this->color,
 			'notes' => $this->notes,
+			'cost_centre_uuid' => $this->getCostCentreUuid(),
 			'second_unit' => $this->secondUnit,
 			'second_value' => $this->secondValue,
 			'reminder_mail' => $this->reminderMail,
@@ -374,6 +389,7 @@ class Vehicle extends BaseEntity implements \JsonSerializable {
 			'out_with' => $this->outWith,
 			'my_next_booking' => $this->myNextBooking,
 			'ever_granted' => $this->everGranted,
+			'uses_cost_centres' => $this->usesCostCentres,
 		];
 	}
 

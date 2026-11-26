@@ -15,9 +15,10 @@ import NcTextArea from '@nextcloud/vue/components/NcTextArea'
 import NcTextField from '@nextcloud/vue/components/NcTextField'
 import { computed, ref, useId, watch } from 'vue'
 
-import { BookingConflictError, ConflictError, RefusedError, energyPrefill, expensePrefill, listReminders, maintenancePrefill, readEntry, tripPrefill } from '../services/api.js'
+import { BookingConflictError, ConflictError, RefusedError, energyPrefill, expensePrefill, listCostCentres, listReminders, maintenancePrefill, readEntry, tripPrefill } from '../services/api.js'
 import { useVehiclesStore } from '../store/index.js'
 import { may } from '../utils/access.js'
+import { centreOptions } from '../utils/costCentres.js'
 import { CATEGORIES, EXPENSE_CATEGORIES, MAINTENANCE_TYPES, categoryWord, decimalComplaint, energyWord, expenseWord, formatCount, formatDecimal, maintenanceWord, parseDecimal, parseWhole, tripCounterWords } from '../utils/format.js'
 import { closedByDefault, openByUrgency, reminderTitle, workOf } from '../utils/reminders.js'
 import { t } from '../utils/l10n.js'
@@ -273,6 +274,51 @@ watch(reminders, (listed) => {
 	}
 })
 
+// The cost centre a trip or a cost counts to, of the vehicle owner's list (docs/api.md#cost-centres).
+// Asked only where the owner uses cost centres, and kept across a switch of kind like the moment. A
+// new entry starts on the vehicle's default, a booking's trip on its draft's.
+const usesCentres = props.vehicle.uses_cost_centres === true
+const offersCentres = computed(() => usesCentres && kind.value !== 'odometer')
+const costCentre = ref(props.booking?.trip_draft?.cost_centre_uuid ?? props.vehicle.cost_centre_uuid ?? null)
+/** Every cost-centre list the session reads; null until read. @type {import('vue').Ref<import('../services/api.js').CostCentre[]|null>} */
+const centres = ref(null)
+// An edit keeps the entry's own on offer, archived or not; a new entry is offered live ones only.
+const centreChoices = computed(() => centreOptions(centres.value ?? [], props.vehicle.user_id, editing ? held.value?.cost_centre_uuid ?? null : null))
+const centreChoice = computed(() => centreChoices.value.find((one) => one.id === costCentre.value) ?? null)
+/** Whether somebody picked or cleared it; until then a new entry leaves it to the server. */
+const centrePicked = ref(false)
+
+/** @param {{id: string}|null} option - what the dropdown now holds */
+function pickCentre(option) {
+	costCentre.value = option?.id ?? null
+	centrePicked.value = true
+}
+
+if (usesCentres) {
+	listCostCentres()
+		.then((read) => {
+			centres.value = read
+		})
+		// Without the list the field stays empty, and nobody can pick.
+		.catch(() => {})
+}
+
+/**
+ * The cost centre as the write of a trip or a cost takes it. An edit sends the entry's own back
+ * unless somebody picked another. A new entry sends one only when somebody picked: what the field
+ * starts on is the vehicle's default as this sheet read it, and the server applies the default it
+ * holds when the entry arrives.
+ *
+ * @return {{cost_centre_uuid?: string|null}} the field, or nothing
+ */
+function centred() {
+	if (!usesCentres || (editing ? held.value?.cost_centre_uuid === undefined : !centrePicked.value)) {
+		return {}
+	}
+
+	return { cost_centre_uuid: costCentre.value }
+}
+
 // An Expense. No category until one is picked, for the reason a Maintenance Record has no type.
 const spent = ref('')
 const spentOn = ref(null)
@@ -475,6 +521,7 @@ function fillUp() {
 		...(station.value.trim() === '' ? {} : { station: station.value.trim() }),
 		...(electric.value && where.value !== '' ? { location_kind: where.value } : {}),
 		...(electric.value && where.value === 'public' ? { is_dc: isDc.value } : {}),
+		...centred(),
 	}
 }
 
@@ -506,6 +553,7 @@ function work() {
 			cost: decimal(cost, 2, t('nextfleet', 'That is not a price.')),
 			...stateCosts(),
 		}),
+		...centred(),
 	}
 }
 
@@ -531,6 +579,7 @@ function spending() {
 			vat_rate: decimal(vatRate, 2, t('nextfleet', 'That is not a VAT rate.')),
 			notes: notes.value.trim() || null,
 		}),
+		...centred(),
 	}
 }
 
@@ -667,6 +716,7 @@ function trip() {
 		partner: partner.value,
 		...counted(),
 		...(props.booking === null ? {} : { booking_uuid: props.booking.uuid }),
+		...centred(),
 	}
 }
 
@@ -809,6 +859,7 @@ function seed(entry) {
 		toLabel.value = text(row.to_label)
 		purpose.value = text(row.purpose)
 		partner.value = text(row.partner)
+		costCentre.value = row.cost_centre_uuid ?? null
 		category.value = categories.value.find((one) => one.id === row.category) ?? category.value
 		return
 	}
@@ -823,6 +874,7 @@ function seed(entry) {
 	entryOdo.value = text(row.odo)
 	entrySecond.value = text(row.second_odo)
 	notes.value = text(row.notes)
+	costCentre.value = row.cost_centre_uuid ?? null
 	if (entry.type === 'energy') {
 		// An energy the vehicle no longer names is still what was filled (the row is flagged for
 		// it), so it is kept rather than swapped for one the dropdown offers.
@@ -1240,6 +1292,18 @@ function requestClose() {
 					inputmode="numeric"
 					autofocus />
 			</template>
+
+			<!-- Last of a trip's or a cost's fields: most entries keep the vehicle's default. -->
+			<NcSelect v-if="offersCentres"
+				:model-value="centreChoice"
+				class="sheet__wide"
+				:options="centreChoices"
+				searchable
+				:input-label="t('nextfleet', 'Cost centre')"
+				:disabled="saving"
+				label="label"
+				:calculate-position="placeDropdown"
+				@update:model-value="pickCentre" />
 		</div>
 
 		<template #actions>

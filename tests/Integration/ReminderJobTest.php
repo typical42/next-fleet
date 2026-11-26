@@ -718,7 +718,7 @@ class ReminderJobTest extends TestCase {
 			\OCP\Server::get(IUserManager::class),
 		);
 		// The digest is ReminderMailTest's; a real one here would mail the whole instance.
-		(new ReminderJob($clock, $service, $mail))->start(\OCP\Server::get(IJobList::class));
+		(new ReminderJob($clock, $service, $mail, $this->createMock(\OCA\NextFleet\Service\BudgetWarnings::class)))->start(\OCP\Server::get(IJobList::class));
 	}
 
 	/** Mid-morning on that day. */

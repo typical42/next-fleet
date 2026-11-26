@@ -31,8 +31,9 @@ class VehicleTables {
 		DocumentMapper $documents,
 		BookingMapper $bookings,
 		BookingRecipientMapper $bookingRecipients,
+		BudgetMapper $budgets,
 	) {
-		$this->all = [$access, $readings, $trips, $energy, $maintenance, $expenses, $reminders, $recipients, $documents, $bookings, $bookingRecipients];
+		$this->all = [$access, $readings, $trips, $energy, $maintenance, $expenses, $reminders, $recipients, $documents, $bookings, $bookingRecipients, $budgets];
 	}
 
 	/** @return list<BaseMapper> */

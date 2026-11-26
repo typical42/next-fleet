@@ -55,6 +55,7 @@ class ExpenseService {
 		private Jurisdictions $jurisdictions,
 		private IDBConnection $db,
 		private CostsShown $costs,
+		private CostCentreLinks $costCentres,
 	) {
 	}
 
@@ -105,6 +106,7 @@ class ExpenseService {
 		$expense->setVehicleId((int)$vehicle->getId());
 		$expense->setCreatedBy($userId);
 		self::apply($expense, $fields);
+		$this->costCentres->apply($expense, $vehicle, $fields, true);
 
 		return $this->expenses->insert($expense)->jsonSerialize();
 	}
@@ -129,6 +131,7 @@ class ExpenseService {
 			$expense = $this->costs->expense($userId, $vehicle, $this->expenses->findOnVehicle((int)$vehicle->getId(), $expenseUuid));
 			$this->fleet->change($userId, VehicleAccess::EDIT, $vehicle, $expense->getCreatedBy());
 			self::apply($expense, $fields);
+			$this->costCentres->apply($expense, $vehicle, $fields, false);
 
 			return $this->expenses->updateChecked($expense, $expectedUpdatedAt)->jsonSerialize();
 		}, $this->db);

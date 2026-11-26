@@ -14,6 +14,10 @@ use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\BaseMapper;
 use OCA\NextFleet\Db\Booking;
 use OCA\NextFleet\Db\BookingMapper;
+use OCA\NextFleet\Db\Budget;
+use OCA\NextFleet\Db\BudgetMapper;
+use OCA\NextFleet\Db\CostCentre;
+use OCA\NextFleet\Db\CostCentreMapper;
 use OCA\NextFleet\Db\Document;
 use OCA\NextFleet\Db\DocumentMapper;
 use OCA\NextFleet\Db\Energy;
@@ -24,6 +28,8 @@ use OCA\NextFleet\Db\Maintenance;
 use OCA\NextFleet\Db\MaintenanceMapper;
 use OCA\NextFleet\Db\OdoReading;
 use OCA\NextFleet\Db\OdoReadingMapper;
+use OCA\NextFleet\Db\Partner;
+use OCA\NextFleet\Db\PartnerMapper;
 use OCA\NextFleet\Db\Reminder;
 use OCA\NextFleet\Db\ReminderMapper;
 use OCA\NextFleet\Db\Trip;
@@ -41,7 +47,9 @@ use Psr\Log\LoggerInterface;
  * can afford.
  *
  * @psalm-import-type NextFleetSync from ResponseDefinitions
- * @psalm-type Row = OdoReading|Trip|Energy|Maintenance|Expense|Reminder|Document|Booking|Access
+ * @psalm-import-type NextFleetSyncedPartner from ResponseDefinitions
+ * @psalm-import-type NextFleetSyncedCostCentre from ResponseDefinitions
+ * @psalm-type Row = OdoReading|Trip|Energy|Maintenance|Expense|Reminder|Document|Booking|Access|Budget
  */
 class SyncService {
 	/**
@@ -84,6 +92,9 @@ class SyncService {
 		private ITimeFactory $time,
 		private LoggerInterface $logger,
 		private CostsShown $costs,
+		private PartnerMapper $lists,
+		private CostCentreMapper $centres,
+		BudgetMapper $budgets,
 	) {
 		$this->tables = [
 			'readings' => $readings,
@@ -95,6 +106,7 @@ class SyncService {
 			'documents' => $documents,
 			'bookings' => $bookings,
 			'grants' => $grants,
+			'budgets' => $budgets,
 		];
 	}
 
@@ -150,12 +162,84 @@ class SyncService {
 		return [
 			'vehicles' => array_map(static fn (Vehicle $vehicle): array => $vehicle->jsonSerialize(), $vehicles),
 			'changes' => $changes,
+			'partners' => $was->inRun() ? [] : $this->partners($userId, $was, $vehicles),
+			'cost_centres' => $was->inRun() ? [] : $this->costCentres($was, $vehicles),
 			'unreachable' => array_values(array_diff($was->listed, $listed)),
 			'cursor' => ($more && $last !== false
 				? $was->paged($listed, $run, $mark, [$last[0], SyncCursor::TABLES[$last[1]], $last[2]])
 				: $was->finished($listed, $run, $mark))->encode(),
 			'more' => $more,
 			'reset' => $reset,
+		];
+	}
+
+	/**
+	 * The partner lists of every owner on one of whose vehicles the caller may log
+	 * (PartnerService::ownersLoggedFor()), on a run's first page: a list hangs off no vehicle to page
+	 * by, and is short. Whole for an owner none of whose vehicles the client holds yet; else what
+	 * changed after the cursor's `since`, tombstones included. A row changed after the run's mark
+	 * comes again next run, as any row does. A client drops the list of an owner on none of whose
+	 * vehicles it may log any more (docs/api.md#sync), so a delete there, an erasure, never needs to
+	 * reach it. A grant that gives `log` on a vehicle already held starts every client over
+	 * (GrantService::resync()), so the list comes whole then.
+	 *
+	 * @param list<Vehicle> $vehicles every reachable vehicle
+	 * @return list<NextFleetSyncedPartner>
+	 * @throws \OCP\DB\Exception
+	 */
+	private function partners(string $userId, SyncCursor $was, array $vehicles): array {
+		[$whole, $held] = self::owners($was, PartnerService::loggable($vehicles));
+		$rows = [...$this->lists->findChangedOf($whole, null), ...$this->lists->findChangedOf($held, $was->since)];
+
+		return array_map(static fn (Partner $partner): array => [
+			'user_id' => $partner->getUserId(),
+			'uuid' => $partner->getUuid(),
+			'updated_at' => $partner->getUpdatedAt(),
+			'deleted_at' => $partner->getDeletedAt(),
+			'row' => $partner->getDeletedAt() === null ? PartnerService::wire($partner, $partner->getUserId() === $userId) : null,
+		], $rows);
+	}
+
+	/**
+	 * The cost-centre lists of every owner whose vehicle the caller reaches, a viewer's too: a
+	 * viewer names the cost centre an entry shows (CostCentreService::list()). Whole and held as
+	 * the partners are. Nothing in them is the owner's alone.
+	 *
+	 * @param list<Vehicle> $vehicles every reachable vehicle
+	 * @return list<NextFleetSyncedCostCentre>
+	 * @throws \OCP\DB\Exception
+	 */
+	private function costCentres(SyncCursor $was, array $vehicles): array {
+		[$whole, $held] = self::owners($was, $vehicles);
+		$rows = [...$this->centres->findChangedOf($whole, null), ...$this->centres->findChangedOf($held, $was->since)];
+
+		return array_map(static fn (CostCentre $centre): array => [
+			'user_id' => $centre->getUserId(),
+			'uuid' => $centre->getUuid(),
+			'updated_at' => $centre->getUpdatedAt(),
+			'deleted_at' => $centre->getDeletedAt(),
+			'row' => $centre->getDeletedAt() === null ? CostCentreService::wire($centre) : null,
+		], $rows);
+	}
+
+	/**
+	 * The owners of the reachable vehicles: those none of whose vehicles the client holds yet, whose
+	 * lists go whole, and the others.
+	 *
+	 * @param list<Vehicle> $vehicles
+	 * @return array{list<string>, list<string>}
+	 */
+	private static function owners(SyncCursor $was, array $vehicles): array {
+		$owners = [];
+		foreach ($vehicles as $vehicle) {
+			$held = in_array((int)$vehicle->getId(), $was->held, true);
+			$owners[$vehicle->getUserId()] = ($owners[$vehicle->getUserId()] ?? false) || $held;
+		}
+
+		// Strings again: PHP keys a numeric uid as an int.
+		return [
+			array_map(strval(...), array_keys(array_filter($owners, static fn (bool $held): bool => !$held))),
+			array_map(strval(...), array_keys(array_filter($owners))),
 		];
 	}
 
@@ -222,8 +306,9 @@ class SyncService {
 
 	/**
 	 * The page without the rows kept from the reader (CostsShown): somebody else's expenses, the
-	 * papers on entries whose amounts are kept, and the receipts on the vehicle or on somebody
-	 * else's booking. Their tombstones too, for rows never handed out.
+	 * papers on entries whose amounts are kept, the receipts on the vehicle or on somebody else's
+	 * booking, and the budgets of a vehicle whose costs are kept. Their tombstones too, for rows
+	 * never handed out.
 	 *
 	 * @param array<int, Vehicle> $byId
 	 * @param list<array{int, int, int, Row}> $page
@@ -251,6 +336,7 @@ class SyncService {
 			return match (true) {
 				$row instanceof Expense => $this->costs->showsExpense($userId, $byId[$row->getVehicleId()], $row),
 				$row instanceof Document => isset($kept[(int)$row->getId()]),
+				$row instanceof Budget => $byId[$row->getVehicleId()]->showsCosts(),
 				default => true,
 			};
 		}));

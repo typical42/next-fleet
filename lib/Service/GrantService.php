@@ -65,7 +65,10 @@ class GrantService {
 	 * After a grant changed: what a grantee may read of rows already synced may have changed with
 	 * it, and no row did. On a vehicle that keeps its costs, every role reads the amounts its own
 	 * way (VehicleAccess::COSTS). Where they are shared, a change across `edit` resets too: a
-	 * booking shows its approval comment to the approvers (BookingService). A change between
+	 * booking shows its approval comment to the approvers (BookingService). A grant that gives
+	 * `log` resets too: the owner's partner list goes to whoever may log (SyncService::partners()),
+	 * and the vehicle may be held already, through another grant. One that takes `log` does not: the
+	 * client drops the list by `may`, as it drops a vehicle it no longer reaches. A change between
 	 * `log` and `view` alters a booking's `may` as well; that waits for the row's next change, as
 	 * the server checks each act anyway.
 	 *
@@ -73,14 +76,16 @@ class GrantService {
 	 * @param ?string $is its role after, null for none
 	 */
 	private function resync(Vehicle $vehicle, ?string $was, ?string $is): void {
-		if (!$vehicle->sharesCosts() || self::approves($was) !== self::approves($is)) {
+		if (!$vehicle->sharesCosts()
+			|| self::covers(VehicleAccess::EDIT, $was) !== self::covers(VehicleAccess::EDIT, $is)
+			|| (!self::covers(VehicleAccess::LOG, $was) && self::covers(VehicleAccess::LOG, $is))) {
 			$this->epoch->reset();
 		}
 	}
 
-	/** Whether a grant of this role, null for none, makes its grantees approvers. */
-	private static function approves(?string $role): bool {
-		return $role !== null && in_array($role, VehicleAccess::rolesCovering(VehicleAccess::EDIT), true);
+	/** Whether a grant of this role, null for none, gives its grantees the operation. */
+	private static function covers(string $operation, ?string $role): bool {
+		return $role !== null && in_array($role, VehicleAccess::rolesCovering($operation), true);
 	}
 
 	/**
@@ -352,6 +357,24 @@ class GrantService {
 	}
 
 	/**
+	 * A member just added to a group reads each car the group is granted as its role lets them,
+	 * and no row changed: resync() as for a grant to them alone.
+	 *
+	 * @throws \OCP\DB\Exception
+	 */
+	public function joined(string $groupId): void {
+		foreach ($this->grants->findByGroup($groupId) as $grant) {
+			try {
+				$vehicle = $this->vehicles->findAnyById($grant->getVehicleId());
+			} catch (DoesNotExistException) {
+				// Gone meanwhile: nobody reads it, and a throw here would fail core's group add.
+				continue;
+			}
+			$this->resync($vehicle, null, $grant->getRole());
+		}
+	}
+
+	/**
 	 * Takes a member just out of a group off the recipients of each car the group reached when
 	 * they left, unless they still see it another way: no revoke runs, so prune() would never hear
 	 * of them. The group's grants stand. One vehicle per transaction under its hold.
@@ -606,7 +629,7 @@ class GrantService {
 	 * @throws \OCP\DB\Exception
 	 */
 	private function answering(Vehicle $vehicle, string $grantee, string $type, string $role): array {
-		if (!self::approves($role)) {
+		if (!self::covers(VehicleAccess::EDIT, $role)) {
 			return [];
 		}
 		$uids = $type === Access::USER ? [$grantee] : $this->names->members($grantee);

@@ -212,6 +212,8 @@ class RemindersCommandTest extends TestCase {
 			$mail,
 			\OCP\Server::get(IFactory::class),
 			\OCP\Server::get(IUserManager::class),
+			// BudgetWarningTest's; a real one here would check the whole instance's budgets.
+			$this->createMock(\OCA\NextFleet\Service\BudgetWarnings::class),
 		));
 	}
 

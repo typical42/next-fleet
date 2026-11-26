@@ -37,7 +37,7 @@ function series(sums, range = sum(), count = 12) {
 function statistics(starts, bucket = 'month') {
 	const at = starts.map((day) => Date.parse(`${day}T00:00:00Z`) / 1000)
 
-	return { from: at[0], to: at[at.length - 1], bucket, buckets: at.slice(0, -1).map((from, i) => ({ from, to: at[i + 1] })), vehicles: [], costs: [], per_distance: [], consumption: [], distance: [], by_driver: [], co2: null }
+	return { from: at[0], to: at[at.length - 1], bucket, buckets: at.slice(0, -1).map((from, i) => ({ from, to: at[i + 1] })), vehicles: [], costs: [], per_distance: [], consumption: [], distance: [], by_driver: [], by_cost_centre: [], co2: null, budget: null }
 }
 
 const YEAR = statistics([...Array.from({ length: 12 }, (_, i) => `2025-${String(i + 1).padStart(2, '0')}-01`), '2026-01-01'])

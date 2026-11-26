@@ -13,6 +13,7 @@ use OCA\NextFleet\Db\Access;
 use OCA\NextFleet\Db\AccessMapper;
 use OCA\NextFleet\Db\Booking;
 use OCA\NextFleet\Db\BookingMapper;
+use OCA\NextFleet\Db\BudgetMapper;
 use OCA\NextFleet\Db\Reminder;
 use OCA\NextFleet\Db\ReminderMapper;
 use OCA\NextFleet\Db\ReminderRecipient;
@@ -21,6 +22,7 @@ use OCA\NextFleet\Db\Vehicle;
 use OCA\NextFleet\Db\VehicleMapper;
 use OCA\NextFleet\Jurisdiction\Jurisdictions;
 use OCA\NextFleet\Service\BookingNotices;
+use OCA\NextFleet\Service\BudgetWarnings;
 use OCA\NextFleet\Service\GrantNotices;
 use OCA\NextFleet\Service\LookalikeNotices;
 use OCA\NextFleet\Service\VehicleAccess;
@@ -36,11 +38,12 @@ use OCP\Notification\INotifier;
 use OCP\Notification\UnknownNotificationException;
 
 /**
- * Turns what the reminder job, a grant or a booking stored into words, in the recipient's
- * language, when the list is read (docs/architecture.md#reminder-engine). Each stores parameters
- * only, so a language changed later is the one shown.
+ * Turns what the reminder job, a budget's warning, a grant or a booking stored into words, in the
+ * recipient's language, when the list is read (docs/architecture.md#reminder-engine). Each stores
+ * parameters only, so a language changed later is the one shown.
  *
  * @psalm-type ReminderNotice = array{vehicle: string, plate: string, template_key: ?string, title: ?string, due_date: ?string, due_odo: ?int, occurrence?: int}
+ * @psalm-type BudgetNotice = array{vehicle: string, plate: string, year: int, share: int}
  */
 class Notifier implements INotifier {
 	/** The most characters of free text a notice carries (shortened()). */
@@ -56,6 +59,8 @@ class Notifier implements INotifier {
 	private array $found = [];
 	/** @var array<string, bool> by uid and vehicle id */
 	private array $sees = [];
+	/** @var array<string, bool> whether the reader sees the costs, by uid and vehicle id */
+	private array $costs = [];
 	/** @var array<int, list<string>> the uids on each vehicle's list, by vehicle id */
 	private array $listed = [];
 	/** @var array<int, array<int, Reminder>> each vehicle's live reminders by id, by vehicle id */
@@ -74,6 +79,7 @@ class Notifier implements INotifier {
 		private BookingMapper $bookings,
 		private ReminderRecipientMapper $recipients,
 		private ReminderMapper $reminders,
+		private BudgetMapper $budgets,
 	) {
 	}
 
@@ -87,7 +93,7 @@ class Notifier implements INotifier {
 	}
 
 	/**
-	 * @throws UnknownNotificationException if it is not a reminder, a grant, a booking or a lookalike of this app
+	 * @throws UnknownNotificationException if it is not a reminder, a budget's warning, a grant, a booking or a lookalike of this app
 	 * @throws AlreadyProcessedException if its vehicle, its grant, its cancel or its account is gone, its reminder has moved on from where it rang, or the reader is off the list
 	 * @throws \OCP\DB\Exception
 	 */
@@ -120,6 +126,7 @@ class Notifier implements INotifier {
 			BookingNotices::EVENT => $this->bookingEvent($l, $user, $vehicle, $notification->getObjectId(), $notification->getSubject(), $p),
 			BookingNotices::APPROVAL => $this->approval($l, $user, $vehicle, $notification, $p),
 			BookingNotices::MADE_FOR => $this->madeFor($l, $user, $vehicle, $notification, $p),
+			BudgetWarnings::OBJECT => $this->budgeted($l, $user, $vehicle, (int)$notification->getObjectId(), $notification->getSubjectParameters()),
 			default => $this->reminded($l, $user, $vehicle, (int)$notification->getObjectId(), $notification->getSubject(), $p),
 		};
 		$notification->setParsedSubject($subject)->setIcon($icon);
@@ -168,6 +175,31 @@ class Notifier implements INotifier {
 		}
 
 		throw new AlreadyProcessedException();
+	}
+
+	/**
+	 * Shown only while the budget still stands at the share it rang for - not deleted, not raised
+	 * past it - and to a reader who still sees the vehicle's costs.
+	 *
+	 * @param array<array-key, mixed> $parameters BudgetNotice
+	 * @throws AlreadyProcessedException if the budget is gone or rearmed, or its costs are kept from the reader
+	 * @throws \OCP\DB\Exception
+	 */
+	private function budgeted(IL10N $l, string $user, Vehicle $vehicle, int $budgetId, array $parameters): string {
+		/** @var BudgetNotice $p */
+		$p = $parameters;
+		try {
+			$budget = $this->budgets->findAnyById($budgetId);
+		} catch (DoesNotExistException) {
+			throw new AlreadyProcessedException();
+		}
+		if ($budget->getDeletedAt() !== null || $budget->getVehicleId() !== (int)$vehicle->getId() || $budget->getWarned() < $p['share']
+			|| !($this->costs[$user . "\0" . $vehicle->getId()] ??= $this->access->may($user, VehicleAccess::COSTS, $vehicle))) {
+			throw new AlreadyProcessedException();
+		}
+		$name = $p['plate'] !== '' ? $p['plate'] : VehicleWords::name($l, $vehicle);
+
+		return $l->t('%1$s: %2$s', [$name, BudgetWords::line($l, $p['year'], $p['share'])]);
 	}
 
 	/** @throws \OCP\DB\Exception */

@@ -83,6 +83,7 @@ class EnergyService {
 		private Jurisdictions $jurisdictions,
 		private IDBConnection $db,
 		private CostsShown $costs,
+		private CostCentreLinks $costCentres,
 	) {
 	}
 
@@ -131,6 +132,7 @@ class EnergyService {
 		$energy->setVehicleId((int)$vehicle->getId());
 		$energy->setCreatedBy($userId);
 		$this->apply($vehicle, $energy, $fields);
+		$this->costCentres->apply($energy, $vehicle, $fields, true);
 		$written = $this->energies->insert($energy);
 		$this->follow($vehicle, $userId, $written, true);
 
@@ -160,6 +162,7 @@ class EnergyService {
 			$energy = $this->energies->findOnVehicle((int)$vehicle->getId(), $energyUuid);
 			$this->fleet->change($userId, VehicleAccess::EDIT, $vehicle, $energy->getCreatedBy());
 			$this->apply($vehicle, $energy, $fields);
+			$this->costCentres->apply($energy, $vehicle, $fields, false);
 			$edited = $this->energies->updateChecked($energy, $expectedUpdatedAt);
 			$this->follow($vehicle, $userId, $edited);
 

@@ -65,9 +65,35 @@ function answer(differs = {}) {
 		consumption: [],
 		distance: [],
 		by_driver: [],
+		by_cost_centre: [],
 		co2: { grams: 109630, unstated: false, source: 'https://example.org/fuels', year: null, grid: null },
+		budget: null,
 		...differs,
 	}
+}
+
+/**
+ * The colour a browser gives a meter, by the HTML standard's algorithm: jsdom draws none.
+ *
+ * @param {import('@vue/test-utils').DOMWrapper<Element>} meter - the element
+ * @return {'green'|'yellow'|'red'} its region
+ */
+function region(meter) {
+	const number = (/** @type {string} */ name, /** @type {number} */ fallback) => meter.attributes(name) === undefined ? fallback : Number(meter.attributes(name))
+	const min = number('min', 0)
+	const max = Math.max(min, number('max', 1))
+	const value = Math.min(Math.max(number('value', 0), min), max)
+	const low = Math.min(Math.max(number('low', min), min), max)
+	const high = Math.min(Math.max(number('high', max), low), max)
+	const optimum = Math.min(Math.max(number('optimum', (min + max) / 2), min), max)
+	if (optimum < low) {
+		return value <= low ? 'green' : value <= high ? 'yellow' : 'red'
+	}
+	if (optimum > high) {
+		return value >= high ? 'green' : value >= low ? 'yellow' : 'red'
+	}
+
+	return value >= low && value <= high ? 'green' : 'yellow'
 }
 
 /** @type {import('../services/api.js').PerDistance} a year whose March cost €15 per 100 km */
@@ -373,6 +399,137 @@ describe('the Statistics screen', () => {
 		const wrapper = await screen()
 
 		expect(wrapper.find('section.statistics__drivers').text()).toContain(ONLY_OWN)
+	})
+
+	it('lists each cost centre\'s trips, distance and costs, the entries naming none last', async () => {
+		vi.mocked(readStatistics).mockResolvedValue(answer({
+			by_cost_centre: [
+				{ uuid: 'c-1', code: '4711', name: 'Vertrieb', costs: [{ currency: 'CHF', total: 0 }, { currency: 'EUR', total: 10000 }], distance: [{ per: 'km', trips: 2, distance: 120 }] },
+				{ uuid: 'c-2', code: null, name: 'Service', costs: [{ currency: 'CHF', total: 5000 }, { currency: 'EUR', total: 0 }], distance: [{ per: 'km', trips: 0, distance: 0 }] },
+				{ uuid: null, code: null, name: null, costs: [{ currency: 'CHF', total: 0 }, { currency: 'EUR', total: 2000 }], distance: [{ per: 'km', trips: 1, distance: 30 }] },
+			],
+		}))
+
+		const wrapper = await screen()
+
+		expect(wrapper.find('section.statistics__centres h3').text()).toBe('By cost centre')
+		const table = wrapper.find('[role="region"][aria-label="By cost centre"]')
+		expect(table.findAll('thead th').map((one) => one.text())).toEqual(['Trips', 'Distance', 'Costs in CHF', 'Costs in EUR'])
+		expect(cells(wrapper, 'By cost centre', '4711 Vertrieb')).toEqual(['2', '120 km', 'CHF\u00a00.00', '€100.00'])
+		expect(cells(wrapper, 'By cost centre', 'Service')).toEqual(['0', '0 km', 'CHF\u00a050.00', '€0.00'])
+		expect(table.findAll('tbody th').map((one) => one.text())).toEqual(['4711 Vertrieb', 'Service', 'No cost centre'])
+		expect(cells(wrapper, 'By cost centre', 'No cost centre')).toEqual(['1', '30 km', 'CHF\u00a00.00', '€20.00'])
+		expect(wrapper.find('section.statistics__centres .statistics__note').text()).toBe('A cost counts to the cost centre its entry names. Costs are not shared out by distance.')
+	})
+
+	it('names the unit beside each distance where trips were counted in hours too', async () => {
+		vi.mocked(readStatistics).mockResolvedValue(answer({
+			by_cost_centre: [
+				{ uuid: 'c-1', code: '4711', name: 'Vertrieb', costs: [], distance: [{ per: 'h', trips: 1, distance: 3 }, { per: 'km', trips: 2, distance: 120 }] },
+			],
+		}))
+
+		const wrapper = await screen()
+
+		expect(wrapper.find('[role="region"][aria-label="By cost centre"]').findAll('thead th').map((one) => one.text())).toEqual(['Trips (hours)', 'Hours', 'Trips (km)', 'Distance'])
+		expect(cells(wrapper, 'By cost centre', '4711 Vertrieb')).toEqual(['1', '3 h', '2', '120 km'])
+	})
+
+	it('shows no cost centres while no entry in the range names one', async () => {
+		vi.mocked(readStatistics).mockResolvedValue(answer({
+			by_cost_centre: [{ uuid: null, code: null, name: null, costs: [{ currency: 'EUR', total: 12000 }], distance: [] }],
+		}))
+
+		const wrapper = await screen()
+
+		expect(wrapper.find('section.statistics__centres').exists()).toBe(false)
+	})
+
+	it('holds the budget against the costs of its year, counted as the budget counts them', async () => {
+		vi.mocked(readStatistics).mockResolvedValue(answer({
+			costs: [series('CHF'), series()],
+			budget: { year: 2026, amount: 500000, net: false, currency: 'EUR', spent: 425000 },
+		}))
+
+		const wrapper = await screen()
+
+		const [swiss, euro] = wrapper.findAll('section.statistics__costs')
+		expect(swiss.find('.statistics__budget').exists()).toBe(false)
+		const budget = euro.find('.statistics__budget')
+		expect(budget.find('h4').text()).toBe('Budget for 2026')
+		const meter = budget.find('meter')
+		expect(region(meter)).toBe('yellow')
+		expect(meter.attributes('aria-label')).toBe('Budget for 2026')
+		expect(budget.text()).toContain('€4,250.00 of €5,000.00 spent, 85%')
+		expect(budget.text()).toContain('The budget counts gross, with VAT.')
+	})
+
+	// The colours turn where BudgetWarnings::SHARES warns: 80 % and 100 %, in whole cents.
+	it.each([
+		[500000, 399999, 'green'],
+		[500000, 400000, 'yellow'],
+		[500000, 499999, 'yellow'],
+		[500000, 500000, 'red'],
+		[500000, 625000, 'red'],
+		// 80 % is 80,000.8 cents: only the cent past it warns.
+		[100001, 80000, 'green'],
+		[100001, 80001, 'yellow'],
+	])('colours a budget of %i cents with %i spent %s', async (amount, spent, colour) => {
+		vi.mocked(readStatistics).mockResolvedValue(answer({ budget: { year: 2026, amount, net: false, currency: 'EUR', spent } }))
+
+		const wrapper = await screen()
+
+		expect(region(wrapper.find('.statistics__budget meter'))).toBe(colour)
+	})
+
+	it('shows the budget of a year with nothing spent yet', async () => {
+		vi.mocked(readStatistics).mockResolvedValue(answer({
+			costs: [{ currency: 'EUR', buckets: MONTHS.map(() => EMPTY), range: EMPTY }],
+			co2: null,
+			budget: { year: 2026, amount: 500000, net: false, currency: 'EUR', spent: 0 },
+		}))
+
+		const wrapper = await screen()
+
+		expect(wrapper.find('.statistics__budget').text()).toContain('€0.00 of €5,000.00 spent, 0%')
+	})
+
+	it('rounds the share spent down, so it says 100% only once the budget is used up', async () => {
+		vi.mocked(readStatistics).mockResolvedValue(answer({ budget: { year: 2026, amount: 500000, net: false, currency: 'EUR', spent: 499900 } }))
+
+		const wrapper = await screen()
+
+		expect(wrapper.find('.statistics__budget').text()).toContain('€4,999.00 of €5,000.00 spent, 99%')
+	})
+
+	it('says under the cost centres when their costs are net or count an entry without a rate gross', async () => {
+		vi.mocked(getPreferences).mockResolvedValue(/** @type {any} */ ({
+			preferences: { dismissed_hints: [], dismissed_logbook_hints: [], inbox_folder: null, reclaim_vat: true, kpi_period: 'last-12' },
+			jurisdictions: [],
+		}))
+		await usePreferencesStore().load()
+		vi.mocked(readStatistics).mockResolvedValue(answer({
+			costs: [{ ...series(), range: sum({ total: 12000, unstated: true }) }],
+			by_cost_centre: [{ uuid: 'c-1', code: '4711', name: 'Vertrieb', costs: [{ currency: 'EUR', total: 12000 }], distance: [] }],
+		}))
+
+		const wrapper = await screen()
+
+		expect(wrapper.findAll('section.statistics__centres .statistics__note').map((one) => one.text())).toEqual([
+			'Net of VAT',
+			'Entries without a VAT rate count gross',
+			'A cost counts to the cost centre its entry names. Costs are not shared out by distance.',
+		])
+	})
+
+	it('says a net budget counts without VAT', async () => {
+		vi.mocked(readStatistics).mockResolvedValue(answer({ budget: { year: 2026, amount: 500000, net: true, currency: 'EUR', spent: 600000 } }))
+
+		const wrapper = await screen()
+
+		const budget = wrapper.find('.statistics__budget')
+		expect(budget.text()).toContain('€6,000.00 of €5,000.00 spent, 120%')
+		expect(budget.text()).toContain('The budget counts net, without VAT.')
 	})
 
 	it('steps to the year before, and not past this one', async () => {
