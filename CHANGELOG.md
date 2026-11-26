@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.0 — not released
+## 1.0.0 — 2026-11-26
 
 ### Partners
 
